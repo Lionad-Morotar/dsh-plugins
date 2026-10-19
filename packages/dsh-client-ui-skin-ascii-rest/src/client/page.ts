@@ -14,7 +14,7 @@
 import type { ReactNode } from "react";
 
 import type { SceneEntry, SceneModule, Settings } from "ascii-rest-scenes";
-import { scenePalette } from "ascii-rest-scenes";
+import { sceneGround, scenePalette } from "ascii-rest-scenes";
 
 import { mount } from "../mount.ts";
 
@@ -69,16 +69,34 @@ function Swatch({ palette, React }: { palette: readonly string[]; React: PageRea
   );
 }
 
-/** The live preview: a mounted scene, re-mounted whenever the scene changes. */
+/** The attribute the shell flips to say the dark theme is live. */
+const DARK_ATTRIBUTE = "data-ds-dark-theme";
+
+/**
+ * The live preview: a mounted scene, re-mounted whenever the scene, the scheme
+ * or the palette options change.
+ *
+ * It paints with the same palette the background does, including the light-mode
+ * flip, so the thumbnail is not a picture of a different skin. The scheme is read
+ * from the DOM and watched, because the theme can change while this page is open.
+ */
 function Preview(props: {
   scene: SceneEntry;
+  options: Settings["options"];
   loadPreview: PageProps["loadPreview"];
   copy: PageCopy;
   React: PageReact;
 }): ReactNode {
-  const { React, scene, copy } = props;
+  const { React, scene, copy, loadPreview, options } = props;
   const host = React.useRef<HTMLDivElement | null>(null);
   const [failed, setFailed] = React.useState(false);
+  const [dark, setDark] = React.useState<boolean>(document.body.hasAttribute(DARK_ATTRIBUTE));
+
+  React.useEffect(() => {
+    const observer = new MutationObserver(() => setDark(document.body.hasAttribute(DARK_ATTRIBUTE)));
+    observer.observe(document.body, { attributes: true, attributeFilter: [DARK_ATTRIBUTE] });
+    return () => observer.disconnect();
+  }, []);
 
   React.useEffect(() => {
     const element = host.current;
@@ -93,13 +111,27 @@ function Preview(props: {
     canvas.style.height = "100%";
     element.append(canvas);
 
-    void props
-      .loadPreview(scene.id)
+    void loadPreview(scene.id)
       .then((module) => {
         if (cancelled) return;
+        const scheme: "light" | "dark" = dark ? "dark" : "light";
         // A still frame is enough here: the preview's job is to show what the
         // picture looks like, not to compete with the background for frames.
-        stop = mount(canvas, { meta: module.meta, default: module.default }, { fps: 0, motion: true });
+        stop = mount(
+          canvas,
+          {
+            meta: {
+              ...module.meta,
+              palette: scenePalette(scene.palette, scheme, options),
+              // The ground is a colour, not a variable: the renderer fills the
+              // canvas with it before drawing, so a scene mounted with the dark
+              // ground on a light page paints a black tile.
+              ground: sceneGround(scene.ground, scheme, options),
+            },
+            default: module.default,
+          },
+          { fps: 0, motion: true },
+        );
       })
       .catch(() => {
         if (!cancelled) setFailed(true);
@@ -110,7 +142,9 @@ function Preview(props: {
       stop?.();
       element.replaceChildren();
     };
-  }, [scene.id, props]);
+    // `options` is a flat record of primitives, so its fields are the identity
+    // that matters; comparing the object would remount on every unrelated change.
+  }, [scene.id, dark, options.softness, options.saturation, loadPreview]);
 
   return React.createElement(
     "div",
@@ -188,7 +222,9 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
     "div",
     { className: "ascii-rest-page" },
     header,
-    current === undefined ? null : React.createElement(Preview, { scene: current, loadPreview: props.loadPreview, copy, React }),
+    current === undefined
+      ? null
+      : React.createElement(Preview, { scene: current, options: settings.options, loadPreview: props.loadPreview, copy, React }),
     actions,
     grid,
     credit,
