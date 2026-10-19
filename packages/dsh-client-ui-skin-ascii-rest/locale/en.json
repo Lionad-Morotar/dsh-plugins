@@ -1,0 +1,12 @@
+{
+  "navLabel": "ASCII background",
+  "title": "ASCII background",
+  "note": "An ascii.rest scene behind the workspace. The palette follows the light and dark themes: dark keeps the scene's own near-black ground, light turns the same picture into paper.",
+  "previewFailed": "This scene did not load.",
+  "play": "Play",
+  "pause": "Pause",
+  "reset": "Reset",
+  "openPanel": "Open the tuning panel",
+  "credit": "Scenes by",
+  "scenes": "Available scenes"
+}

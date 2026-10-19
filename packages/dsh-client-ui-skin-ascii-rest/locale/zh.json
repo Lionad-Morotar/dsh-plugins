@@ -1,0 +1,12 @@
+{
+  "navLabel": "ASCII 背景",
+  "title": "ASCII 背景",
+  "note": "用 ascii.rest 的场景作工作区背景。配色随亮暗主题切换：暗色取场景本身的近黑底色，亮色把同一张画翻成纸色。",
+  "previewFailed": "这个场景没能加载。",
+  "play": "播放动画",
+  "pause": "暂停动画",
+  "reset": "恢复默认",
+  "openPanel": "打开调参面板",
+  "credit": "场景来自",
+  "scenes": "可选场景"
+}

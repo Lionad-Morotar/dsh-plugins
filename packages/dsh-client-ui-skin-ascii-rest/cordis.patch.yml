@@ -1,0 +1,7 @@
+# Enable this skin by inserting its Loader row. The skin manager owns the
+# `disabled` flag on this row (it rewrites the managed block on every switch),
+# so this file never sets one: a fresh install is on until the manager says
+# otherwise.
+- insert:
+    - id: ui-skin-ascii-rest
+      name: '@lionad/dsh-client-ui-skin-ascii-rest'

@@ -1,0 +1,51 @@
+{
+  "name": "@lionad/dsh-client-ui-skin-ascii-rest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "An ascii.rest scene as the DeepSeek Harness background, with a light and a dark reading",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./skin.json": "./skin.json",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/client.*.js",
+    "skin.json",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "ascii-rest-scenes": "workspace:*",
+    "ascii.rest": "github:bas3line/ascii#c556be4284a97599f78197c09ba744ad11c0145e",
+    "lil-gui": "^0.21.0"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^30.0.0",
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.1.3",
+    "vitest": "^3.2.0"
+  }
+}

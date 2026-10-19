@@ -1,0 +1,26 @@
+{
+  "id": "ascii-rest",
+  "name": "ASCII 盐湖",
+  "nameEn": "ASCII Salt Flat",
+  "author": "Lionad",
+  "tagline": "把 ascii.rest 的场景放成工作区背景",
+  "taglineEn": "An ascii.rest scene as the workspace background",
+  "description": "以 ascii.rest 的 ASCII 场景作背景，随亮暗主题自动换配色：暗色用场景本身的近黑底色，亮色把同一张画翻成纸色。可在设置页切换三十四个场景，并用 lil-gui 面板实时调参。",
+  "tags": [
+    "background",
+    "ascii",
+    "art",
+    "animated",
+    "dark",
+    "light"
+  ],
+  "accent": "#50e3c2",
+  "bodyAttr": "data-dsh-ascii-rest",
+  "dshCompatibility": "0.2.1rc2",
+  "package": "@lionad/dsh-client-ui-skin-ascii-rest",
+  "wiring": {
+    "id": "ui-skin-ascii-rest",
+    "bundleWired": false
+  },
+  "order": 20
+}
