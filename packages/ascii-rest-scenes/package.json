@@ -1,0 +1,26 @@
+{
+  "name": "ascii-rest-scenes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure, DOM-free helpers for rendering ascii.rest scenes: catalog shape, cover geometry, ink-on-paper palettes, and option normalization",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "build": "node scripts/generate-catalog.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "build:catalog": "node scripts/generate-catalog.mjs"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.0"
+  },
+  "dependencies": {
+    "ascii.rest": "github:bas3line/ascii#c556be4284a97599f78197c09ba744ad11c0145e"
+  }
+}
