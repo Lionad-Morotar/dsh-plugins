@@ -8,5 +8,6 @@
   "reset": "恢复默认",
   "openPanel": "打开调参面板",
   "credit": "场景来自",
-  "scenes": "可选场景"
+  "scenes": "可选场景",
+  "closePanel": "关闭调参面板"
 }

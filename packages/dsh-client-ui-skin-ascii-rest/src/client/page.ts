@@ -31,6 +31,8 @@ export interface PageCopy {
   scenes: string;
   /** The settings navigation label, which is the page's title in a narrower frame. */
   navLabel: string;
+  /** The accessible name of the tuning panel's close control. */
+  closePanel: string;
 }
 
 /** The slice of React this page uses; the rest comes from the host. */

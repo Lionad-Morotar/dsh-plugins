@@ -39,6 +39,8 @@ export interface GuiCallbacks {
   onScene(sceneId: string): void;
   /** Persist the current settings as they now are. */
   onSave(): void;
+  /** Dismiss the panel. */
+  onClose(): void;
 }
 
 export interface GuiHandle {
@@ -126,6 +128,8 @@ export interface GuiOptions {
   settings: Settings;
   module: SceneModule;
   callbacks: GuiCallbacks;
+  /** The accessible name of the close control. */
+  closeLabel: string;
 }
 
 /**
@@ -158,6 +162,25 @@ export function createGui(host: HTMLElement, options: GuiOptions): GuiHandle {
   injectLilGuiStyles();
   const gui = new GUI({ container: host, title: "ascii.rest", width: 276, injectStyles: false });
 
+  // lil-gui's title toggles the panel between open and collapsed; it has no
+  // dismiss, so a reader who opens the panel has no way back out. This adds one,
+  // and Escape as a second route, because a floating panel that cannot be
+  // dismissed is a trap.
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "ascii-rest-gui__close";
+  close.textContent = "\u00d7";
+  close.setAttribute("aria-label", options.closeLabel);
+  close.title = options.closeLabel;
+  close.addEventListener("click", () => callbacks.onClose());
+  gui.domElement.classList.add("ascii-rest-gui");
+  gui.domElement.appendChild(close);
+
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") callbacks.onClose();
+  };
+  document.addEventListener("keydown", onKeyDown);
+
   addAppearanceFolder(gui, settings.appearance, callbacks);
   let pieceFolder = addPieceFolder(gui, (module.meta.options ?? {}) as Record<string, unknown>, settings.piece[scene.id] ?? {}, callbacks);
 
@@ -185,6 +208,9 @@ export function createGui(host: HTMLElement, options: GuiOptions): GuiHandle {
       if (typeof state === "object" && state !== null) gui.load(state as Record<string, unknown>);
     },
     capture: () => gui.save(),
-    destroy: () => gui.destroy(),
+    destroy: () => {
+      document.removeEventListener("keydown", onKeyDown);
+      gui.destroy();
+    },
   };
 }

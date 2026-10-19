@@ -273,7 +273,9 @@ export function apply(ctx: ClientContext): void {
         // that tuning is committable, and to re-assert the document against a
         // concurrent reset.
         onSave: () => store.set(settings),
+        onClose: () => closeGui(),
       },
+      closeLabel: copy().closePanel,
     });
   };
 

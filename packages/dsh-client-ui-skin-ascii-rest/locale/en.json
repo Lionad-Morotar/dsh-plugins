@@ -8,5 +8,6 @@
   "reset": "Reset",
   "openPanel": "Open the tuning panel",
   "credit": "Scenes by",
-  "scenes": "Available scenes"
+  "scenes": "Available scenes",
+  "closePanel": "Close the tuning panel"
 }

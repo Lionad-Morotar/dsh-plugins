@@ -65,6 +65,38 @@ body[data-dsh-ascii-rest] [data-ascii-rest-layer] {
   color: var(--dsw-alias-label-primary);
 }
 
+/* lil-gui's title only collapses the panel, so the dismiss control sits beside
+   it rather than replacing it: folding and closing are different intentions. */
+[data-ascii-rest-gui] .ascii-rest-gui {
+  position: relative;
+}
+
+[data-ascii-rest-gui] .ascii-rest-gui__close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 28px;
+  height: var(--title-height, 26px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 1;
+}
+
+[data-ascii-rest-gui] .ascii-rest-gui__close:hover {
+  color: var(--dsw-alias-label-primary);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);
+}
+
+/* Keep the title text clear of the dismiss control. */
+[data-ascii-rest-gui] .lil-gui.lil-root > .lil-title {
+  padding-right: 30px;
+}
+
 /* The settings page reads like a contact sheet, not a form. */
 .ascii-rest-page {
   display: flex;
