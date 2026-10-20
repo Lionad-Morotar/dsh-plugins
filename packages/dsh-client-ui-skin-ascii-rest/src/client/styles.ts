@@ -203,6 +203,95 @@ body[data-dsh-ascii-rest] [data-ascii-rest-layer] {
   overflow: hidden;
 }
 
+/* A settings section: a titled block of control rows. */
+.ascii-rest-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-md, 12px);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 55%, transparent);
+}
+
+.ascii-rest-section__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ascii-rest-section__note {
+  margin: 0 0 4px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* One control on one line: the label and its hint on the left, the control on
+   the right, so the eye can scan a column of values instead of a stack. */
+.ascii-rest-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+  font-size: 12px;
+}
+
+.ascii-rest-field__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ascii-rest-field__label {
+  color: var(--dsw-alias-label-primary);
+}
+
+.ascii-rest-field__hint {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ascii-rest-range {
+  flex: 0 0 132px;
+  accent-color: var(--dsw-alias-brand-primary);
+}
+
+/* A named choice is a chip, not a dropdown: two or nine options are all visible
+   at once, and a select would hide the vocabulary the page exists to explain. */
+.ascii-rest-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+  max-width: 60%;
+}
+
+.ascii-rest-chip {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.ascii-rest-chip:hover {
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.ascii-rest-chip[aria-pressed="true"] {
+  border-color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent);
+  color: var(--dsw-alias-label-primary);
+}
+
 /* The palette strip: the one honest thumbnail that costs nothing to draw. */
 .ascii-rest-swatch {
   display: flex;

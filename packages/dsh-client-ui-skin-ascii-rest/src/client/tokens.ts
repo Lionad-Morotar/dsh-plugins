@@ -58,8 +58,28 @@ export interface TokenOptions {
   paper: PaperifyOptions;
 }
 
+/** One region's alpha in each scheme, as a multiplier over the calibrated value. */
+export interface RegionReveal {
+  sidebar: number;
+  main: number;
+  rightbar: number;
+  bottom: number;
+}
+
+/** The alpha a region's surface gets, given its reveal multiplier. */
+export function regionAlpha(scheme: "light" | "dark", reveal: number, surfaceOpacity: number): number {
+  const base = scheme === "dark" ? SURFACE_ALPHA_DARK : SURFACE_ALPHA_LIGHT;
+  // A reveal of 1 is the calibrated default; 0 is the host's own opaque surface,
+  // which is what the region would show if this skin did not touch it.
+  return Math.min(1, base * surfaceOpacity * reveal);
+}
+
+
 /** The 14 tokens the theme service documents as needing both schemes. */
 export type SkinTokens = Record<string, { light: string; dark: string }>;
+
+/** One colour per region per scheme: the paint the region painter applies inline. */
+export type RegionColors = Record<string, { light: string; dark: string }>;
 
 /**
  * Build the token layer for one scene.
@@ -127,6 +147,29 @@ export function buildTokens(options: TokenOptions): SkinTokens {
     "--dsw-alias-state-success-primary": { light: "#0f7b4f", dark: "#4ade80" },
     "--dsw-alias-state-warn-primary": { light: "#96660a", dark: "#fbbf24" },
   };
+
+}
+
+/**
+ * The paint each region applies inline.
+ *
+ * This is a separate function from `buildTokens` on purpose. The token layer is a
+ * page-wide fallback; a region colour is an override on one element. Keeping them
+ * apart means the common case (every region at its default) writes no inline style
+ * at all, and a reader who has not touched the region controls never pays for them.
+ */
+export function buildRegionColors(options: TokenOptions, reveal: RegionReveal): RegionColors {
+  const darkGround = sceneGround(options.scene.ground, "dark");
+  const lightGround = sceneGround(options.scene.ground, "light", options.paper);
+  const colors: RegionColors = {};
+  for (const key of ["sidebar", "main", "rightbar", "bottom"] as const) {
+    const multiplier = reveal[key];
+    colors[key] = {
+      light: withAlpha(lightGround, regionAlpha("light", multiplier, options.surfaceOpacity)),
+      dark: withAlpha(darkGround, regionAlpha("dark", multiplier, options.surfaceOpacity)),
+    };
+  }
+  return colors;
 }
 
 /**

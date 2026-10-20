@@ -53,6 +53,24 @@ export interface MountOptions {
   [option: string]: unknown;
 }
 
+/**
+ * What playing a piece returns: a stop function, plus the two controls the host
+ * needs to hold the picture still without tearing it down.
+ *
+ * `pause` is not the same as `fps: 0`. A zero frame rate still draws, then never
+ * advances; a paused loop keeps its canvas exactly as it is and spends nothing.
+ * The skin uses it when the window loses focus, which is a frequent, temporary
+ * state that must not cost a re-mount.
+ */
+export type MountHandle = (() => void) & {
+  /** Hold the frame loop without losing the current frame. Idempotent. */
+  pause(): void;
+  /** Resume the frame loop where it left off. Idempotent. */
+  resume(): void;
+  /** Play time, in seconds, of the frame currently on screen. */
+  now(): number;
+};
+
 /** A piece as the loader hands it over: either the object or its default export. */
 export type PieceLike = Piece | Piece["default"];
 
@@ -81,7 +99,7 @@ export function pieceIn(module: unknown, from: string): Piece {
  * and copied from there, and a frame redraws only the cells that changed: a
  * 20,000-cell scene redrawn cell by cell is most of its cost per frame.
  */
-export function mount(el: HTMLElement, piece: PieceLike, options: MountOptions = {}): () => void {
+export function mount(el: HTMLElement, piece: PieceLike, options: MountOptions = {}): MountHandle {
   const make = typeof piece === "function" ? piece : piece.default;
   const meta: Partial<PieceMeta> = typeof piece === "function" ? {} : piece.meta;
   const { fps = meta.fps ?? 30, motion = false, ...rest }: MountOptions = { ...meta.options, ...options };
@@ -110,7 +128,7 @@ export function mount(el: HTMLElement, piece: PieceLike, options: MountOptions =
     const ctx = canvas.getContext("2d");
     const atlas = document.createElement("canvas");
     const actx = atlas.getContext("2d");
-    if (ctx === null || actx === null) return () => {};
+    if (ctx === null || actx === null) return detachedNoop();
 
     const slots = new Map<number, number>();
     let w = 0;
@@ -242,12 +260,21 @@ export function mount(el: HTMLElement, piece: PieceLike, options: MountOptions =
   }
 
   draw();
-  if (!fps) return () => observer?.disconnect();
+  if (!fps) {
+    const stopped = (): void => {
+      observer?.disconnect();
+    };
+    return attach(stopped, () => {}, () => {}, () => t);
+  }
 
   const still = matchMedia("(prefers-reduced-motion: reduce)");
   let raf = 0;
   let previous = 0;
   let seen = false;
+  // Held while the page is inactive. Kept separate from `seen` because the two
+  // answer different questions: one is "is this canvas on screen", the other is
+  // "does the reader want the application working at all right now".
+  let held = false;
 
   const tick = (now: number): void => {
     raf = requestAnimationFrame(tick);
@@ -259,7 +286,7 @@ export function mount(el: HTMLElement, piece: PieceLike, options: MountOptions =
   };
 
   const run = (): void => {
-    const go = seen && !document.hidden && (motion || !still.matches);
+    const go = !held && seen && !document.hidden && (motion || !still.matches);
     if (go && !raf) {
       previous = performance.now();
       raf = requestAnimationFrame(tick);
@@ -277,12 +304,47 @@ export function mount(el: HTMLElement, piece: PieceLike, options: MountOptions =
   document.addEventListener("visibilitychange", run);
   still.addEventListener("change", run);
 
-  return () => {
-    io.disconnect();
-    observer?.disconnect();
-    cancelAnimationFrame(raf);
-    raf = 0;
-    document.removeEventListener("visibilitychange", run);
-    still.removeEventListener("change", run);
-  };
+  return attach(
+    () => {
+      io.disconnect();
+      observer?.disconnect();
+      cancelAnimationFrame(raf);
+      raf = 0;
+      document.removeEventListener("visibilitychange", run);
+      still.removeEventListener("change", run);
+    },
+    () => {
+      held = true;
+      run();
+    },
+    () => {
+      held = false;
+      run();
+    },
+    () => t,
+  );
+}
+
+/** A handle that does nothing, for the paths that bail before the loop exists. */
+function detachedNoop(): MountHandle {
+  return attach(
+    () => {},
+    () => {},
+    () => {},
+    () => 0,
+  );
+}
+
+/**
+ * Glue a stop function and the play-time getter onto one object.
+ *
+ * The stop function stays callable (`stop()`) so existing callers and upstream's
+ * own contract keep working; `pause`/`resume`/`now` are additions, not a new shape.
+ */
+function attach(stop: () => void, pause: () => void, resume: () => void, now: () => number): MountHandle {
+  const handle = stop as MountHandle;
+  handle.pause = pause;
+  handle.resume = resume;
+  handle.now = now;
+  return handle;
 }

@@ -130,6 +130,13 @@ function makeContext(dom: JSDOM) {
         return {
           overrideTokens: (_source: string, value: Record<string, unknown>) => {
             tokens.push(value);
+            // A real `overrideTokens` publishes a snapshot, and the host's
+            // ThemePresenter answers every publish by writing the scheme
+            // attribute on the body — unconditionally, even when the value did
+            // not change. The skeleton reproduces that write because it is the
+            // exact edge the spin loop used to close on: publish → setAttribute
+            // → the skin's own attribute observer → publish again.
+            window.document.body.setAttribute("data-ds-dark-theme", "");
             return () => {};
           },
           getTheme: () => ({ active: "dark", preference: "dark" }),
@@ -206,6 +213,34 @@ describe("the built client bundle", () => {
     // what scopes every rule.
     const styled = [...window.document.querySelectorAll("style[data-plugin-css]")].map((el) => el.textContent ?? "");
     expect(styled.join("")).toContain("data-dsh-ascii-rest");
+  });
+
+  it("does not republish the token layer when the host rewrites the scheme attribute", async () => {
+    // Regression: the skin observed `data-ds-dark-theme` on the body and answered
+    // that mutation with `paintTokens`, which called `theme.overrideTokens`, which
+    // published `theme/change`, which made the host's presenter write the same
+    // attribute again. `setAttribute` is reported as a mutation even when the value
+    // is unchanged, so the pair never settled and the renderer sat at 100% CPU
+    // with the page stuck on "loading plugins".
+    const dom = makeDom();
+    const exports = materialize(dom);
+    const { ctx, tokens, window } = makeContext(dom);
+
+    (exports.apply as (ctx: unknown) => void)(ctx);
+    const afterApply = tokens.length;
+
+    // Let the shell's own mutations settle, then nudge the attribute the host
+    // writes on every theme publish.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const settled = tokens.length;
+    window.document.body.setAttribute("data-ds-dark-theme", "");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(afterApply).toBeGreaterThanOrEqual(1);
+    // A repaint triggered by the attribute must not add a publish. One publish per
+    // apply is the contract; a second layer per attribute write is the loop.
+    expect(settled).toBe(afterApply);
+    expect(tokens.length).toBe(afterApply);
   });
 
   it("registers exactly one settings section and names it", () => {

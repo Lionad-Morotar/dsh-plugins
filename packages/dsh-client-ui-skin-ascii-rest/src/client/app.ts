@@ -17,6 +17,8 @@
  */
 import {
   builtInCatalog,
+  REGION_KEYS,
+  type RegionKey,
   type SceneCatalog,
   type SceneEntry,
   type SceneModule,
@@ -30,8 +32,17 @@ import { AsciiRestSettingsPage, type PageCopy, type PageReact } from "./page.ts"
 import { loadScene } from "./scenes.ts";
 import { createSettingsStore, type SettingsStore } from "./store.ts";
 import { SKIN_CSS } from "./styles.ts";
-import { presentScene, type Surface } from "./surface.ts";
-import { buildTokens } from "./tokens.ts";
+import { currentScheme, presentScene, type Surface } from "./surface.ts";
+import {
+  clearRegionPaint,
+  clearRegions,
+  locateRegions,
+  paintRegions,
+  regionsAreCurrent,
+  stampRegions,
+  type RegionSurfaces,
+} from "./regions.ts";
+import { buildRegionColors, buildTokens } from "./tokens.ts";
 
 // The page's copy lives in the locale documents, not in this file, so a
 // translator edits one place. `resolveJsonModule` turns the imports into
@@ -124,6 +135,7 @@ export function apply(ctx: ClientContext): void {
   let gui: GuiHandle | null = null;
   let guiHost: HTMLElement | null = null;
   let releaseTokens: (() => void) | null = null;
+  let regions: RegionSurfaces | null = null;
   // Guards against a slower scene load overwriting a faster, newer one.
   let presentation = 0;
 
@@ -145,15 +157,53 @@ export function apply(ctx: ClientContext): void {
 
   // --- colour -----------------------------------------------------------------
 
+  /** The scene entry the current settings name, or undefined when the id is unknown. */
+  const currentScene = (): SceneEntry | undefined => {
+    const scene = settings.scene;
+    return catalog.scenes.find((entry) => entry.id === scene);
+  };
+
+  /**
+   * Repaint the per-region inline colours. Publishes nothing.
+   *
+   * This is kept apart from `paintTokens` on purpose, and the separation is the
+   * whole point of the function: the host answers every `theme/change` by
+   * calling `body.setAttribute("data-ds-dark-theme", "")`, which the browser
+   * reports as a mutation even when the value did not change. Repainting the
+   * regions from that observer is therefore safe — but republishing the tokens
+   * from it would feed `theme/change` straight back into the same observer and
+   * spin the renderer forever. So: colours here, tokens in `paintTokens` only.
+   *
+   * The page-wide token is the fallback; each region then overrides it locally so
+   * one surface can sit further back than another. When every region is at its
+   * default the inline paint is skipped entirely, which keeps the common case
+   * identical to a build without regions.
+   */
+  const paintRegionColors = (scene: SceneEntry | undefined): void => {
+    if (regions === null || scene === undefined) return;
+    const reveal = settings.regions;
+    if (REGION_KEYS.every((key) => reveal[key] === 1)) {
+      // Paint only: the stamps must stay, or the next shell mutation would treat
+      // the surfaces as unclaimed and re-locate them on every frame it paints.
+      clearRegionPaint(regions);
+      return;
+    }
+    const tokenOptions = { scene, surfaceOpacity: settings.appearance.surface, paper: settings.options };
+    const colors = buildRegionColors(tokenOptions, reveal);
+    const scheme = currentScheme(doc);
+    const paint = {} as Record<RegionKey, string>;
+    for (const key of REGION_KEYS) paint[key] = colors[key]?.[scheme] ?? "";
+    paintRegions(regions, paint);
+  };
+
   /** Repaint the token layer for the current scene. The theme service picks the scheme. */
   const paintTokens = (scene: SceneEntry | undefined): void => {
     releaseTokens?.();
     releaseTokens = null;
     if (theme === undefined || scene === undefined) return;
-    releaseTokens = theme.overrideTokens(
-      PACKAGE_ID,
-      buildTokens({ scene, surfaceOpacity: settings.appearance.surface, paper: settings.options }),
-    );
+    const tokenOptions = { scene, surfaceOpacity: settings.appearance.surface, paper: settings.options };
+    releaseTokens = theme.overrideTokens(PACKAGE_ID, buildTokens(tokenOptions));
+    paintRegionColors(scene);
   };
 
   // --- the picture ------------------------------------------------------------
@@ -193,8 +243,11 @@ export function apply(ctx: ClientContext): void {
       veil: next.appearance.veil,
       still: next.appearance.still,
       fps: next.appearance.fps,
+      scrim: next.appearance.scrim,
+      scrimAngle: next.appearance.scrimAngle,
+      pauseOnBlur: next.appearance.pauseOnBlur,
       paper: next.options,
-      geometry: { zoom: next.options.zoom, offsetX: next.options.offsetX, offsetY: next.options.offsetY },
+      geometry: { fit: next.options.fit, anchor: next.options.anchor, zoom: next.options.zoom },
       onError: (error) => {
         warn("ascii-rest: the scene stopped drawing", error);
       },
@@ -265,6 +318,12 @@ export function apply(ctx: ClientContext): void {
         onAppearance: (change) => {
           store.update((current) => ({ ...current, appearance: { ...current.appearance, ...change } }));
         },
+        onRegions: (change) => {
+          store.update((current) => ({ ...current, regions: { ...current.regions, ...change } }));
+        },
+        onPlacement: (change) => {
+          store.update((current) => ({ ...current, options: { ...current.options, ...change } }));
+        },
         onScene: (sceneId) => {
           store.update((current) => ({ ...current, scene: sceneId }));
         },
@@ -299,6 +358,8 @@ export function apply(ctx: ClientContext): void {
       loadPreview: (sceneId) => loadScene(sceneId),
       onScene: (sceneId) => store.update((current) => ({ ...current, scene: sceneId })),
       onAppearance: (change) => store.update((current) => ({ ...current, appearance: { ...current.appearance, ...change } })),
+      onPlacement: (change) => store.update((current) => ({ ...current, options: { ...current.options, ...change } })),
+      onRegions: (change) => store.update((current) => ({ ...current, regions: { ...current.regions, ...change } })),
       onOpenPanel: () => {
         void openGui();
       },
@@ -351,26 +412,77 @@ export function apply(ctx: ClientContext): void {
           veil: next.appearance.veil,
           still: next.appearance.still,
           fps: next.appearance.fps,
+          scrim: next.appearance.scrim,
+          scrimAngle: next.appearance.scrimAngle,
+          pauseOnBlur: next.appearance.pauseOnBlur,
         });
-        surface?.relayout({ zoom: next.options.zoom, offsetX: next.options.offsetX, offsetY: next.options.offsetY });
+        surface?.relayout({ fit: next.options.fit, anchor: next.options.anchor, zoom: next.options.zoom });
       }),
     "ascii-rest: follow the settings",
   );
+
+  /**
+   * Find the shell's surfaces and stamp them.
+   *
+   * Runs once, then again whenever the shell replaces its own frame: React remounts
+   * the frame on a layout change (a sidebar toggled, a panel moved), and the new
+   * elements carry none of this skin's stamps. The check is cheap and the retry is
+   * what makes the region controls survive normal use rather than only working
+   * until the reader opens a panel.
+   *
+   * It repaints the region colours but never the tokens: this runs from a subtree
+   * observer, and publishing from there is what once turned the renderer into a
+   * spin loop (see `paintRegionColors`).
+   */
+  const syncRegions = (): void => {
+    if (regions === null || !regionsAreCurrent(regions)) {
+      if (regions !== null) clearRegions(regions);
+      regions = locateRegions(doc);
+      if (regions !== null) stampRegions(regions);
+    }
+    paintRegionColors(currentScene());
+  };
 
   ctx.effect(() => {
     // The host writes `data-ds-dark-theme` on the body; the renderer needs a
     // fresh mount with the other scheme's palette, not a mutation.
     const observer = new MutationObserver(() => {
       surface?.rescheme();
+      // A scheme change also changes which half of the region colours applies.
+      // Colours only — republishing the tokens here would answer the host's own
+      // `setAttribute` with another `theme/change` and never settle.
+      paintRegionColors(currentScene());
     });
     observer.observe(doc.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+
+    // The shell mounts after this plugin, so the first look happens on a frame
+    // boundary; a subtree observer then catches the frame being replaced. The
+    // child list is busy while the shell paints itself, so the work is coalesced
+    // to one pass per frame instead of one pass per inserted node.
+    let scheduled = false;
+    const scheduleSync = (): void => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        if (regions !== null && regionsAreCurrent(regions)) return;
+        syncRegions();
+      });
+    };
+    const shellObserver = new MutationObserver(scheduleSync);
+    shellObserver.observe(doc.body, { childList: true, subtree: true });
+
     const onResize = (): void => surface?.relayout();
     window.addEventListener("resize", onResize);
+    syncRegions();
     return () => {
       observer.disconnect();
+      shellObserver.disconnect();
       window.removeEventListener("resize", onResize);
+      if (regions !== null) clearRegions(regions);
+      regions = null;
     };
-  }, "ascii-rest: follow the scheme and the window");
+  }, "ascii-rest: follow the scheme, the shell and the window");
 
   if (locale !== undefined) {
     ctx.effect(

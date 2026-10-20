@@ -13,8 +13,8 @@
  */
 import type { ReactNode } from "react";
 
-import type { SceneEntry, SceneModule, Settings } from "ascii-rest-scenes";
-import { sceneGround, scenePalette } from "ascii-rest-scenes";
+import type { Anchor, FitMode, RegionKey, SceneEntry, SceneModule, Settings } from "ascii-rest-scenes";
+import { ANCHORS, FIT_MODES, REGION_KEYS, sceneGround, scenePalette } from "ascii-rest-scenes";
 
 import { mount } from "../mount.ts";
 
@@ -33,6 +33,34 @@ export interface PageCopy {
   navLabel: string;
   /** The accessible name of the tuning panel's close control. */
   closePanel: string;
+  placement: string;
+  placementNote: string;
+  fit: string;
+  fitCover: string;
+  fitContain: string;
+  anchor: string;
+  anchorTopLeft: string;
+  anchorTop: string;
+  anchorTopRight: string;
+  anchorLeft: string;
+  anchorCenter: string;
+  anchorRight: string;
+  anchorBottomLeft: string;
+  anchorBottom: string;
+  anchorBottomRight: string;
+  zoom: string;
+  regions: string;
+  regionsNote: string;
+  regionSidebar: string;
+  regionMain: string;
+  regionRightbar: string;
+  regionBottom: string;
+  scrim: string;
+  scrimNote: string;
+  scrimStrength: string;
+  scrimAngle: string;
+  pauseOnBlur: string;
+  pauseOnBlurNote: string;
 }
 
 /** The slice of React this page uses; the rest comes from the host. */
@@ -50,6 +78,8 @@ export interface PageProps {
   loadPreview(sceneId: string): Promise<SceneModule>;
   onScene(sceneId: string): void;
   onAppearance(change: Partial<Settings["appearance"]>): void;
+  onPlacement(change: Partial<Settings["options"]>): void;
+  onRegions(change: Partial<Settings["regions"]>): void;
   onOpenPanel(): void;
   onReset(): void;
   copy: PageCopy;
@@ -213,6 +243,112 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
     ),
   );
 
+  // One labelled row per control. The page stays a form only where a form is
+  // genuinely better than the panel: four region sliders and a fit/anchor pair
+  // are the settings a reader changes and then leaves alone, so they belong here
+  // rather than behind a floating panel.
+  const row = (label: string, control: ReactNode, hint?: string): ReactNode =>
+    React.createElement(
+      "label",
+      { className: "ascii-rest-field" },
+      React.createElement(
+        "span",
+        { className: "ascii-rest-field__text" },
+        React.createElement("span", { className: "ascii-rest-field__label" }, label),
+        hint === undefined ? null : React.createElement("span", { className: "ascii-rest-field__hint" }, hint),
+      ),
+      control,
+    );
+
+  const pick = (values: readonly string[], labels: Record<string, string>, current: string, onPick: (value: string) => void): ReactNode =>
+    React.createElement(
+      "div",
+      { className: "ascii-rest-chips", role: "group" },
+      ...values.map((value) =>
+        React.createElement(
+          "button",
+          {
+            key: value,
+            type: "button",
+            className: "ascii-rest-chip",
+            "aria-pressed": value === current,
+            onClick: () => onPick(value),
+          },
+          labels[value] ?? value,
+        ),
+      ),
+    );
+
+  const anchorLabels: Record<string, string> = {
+    "top-left": copy.anchorTopLeft,
+    top: copy.anchorTop,
+    "top-right": copy.anchorTopRight,
+    left: copy.anchorLeft,
+    center: copy.anchorCenter,
+    right: copy.anchorRight,
+    "bottom-left": copy.anchorBottomLeft,
+    bottom: copy.anchorBottom,
+    "bottom-right": copy.anchorBottomRight,
+  };
+  const fitLabels: Record<string, string> = { cover: copy.fitCover, contain: copy.fitContain };
+  const regionLabels: Record<string, string> = {
+    sidebar: copy.regionSidebar,
+    main: copy.regionMain,
+    rightbar: copy.regionRightbar,
+    bottom: copy.regionBottom,
+  };
+
+  const placement = React.createElement(
+    "section",
+    { className: "ascii-rest-section" },
+    React.createElement("h4", { className: "ascii-rest-section__title" }, copy.placement),
+    React.createElement("p", { className: "ascii-rest-section__note" }, copy.placementNote),
+    row(
+      copy.fit,
+      pick(FIT_MODES, fitLabels, settings.options.fit, (value) => props.onPlacement({ fit: value as FitMode })),
+    ),
+    row(
+      copy.anchor,
+      pick(ANCHORS, anchorLabels, settings.options.anchor, (value) => props.onPlacement({ anchor: value as Anchor })),
+    ),
+    row(
+      copy.zoom,
+      React.createElement("input", {
+        type: "range",
+        className: "ascii-rest-range",
+        min: 0.5,
+        max: 3,
+        step: 0.01,
+        value: settings.options.zoom,
+        onChange: (event: { target: { value: string } }) => props.onPlacement({ zoom: Number(event.target.value) }),
+      }),
+      `${settings.options.zoom.toFixed(2)}×`,
+    ),
+  );
+
+  const regions = React.createElement(
+    "section",
+    { className: "ascii-rest-section" },
+    React.createElement("h4", { className: "ascii-rest-section__title" }, copy.regions),
+    React.createElement("p", { className: "ascii-rest-section__note" }, copy.regionsNote),
+    ...REGION_KEYS.map((key) =>
+      row(
+        regionLabels[key] ?? key,
+        React.createElement("input", {
+          type: "range",
+          className: "ascii-rest-range",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          value: settings.regions[key],
+          onChange: (event: { target: { value: string } }) =>
+            props.onRegions({ [key]: Number(event.target.value) } as Partial<Settings["regions"]>),
+        }),
+        `${Math.round(settings.regions[key] * 100)}%`,
+      ),
+    ),
+  );
+
   const credit = React.createElement(
     "p",
     { className: "ascii-rest-credit" },
@@ -228,6 +364,8 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
       ? null
       : React.createElement(Preview, { scene: current, options: settings.options, loadPreview: props.loadPreview, copy, React }),
     actions,
+    placement,
+    regions,
     grid,
     credit,
   );

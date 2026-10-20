@@ -19,9 +19,16 @@
  */
 import { fitCover } from "ascii-rest-scenes";
 import { sceneGround, scenePalette, type PaperifyOptions } from "ascii-rest-scenes";
-import type { SceneEntry, SceneModule } from "ascii-rest-scenes";
+import type { Anchor, FitMode, SceneEntry, SceneModule } from "ascii-rest-scenes";
 
-import { mount, type Piece } from "../mount.ts";
+import { mount, type MountHandle, type Piece } from "../mount.ts";
+
+/** The same colour at zero alpha, spelled as `#rrggbb00` so a gradient fades to it. */
+function withAlphaf(hex: string, alpha: number): string {
+  return `${hex}${Math.round(Math.max(0, Math.min(1, alpha)) * 255)
+    .toString(16)
+    .padStart(2, "0")}`;
+}
 
 /** The attribute the host shell sets on `body` for the dark palette. */
 export const DARK_ATTRIBUTE = "data-ds-dark-theme";
@@ -37,9 +44,12 @@ export function currentScheme(doc: Document = document): Scheme {
 }
 
 export interface Geometry {
+  /** `cover` crops the overflow, `contain` shows the whole picture. */
+  fit: FitMode;
+  /** Which edge of the picture survives the crop. */
+  anchor: Anchor;
+  /** Fine adjustment on top of the fit mode; 1 is none. */
   zoom: number;
-  offsetX: number;
-  offsetY: number;
 }
 
 export interface Presentation {
@@ -55,8 +65,14 @@ export interface Presentation {
   blur: number;
   /** How strongly the ground is washed back over the picture. */
   veil: number;
+  /** How strong the directional gradient scrim is, 0 for none. */
+  scrim: number;
+  /** The direction the scrim darkens towards, in degrees clockwise from up. */
+  scrimAngle: number;
   /** Hold the picture still regardless of the reader's motion setting. */
   still: boolean;
+  /** Stop playing while the window is not focused. */
+  pauseOnBlur: boolean;
   /** Frames per second; 0 holds a single frame. */
   fps: number;
   /** The colour treatment for the light scheme. */
@@ -73,7 +89,12 @@ export interface Surface {
   /** Re-read the scheme and repaint. Cheap when the scheme did not change. */
   rescheme(): void;
   /** Repaint the wash and the filter stack without touching the frame loop. */
-  restyle(next: Pick<Presentation, "opacity" | "blur" | "veil" | "still" | "fps">): void;
+  restyle(
+    next: Pick<
+      Presentation,
+      "opacity" | "blur" | "veil" | "scrim" | "scrimAngle" | "still" | "fps" | "pauseOnBlur"
+    >,
+  ): void;
   /** Remove the layer and stop the frame loop. Idempotent. */
   dispose(): void;
 }
@@ -89,7 +110,7 @@ export function presentScene(presentation: Presentation, doc: Document = documen
 
   let geometry = presentation.geometry;
   let scheme = currentScheme(doc);
-  let stop: (() => void) | null = null;
+  let stop: MountHandle | null = null;
   let disposed = false;
   let currentFps = presentation.still ? 0 : presentation.fps;
 
@@ -116,7 +137,24 @@ export function presentScene(presentation: Presentation, doc: Document = documen
   veil.style.inset = "0";
   veil.style.pointerEvents = "none";
 
-  layer.append(canvas, veil);
+  // The scrim is a separate element from the veil because the two answer
+  // different problems. The veil is flat: it holds the picture back everywhere,
+  // which is what a dense scene needs under body text. The scrim is directional:
+  // it fades one edge towards the ground, so the composer at the bottom and the
+  // sidebar at the side have somewhere quiet to sit while the rest of the picture
+  // stays bright. One element cannot do both without a gradient on the same node
+  // as a flat fill.
+  //
+  // "The ground" is the scheme's own ground, not black: in the dark scheme the
+  // fade darkens, and in the light scheme the same fade goes towards paper. Using
+  // black in both would put a soot smudge across a pale background.
+  const scrim = doc.createElement("div");
+  scrim.setAttribute("aria-hidden", "true");
+  scrim.style.position = "absolute";
+  scrim.style.inset = "0";
+  scrim.style.pointerEvents = "none";
+
+  layer.append(canvas, veil, scrim);
 
   const ground = (): string => sceneGround(scene.ground, scheme, presentation.paper);
 
@@ -128,6 +166,18 @@ export function presentScene(presentation: Presentation, doc: Document = documen
     // dense scene readable under text without dimming the whole shell.
     veil.style.backgroundColor = ground();
     veil.style.opacity = String(presentation.veil);
+
+    // A scrim angle of 0 fades downwards from the top edge; the gradient runs
+    // the other way, so the dark stop is at 100% of the axis the angle names.
+    // `transparent` is deliberately spelled out as the ground at zero alpha: a
+    // plain `transparent` keyword interpolates through transparent black in some
+    // engines, which greys the pale light-mode ground as it fades.
+    const strength = presentation.scrim;
+    scrim.style.opacity = String(strength);
+    scrim.style.background =
+      strength > 0
+        ? `linear-gradient(${String(presentation.scrimAngle)}deg, ${ground()} 0%, ${withAlphaf(ground(), 0)} 62%)`
+        : "";
   };
 
   const startFrames = (): void => {
@@ -177,6 +227,33 @@ export function presentScene(presentation: Presentation, doc: Document = documen
 
   const onResize = (): void => relayout();
 
+  // The application window losing focus is the case requirement 3 names. The
+  // renderer already stops for a hidden tab, but a background window is still
+  // "visible" to the document, so it kept painting at full rate behind whatever
+  // the reader switched to. Pausing here costs one boolean and saves the frames.
+  const onBlur = (): void => stop?.pause();
+  const onFocus = (): void => stop?.resume();
+
+  /**
+   * Bind or unbind the focus listeners.
+   *
+   * The switch is live: turning it off in the settings page has to stop the
+   * listeners, not merely be ignored until the next reload. `blurWhileHidden`
+   * tracks the binding so the same state is never bound twice.
+   */
+  let blurBound = false;
+  const bindBlur = (wanted: boolean): void => {
+    if (wanted === blurBound) return;
+    blurBound = wanted;
+    if (wanted) {
+      window.addEventListener("blur", onBlur);
+      window.addEventListener("focus", onFocus);
+    } else {
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    }
+  };
+
   try {
     doc.body.prepend(layer);
     paintChrome();
@@ -188,6 +265,7 @@ export function presentScene(presentation: Presentation, doc: Document = documen
   }
 
   window.addEventListener("resize", onResize);
+  bindBlur(presentation.pauseOnBlur);
 
   return {
     element: layer,
@@ -206,6 +284,10 @@ export function presentScene(presentation: Presentation, doc: Document = documen
       presentation.opacity = next.opacity;
       presentation.blur = next.blur;
       presentation.veil = next.veil;
+      presentation.scrim = next.scrim;
+      presentation.scrimAngle = next.scrimAngle;
+      presentation.pauseOnBlur = next.pauseOnBlur;
+      bindBlur(next.pauseOnBlur);
       paintChrome();
       const wantedFps = next.still ? 0 : next.fps;
       if (wantedFps !== currentFps) {
@@ -218,6 +300,7 @@ export function presentScene(presentation: Presentation, doc: Document = documen
       if (disposed) return;
       disposed = true;
       window.removeEventListener("resize", onResize);
+      bindBlur(false);
       teardown();
     },
   };
