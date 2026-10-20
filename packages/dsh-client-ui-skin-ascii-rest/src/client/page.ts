@@ -14,7 +14,7 @@
 import type { ReactNode } from "react";
 
 import type { Anchor, FitMode, RegionKey, SceneEntry, SceneModule, Settings } from "ascii-rest-scenes";
-import { ANCHORS, FIT_MODES, REGION_KEYS, sceneGround, scenePalette } from "ascii-rest-scenes";
+import { ANCHORS, FIT_MODES, REGION_KEYS, fitCover, sceneGround, scenePalette } from "ascii-rest-scenes";
 
 import { mount } from "../mount.ts";
 
@@ -105,6 +105,24 @@ function Swatch({ palette, React }: { palette: readonly string[]; React: PageRea
 const DARK_ATTRIBUTE = "data-ds-dark-theme";
 
 /**
+ * Whether the dark theme is live, kept current while the page is open.
+ *
+ * Both the preview and the anchor pad paint with a scheme-dependent palette, so
+ * reading the attribute once would leave one of them showing the other theme's
+ * colours after a switch. The shell flips a single attribute, so watching that
+ * one is the whole subscription.
+ */
+function useDarkScheme(React: PageReact): boolean {
+  const [dark, setDark] = React.useState<boolean>(document.body.hasAttribute(DARK_ATTRIBUTE));
+  React.useEffect(() => {
+    const observer = new MutationObserver(() => setDark(document.body.hasAttribute(DARK_ATTRIBUTE)));
+    observer.observe(document.body, { attributes: true, attributeFilter: [DARK_ATTRIBUTE] });
+    return () => observer.disconnect();
+  }, []);
+  return dark;
+}
+
+/**
  * The live preview: a mounted scene, re-mounted whenever the scene, the scheme
  * or the palette options change.
  *
@@ -122,13 +140,7 @@ function Preview(props: {
   const { React, scene, copy, loadPreview, options } = props;
   const host = React.useRef<HTMLDivElement | null>(null);
   const [failed, setFailed] = React.useState(false);
-  const [dark, setDark] = React.useState<boolean>(document.body.hasAttribute(DARK_ATTRIBUTE));
-
-  React.useEffect(() => {
-    const observer = new MutationObserver(() => setDark(document.body.hasAttribute(DARK_ATTRIBUTE)));
-    observer.observe(document.body, { attributes: true, attributeFilter: [DARK_ATTRIBUTE] });
-    return () => observer.disconnect();
-  }, []);
+  const dark = useDarkScheme(React);
 
   React.useEffect(() => {
     const element = host.current;
@@ -194,6 +206,7 @@ function Preview(props: {
 
 export function AsciiRestSettingsPage(props: PageProps): ReactNode {
   const { React, catalog, settings, copy } = props;
+  const dark = useDarkScheme(React);
   const current = catalog.find((scene) => scene.id === settings.scene) ?? catalog[0];
 
   const actions = React.createElement(
@@ -247,12 +260,18 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
   // genuinely better than the panel: four region sliders and a fit/anchor pair
   // are the settings a reader changes and then leaves alone, so they belong here
   // rather than behind a floating panel.
-  const row = (label: string, control: ReactNode, hint?: string): ReactNode =>
+  //
+  // The row is a div rather than a label. A label may wrap at most one labelable
+  // control, and these rows carry a group of buttons: inside a label the browser
+  // routes a click on the row text to the group's first button, so clicking
+  // "对齐位置" quietly jumped the picture to the top-left corner. Each control
+  // names itself instead.
+  const field = (label: string, control: ReactNode, hint?: string): ReactNode =>
     React.createElement(
-      "label",
+      "div",
       { className: "ascii-rest-field" },
       React.createElement(
-        "span",
+        "div",
         { className: "ascii-rest-field__text" },
         React.createElement("span", { className: "ascii-rest-field__label" }, label),
         hint === undefined ? null : React.createElement("span", { className: "ascii-rest-field__hint" }, hint),
@@ -260,10 +279,16 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
       control,
     );
 
-  const pick = (values: readonly string[], labels: Record<string, string>, current: string, onPick: (value: string) => void): ReactNode =>
+  const pick = <V extends string>(
+    fieldLabel: string,
+    values: readonly V[],
+    labels: Record<string, string>,
+    current: string,
+    onPick: (value: V) => void,
+  ): ReactNode =>
     React.createElement(
       "div",
-      { className: "ascii-rest-chips", role: "group" },
+      { className: "ascii-rest-chips", role: "group", "aria-label": fieldLabel },
       ...values.map((value) =>
         React.createElement(
           "button",
@@ -278,6 +303,23 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
         ),
       ),
     );
+
+  const range = (
+    fieldLabel: string,
+    value: number,
+    bounds: { min: number; max: number; step: number },
+    onInput: (next: number) => void,
+  ): ReactNode =>
+    React.createElement("input", {
+      type: "range",
+      className: "ascii-rest-range",
+      "aria-label": fieldLabel,
+      min: bounds.min,
+      max: bounds.max,
+      step: bounds.step,
+      value,
+      onChange: (event: { target: { value: string } }) => onInput(Number(event.target.value)),
+    });
 
   const anchorLabels: Record<string, string> = {
     "top-left": copy.anchorTopLeft,
@@ -298,31 +340,100 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
     bottom: copy.regionBottom,
   };
 
+  // The anchor is a place in a two-dimensional frame, so it is drawn as one, and
+  // drawn truthfully: the pad is a window, and the scene sits inside it at the
+  // size and offset `fitCover` actually solves, so a reader sees the crop instead
+  // of inferring it from nine words. Nine chips spelling out 左上 / 上中 / 右上
+  // wrapped into a ragged 6+3 block that had to be read word by word; the words
+  // survive as accessible names and hover titles.
+  //
+  // The pad is measured in the same units the background is, so `cover` makes the
+  // picture overflow the frame (clipped by its own overflow) and `contain` leaves
+  // a margin, which is exactly what those two modes do to the real picture.
+  const PAD = { width: 172, height: 96 };
+  const padBox =
+    current === undefined
+      ? null
+      : fitCover(
+          { cols: current.cols, rows: current.rows, cell: current.cell },
+          PAD.width,
+          PAD.height,
+          { fit: settings.options.fit, anchor: settings.options.anchor, zoom: settings.options.zoom },
+        );
+  const anchorPad = React.createElement(
+    "div",
+    { className: "ascii-rest-anchor", style: { width: `${String(PAD.width)}px`, height: `${String(PAD.height)}px` } },
+    padBox === null || current === undefined
+      ? null
+      : React.createElement("div", {
+          className: "ascii-rest-anchor__picture",
+          style: {
+            left: `${String(padBox.left)}px`,
+            top: `${String(padBox.top)}px`,
+            width: `${String(padBox.width)}px`,
+            height: `${String(padBox.height)}px`,
+            // The picture's own colours, so the pad reads as this scene rather
+            // than as an empty diagram. The scheme is passed through for the same
+            // reason the preview does it: a dark palette against a dark theme
+            // draws a frame with nothing in it.
+            backgroundImage: `linear-gradient(105deg, ${scenePalette(current.palette, dark ? "dark" : "light", settings.options)
+              .slice(0, 12)
+              .map((colour, index, all) => `${colour} ${String((index / all.length) * 100)}%`)
+              .join(", ")})`,
+          },
+        }),
+    React.createElement(
+      "div",
+      { className: "ascii-rest-anchor__cells", role: "group", "aria-label": copy.anchor },
+      ...ANCHORS.map((value) =>
+        React.createElement(
+          "button",
+          {
+            key: value,
+            type: "button",
+            className: "ascii-rest-anchor__cell",
+            "aria-pressed": value === settings.options.anchor,
+            "aria-label": anchorLabels[value] ?? value,
+            title: anchorLabels[value] ?? value,
+            onClick: () => props.onPlacement({ anchor: value as Anchor }),
+          },
+          React.createElement("span", { className: "ascii-rest-anchor__dot" }),
+        ),
+      ),
+    ),
+  );
+
   const placement = React.createElement(
     "section",
     { className: "ascii-rest-section" },
     React.createElement("h4", { className: "ascii-rest-section__title" }, copy.placement),
     React.createElement("p", { className: "ascii-rest-section__note" }, copy.placementNote),
-    row(
-      copy.fit,
-      pick(FIT_MODES, fitLabels, settings.options.fit, (value) => props.onPlacement({ fit: value as FitMode })),
-    ),
-    row(
-      copy.anchor,
-      pick(ANCHORS, anchorLabels, settings.options.anchor, (value) => props.onPlacement({ anchor: value as Anchor })),
-    ),
-    row(
-      copy.zoom,
-      React.createElement("input", {
-        type: "range",
-        className: "ascii-rest-range",
-        min: 0.5,
-        max: 3,
-        step: 0.01,
-        value: settings.options.zoom,
-        onChange: (event: { target: { value: string } }) => props.onPlacement({ zoom: Number(event.target.value) }),
-      }),
-      `${settings.options.zoom.toFixed(2)}×`,
+    React.createElement(
+      "div",
+      { className: "ascii-rest-placement" },
+      React.createElement(
+        "div",
+        { className: "ascii-rest-placement__controls" },
+        field(
+          copy.fit,
+          pick(copy.fit, FIT_MODES, fitLabels, settings.options.fit, (value) =>
+            props.onPlacement({ fit: value as FitMode }),
+          ),
+        ),
+        field(
+          copy.zoom,
+          range(copy.zoom, settings.options.zoom, { min: 0.5, max: 3, step: 0.01 }, (zoom) =>
+            props.onPlacement({ zoom }),
+          ),
+          `${settings.options.zoom.toFixed(2)}×`,
+        ),
+      ),
+      React.createElement(
+        "div",
+        { className: "ascii-rest-placement__stage" },
+        anchorPad,
+        React.createElement("p", { className: "ascii-rest-placement__caption" }, anchorLabels[settings.options.anchor] ?? ""),
+      ),
     ),
   );
 
@@ -332,18 +443,14 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
     React.createElement("h4", { className: "ascii-rest-section__title" }, copy.regions),
     React.createElement("p", { className: "ascii-rest-section__note" }, copy.regionsNote),
     ...REGION_KEYS.map((key) =>
-      row(
+      field(
         regionLabels[key] ?? key,
-        React.createElement("input", {
-          type: "range",
-          className: "ascii-rest-range",
-          min: 0,
-          max: 1,
-          step: 0.01,
-          value: settings.regions[key],
-          onChange: (event: { target: { value: string } }) =>
-            props.onRegions({ [key]: Number(event.target.value) } as Partial<Settings["regions"]>),
-        }),
+        range(
+          regionLabels[key] ?? key,
+          settings.regions[key],
+          { min: 0, max: 1, step: 0.01 },
+          (reveal) => props.onRegions({ [key]: reveal } as Partial<Settings["regions"]>),
+        ),
         `${Math.round(settings.regions[key] * 100)}%`,
       ),
     ),

@@ -292,6 +292,122 @@ body[data-dsh-ascii-rest] [data-ascii-rest-layer] {
   color: var(--dsw-alias-label-primary);
 }
 
+/* Placement reads as one instrument: the controls on the left, the geometry they
+   drive on the right. The stage is where the anchor is chosen, so it sits beside
+   the switches rather than stranded at the end of a full-width row with half the
+   width empty. */
+.ascii-rest-placement {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.ascii-rest-placement__controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ascii-rest-placement__stage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.ascii-rest-placement__caption {
+  margin: 0;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* The anchor pad is the window, not nine tiles: the scene sits inside it at the
+   size and offset the real background uses, so the crop is shown rather than
+   described. The picture is a gradient of the scene's own palette, drawn behind
+   the cells and clipped by the frame, which is precisely what cover does to the
+   canvas. (No backticks in these comments: this file is a template literal.) */
+.ascii-rest-anchor {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  flex: 0 0 auto;
+}
+
+.ascii-rest-anchor__picture {
+  position: absolute;
+  /* Behind the cells, never between them and the pointer. */
+  pointer-events: none;
+  opacity: 0.55;
+  transition: left 160ms ease-out, top 160ms ease-out, width 160ms ease-out, height 160ms ease-out;
+}
+
+.ascii-rest-anchor__cells {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+}
+
+.ascii-rest-anchor__cell {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ascii-rest-anchor__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-primary);
+  opacity: 0.4;
+  transition: opacity 120ms ease-out, transform 120ms ease-out, background-color 120ms ease-out;
+}
+
+.ascii-rest-anchor__cell:hover .ascii-rest-anchor__dot {
+  opacity: 0.9;
+  transform: scale(1.4);
+}
+
+/* The chosen position is the dot alone. A tinted cell would draw a second
+   rectangle inside the frame, competing with the picture that is already
+   drawn there for the same reason. */
+.ascii-rest-anchor__cell[aria-pressed="true"] .ascii-rest-anchor__dot {
+  width: 11px;
+  height: 11px;
+  opacity: 1;
+  background: var(--dsw-alias-brand-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent);
+}
+
+/* Keyboard focus is themed rather than left to the browser's blue ring, which
+   belongs to no design system and is the one default that shows up on every
+   control in this page. */
+.ascii-rest-chip:focus-visible,
+.ascii-rest-anchor__cell:focus-visible,
+.ascii-rest-button:focus-visible,
+.ascii-rest-card:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.ascii-rest-range:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
 /* The palette strip: the one honest thumbnail that costs nothing to draw. */
 .ascii-rest-swatch {
   display: flex;
