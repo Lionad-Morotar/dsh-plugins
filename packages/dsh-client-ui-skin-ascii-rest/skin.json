@@ -5,7 +5,7 @@
   "author": "Lionad",
   "tagline": "把 ascii.rest 的场景放成工作区背景",
   "taglineEn": "An ascii.rest scene as the workspace background",
-  "description": "以 ascii.rest 的 ASCII 场景作背景，随亮暗主题自动换配色：暗色用场景本身的近黑底色，亮色把同一张画翻成纸色。可在设置页切换三十四个场景，并用 lil-gui 面板实时调参。",
+  "description": "以 ascii.rest 的 ASCII 场景作背景，随亮暗主题自动换配色：暗色用场景本身的近黑底色，亮色把同一张画翻成纸色。可在设置页切换三十四个场景、按名选择适应方式与九宫格对齐、给侧边栏与底栏分别调透出度，并用 lil-gui 面板实时调参。",
   "tags": [
     "background",
     "ascii",
