@@ -23,18 +23,35 @@ export {
   type PaperifyOptions,
   type Rgb,
 } from "./palette.ts";
-export { fitCover, type CoverBox, type CoverOptions, type SceneShape } from "./cover.ts";
+export {
+  ANCHORS,
+  anchorOffsets,
+  FIT_MODES,
+  fitCover,
+  isAnchor,
+  isFitMode,
+  type Anchor,
+  type CoverBox,
+  type CoverOptions,
+  type FitMode,
+  type SceneShape,
+} from "./cover.ts";
 export {
   DEFAULT_APPEARANCE,
+  DEFAULT_REGIONS,
   DEFAULT_SCENE_OPTIONS,
   DEFAULT_SETTINGS,
   FPS_RANGE,
   normalizeAppearance,
+  normalizeRegions,
   normalizeSceneOptions,
   normalizeSettings,
   pieceOptionsFor,
+  REGION_KEYS,
   settingsEqual,
   type AppearanceOptions,
+  type RegionKey,
+  type RegionOptions,
   type SceneOptions,
   type Settings,
 } from "./options.ts";

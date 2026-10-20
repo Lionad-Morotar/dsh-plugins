@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vitest";
 
-import { fitCover } from "../src/cover.ts";
+import { anchorOffsets, ANCHORS, fitCover, isAnchor, isFitMode } from "../src/cover.ts";
 
 const scene = { cols: 200, rows: 100, cell: 1 as const };
+
+describe("anchorOffsets", () => {
+  it("splits every anchor into one offset per axis", () => {
+    expect(anchorOffsets("center")).toEqual({ x: 0, y: 0 });
+    expect(anchorOffsets("top-left")).toEqual({ x: -1, y: -1 });
+    expect(anchorOffsets("bottom-right")).toEqual({ x: 1, y: 1 });
+    // The four edge words are single-axis: the other axis stays centred.
+    expect(anchorOffsets("top")).toEqual({ x: 0, y: -1 });
+    expect(anchorOffsets("bottom")).toEqual({ x: 0, y: 1 });
+    expect(anchorOffsets("left")).toEqual({ x: -1, y: 0 });
+    expect(anchorOffsets("right")).toEqual({ x: 1, y: 0 });
+  });
+
+  it("covers all nine corners of the compass, none duplicated", () => {
+    const seen = new Set(ANCHORS.map((anchor) => JSON.stringify(anchorOffsets(anchor))));
+    expect(seen.size).toBe(9);
+  });
+});
 
 describe("fitCover", () => {
   it("covers a wide viewport by height, overflowing vertically", () => {
@@ -39,21 +57,49 @@ describe("fitCover", () => {
     }
   });
 
+  it("contains instead of covering, showing the whole picture", () => {
+    // The complement of the first case: the same 4:1 viewport now fits inside.
+    const box = fitCover(scene, 1600, 400, { fit: "contain" });
+    expect(box.width).toBeCloseTo(800, 5);
+    expect(box.height).toBeCloseTo(400, 5);
+    // Short side centred, so it sits inside the viewport rather than overflowing.
+    expect(box.left).toBeCloseTo(400, 0);
+    expect(box.top).toBe(0);
+  });
+
+  it("keeps the aspect ratio in both fit modes", () => {
+    for (const fit of ["cover", "contain"] as const) {
+      const box = fitCover(scene, 1000, 1000, { fit });
+      expect(box.width / box.height).toBeCloseTo(2, 5);
+    }
+  });
+
   it("centres by default, putting half the overflow on each side", () => {
     const box = fitCover(scene, 400, 1200);
     const overflow = box.width - 400;
     expect(box.left).toBeCloseTo(-overflow / 2, 0);
   });
 
-  it("pins an edge when the offset says so", () => {
-    const pinnedLeft = fitCover(scene, 400, 1200, { offsetX: -1 });
-    expect(pinnedLeft.left).toBe(0);
+  it("pins the anchored edge when the box overflows", () => {
+    const left = fitCover(scene, 400, 1200, { anchor: "left" });
+    expect(left.left).toBe(0);
 
-    const pinnedRight = fitCover(scene, 400, 1200, { offsetX: 1 });
-    expect(pinnedRight.left).toBeCloseTo(-(pinnedRight.width - 400), 0);
+    const right = fitCover(scene, 400, 1200, { anchor: "right" });
+    expect(right.left).toBeCloseTo(-(right.width - 400), 0);
 
-    const pinnedTop = fitCover(scene, 1600, 400, { offsetY: -1 });
-    expect(pinnedTop.top).toBe(0);
+    const top = fitCover(scene, 1600, 400, { anchor: "top" });
+    expect(top.top).toBe(0);
+
+    const bottom = fitCover(scene, 1600, 400, { anchor: "bottom" });
+    expect(bottom.top).toBeCloseTo(-(bottom.height - 400), 0);
+  });
+
+  it("pushes the margin to the opposite side in contain mode", () => {
+    // Anchoring left in contain mode leaves all the leftover width on the right.
+    const left = fitCover(scene, 1600, 400, { fit: "contain", anchor: "left" });
+    expect(left.left).toBe(0);
+    const right = fitCover(scene, 1600, 400, { fit: "contain", anchor: "right" });
+    expect(right.left).toBeCloseTo(800, 0);
   });
 
   it("crops more when zoomed in", () => {
@@ -67,6 +113,35 @@ describe("fitCover", () => {
     const box = fitCover({ cols: 199, rows: 97, cell: 2 }, 1001, 733);
     expect(Number.isInteger(box.left)).toBe(true);
     expect(Number.isInteger(box.top)).toBe(true);
+  });
+
+  it("pins every one of the nine anchors to its own corner of the overflow", () => {
+    // A viewport that overflows on both axes, which is the only case where all
+    // nine positions are distinguishable.
+    const box = { cols: 200, rows: 100, cell: 1 as const };
+    const horizontal = (anchor: Parameters<typeof fitCover>[3]) =>
+      fitCover(box, 400, 1200, anchor).left;
+    const vertical = (anchor: Parameters<typeof fitCover>[3]) =>
+      fitCover(box, 400, 1200, anchor).top;
+
+    expect(horizontal({ anchor: "left" })).toBe(0);
+    expect(horizontal({ anchor: "center" })).toBeLessThan(0);
+    expect(horizontal({ anchor: "right" })).toBeLessThan(horizontal({ anchor: "center" }));
+    expect(vertical({ anchor: "top" })).toBe(0);
+    expect(vertical({ anchor: "bottom" })).toBeGreaterThanOrEqual(vertical({ anchor: "center" }));
+  });
+
+  it("zooms about the anchored edge, not about the centre", () => {
+    // Zoom keeps the pinned edge where it is; only the far edge moves.
+    const left = fitCover(scene, 400, 1200, { anchor: "left", zoom: 2 });
+    const leftAtOne = fitCover(scene, 400, 1200, { anchor: "left" });
+    expect(left.left).toBe(leftAtOne.left);
+    expect(left.width).toBeGreaterThan(leftAtOne.width);
+  });
+
+  it("treats a zero-sized viewport as no layout rather than as NaN geometry", () => {
+    const box = fitCover(scene, 0, 0);
+    expect(box).toEqual({ width: 0, height: 0, left: 0, top: 0, cellSize: 0 });
   });
 
   it("never hands back negative zero on a side with no overflow", () => {
@@ -87,6 +162,11 @@ describe("fitCover", () => {
     expect(box.cellSize).toBeGreaterThan(0);
   });
 
+  it("falls back to cover when handed a fit mode it does not know", () => {
+    const box = fitCover(scene, 1600, 400, { fit: "stretch" as never });
+    expect(box.width).toBeCloseTo(1600, 5);
+  });
+
   it("honours a square grid", () => {
     const square = fitCover({ cols: 100, rows: 100, cell: 1 }, 500, 500);
     expect(square.width).toBeCloseTo(square.height, 5);
@@ -96,5 +176,16 @@ describe("fitCover", () => {
     // 100 cols by 50 rows of 2 units each: 100 by 100 units, so a square.
     const tall = fitCover({ cols: 100, rows: 50, cell: 2 }, 500, 500);
     expect(tall.width).toBeCloseTo(tall.height, 5);
+  });
+});
+
+describe("the vocabulary guards", () => {
+  it("accepts only the shipped modes and anchors", () => {
+    expect(isFitMode("cover")).toBe(true);
+    expect(isFitMode("contain")).toBe(true);
+    expect(isFitMode("fill")).toBe(false);
+    expect(isFitMode(1)).toBe(false);
+    expect(isAnchor("bottom-right")).toBe(true);
+    expect(isAnchor("middle")).toBe(false);
   });
 });

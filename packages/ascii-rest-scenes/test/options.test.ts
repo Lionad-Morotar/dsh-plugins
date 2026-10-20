@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_APPEARANCE,
+  DEFAULT_REGIONS,
   DEFAULT_SCENE_OPTIONS,
   DEFAULT_SETTINGS,
   normalizeAppearance,
+  normalizeRegions,
   normalizeSceneOptions,
   normalizeSettings,
   settingsEqual,
@@ -48,12 +50,28 @@ describe("normalizeSceneOptions", () => {
   });
 
   it("clamps a hand-edited value into its documented range", () => {
-    const read = normalizeSceneOptions({ softness: 9, saturation: -4, zoom: 100, offsetX: -8, offsetY: 8 });
+    const read = normalizeSceneOptions({ softness: 9, saturation: -4, zoom: 100, fit: "stretch", anchor: "middle" });
     expect(read.softness).toBe(1);
     expect(read.saturation).toBe(0);
     expect(read.zoom).toBe(4);
-    expect(read.offsetX).toBe(-1);
-    expect(read.offsetY).toBe(1);
+    // An unknown fit or anchor is not a new mode: it falls back to the default.
+    expect(read.fit).toBe(DEFAULT_SCENE_OPTIONS.fit);
+    expect(read.anchor).toBe(DEFAULT_SCENE_OPTIONS.anchor);
+  });
+
+  it("reads a fit mode and an anchor", () => {
+    const read = normalizeSceneOptions({ fit: "contain", anchor: "bottom-left" });
+    expect(read.fit).toBe("contain");
+    expect(read.anchor).toBe("bottom-left");
+  });
+
+  it("recovers an anchor from the offsets an older build stored", () => {
+    // The previous document had two continuous offsets; rounding each to its
+    // nearest edge recovers the corner the reader had effectively chosen.
+    expect(normalizeSceneOptions({ offsetX: -0.9, offsetY: -0.9 }).anchor).toBe("top-left");
+    expect(normalizeSceneOptions({ offsetX: 0.9, offsetY: 0.9 }).anchor).toBe("bottom-right");
+    expect(normalizeSceneOptions({ offsetX: 0, offsetY: 0 }).anchor).toBe("center");
+    expect(normalizeSceneOptions({ offsetX: 0.02, offsetY: -0.9 }).anchor).toBe("top");
   });
 
   it("falls back per field, so one bad value does not reset the rest", () => {
@@ -75,6 +93,43 @@ describe("normalizeAppearance", () => {
     expect(read.veil).toBe(1);
     expect(read.still).toBe(DEFAULT_APPEARANCE.still);
     expect(read.fps).toBe(30);
+  });
+});
+
+describe("normalizeRegions", () => {
+  it("defaults every region to its calibrated reveal", () => {
+    expect(normalizeRegions(undefined)).toEqual(DEFAULT_REGIONS);
+  });
+
+  it("reads each region independently and clamps it", () => {
+    const read = normalizeRegions({ sidebar: 0.3, main: -1, rightbar: 9 });
+    expect(read.sidebar).toBe(0.3);
+    // An out-of-range value is clamped, and the omitted region keeps its default.
+    expect(read.main).toBe(0);
+    expect(read.rightbar).toBe(1);
+    expect(read.bottom).toBe(DEFAULT_REGIONS.bottom);
+  });
+
+  it("falls back per region, so one bad value does not reset the others", () => {
+    const read = normalizeRegions({ sidebar: 0.4, main: "sealed" });
+    expect(read.sidebar).toBe(0.4);
+    expect(read.main).toBe(DEFAULT_REGIONS.main);
+  });
+});
+
+describe("the scrim and focus settings", () => {
+  it("defaults to no scrim and to pausing while unfocused", () => {
+    expect(DEFAULT_APPEARANCE.scrim).toBe(0);
+    expect(DEFAULT_APPEARANCE.pauseOnBlur).toBe(true);
+  });
+
+  it("reads a scrim angle and wraps nothing silently", () => {
+    const read = normalizeAppearance({ scrim: 0.4, scrimAngle: 999, pauseOnBlur: false });
+    expect(read.scrim).toBe(0.4);
+    // The angle is clamped to one turn rather than folded: 999deg and 279deg
+    // are the same gradient, but storing 999 would keep growing every save.
+    expect(read.scrimAngle).toBe(360);
+    expect(read.pauseOnBlur).toBe(false);
   });
 });
 
@@ -117,5 +172,13 @@ describe("settingsEqual", () => {
     const a = normalizeSettings({}, catalog);
     const b = normalizeSettings({ appearance: { veil: 0.9 } }, catalog);
     expect(settingsEqual(a, b)).toBe(false);
+  });
+
+  it("notices a moved anchor and a changed region", () => {
+    const base = normalizeSettings({}, catalog);
+    expect(settingsEqual(base, normalizeSettings({ options: { anchor: "top-left" } }, catalog))).toBe(false);
+    expect(settingsEqual(base, normalizeSettings({ regions: { sidebar: 0.5 } }, catalog))).toBe(false);
+    expect(settingsEqual(base, normalizeSettings({ appearance: { scrim: 0.5 } }, catalog))).toBe(false);
+    expect(settingsEqual(base, normalizeSettings({ appearance: { pauseOnBlur: false } }, catalog))).toBe(false);
   });
 });
