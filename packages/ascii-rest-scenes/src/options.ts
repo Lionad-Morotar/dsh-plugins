@@ -38,6 +38,12 @@ export interface AppearanceOptions {
   still: boolean;
   /** The frames per second to play at, whatever the scene declares. */
   fps: number;
+  /**
+   * How many device pixels each character is drawn with, 1 being the display's
+   * own density. The grid itself is the scene's (200 by 100 is a scene's own
+   * shape, not a setting), so this is the part of sharpness that is a choice.
+   */
+  resolution: number;
   /** Whether to stop playing while the window is not focused. */
   pauseOnBlur: boolean;
 }
@@ -96,6 +102,7 @@ export const DEFAULT_APPEARANCE: AppearanceOptions = {
   scrimAngle: 180,
   still: false,
   fps: 15,
+  resolution: 1,
   pauseOnBlur: true,
 };
 
@@ -115,6 +122,15 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 export const FPS_RANGE = { min: 0, max: 30 } as const;
+
+/**
+ * The render-density range, in device pixels per CSS pixel.
+ *
+ * The floor is low enough to visibly relieve a heavy scene on a small machine;
+ * the ceiling stops short of spending four times the fill rate of a 2x display
+ * for a difference no one can see behind a translucent panel.
+ */
+export const RESOLUTION_RANGE = { min: 0.5, max: 2 } as const;
 
 const clamp = (value: number, min: number, max: number): number => (value < min ? min : value > max ? max : value);
 
@@ -178,6 +194,12 @@ export function normalizeAppearance(input: unknown): AppearanceOptions {
     scrimAngle: readNumber(raw.scrimAngle, DEFAULT_APPEARANCE.scrimAngle, 0, 360),
     still: readBoolean(raw.still, DEFAULT_APPEARANCE.still),
     fps: readNumber(raw.fps, DEFAULT_APPEARANCE.fps, FPS_RANGE.min, FPS_RANGE.max),
+    resolution: readNumber(
+      raw.resolution,
+      DEFAULT_APPEARANCE.resolution,
+      RESOLUTION_RANGE.min,
+      RESOLUTION_RANGE.max,
+    ),
     pauseOnBlur: readBoolean(raw.pauseOnBlur, DEFAULT_APPEARANCE.pauseOnBlur),
   };
 }
@@ -263,6 +285,7 @@ export function settingsEqual(a: Settings, b: Settings): boolean {
     a.appearance.scrimAngle === b.appearance.scrimAngle &&
     a.appearance.still === b.appearance.still &&
     a.appearance.fps === b.appearance.fps &&
+    a.appearance.resolution === b.appearance.resolution &&
     a.appearance.pauseOnBlur === b.appearance.pauseOnBlur &&
     REGION_KEYS.every((key) => a.regions[key] === b.regions[key]) &&
     JSON.stringify(a.piece) === JSON.stringify(b.piece)

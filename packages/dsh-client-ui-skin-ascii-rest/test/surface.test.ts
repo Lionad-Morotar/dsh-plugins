@@ -26,6 +26,7 @@ const SALT_FLAT = {
   rows: 10,
   cell: 1,
   fps: 15,
+  resolution: 1,
   ground: "#000000",
   palette: ["#ffffff", "#888888", "#333333"],
   options: {},
@@ -49,6 +50,7 @@ function presentation(overrides: Partial<Presentation> = {}): Presentation {
     scrimAngle: 180,
     still: false,
     fps: 0,
+    resolution: 1,
     paper: { softness: 0.55, saturation: 0.5 },
     pauseOnBlur: true,
     geometry: { fit: "cover", anchor: "center", zoom: 1 },
@@ -115,6 +117,7 @@ describe("restyle", () => {
       scrimAngle: 90,
       still: false,
       fps: 0,
+      resolution: 1,
       pauseOnBlur: true,
     });
 
@@ -138,6 +141,7 @@ describe("restyle", () => {
       scrimAngle: 180,
       still: false,
       fps: 0,
+      resolution: 1,
       pauseOnBlur: true,
     });
     expect(scrimOf(surface).style.background).toBe("");
@@ -173,6 +177,7 @@ describe("restyle", () => {
         scrimAngle: 180,
         still: false,
         fps: 0,
+        resolution: 1,
         pauseOnBlur,
       });
 

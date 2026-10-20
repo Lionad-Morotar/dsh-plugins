@@ -75,6 +75,8 @@ export interface Presentation {
   pauseOnBlur: boolean;
   /** Frames per second; 0 holds a single frame. */
   fps: number;
+  /** Device pixels per CSS pixel for the canvas backing store. */
+  resolution: number;
   /** The colour treatment for the light scheme. */
   paper: PaperifyOptions;
   geometry: Geometry;
@@ -92,7 +94,7 @@ export interface Surface {
   restyle(
     next: Pick<
       Presentation,
-      "opacity" | "blur" | "veil" | "scrim" | "scrimAngle" | "still" | "fps" | "pauseOnBlur"
+      "opacity" | "blur" | "veil" | "scrim" | "scrimAngle" | "still" | "fps" | "resolution" | "pauseOnBlur"
     >,
   ): void;
   /** Remove the layer and stop the frame loop. Idempotent. */
@@ -198,6 +200,7 @@ export function presentScene(presentation: Presentation, doc: Document = documen
       stop = mount(canvas, themed, {
         ...presentation.pieceOptions,
         fps: currentFps,
+        resolution: presentation.resolution,
         // `motion` here means "the page has its own motion control", not "ignore
         // the reader": the host is a desktop application and the skin exposes a
         // still switch in its own settings, so the toggle is the reader's say.
@@ -290,9 +293,14 @@ export function presentScene(presentation: Presentation, doc: Document = documen
       bindBlur(next.pauseOnBlur);
       paintChrome();
       const wantedFps = next.still ? 0 : next.fps;
-      if (wantedFps !== currentFps) {
+      // Density is read once, when the renderer sizes its backing store, so a
+      // changed value has to re-mount. It rides along with the fps change because
+      // both are "the picture must be rebuilt", not "the wash must be repainted".
+      const densityChanged = next.resolution !== presentation.resolution;
+      if (wantedFps !== currentFps || densityChanged) {
         presentation.still = next.still;
         presentation.fps = next.fps;
+        presentation.resolution = next.resolution;
         startFrames();
       }
     },

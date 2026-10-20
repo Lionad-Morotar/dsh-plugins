@@ -49,6 +49,16 @@ export interface MountOptions {
   fps?: number;
   /** Play even when the reader prefers reduced motion. */
   motion?: boolean;
+  /**
+   * How many device pixels to spend per CSS pixel. 1 follows the display.
+   *
+   * The character grid is the piece's own (cols by rows, fixed by its generator),
+   * so this does not change how many characters there are; it changes how many
+   * pixels each of them is drawn with. Below 1 the canvas backing store shrinks,
+   * which costs less to draw and lets the browser upscale; above 1 it grows, for
+   * a finer picture. It is the one part of "resolution" a skin can honestly offer.
+   */
+  resolution?: number;
   /** Piece-specific options, merged over `meta.options`. */
   [option: string]: unknown;
 }
@@ -102,7 +112,7 @@ export function pieceIn(module: unknown, from: string): Piece {
 export function mount(el: HTMLElement, piece: PieceLike, options: MountOptions = {}): MountHandle {
   const make = typeof piece === "function" ? piece : piece.default;
   const meta: Partial<PieceMeta> = typeof piece === "function" ? {} : piece.meta;
-  const { fps = meta.fps ?? 30, motion = false, ...rest }: MountOptions = { ...meta.options, ...options };
+  const { fps = meta.fps ?? 30, motion = false, resolution = 1, ...rest }: MountOptions = { ...meta.options, ...options };
   const frame: Frame = make(rest);
   const { cols = 80, rows = 24, palette, ground, cell = 2 } = meta;
   const canvas = el instanceof HTMLCanvasElement ? el : null;
@@ -152,7 +162,10 @@ export function mount(el: HTMLElement, piece: PieceLike, options: MountOptions =
 
     const size = (): void => {
       width = canvas.clientWidth;
-      w = (width * (devicePixelRatio || 1)) / cols;
+      // `resolution` scales the backing store against the display, and is clamped
+      // away from zero so a stored 0 cannot divide the cell size to nothing.
+      const density = (devicePixelRatio || 1) * Math.min(2, Math.max(0.5, resolution));
+      w = (width * density) / cols;
       h = w * cell;
       sw = Math.ceil(w);
       sh = Math.ceil(h);

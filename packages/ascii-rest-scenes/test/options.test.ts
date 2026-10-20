@@ -6,6 +6,7 @@ import {
   DEFAULT_SCENE_OPTIONS,
   DEFAULT_SETTINGS,
   normalizeAppearance,
+  RESOLUTION_RANGE,
   normalizeRegions,
   normalizeSceneOptions,
   normalizeSettings,
@@ -94,6 +95,15 @@ describe("normalizeAppearance", () => {
     expect(read.still).toBe(DEFAULT_APPEARANCE.still);
     expect(read.fps).toBe(30);
   });
+
+  it("keeps the render density inside the range a display can honour", () => {
+    // A stored 0 would divide the backing store to nothing, and 8 would spend
+    // thirty-two times the fill rate of a 2x display for no visible gain.
+    expect(normalizeAppearance({ resolution: 0 }).resolution).toBe(RESOLUTION_RANGE.min);
+    expect(normalizeAppearance({ resolution: 8 }).resolution).toBe(RESOLUTION_RANGE.max);
+    expect(normalizeAppearance({ resolution: 1.5 }).resolution).toBe(1.5);
+    expect(normalizeAppearance({}).resolution).toBe(DEFAULT_APPEARANCE.resolution);
+  });
 });
 
 describe("normalizeRegions", () => {
@@ -172,6 +182,13 @@ describe("settingsEqual", () => {
     const a = normalizeSettings({}, catalog);
     const b = normalizeSettings({ appearance: { veil: 0.9 } }, catalog);
     expect(settingsEqual(a, b)).toBe(false);
+  });
+
+  it("notices a changed render density", () => {
+    // The store drops a write it judges equal, so a setting left out of this
+    // comparison is a control that silently does nothing.
+    const base = normalizeSettings({}, catalog);
+    expect(settingsEqual(base, normalizeSettings({ appearance: { resolution: 1.5 } }, catalog))).toBe(false);
   });
 
   it("notices a moved anchor and a changed region", () => {

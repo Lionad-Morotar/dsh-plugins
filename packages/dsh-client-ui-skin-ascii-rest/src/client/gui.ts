@@ -171,6 +171,7 @@ function addAppearanceFolder(gui: GUI, appearance: Settings["appearance"], callb
   folder.add(state, "blur", 0, 16, 0.5).name("模糊").onChange(() => emit("blur"));
   folder.add(state, "veil", 0, 1, 0.01).name("蒙层").onChange(() => emit("veil"));
   folder.add(state, "fps", 0, 30, 1).name("帧率").onChange(() => emit("fps"));
+  folder.add(state, "resolution", 0.5, 2, 0.25).name("分辨率").onChange(() => emit("resolution"));
   folder.add(state, "still").name("静止").onChange(() => emit("still"));
   folder.add(state, "pauseOnBlur").name("失焦暂停").onChange(() => emit("pauseOnBlur"));
 }

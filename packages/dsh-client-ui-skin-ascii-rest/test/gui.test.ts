@@ -74,6 +74,7 @@ function build() {
         scrimAngle: 180,
         still: false,
         fps: 15,
+    resolution: 1,
         pauseOnBlur: true,
       },
       regions: { sidebar: 1, main: 1, rightbar: 1, bottom: 1 },
