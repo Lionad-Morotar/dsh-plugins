@@ -38,23 +38,24 @@ const manifest = require(join(packageRoot, "package.json"));
 /**
  * The module wrapper the entry and every chunk share.
  *
- * `code` is indented into the factory body so a stack trace from inside the
- * bundle still points at a readable column.
+ * The bundle is inserted verbatim, on its own lines, and is deliberately not
+ * re-indented. Minified code may contain a multi-line template literal, and
+ * padding every line of the text would then insert that padding into the string
+ * itself: a piece whose frame ends `rows.join("\n")` came back with four spaces
+ * appended to every row, which the renderer drew as four extra columns of
+ * garbage down the right edge of the picture. The indentation is cosmetic; the
+ * string is not.
  */
 function wrap(id, code, { boot = false } = {}) {
-  const body = code
-    .split("\n")
-    .map((line) => (line === "" ? "" : `    ${line}`))
-    .join("\n");
   // `boot` runs inside the factory, after the bundle's exports exist, and is the
   // only place the loader's `require` is reachable.
-  const handover = boot ? "\n    module.exports.boot(require);" : "";
+  const handover = boot ? "\nmodule.exports.boot(require);" : "";
   return `window.__ModuleLoader__.load({
   id: ${JSON.stringify(id)},
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
-${body}${handover}
+${code}${handover}
     return module.exports;
   }
 });

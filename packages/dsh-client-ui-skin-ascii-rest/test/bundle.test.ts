@@ -14,7 +14,7 @@
  * with a single argument. React does not come from the context, which is why the
  * stub `require` has to answer `"react"`.
  */
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -290,4 +290,67 @@ describe("the built client bundle", () => {
     expect(window.document.querySelectorAll("[data-ascii-rest-layer]")).toHaveLength(0);
     expect(window.document.querySelectorAll("style[data-plugin-css]")).toHaveLength(0);
   });
+});
+
+/**
+ * Every shipped scene chunk, checked for the frame shape the renderer assumes.
+ *
+ * A scene chunk is a minified copy of one ascii.rest piece. The wrapper that puts
+ * it inside a `__ModuleLoader__.load` factory must not re-indent the bundle,
+ * because minified code can hold a multi-line template literal and padding each
+ * line of the file would pad the string too. That is not hypothetical: a piece
+ * whose frame ends `rows.join("\n")` came back with four spaces glued to the end
+ * of every row, which the renderer dutifully drew as four columns of garbage down
+ * one side of the picture. The check is cheap and the failure is silent, so it
+ * belongs in the suite rather than in a comment.
+ */
+describe("the scene chunks", () => {
+  it("emit frames whose rows are exactly the scene's own width", async () => {
+    const chunks = await readdir(join(packageRoot, "lib"));
+    // `client.gui.js` is the same shape but is the tuning panel, not a piece.
+    const sceneChunks = chunks.filter((file) => /^client\.[a-z0-9-]+\.js$/.test(file) && file !== "client.gui.js");
+    expect(sceneChunks.length).toBeGreaterThan(0);
+
+    const mismatched: string[] = [];
+    for (const file of sceneChunks) {
+      const source = await readFile(join(packageRoot, "lib", file), "utf8");
+      let registered: { meta?: { cols?: number; rows?: number }; default?: unknown } | null = null;
+      const fakeWindow = {
+        __ModuleLoader__: {
+          load: (entry: { factory: (require: unknown) => unknown }): void => {
+            registered = entry.factory(() => {
+              throw new Error("a scene chunk is not expected to require anything");
+            }) as typeof registered;
+          },
+        },
+      };
+      // Both globals are passed as parameters instead of being installed on the
+      // realm: that keeps the bundles from seeing each other's state, and it is
+      // also the difference between this test taking three seconds and taking
+      // two minutes, since a fresh `vm` context per chunk is very expensive under
+      // vitest's transform pipeline.
+      const run = new Function("window", "document", "matchMedia", source) as (
+        window: unknown,
+        document: unknown,
+        matchMedia: unknown,
+      ) => void;
+      run(fakeWindow, { createElement: () => ({}) }, () => ({ matches: false }));
+      if (registered === null) {
+        mismatched.push(`${file}: registered nothing`);
+        continue;
+      }
+      const { meta, default: make } = registered as { meta: { cols: number; rows: number }; default: () => (t: number) => string };
+      // The renderer reads one frame at t=0 from a canvas-less call, which is the
+      // same path the preview uses when it holds a scene still.
+      const text = make()(0);
+      const rows = text.split("\n");
+      const widths = [...new Set(rows.map((row) => row.length))];
+      if (widths.length !== 1 || widths[0] !== meta.cols || rows.length !== meta.rows) {
+        mismatched.push(`${file}: ${String(meta.cols)}x${String(meta.rows)}, rows ${String(rows.length)}, widths ${widths.join("/")}`);
+      }
+    }
+    expect(mismatched).toEqual([]);
+    // Every chunk is a separately compiled scene with its own noise textures
+    // built at first call, so this is the one test here that is genuinely slow.
+  }, 120_000);
 });
