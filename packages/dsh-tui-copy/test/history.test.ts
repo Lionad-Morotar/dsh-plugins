@@ -81,6 +81,18 @@ describe("collecting the last n turns", () => {
     ]);
   });
 
+  it("keeps every human prompt of a turn, because a queued follow-up lands there too", () => {
+    const events = [
+      { type: "turn/start", seq: 0, time: 0, data: { turn: 1 } },
+      user(1, "start on the parser"),
+      user(2, "also rename the field"),
+      assistant(1, 3, "did both"),
+    ];
+    expect(collectTurns(events, { count: 1, includeUser: true })).toEqual([
+      { turn: 1, assistant: "did both", user: "start on the parser\n\nalso rename the field" },
+    ]);
+  });
+
   it("skips a turn whose assistant text is empty or blank", () => {
     const events = [
       assistant(1, 1, "   "),

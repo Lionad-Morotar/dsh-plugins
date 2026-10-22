@@ -113,7 +113,9 @@ function collectTurns(events, request) {
       if (owner === void 0) continue;
       if (event.data?.source?.kind !== "user") continue;
       const text = textOf(event.data?.content);
-      if (text !== "" && !userByTurn.has(owner)) userByTurn.set(owner, text);
+      if (text === "") continue;
+      const already = userByTurn.get(owner);
+      userByTurn.set(owner, already === void 0 ? text : already + "\n\n" + text);
     }
   }
   const turns = [...assistantByTurn.keys()].sort((a, b) => a - b).slice(-request.count);

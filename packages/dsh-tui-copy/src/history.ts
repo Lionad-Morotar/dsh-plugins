@@ -87,7 +87,12 @@ export function collectTurns(events: readonly SessionEventLike[], request: CopyR
       if (owner === undefined) continue;
       if (event.data?.source?.kind !== "user") continue;
       const text = textOf(event.data?.content);
-      if (text !== "" && !userByTurn.has(owner)) userByTurn.set(owner, text);
+      if (text === "") continue;
+      // A prompt typed while the assistant is working is spliced into the same
+      // turn's next step, so one turn can hold several human messages. Keeping
+      // only the first would silently drop the second.
+      const already = userByTurn.get(owner);
+      userByTurn.set(owner, already === undefined ? text : already + "\n\n" + text);
     }
   }
 
