@@ -71,6 +71,28 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@24.19.2)(jsdom@30.1.3)(yaml@2.9.1)
 
+  packages/dsh-jump:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: ^4.0.1
+        version: 4.0.5(@deepseek-ai/cordis-plugin-include@1.0.10)(@deepseek-ai/cordis-plugin-loader@1.0.6)
+      '@deepseek-ai/dsh':
+        specifier: '>=0.2.0-rc.2 <0.3.0-0'
+        version: 0.2.0-rc.2(f8a34bff4876b799484f6b81e8499b35)
+    devDependencies:
+      '@types/jsdom':
+        specifier: ^30.0.0
+        version: 30.0.0
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
+      jsdom:
+        specifier: ^30.1.3
+        version: 30.1.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/node@24.19.2)(jsdom@30.1.3)(yaml@2.9.1)
+
 packages:
 
   '@agentclientprotocol/sdk@1.4.0':
