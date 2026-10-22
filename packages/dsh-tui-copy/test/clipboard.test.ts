@@ -84,9 +84,9 @@ describe("copying outside tmux", () => {
     const test = harness({ platform: "darwin", env: { SSH_CONNECTION: "10.0.0.1 1 10.0.0.2 2" } });
     const outcome = await copyToClipboard("hello", test.deps);
     expect(test.exec).not.toHaveBeenCalled();
-    // Nothing local ran, so nothing confirmed the copy: the escape is all there
-    // is, and it stays unverifiable.
-    expect(outcome).toEqual({ attempted: ["osc52"], landed: [], bytes: 5, degraded: true });
+    // The escape is the intended path over SSH, not a fallback from something
+    // that broke, so this is not a degradation.
+    expect(outcome).toEqual({ attempted: ["osc52"], landed: [], bytes: 5, degraded: false });
   });
 });
 

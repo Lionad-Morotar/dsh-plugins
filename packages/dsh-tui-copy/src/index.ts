@@ -20,27 +20,53 @@ export interface PluginContext extends HostContextLike {
   readonly logger?: { info?: (message: string) => void; warn?: (message: string) => void };
 }
 
-/** Run a clipboard helper with the text on stdin and resolve to its exit code. */
-async function runHelper(command: string, args: readonly string[], text: string): Promise<number> {
+/** Longest a clipboard helper may take before it counts as failed. The host's
+ *  own clipboard path uses the same 2s bound. */
+const HELPER_TIMEOUT_MS = 2000;
+
+/**
+ * Run a clipboard helper with the text on stdin and resolve to its exit code
+ * (callers only distinguish 0 from non-zero).
+ *
+ * Bounded on purpose: a helper that never exits (a wedged X server, a clipboard
+ * tool waiting on an empty message loop) would otherwise leave `/copy` awaiting
+ * forever with no feedback at all.
+ */
+export async function runHelper(command: string, args: readonly string[], text: string): Promise<number> {
   const { spawn } = await import("node:child_process");
   return await new Promise<number>(resolve => {
     let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const child = (() => {
+      try {
+        return spawn(command, [...args], { stdio: ["pipe", "ignore", "ignore"] });
+      } catch {
+        return undefined;
+      }
+    })();
     const finish = (code: number) => {
       if (settled) return;
       settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      // A timed-out child must not outlive the copy it was serving.
+      if (code !== 0) {
+        try {
+          child?.kill();
+        } catch {
+          // Already gone.
+        }
+      }
       resolve(code);
     };
-    try {
-      const child = spawn(command, [...args], { stdio: ["pipe", "ignore", "ignore"] });
-      child.on("error", () => finish(1));
-      child.on("close", code => finish(typeof code === "number" ? code : 1));
-      // A helper that never drains stdin would hold the caller: the payload is
-      // small, but a failed write is still a failed copy.
-      child.stdin?.on("error", () => finish(1));
-      child.stdin?.end(text, "utf8");
-    } catch {
+    if (child === undefined) {
       finish(1);
+      return;
     }
+    timer = setTimeout(() => finish(1), HELPER_TIMEOUT_MS);
+    child.on("error", () => finish(1));
+    child.on("close", code => finish(typeof code === "number" ? code : 1));
+    child.stdin?.on("error", () => finish(1));
+    child.stdin?.end(text, "utf8");
   });
 }
 

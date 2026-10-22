@@ -33,7 +33,8 @@ export interface ClipboardOutcome {
   readonly landed: readonly ClipboardPath[];
   /** UTF-8 byte length of the copied text, so the caller can warn on size. */
   readonly bytes: number;
-  /** Only unverifiable escape(s) were written: nothing local confirmed it. */
+  /** A verifiable path was available and failed: the copy now rests on an
+   *  escape nothing here can confirm. */
   readonly degraded: boolean;
 }
 
@@ -136,7 +137,12 @@ export async function copyToClipboard(text: string, deps: ClipboardDeps): Promis
   if (nativeLanded) landed.push("native");
   if (bufferLanded) landed.push("tmux-buffer");
 
-  return { attempted, landed, bytes, degraded: landed.length === 0 };
+  // Degraded means a verifiable path was available and failed, so the copy now
+  // rests on an escape nobody can confirm. Over SSH the escape is not a
+  // fallback, it is the intended path: warning there every single time would
+  // train the user to ignore the warning that matters.
+  const hadVerifiablePath = attempted.some(path => path !== "osc52");
+  return { attempted, landed, bytes, degraded: hadVerifiablePath && landed.length === 0 };
 }
 
 /** A helper that cannot be spawned counts as a failed helper, not as a crash. */

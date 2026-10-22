@@ -72,7 +72,8 @@ async function copyToClipboard(text, deps) {
   const landed = [];
   if (nativeLanded) landed.push("native");
   if (bufferLanded) landed.push("tmux-buffer");
-  return { attempted, landed, bytes, degraded: landed.length === 0 };
+  const hadVerifiablePath = attempted.some((path) => path !== "osc52");
+  return { attempted, landed, bytes, degraded: hadVerifiablePath && landed.length === 0 };
 }
 async function runSafely(run) {
   try {
@@ -201,24 +202,40 @@ function registerCopyCommand(ctx, environment) {
 // src/index.ts
 var name = "dsh-tui-copy";
 var inject = ["commands"];
+var HELPER_TIMEOUT_MS = 2e3;
 async function runHelper(command, args, text) {
   const { spawn } = await import("node:child_process");
   return await new Promise((resolve) => {
     let settled = false;
+    let timer;
+    const child = (() => {
+      try {
+        return spawn(command, [...args], { stdio: ["pipe", "ignore", "ignore"] });
+      } catch {
+        return void 0;
+      }
+    })();
     const finish = (code) => {
       if (settled) return;
       settled = true;
+      if (timer !== void 0) clearTimeout(timer);
+      if (code !== 0) {
+        try {
+          child?.kill();
+        } catch {
+        }
+      }
       resolve(code);
     };
-    try {
-      const child = spawn(command, [...args], { stdio: ["pipe", "ignore", "ignore"] });
-      child.on("error", () => finish(1));
-      child.on("close", (code) => finish(typeof code === "number" ? code : 1));
-      child.stdin?.on("error", () => finish(1));
-      child.stdin?.end(text, "utf8");
-    } catch {
+    if (child === void 0) {
       finish(1);
+      return;
     }
+    timer = setTimeout(() => finish(1), HELPER_TIMEOUT_MS);
+    child.on("error", () => finish(1));
+    child.on("close", (code) => finish(typeof code === "number" ? code : 1));
+    child.stdin?.on("error", () => finish(1));
+    child.stdin?.end(text, "utf8");
   });
 }
 function writeRaw(sequence) {
@@ -243,5 +260,6 @@ function apply(ctx) {
 export {
   apply,
   inject,
-  name
+  name,
+  runHelper
 };
