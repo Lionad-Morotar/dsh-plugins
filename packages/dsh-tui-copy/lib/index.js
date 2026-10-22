@@ -1,27 +1,5 @@
-// src/arguments.ts
-var MAX_COUNT = 50;
-var USAGE = "Usage: /copy [<number=1>] [--all]";
-var INCLUDE_USER_FLAGS = /* @__PURE__ */ new Set(["--all", "-a"]);
-function parseCopyInput(rawInput) {
-  const tokens = rawInput.trim().split(/\s+/u).filter((token) => token !== "");
-  let count;
-  let includeUser = false;
-  for (const token of tokens) {
-    if (INCLUDE_USER_FLAGS.has(token.toLowerCase())) {
-      if (includeUser) return { ok: false, message: USAGE };
-      includeUser = true;
-      continue;
-    }
-    if (!/^\d+$/u.test(token)) return { ok: false, message: USAGE };
-    if (count !== void 0) return { ok: false, message: USAGE };
-    const parsed = Number.parseInt(token, 10);
-    if (!Number.isSafeInteger(parsed) || parsed < 1) return { ok: false, message: USAGE };
-    count = parsed;
-  }
-  return { ok: true, count: Math.min(count ?? 1, MAX_COUNT), includeUser };
-}
-
 // src/clipboard.ts
+var MISSING_TOOL = -2;
 var ESC = "\x1B";
 var BEL = "\x07";
 var ST = "\x1B\\";
@@ -49,9 +27,11 @@ async function copyToClipboard(text, deps) {
   const inTmux = (deps.env["TMUX"] ?? "") !== "";
   const helpers = deps.env["SSH_CONNECTION"] === void 0 ? nativeHelpers(deps.platform) : [];
   let nativeLanded = false;
+  let nativeRan = false;
   const nativeAttempt = (async () => {
     for (const [command, args] of helpers) {
       const code = await runSafely(() => deps.exec(command, args, text));
+      if (code !== MISSING_TOOL) nativeRan = true;
       if (code === 0) {
         nativeLanded = true;
         return;
@@ -66,7 +46,7 @@ async function copyToClipboard(text, deps) {
   deps.write(bufferLanded ? tmuxSequence(text) : osc52Sequence(text));
   await nativeAttempt;
   const attempted = [];
-  if (helpers.length > 0) attempted.push("native");
+  if (nativeRan) attempted.push("native");
   if (inTmux) attempted.push("tmux-buffer");
   attempted.push("osc52");
   const landed = [];
@@ -81,6 +61,29 @@ async function runSafely(run) {
   } catch {
     return 1;
   }
+}
+
+// src/arguments.ts
+var MAX_COUNT = 50;
+var USAGE = "Usage: /copy [<number=1>] [--all]";
+var INCLUDE_USER_FLAGS = /* @__PURE__ */ new Set(["--all", "-a"]);
+function parseCopyInput(rawInput) {
+  const tokens = rawInput.trim().split(/\s+/u).filter((token) => token !== "");
+  let count;
+  let includeUser = false;
+  for (const token of tokens) {
+    if (INCLUDE_USER_FLAGS.has(token.toLowerCase())) {
+      if (includeUser) return { ok: false, message: USAGE };
+      includeUser = true;
+      continue;
+    }
+    if (!/^\d+$/u.test(token)) return { ok: false, message: USAGE };
+    if (count !== void 0) return { ok: false, message: USAGE };
+    const parsed = Number.parseInt(token, 10);
+    if (!Number.isSafeInteger(parsed) || parsed < 1) return { ok: false, message: USAGE };
+    count = parsed;
+  }
+  return { ok: true, count: Math.min(count ?? 1, MAX_COUNT), includeUser };
 }
 
 // src/history.ts
@@ -142,21 +145,21 @@ function logOf(session) {
 function bytesLabel(bytes) {
   return bytes < 1024 ? bytes + " \u5B57\u8282" : (bytes / 1024).toFixed(1) + " KB";
 }
-function createCopyCommand(ctx, environment) {
+function createCopyCommand(ctx, environment, effects) {
   const deps = {
     ...environment,
-    exec: (command, args, text) => ctx.exec(command, args, text),
-    write: (sequence) => ctx.write(sequence)
+    exec: (command, args, text) => effects.exec(command, args, text),
+    write: (sequence) => effects.write(sequence)
   };
   const report = (text, color, kind = "success") => {
     const toast = ctx.get("tuiToast");
     const delivered = toast?.show?.(text, color === void 0 ? void 0 : { color }) ?? false;
-    return delivered ? { kind, text: "" } : { kind, text };
+    return delivered && kind === "success" ? { kind, text: "" } : { kind, text };
   };
   return {
     name: COPY_COMMAND_NAME,
     description: COPY_COMMAND_DESCRIPTION,
-    // The TUI wraps this hint in its own brackets, so it must not carry outer ones.
+    // The TUI wraps this hint in its own brackets, so it carries no outer ones.
     input: { hint: "<number=1> --all" },
     async handler(invocation) {
       const parsed = parseCopyInput(invocation.rawInput);
@@ -183,15 +186,15 @@ function createCopyCommand(ctx, environment) {
     }
   };
 }
-function registerCopyCommand(ctx, environment) {
-  const definition = createCopyCommand(ctx, environment);
+function registerCopyCommand(ctx, environment, effects) {
+  const definition = createCopyCommand(ctx, environment, effects);
   const host = ctx.get("tuiPluginHost", false);
   if (typeof host?.registerCommand === "function") {
     try {
       return host.registerCommand(ctx, definition);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      ctx.logger?.warn?.("dsh-tui-copy: host-mediated registration refused (" + detail + "); falling back to the plain commands registry");
+      ctx.logger?.info?.("dsh-tui-copy: registering /copy without Component attribution (" + detail + ")");
     }
   }
   const commands = ctx.get("commands");
@@ -230,11 +233,11 @@ async function runHelper(command, args, text) {
       resolve(code);
     };
     if (child === void 0) {
-      finish(1);
+      finish(MISSING_TOOL);
       return;
     }
     timer = setTimeout(() => finish(1), HELPER_TIMEOUT_MS);
-    child.on("error", () => finish(1));
+    child.on("error", (error) => finish(error.code === "ENOENT" ? MISSING_TOOL : 1));
     child.on("close", (code) => finish(typeof code === "number" ? code : 1));
     child.stdin?.on("error", () => finish(1));
     child.stdin?.end(text, "utf8");
@@ -245,19 +248,16 @@ function writeRaw(sequence) {
 }
 function apply(ctx) {
   const environment = { platform: process.platform, env: { ...process.env } };
-  const commandContext = {
-    get: (serviceName, strict) => ctx.get(serviceName, strict),
-    write: writeRaw,
-    exec: runHelper,
-    logger: ctx.logger
-  };
-  try {
-    registerCopyCommand(commandContext, environment);
-    ctx.logger?.info?.("/copy is ready: /copy [<number=1>] [--all]");
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    ctx.logger?.warn?.("dsh-tui-copy: /copy is unavailable on this composition: " + detail);
-  }
+  const effects = { write: writeRaw, exec: runHelper };
+  setTimeout(() => {
+    try {
+      registerCopyCommand(ctx, environment, effects);
+      ctx.logger?.info?.("/copy is ready: /copy [<number=1>] --all");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      ctx.logger?.warn?.("dsh-tui-copy: /copy is unavailable on this composition: " + detail);
+    }
+  }, 0);
 }
 export {
   apply,

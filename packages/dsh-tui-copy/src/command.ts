@@ -5,10 +5,13 @@
  *
  * The mediated path (`tuiPluginHost.registerCommand`) is the honest one: it
  * stamps the command with this plugin's verified Component identity so the
- * channel can enforce per-owner `commands.invoke`. It refuses activations
- * without an admitted `dsh-plugin.json`, and a plugin that only ever fails
- * there would be a package that installs and does nothing, so the plain
- * `commands` registry is the fallback and the command keeps working.
+ * channel can enforce per-owner `commands.invoke`. It refuses anything that is
+ * not a live activation context of the host composition (it checks the Cordis
+ * activation marker), so the context handed to it MUST be the one `apply`
+ * received, never a hand-built object. That is why effects live in their own
+ * parameter here: the command needs `write`/`exec`, registration needs identity,
+ * and conflating the two silently downgrades the command to an unattributed
+ * root command that per-plugin grants no longer govern.
  */
 import { parseCopyInput } from "./arguments.ts";
 import { copyToClipboard } from "./clipboard.ts";
@@ -26,16 +29,21 @@ export interface SessionLike {
   events?: readonly unknown[];
 }
 
+/** The effects the command needs, kept apart from the context that carries
+ *  identity: the host rejects a synthesized object as a registration context. */
+export interface ClipboardEffects {
+  /** Raw terminal write for the OSC 52 escape. */
+  write(sequence: string): void;
+  /** Run a clipboard helper with the text on stdin; resolves to its exit code. */
+  exec(command: string, args: readonly string[], text: string): Promise<number>;
+}
+
 /** The slice of the Cordis context this plugin touches. */
 export interface HostContextLike {
   /** `strict: false` is the documented soft probe: it finds a service whose
    *  providing fiber is not active yet, instead of reporting it missing. */
   get(name: string, strict?: boolean): unknown;
   readonly logger?: { info?: (message: string) => void; warn?: (message: string) => void };
-  /** Raw terminal write for the OSC 52 escape. */
-  write(sequence: string): void;
-  /** Run a clipboard helper with the text on stdin; resolves to its exit code. */
-  exec(command: string, args: readonly string[], text: string): Promise<number>;
 }
 
 /** The slice of the receiving agent this command reads. */
@@ -79,28 +87,39 @@ function bytesLabel(bytes: number): string {
  * Build the command. `environment` is read by the caller at activation time, so
  * a test drives every clipboard branch without a terminal.
  */
-export function createCopyCommand(ctx: HostContextLike, environment: ClipboardEnvironment): CommandDefinitionLike {
+export function createCopyCommand(
+  ctx: HostContextLike,
+  environment: ClipboardEnvironment,
+  effects: ClipboardEffects,
+): CommandDefinitionLike {
   const deps: ClipboardDeps = {
     ...environment,
-    exec: (command, args, text) => ctx.exec(command, args, text),
-    write: sequence => ctx.write(sequence),
+    exec: (command, args, text) => effects.exec(command, args, text),
+    write: sequence => effects.write(sequence),
   };
 
-  /** Toast when the host mounted one; hand the text back for the other hosts. */
+  /**
+   * Report through a toast when the host mounted one, otherwise through the
+   * command result text.
+   *
+   * An error result must still carry text: the registry rejects
+   * `{kind: "error", text: ""}` with a TypeError, which would replace the
+   * real diagnosis in the transcript with an internal wording.
+   */
   const report = (text: string, color?: "success" | "warning" | "error", kind: CommandResultLike["kind"] = "success"): CommandResultLike => {
     const toast = ctx.get("tuiToast") as
       | { show?: (text: string, options?: { color?: string }) => boolean }
       | undefined;
     const delivered = toast?.show?.(text, color === undefined ? undefined : { color }) ?? false;
     // A delivered toast already reached the user; echoing the same words as a
-    // transcript notice would say it twice.
-    return delivered ? { kind, text: "" } : { kind, text };
+    // transcript notice would say it twice (errors must still echo: see above).
+    return delivered && kind === "success" ? { kind, text: "" } : { kind, text };
   };
 
   return {
     name: COPY_COMMAND_NAME,
     description: COPY_COMMAND_DESCRIPTION,
-    // The TUI wraps this hint in its own brackets, so it must not carry outer ones.
+    // The TUI wraps this hint in its own brackets, so it carries no outer ones.
     input: { hint: "<number=1> --all" },
     async handler(invocation) {
       const parsed = parseCopyInput(invocation.rawInput);
@@ -125,9 +144,9 @@ export function createCopyCommand(ctx: HostContextLike, environment: ClipboardEn
       const copied = "已复制最近 " + turns.length + " 轮（" + scope + "，" + bytesLabel(outcome.bytes) + "）";
 
       if (outcome.degraded) {
-        // Nothing local confirmed the copy: the text went out as a terminal
-        // escape only. Say which terminal knob decides whether it lands instead
-        // of claiming a success the plugin cannot see.
+        // A verifiable path was available and failed: the text went out as a
+        // terminal escape only. Say which terminal knob decides whether it
+        // lands instead of claiming a success the plugin cannot see.
         return report(copied + "，仅经 OSC 52 转义发出，是否落地取决于终端设置", "warning");
       }
       return report(copied, "success");
@@ -138,11 +157,20 @@ export function createCopyCommand(ctx: HostContextLike, environment: ClipboardEn
 /**
  * Register `/copy` on the best path this composition offers.
  *
+ * `ctx` is the live activation context `apply` received; `effects` supplies the
+ * terminal write and the helper runner. Keeping them apart is what lets the
+ * mediated path succeed, and it is the difference between a command the host
+ * can attribute and revoke per plugin, and one it cannot.
+ *
  * Returns a disposer. Throws when neither registry exists: a plugin silently
  * doing nothing is harder to diagnose than an activation error in the log.
  */
-export function registerCopyCommand(ctx: HostContextLike, environment: ClipboardEnvironment): () => void {
-  const definition = createCopyCommand(ctx, environment);
+export function registerCopyCommand(
+  ctx: HostContextLike,
+  environment: ClipboardEnvironment,
+  effects: ClipboardEffects,
+): () => void {
+  const definition = createCopyCommand(ctx, environment, effects);
 
   // #183 in the host's own notes: the plugin-host row is probed softly, because
   // a profile launched against a stale patch may not have mounted it yet, and
@@ -152,12 +180,17 @@ export function registerCopyCommand(ctx: HostContextLike, environment: Clipboard
     | undefined;
   if (typeof host?.registerCommand === "function") {
     try {
+      // The first argument must be this very activation context: the host
+      // checks the Cordis activation marker, so a synthesized object is
+      // refused before identity or the command contract is even consulted.
       return host.registerCommand(ctx, definition);
     } catch (error) {
-      // Not admitted (no package-root dsh-plugin.json, or a refused manifest):
-      // the command still works, it just cannot carry Component attribution.
+      // The normal outcome on a composition that does not admit third-party
+      // activations: the command still works, it just cannot carry Component
+      // attribution. Logged at info so a routine fallback stops looking like a
+      // failure and drowning the warning that matters.
       const detail = error instanceof Error ? error.message : String(error);
-      ctx.logger?.warn?.("dsh-tui-copy: host-mediated registration refused (" + detail + "); falling back to the plain commands registry");
+      ctx.logger?.info?.("dsh-tui-copy: registering /copy without Component attribution (" + detail + ")");
     }
   }
 

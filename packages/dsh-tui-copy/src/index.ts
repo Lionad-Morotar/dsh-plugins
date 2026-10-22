@@ -2,14 +2,20 @@
  * Host half of dsh-tui-copy.
  *
  * The Loader mounts a plugin by package name; this half owns the one
- * registration the package makes. `inject` names `commands` because a plugin
- * row activates as soon as its own layer mounts, and the command registry is
+ * registration the package makes. `inject` names `commands` because the plugin
+ * row activates as soon as its own layer mounts while the command registry is
  * mounted by a different row: without the declaration `apply` can run before
  * the service exists, register nothing, and leave the plugin installed but
- * inert.
+ * inert (observed on the first real launch).
+ *
+ * Registration is deferred one macrotask for the same reason on the other side:
+ * `tuiPluginHost` is mounted by yet another row and is still absent when `apply`
+ * runs (measured absent at apply, present ~250ms later). Registering
+ * synchronously therefore always missed the mediated path.
  */
+import { MISSING_TOOL } from "./clipboard.ts";
 import { registerCopyCommand } from "./command.ts";
-import type { HostContextLike } from "./command.ts";
+import type { ClipboardEffects, HostContextLike } from "./command.ts";
 
 export const name = "dsh-tui-copy";
 export const inject = ["commands"];
@@ -59,11 +65,12 @@ export async function runHelper(command: string, args: readonly string[], text: 
       resolve(code);
     };
     if (child === undefined) {
-      finish(1);
+      finish(MISSING_TOOL);
       return;
     }
     timer = setTimeout(() => finish(1), HELPER_TIMEOUT_MS);
-    child.on("error", () => finish(1));
+    // ENOENT from spawning is "not installed", not "ran and failed".
+    child.on("error", error => finish((error as NodeJS.ErrnoException).code === "ENOENT" ? MISSING_TOOL : 1));
     child.on("close", code => finish(typeof code === "number" ? code : 1));
     child.stdin?.on("error", () => finish(1));
     child.stdin?.end(text, "utf8");
@@ -83,18 +90,20 @@ function writeRaw(sequence: string): void {
 
 export function apply(ctx: PluginContext): void {
   const environment = { platform: process.platform, env: { ...process.env } };
-  const commandContext: HostContextLike = {
-    get: (serviceName, strict) => ctx.get(serviceName, strict),
-    write: writeRaw,
-    exec: runHelper,
-    logger: ctx.logger,
-  } as HostContextLike;
+  const effects: ClipboardEffects = { write: writeRaw, exec: runHelper };
 
-  try {
-    registerCopyCommand(commandContext, environment);
-    ctx.logger?.info?.("/copy is ready: /copy [<number=1>] [--all]");
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    ctx.logger?.warn?.("dsh-tui-copy: /copy is unavailable on this composition: " + detail);
-  }
+  // One macrotask later the host row is mounted; registering from the same
+  // tick as `apply` always missed it.
+  setTimeout(() => {
+    try {
+      // The live activation context goes to registration untouched: the
+      // mediated path validates the Cordis activation marker on it, which a
+      // synthesized object would not carry.
+      registerCopyCommand(ctx, environment, effects);
+      ctx.logger?.info?.("/copy is ready: /copy [<number=1>] --all");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      ctx.logger?.warn?.("dsh-tui-copy: /copy is unavailable on this composition: " + detail);
+    }
+  }, 0);
 }

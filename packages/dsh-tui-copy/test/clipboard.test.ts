@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { copyToClipboard, nativeHelpers, osc52Sequence, tmuxSequence } from "../src/clipboard.ts";
+import { MISSING_TOOL, copyToClipboard, nativeHelpers, osc52Sequence, tmuxSequence } from "../src/clipboard.ts";
 
 /** A recorder standing in for the shell-outs and the raw stdout write. */
 function harness(options: { platform?: string; env?: Record<string, string>; code?: number } = {}) {
+  // A machine with no clipboard tool installed reports MISSING_TOOL instead.
   const calls: { command: string; args: readonly string[]; text: string }[] = [];
   const exec = vi.fn(async (command: string, args: readonly string[], text: string) => {
     calls.push({ command, args, text });
@@ -116,6 +117,21 @@ describe("copying inside tmux", () => {
     const outcome = await copyToClipboard("hello", test.deps);
     expect(outcome).toMatchObject({ attempted: ["native", "tmux-buffer", "osc52"], landed: [], degraded: true });
     expect(test.write).toHaveBeenCalledWith("\u001b]52;c;aGVsbG8=\u0007");
+  });
+});
+
+describe("a machine without any clipboard tool", () => {
+  it("does not call the copy degraded, because there was no verifiable path to fail", async () => {
+    // Every Linux helper answers MISSING_TOOL: nothing ran, so nothing failed.
+    const test = harness({ platform: "linux", code: MISSING_TOOL });
+    const outcome = await copyToClipboard("hello", test.deps);
+    expect(outcome).toMatchObject({ attempted: ["osc52"], landed: [], degraded: false });
+  });
+
+  it("still reports degraded when a tool exists and fails", async () => {
+    const test = harness({ platform: "linux", code: 1 });
+    const outcome = await copyToClipboard("hello", test.deps);
+    expect(outcome).toMatchObject({ attempted: ["native", "osc52"], landed: [], degraded: true });
   });
 });
 

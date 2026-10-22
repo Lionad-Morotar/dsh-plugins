@@ -44,9 +44,15 @@ export interface ClipboardEnvironment {
   readonly env: Record<string, string | undefined>;
 }
 
+/** Exit code for "the program is not installed", which is not the same thing
+ *  as "the program ran and failed": a machine with no clipboard tool at all has
+ *  no verifiable path to lose, so it must not be reported as degraded. */
+export const MISSING_TOOL = -2;
+
 /** Injected effects, so every branch is testable without a terminal. */
 export interface ClipboardDeps extends ClipboardEnvironment {
-  /** Run a helper with `text` on stdin; resolves to its exit code. */
+  /** Run a helper with `text` on stdin; resolves to its exit code, or to
+   *  {@link MISSING_TOOL} when the program does not exist. */
   readonly exec: (command: string, args: readonly string[], text: string) => Promise<number>;
   /** Write a raw escape sequence to the terminal. */
   readonly write: (sequence: string) => void;
@@ -105,9 +111,13 @@ export async function copyToClipboard(text: string, deps: ClipboardDeps): Promis
   const helpers = deps.env["SSH_CONNECTION"] === undefined ? nativeHelpers(deps.platform) : [];
 
   let nativeLanded = false;
+  let nativeRan = false;
   const nativeAttempt = (async () => {
     for (const [command, args] of helpers) {
       const code = await runSafely(() => deps.exec(command, args, text));
+      // A tool that is simply not installed never ran, so its absence cannot
+      // count as the verifiable path failing.
+      if (code !== MISSING_TOOL) nativeRan = true;
       if (code === 0) {
         nativeLanded = true;
         return;
@@ -129,7 +139,7 @@ export async function copyToClipboard(text: string, deps: ClipboardDeps): Promis
   await nativeAttempt;
 
   const attempted: ClipboardPath[] = [];
-  if (helpers.length > 0) attempted.push("native");
+  if (nativeRan) attempted.push("native");
   if (inTmux) attempted.push("tmux-buffer");
   attempted.push("osc52");
 
