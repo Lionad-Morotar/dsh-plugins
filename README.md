@@ -9,6 +9,7 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 | [`dsh-client-ui-skin-ascii-rest`](packages/dsh-client-ui-skin-ascii-rest) | 以 ascii.rest 场景作工作区背景的皮肤，随亮暗主题换配色，可在设置页切换 34 个场景并用 lil-gui 调参 |
 | [`ascii-rest-scenes`](packages/ascii-rest-scenes) | 上面那个皮肤用到的纯逻辑层：场景目录、cover 取景、调色板与纸色转换、设置归一化 |
 | [`dsh-jump`](packages/dsh-jump) | 键盘跳跃导航，web profile 专用：Cmd+H 给可点击元素打 label 按键即点，Cmd+U 聚焦元素供键盘交互，Esc 退出 |
+| [`dsh-tui-copy`](packages/dsh-tui-copy) | tui profile 专用 `/copy`：把最近 n 轮最终回复放进系统剪贴板，`--all` 连你的发言一起带 |
 
 ## 安装皮肤
 
