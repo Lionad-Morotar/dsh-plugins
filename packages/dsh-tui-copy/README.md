@@ -66,8 +66,8 @@ SSH 会话里绝不尝试 `native`：那会写远端机器的剪贴板，写了�
 - `src/arguments.ts` 独占 `/copy` 的文法：无法解析就报用法，绝不猜一个「差不多」的范围去复制。
 - `src/history.ts` 从会话日志选轮次并渲染，纯函数，不碰终端。
 - `src/clipboard.ts` 是剪贴板三档路径，effects 全注入，每个分支都能在无终端环境下测。
-- `src/command.ts` 组装命令；优先走宿主中介的 `tuiPluginHost.registerCommand`（命令会带插件身份，宿主能按 `commands.invoke` 逐插件管控），未准入时回落到 `commands.register`，让命令仍然可用。
-- `src/index.ts` 是宿主半，`inject` 为空：服务缺失时要出我们自己的诊断，而不是让这一行静默不加载。
+- `src/command.ts` 组装命令；优先走宿主中介的 `tuiPluginHost.registerCommand`（命令会带插件身份，宿主能按 `commands.invoke` 逐插件管控），未准入时回落到 `commands.register`，让命令仍然可用。本机 dsh-tui 组合实测未向第三方激活授予 Component 身份（`componentIdentityOf` 返回 undefined），因此实际走的是回落路径，命令可用但不带归属。
+- `src/index.ts` 是宿主半，`inject = ['commands']`：插件行的激活时机早于命令服务挂载，不声明依赖会出现 `apply` 先跑、注册不到、装完即失效（首次真机启动即如此）。注册再延后一个宏任务，因为 `tuiPluginHost` 由另一行挂载，`apply` 时它还不存在（实测 apply 时缺失、约 250ms 后出现）。注册失败时 `apply` 的 catch 会 warn。
 
 `lib/` 是构建产物且**要提交**：harness 从安装包直接读它，不会替你跑构建。改了 `src/` 就 `pnpm build` 再提交。
 
