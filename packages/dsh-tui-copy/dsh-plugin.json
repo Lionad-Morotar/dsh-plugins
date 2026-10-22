@@ -1,0 +1,39 @@
+{
+  "$schema": "https://raw.githubusercontent.com/T-Auto/dsh-std/main/schema/dsh-plugin-0.15.schema.json",
+  "manifestVersion": "0.15",
+  "id": "lionad.dsh-tui-copy",
+  "name": "dsh-tui-copy",
+  "version": "0.1.0",
+  "license": "MIT",
+  "facets": {
+    "host": {
+      "entry": "./lib/index.js",
+      "apiVersion": "v1alpha1"
+    }
+  },
+  "requires": {
+    "contracts": [
+      {
+        "apiVersion": "commands.dsh/v1alpha1",
+        "kind": "Command"
+      }
+    ]
+  },
+  "permissions": [
+    {
+      "name": "commands.invoke",
+      "scope": "lionad.dsh-tui-copy.copy",
+      "reason": "/copy 由用户手动发起，只读当前会话历史并写系统剪贴板"
+    }
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "lionad.dsh-tui-copy.copy",
+        "title": "/copy",
+        "description": "Copy the last n assistant replies to the system clipboard (--all also includes your prompts)"
+      }
+    ]
+  },
+  "subscriptions": []
+}
