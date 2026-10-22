@@ -1,0 +1,178 @@
+/* DSH 插件集 — LikeC4 架构模型。事实源：.planning/codebase/ARCHITECTURE.md 等；本文件随其同步维护 */
+specification {
+  element actor { notation "人员"; style { shape person } }
+  element system { notation "软件系统" }
+  element container { notation "容器" }
+  element component { notation "组件"; style { shape component } }
+  element database { notation "存储"; style { shape storage } }
+  element dataSource { notation "上游内容源"; style { shape storage } }
+
+  deploymentNode environment { notation "环境"; style { color gray } }
+  deploymentNode host { notation "宿主机" }
+  deploymentNode runtime { notation "运行时" }
+}
+
+model {
+  actor user "Lionad" {
+    description "DSH 用户兼本仓库维护者"
+  }
+
+  system dshPlugins "DSH 插件集" {
+    description "Lionad 的 DeepSeek Harness 插件 monorepo，核心产物是 ascii.rest 背景皮肤"
+
+    container skin "@lionad/dsh-client-ui-skin-ascii-rest" {
+      description "DSH 客户端 UI 皮肤：把 ascii.rest 场景渲染为工作区背景，随亮暗主题换配色"
+      technology "TypeScript + esbuild，lib/ 提交入库"
+
+      component entry "client/entry" {
+        description "客户端半边入口，boot(require) 安装模块加载器"
+      }
+      component loader "client/loader" {
+        description "装载器桥：承接宿主工厂 require，模块作用域外传递"
+      }
+      component contract "client/dsh" {
+        description "宿主契约：手写 DSH/Cordis 结构化类型，零 SDK 依赖"
+      }
+      component app "client/app" {
+        description "皮肤行为汇点：body 属性、token 层、挂画、完整 teardown"
+      }
+      component surface "client/surface" {
+        description "背景画布：fixed 层 z-index -1，换主题重挂载而非原地改色"
+      }
+      component mountRenderer "mount" {
+        description "vendored 渲染器：ascii.rest canvas mount，摘掉 pre 路径"
+      }
+      component tokens "client/tokens" {
+        description "主题 token：只动表面 token + 品牌强调色"
+      }
+      component scenes "client/scenes" {
+        description "场景加载：salt-flat 内联兜底，其余 require.async 按需取分块"
+      }
+      component store "client/store" {
+        description "设置存储：localStorage 文档 + 订阅，值真实变化才通知"
+      }
+      component settingsPage "client/page" {
+        description "React 设置页：联络表 + 实时画布预览"
+      }
+      component gui "client/gui" {
+        description "lil-gui 调参面板，独立分块 client.gui.js"
+      }
+    }
+
+    container scenesLib "ascii-rest-scenes" {
+      description "纯逻辑层：场景目录、cover 取景、调色板、设置归一化，零 DOM"
+      technology "TypeScript，barrel 导出源码"
+
+      component catalog "catalog" {
+        description "34 个场景 meta：构建期生成、加载时一次校验缓存"
+      }
+      component cover "cover" {
+        description "contain/cover 拟合、九宫格 anchor、zoom"
+      }
+      component palette "palette" {
+        description "纸色翻转（paperify）、HSL/Hex 数学、对比度"
+      }
+      component options "options" {
+        description "设置归一化：默认值 + 不受信输入清洗，返回 null/默认值不抛异常"
+      }
+    }
+  }
+
+  system dshHost "DSH 宿主" {
+    description "外部宿主：Cordis 上下文 + 模块加载器，提供 slots/theme/locale 服务与 React 平台种子"
+    technology "Cordis 4 + DSH 0.2 rc"
+  }
+
+  system localStorage "浏览器 localStorage" {
+    description "用户设置持久化，键 dsh-skin:ascii-rest:settings，皮肤独占读写"
+    style { shape storage }
+  }
+
+  dataSource asciiRest "ascii.rest 上游" {
+    description "场景代码与 meta 唯一来源（github:bas3line/ascii#c556be4，MIT）；构建期消费，运行期零网络"
+    technology "git 依赖，commit 钉死"
+  }
+
+  user -> dshPlugins "使用与维护"
+
+  dshHost -> skin "Loader row 注入，require/require.async 加载 lib/ 分块"
+  skin.entry -> dshHost "boot(require) 安装加载器"
+  skin.app -> dshHost "apply(ctx)：slots/theme 服务，theme/change 事件"
+  skin.app -> skin.surface "loadScene 后挂画"
+  skin.surface -> skin.mountRenderer "复用 vendored 渲染器挂帧循环"
+  skin.scenes -> skin.mountRenderer "场景 piece 交渲染器"
+  skin.app -> skin.tokens "主题切换时 overrideTokens 打开表面 token"
+  skin.settingsPage -> skin.store "store.update 写设置"
+  skin.gui -> skin.store "调参写入"
+  skin.store -> localStorage "读写设置文档"
+  skin.store -> scenesLib.options "读出必经 normalizeSettings 清洗"
+  skin.scenes -> scenesLib.catalog "按目录取场景 meta"
+  skin.surface -> scenesLib.palette "按 scheme 生成主题调色板"
+  skin.app -> scenesLib.cover "取景几何"
+  scenesLib.catalog -> asciiRest "构建期遍历 dist/pieces 抽 meta（generate-catalog.mjs）"
+  skin.mountRenderer -> asciiRest "构建期逐个打包 pieces 为 client.<id>.js 分块"
+  skin.scenes -> asciiRest "salt-flat 静态内联兜底"
+}
+
+deployment {
+  environment install "安装态（profile）" {
+    technology "DSH profile 依赖 + cordis.patch.yml Loader row，单实例"
+    host machine "用户机器" {
+      runtime dshRuntime "DSH 宿主进程" {
+        instanceOf dshPlugins.skin
+      }
+      runtime browserRuntime "浏览器环境" {
+        instanceOf dshPlugins.scenesLib
+        instanceOf localStorage
+      }
+    }
+  }
+}
+
+views {
+  view index {
+    title "系统全景：DSH 插件集"
+    description "皮肤两包分层 + DSH 宿主 + 上游 ascii.rest + localStorage"
+    include *
+    autoLayout LeftRight
+  }
+
+  view skin of dshPlugins.skin {
+    title "皮肤容器内部"
+    include *
+    include -> dshPlugins.skin
+    autoLayout LeftRight
+  }
+
+  view scenesLib of dshPlugins.scenesLib {
+    title "纯逻辑层内部"
+    include *
+    include -> dshPlugins.scenesLib
+    autoLayout LeftRight
+  }
+
+  dynamic view renderFlow {
+    title "主路径：渲染背景"
+    dshHost -> dshPlugins.skin.entry "加载 lib/client.js 工厂"
+    dshPlugins.skin.entry -> dshPlugins.skin.loader "boot(require) 安装 loader"
+    dshHost -> dshPlugins.skin.app "调 apply(ctx)"
+    dshPlugins.skin.app -> dshPlugins.skin.tokens "overrideTokens 打开表面 token"
+    dshPlugins.skin.app -> dshPlugins.skin.scenes "loadScene（salt-flat 内联，其余 require.async）"
+    dshPlugins.skin.scenes -> dshPlugins.skin.surface "piece + 调色板"
+    dshPlugins.skin.surface -> dshPlugins.skin.mountRenderer "挂帧循环"
+  }
+
+  dynamic view settingsFlow {
+    title "设置流"
+    dshPlugins.skin.settingsPage -> dshPlugins.skin.store "store.update"
+    dshPlugins.skin.store -> localStorage "写文档并广播"
+    dshPlugins.skin.store -> dshPlugins.scenesLib.options "normalizeSettings 清洗"
+    dshPlugins.skin.store -> dshPlugins.skin.app "值变化才通知，重挂画"
+  }
+
+  deployment view deployment {
+    title "部署：profile 安装态"
+    include install.**
+    autoLayout LeftRight
+  }
+}

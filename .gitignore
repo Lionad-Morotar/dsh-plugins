@@ -9,3 +9,6 @@ zRefs/
 # Build output is committed for skin packages: the Harness profile loads
 # `lib/` straight from the installed package and never runs a build step.
 !packages/*/lib/
+
+# LikeC4 build output
+.planning/c4/dist/
