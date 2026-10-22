@@ -28,7 +28,9 @@ export interface SessionLike {
 
 /** The slice of the Cordis context this plugin touches. */
 export interface HostContextLike {
-  get(name: string): unknown;
+  /** `strict: false` is the documented soft probe: it finds a service whose
+   *  providing fiber is not active yet, instead of reporting it missing. */
+  get(name: string, strict?: boolean): unknown;
   readonly logger?: { info?: (message: string) => void; warn?: (message: string) => void };
   /** Raw terminal write for the OSC 52 escape. */
   write(sequence: string): void;
@@ -142,7 +144,10 @@ export function createCopyCommand(ctx: HostContextLike, environment: ClipboardEn
 export function registerCopyCommand(ctx: HostContextLike, environment: ClipboardEnvironment): () => void {
   const definition = createCopyCommand(ctx, environment);
 
-  const host = ctx.get("tuiPluginHost") as
+  // #183 in the host's own notes: the plugin-host row is probed softly, because
+  // a profile launched against a stale patch may not have mounted it yet, and
+  // a strict read would report a live service as missing.
+  const host = ctx.get("tuiPluginHost", false) as
     | { registerCommand?: (pluginCtx: unknown, definition: CommandDefinitionLike) => () => void }
     | undefined;
   if (typeof host?.registerCommand === "function") {

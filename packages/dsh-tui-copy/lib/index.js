@@ -182,7 +182,7 @@ function createCopyCommand(ctx, environment) {
 }
 function registerCopyCommand(ctx, environment) {
   const definition = createCopyCommand(ctx, environment);
-  const host = ctx.get("tuiPluginHost");
+  const host = ctx.get("tuiPluginHost", false);
   if (typeof host?.registerCommand === "function") {
     try {
       return host.registerCommand(ctx, definition);
@@ -227,7 +227,7 @@ function writeRaw(sequence) {
 function apply(ctx) {
   const environment = { platform: process.platform, env: { ...process.env } };
   const commandContext = {
-    get: (serviceName) => ctx.get(serviceName),
+    get: (serviceName, strict) => ctx.get(serviceName, strict),
     write: writeRaw,
     exec: runHelper,
     logger: ctx.logger

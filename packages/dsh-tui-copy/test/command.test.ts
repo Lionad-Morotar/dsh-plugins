@@ -132,6 +132,23 @@ describe("registering /copy", () => {
     expect(registerCommand.mock.calls[0]?.[1]).toMatchObject({ name: "copy" });
   });
 
+  it("probes the plugin host softly, so a not-yet-active row is not mistaken for a missing one", () => {
+    const strictReads: (boolean | undefined)[] = [];
+    const test = host();
+    const routed = {
+      ...test.ctx,
+      get: (name: string, strict?: boolean) => {
+        if (name !== "tuiPluginHost") return test.ctx.get(name);
+        strictReads.push(strict);
+        return { registerCommand: () => () => {} };
+      },
+    };
+    registerCopyCommand(routed, { platform: "darwin", env: {} });
+    // #183 in the host's own notes: a strict read reports a live service as
+    // missing when its providing fiber has not activated yet.
+    expect(strictReads).toEqual([false]);
+  });
+
   it("falls back to the plain command registry when the host does not mediate", async () => {
     const test = host();
     const dispose = registerCopyCommand(test.ctx, { platform: "darwin", env: {} });

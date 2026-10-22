@@ -58,7 +58,7 @@ function writeRaw(sequence: string): void {
 export function apply(ctx: PluginContext): void {
   const environment = { platform: process.platform, env: { ...process.env } };
   const commandContext: HostContextLike = {
-    get: serviceName => ctx.get(serviceName),
+    get: (serviceName, strict) => ctx.get(serviceName, strict),
     write: writeRaw,
     exec: runHelper,
     logger: ctx.logger,
