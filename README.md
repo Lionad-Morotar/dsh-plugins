@@ -53,11 +53,11 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 ```sh
 pnpm install
 pnpm build      # 产出 lib/（包内分块 + 主入口），lib 是要提交的，profile 直接读它
-pnpm test       # 23 个测试
+pnpm test       # 四个包递归，20 文件 199 用例
 pnpm typecheck
 ```
 
-`packages/dsh-client-ui-skin-ascii-rest/lib/` 提交进仓库是刻意的：harness 的 profile 直接从安装包读 `lib/`，不会替你跑构建。改了 `src/` 就必须重新 build 再提交，否则安装态跑的是旧代码。
+`packages/*/lib/` 提交进仓库是刻意的：harness 的 profile 直接从安装包读 `lib/`，不会替你跑构建。改了 `src/` 就必须重新 build 再提交，否则安装态跑的是旧代码。
 
 ## 更新上游 ascii.rest
 

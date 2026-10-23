@@ -50,7 +50,7 @@
 ## 测试
 
 ```sh
-pnpm test        # 38 个用例，纯逻辑 + jsdom 打包产物
+pnpm test        # 39 个用例，纯逻辑 + jsdom 打包产物
 pnpm typecheck
 pnpm build
 ```
