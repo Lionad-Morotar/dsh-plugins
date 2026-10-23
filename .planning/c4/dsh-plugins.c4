@@ -18,7 +18,7 @@ model {
   }
 
   system dshPlugins "DSH 插件集" {
-    description "Lionad 的 DeepSeek Harness 插件 monorepo，核心产物是 ascii.rest 背景皮肤"
+    description "Lionad 的 DeepSeek Harness 插件 monorepo：四包三形态，共用 Loader row 发行模型"
 
     container skin "@lionad/dsh-client-ui-skin-ascii-rest" {
       description "DSH 客户端 UI 皮肤：把 ascii.rest 场景渲染为工作区背景，随亮暗主题换配色"
@@ -76,10 +76,61 @@ model {
         description "设置归一化：默认值 + 不受信输入清洗，返回 null/默认值不抛异常"
       }
     }
+
+    container jump "dsh-jump" {
+      description "web profile 的键盘跳跃导航：Cmd+H 点击 / Cmd+U 聚焦，视口内候选分派单键或两键 label"
+      technology "TypeScript + esbuild，纯 client 半边，运行期零三方依赖"
+
+      component hostStub "src/index" {
+        description "宿主半边空 apply：Loader 双侧按包名挂载，main 必须可解析"
+      }
+      component jumpEntry "client/entry" {
+        description "客户端工厂：返回 {name, inject, apply}，配置只从 apply 第二参读"
+      }
+      component jumpApp "client/app" {
+        description "跳跃接线：捕获阶段 keydown、浮层驱动、命中执行 click/focus、对称 teardown"
+      }
+      component jumpConfig "client/config" {
+        description "默认值：九键首页行、Cmd+H/Cmd+U、候选选择器"
+      }
+      component hints "client/hints" {
+        description "视口快照：可见性裁剪、祖先去重、整轮等长 label 分派，纯函数"
+      }
+      component keys "client/keys" {
+        description "三态状态机：idle/click/focus，前缀累积与死路清空，无 DOM"
+      }
+      component overlay "client/overlay" {
+        description "label 浮层：单容器 fixed 全屏、pointer-events:none、按前缀亮暗"
+      }
+    }
+
+    container tuiCopy "dsh-tui-copy" {
+      description "tui profile 的 /copy 命令：把最近 n 轮回复并发写进三条剪贴板路径"
+      technology "TypeScript + esbuild，纯 host 半边，ESM 单文件 lib/index.js"
+
+      component tuiEntry "src/index" {
+        description "宿主 apply 本体：inject commands、注册延后一宏任务、helper 统一 2 秒上限"
+      }
+      component command "command" {
+        description "命令组装与注册：宿主中介优先，未准入回落 commands.register"
+      }
+      component args "arguments" {
+        description "参数文法 /copy [n] [--all]：正整数、超过 50 夹取，非法输入直接拒绝"
+      }
+      component history "history" {
+        description "从会话事件流选轮次：每轮最后一条非空正文，--all 只带真人发言"
+      }
+      component clipboard "clipboard" {
+        description "剪贴板三路并发：native / tmux-buffer / OSC 52，如实报 attempted/landed/degraded"
+      }
+      component manifest "dsh-plugin.json" {
+        description "TUI 准入清单（Community Draft 0.15）：声明 /copy 命令与 commands.invoke 权限"
+      }
+    }
   }
 
   system dshHost "DSH 宿主" {
-    description "外部宿主：Cordis 上下文 + 模块加载器，提供 slots/theme/locale 服务与 React 平台种子"
+    description "外部宿主：Cordis 上下文 + 模块加载器；web 面 slots/theme/locale，tui 面 commands/tuiPluginHost/tuiToast"
     technology "Cordis 4 + DSH 0.2 rc"
   }
 
@@ -91,6 +142,16 @@ model {
   dataSource asciiRest "ascii.rest 上游" {
     description "场景代码与 meta 唯一来源（github:bas3line/ascii#c556be4，MIT）；构建期消费，运行期零网络"
     technology "git 依赖，commit 钉死"
+  }
+
+  system systemClipboard "系统剪贴板" {
+    description "本机剪贴板：native 工具写入（pbcopy / clip / wl-copy / xclip / xsel）；SSH 下跳过，避免写远端"
+    technology "子进程 stdin，退出码判定"
+  }
+
+  system terminalHost "终端与 tmux" {
+    description "终端侧剪贴板通道：tmux buffer 与 OSC 52 转义；能否落地取决于终端设置"
+    technology "tmux load-buffer + ESC ] 52 ; c ; base64 BEL（tmux 内包 DCS 透传）"
   }
 
   user -> dshPlugins "使用与维护"
@@ -112,14 +173,44 @@ model {
   scenesLib.catalog -> asciiRest "构建期遍历 dist/pieces 抽 meta（generate-catalog.mjs）"
   skin.mountRenderer -> asciiRest "构建期逐个打包 pieces 为 client.<id>.js 分块"
   skin.scenes -> asciiRest "salt-flat 静态内联兜底"
+
+  dshHost -> jump "Loader row 注入（id: jump），加载 lib/client.js 工厂"
+  jump.jumpEntry -> dshHost "window.__ModuleLoader__.load({id, factory})，id 必须等于包名"
+  jump.jumpEntry -> jump.jumpApp "createApp({config}).apply()"
+  jump.jumpApp -> jump.jumpConfig "读激活键与 candidateSelector"
+  jump.jumpApp -> jump.keys "每次 keydown 进 matchKey"
+  jump.jumpApp -> jump.hints "collectHints 快照视口候选并分派 label"
+  jump.jumpApp -> jump.overlay "render(hints, pending) / destroy"
+  jump.jumpApp -> dshHost "捕获阶段吞掉自己拥有的 keydown，不漏给宿主快捷键"
+
+  dshHost -> tuiCopy "Loader row 注入（id: dsh-tui-copy），加载 lib/index.js"
+  tuiCopy.tuiEntry -> tuiCopy.command "延后一宏任务后调 registerCopyCommand"
+  tuiCopy.command -> tuiCopy.args "parseCopyInput 解析文法"
+  tuiCopy.command -> tuiCopy.history "collectTurns 选轮次，renderTurns 渲染"
+  tuiCopy.command -> tuiCopy.clipboard "copyToClipboard 三路并发"
+  tuiCopy.command -> dshHost "优先 tuiPluginHost.registerCommand，未准入回落 commands.register；tuiToast 播报"
+  tuiCopy.history -> dshHost "读 invocation.agent.session 的事件流"
+  dshHost -> tuiCopy.manifest "admission-loader 读清单绑定插件身份，按 commands.invoke 管控"
+  tuiCopy.clipboard -> systemClipboard "native：pbcopy / clip / wl-copy / xclip / xsel"
+  tuiCopy.clipboard -> terminalHost "tmux load-buffer 与 OSC 52（tmux 内包 DCS 透传）"
 }
 
 deployment {
   environment install "安装态（profile）" {
     technology "DSH profile 依赖 + cordis.patch.yml Loader row，单实例"
     host machine "用户机器" {
-      runtime dshRuntime "DSH 宿主进程" {
+      runtime dshRuntime "desktop profile：DSH 宿主进程" {
         instanceOf dshPlugins.skin
+      }
+      runtime webRuntime "web profile：DSH 宿主进程" {
+        instanceOf dshPlugins.jump
+      }
+      runtime tuiRuntime "tui profile：DSH 宿主进程" {
+        instanceOf dshPlugins.tuiCopy
+      }
+      runtime clipboardHost "本机剪贴板工具与终端" {
+        instanceOf systemClipboard
+        instanceOf terminalHost
       }
       runtime browserRuntime "浏览器环境" {
         instanceOf dshPlugins.scenesLib
@@ -132,7 +223,7 @@ deployment {
 views {
   view index {
     title "系统全景：DSH 插件集"
-    description "皮肤两包分层 + DSH 宿主 + 上游 ascii.rest + localStorage"
+    description "四包三形态：皮肤两包分层、jump 纯 client、tui-copy 纯 host；DSH 宿主 + 上游 ascii.rest + 剪贴板边界"
     include *
     autoLayout LeftRight
   }
@@ -148,6 +239,22 @@ views {
     title "纯逻辑层内部"
     include *
     include -> dshPlugins.scenesLib
+    autoLayout LeftRight
+  }
+
+  view jump of dshPlugins.jump {
+    title "跳跃导航容器内部"
+    description "纯 client 半边：入口 + 快照/状态机/浮层三段 + 仅保可解析的宿主空壳"
+    include *
+    include dshHost
+    autoLayout LeftRight
+  }
+
+  view copy of dshPlugins.tuiCopy {
+    title "复制命令容器内部"
+    description "纯 host 半边：文法、轮次渲染、三路剪贴板与两条注册路径"
+    include *
+    include dshHost, systemClipboard, terminalHost
     autoLayout LeftRight
   }
 
@@ -168,6 +275,29 @@ views {
     dshPlugins.skin.store -> localStorage "写文档并广播"
     dshPlugins.skin.store -> dshPlugins.scenesLib.options "normalizeSettings 清洗"
     dshPlugins.skin.store -> dshPlugins.skin.app "值变化才通知，重挂画"
+  }
+
+  dynamic view jumpFlow {
+    title "跳跃流：激活、快照、消费"
+    user -> dshPlugins.jump.jumpApp "Cmd+H 点击 / Cmd+U 聚焦"
+    dshPlugins.jump.jumpEntry -> dshPlugins.jump.jumpApp "apply(ctx, config)"
+    dshPlugins.jump.jumpApp -> dshPlugins.jump.keys "matchKey 判定模式与前缀"
+    dshPlugins.jump.jumpApp -> dshPlugins.jump.hints "collectHints 视口裁剪 + 等长 label"
+    dshPlugins.jump.jumpApp -> dshPlugins.jump.overlay "render(hints, pending) 画徽标"
+    dshPlugins.jump.jumpApp -> dshPlugins.jump.overlay "命中完整 label 后 destroy"
+    dshPlugins.jump.jumpApp -> dshHost "激活期间 keydown 一律 preventDefault + stopPropagation"
+  }
+
+  dynamic view copyFlow {
+    title "复制流：/copy 到剪贴板"
+    user -> dshPlugins.tuiCopy.tuiEntry "/copy [n] [--all]"
+    dshPlugins.tuiCopy.tuiEntry -> dshPlugins.tuiCopy.command "registerCopyCommand（延后一宏任务）"
+    dshPlugins.tuiCopy.command -> dshPlugins.tuiCopy.args "parseCopyInput"
+    dshPlugins.tuiCopy.command -> dshPlugins.tuiCopy.history "collectTurns + renderTurns"
+    dshPlugins.tuiCopy.command -> dshPlugins.tuiCopy.clipboard "copyToClipboard 并发三路"
+    dshPlugins.tuiCopy.clipboard -> systemClipboard "native：pbcopy / clip / wl-copy / xclip / xsel"
+    dshPlugins.tuiCopy.clipboard -> terminalHost "tmux load-buffer + OSC 52"
+    dshPlugins.tuiCopy.command -> dshHost "tuiToast 播报，降级改警告色"
   }
 
   deployment view deployment {
