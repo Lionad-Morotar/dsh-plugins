@@ -1,6 +1,8 @@
 # Agents.md
 
-Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。核心产物是 DSH 客户端 UI 皮肤 `@lionad/dsh-client-ui-skin-ascii-rest`——把 ascii.rest 的 ASCII 场景渲染为工作区背景，随亮暗主题换配色；`ascii-rest-scenes` 是其纯逻辑层（场景目录、cover 取景、调色板、设置归一化，DOM-free）。
+Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。四个包、三种形态：DSH 客户端 UI 皮肤 `@lionad/dsh-client-ui-skin-ascii-rest`（把 ascii.rest 的 ASCII 场景渲染为工作区背景，随亮暗主题换配色）与其纯逻辑层 `ascii-rest-scenes`（场景目录、cover 取景、调色板、设置归一化，DOM-free）；web 端键盘跳跃导航 `dsh-jump`；TUI 端 `/copy` 剪贴板命令 `dsh-tui-copy`。
+
+共同发行模型：Loader row 经 `cordis.patch.yml` 注入，`lib/` 构建产物提交入库，profile 安装态不跑构建。
 
 ## 项目上下文
 
@@ -17,5 +19,13 @@ Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。核心产物是 DSH 
 | [INTEGRATIONS.md](./.planning/codebase/INTEGRATIONS.md) | 外部内容源、宿主契约 |
 | [CONCERNS.md](./.planning/codebase/CONCERNS.md) | 技术债务、经核实不成立项 |
 | [.planning/c4/](./.planning/c4/) | LikeC4 架构模型，查看方式 `npx likec4 start`（cwd 须为 `.planning/c4`） |
+
+## 包文档
+
+| 包 | 文档 |
+| --- | --- |
+| `dsh-client-ui-skin-ascii-rest` | [README](./packages/dsh-client-ui-skin-ascii-rest/README.md)：皮肤配置面、分区透出与摆放 |
+| `dsh-jump` | [README](./packages/dsh-jump/README.md)：跳跃导航用法、v1 边界、web profile 安装 |
+| `dsh-tui-copy` | [README](./packages/dsh-tui-copy/README.md)：`/copy` 用法、剪贴板三路路径、TUI 安装 |
 
 你可以自行读取项目上下文文档，更新时也优先更新相关文档。
