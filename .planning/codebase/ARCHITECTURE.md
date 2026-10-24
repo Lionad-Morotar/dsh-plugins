@@ -1,6 +1,6 @@
 # 架构（Architecture）
 
-更新: 2026-10-23
+更新: 2026-10-24
 
 ## 系统总览
 
@@ -31,7 +31,7 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
             └─ 副作用 → 子进程 helper / 终端 OSC 52 / tmux buffer → 系统剪贴板
 ```
 
-四个包、三种形态，共用同一发行模型：三个可挂载的包（皮肤、`dsh-jump`、`dsh-tui-copy`）各自在包根 `cordis.patch.yml` 插一条 Loader row（`id` 为短名、`name` 为包名），三者的 `lib/` 构建产物提交入库，profile 安装态直接读包内 `lib/`、不跑构建。`ascii-rest-scenes` 没有 Loader row、没有产物，它是直发源码（`exports` 指向 `src/index.ts`）的纯逻辑库，被皮肤以 `workspace:*` 依赖。宿主按包名挂载两侧，因此纯 client 的 `dsh-jump` 也必须留一个可解析的宿主入口。
+五个包、四种形态，共用同一发行模型：四个可挂载的包（皮肤、`dsh-jump`、`dsh-better-keybindings`、`dsh-tui-copy`）各自在包根 `cordis.patch.yml` 插一条 Loader row（`id` 为短名、`name` 为包名），三者的 `lib/` 构建产物提交入库，profile 安装态直接读包内 `lib/`、不跑构建。`ascii-rest-scenes` 没有 Loader row、没有产物，它是直发源码（`exports` 指向 `src/index.ts`）的纯逻辑库，被皮肤以 `workspace:*` 依赖。宿主按包名挂载两侧，因此纯 client 的 `dsh-jump` 与 `dsh-better-keybindings` 也必须留一个可解析的宿主入口。
 
 ## 组件职责
 
@@ -53,6 +53,10 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 | 调参面板 | lil-gui 独立分块，CSS 内联 | `packages/dsh-client-ui-skin-ascii-rest/src/client/gui.ts`、`gui-chunk.ts` |
 | 构建 | 产出 lib/：ESM 宿主 + 加载器包装 CJS 分块 | `packages/dsh-client-ui-skin-ascii-rest/scripts/build.mjs` |
 | 跳跃接线 | 捕获阶段 keydown、事件字段封装、浮层驱动、命中执行 click/focus、对称 teardown | `packages/dsh-jump/src/client/app.ts` |
+| 键盘修正接线 | 捕获阶段 keydown：分类目标、取消默认动作、执行光标移动、补齐光标可见性、对称 teardown | `packages/dsh-better-keybindings/src/client/app.ts` |
+| 键位映射 | Home/End -> 方向 + 粒度 + 是否扩选；目标三分类，纯数据无 DOM | `packages/dsh-better-keybindings/src/client/keys.ts` |
+| 光标原语 | 文本框按 `\n` 字符串算术；富文本交给 `Selection.modify` 的 lineboundary/documentboundary | `packages/dsh-better-keybindings/src/client/caret.ts` |
+| 光标可见性 | 被取消的 scroll-into-view 的替代：最小滚动增量，会话滚动容器显式排除 | `packages/dsh-better-keybindings/src/client/reveal.ts` |
 | hint 快照 | 视口裁剪 + 可见性判定 + 最深元素去重 + 等长 label 分派 | `packages/dsh-jump/src/client/hints.ts` |
 | 键位状态机 | idle/click/focus 三态、前缀累积与死路清空，纯数据无 DOM | `packages/dsh-jump/src/client/keys.ts` |
 | label 浮层 | 单容器 fixed 全屏、pointer-events:none、按前缀亮暗 | `packages/dsh-jump/src/client/overlay.ts` |
@@ -68,7 +72,7 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 
 ## 模式总览
 
-**总体：** 多形态插件集合（皮肤双半边 / web 单 client 半边 / tui 单 host 半边）+ 纯逻辑内核 + 构建期代码生成 + 按需分块加载 + Loader row 挂载发行
+**总体：** 多形态插件集合（皮肤双半边 / web 单 client 半边（jump 与 better-keybindings）/ tui 单 host 半边）+ 纯逻辑内核 + 构建期代码生成 + 按需分块加载 + Loader row 挂载发行
 
 **关键特征：**
 - 纯/DOM 边界硬隔离：`ascii-rest-scenes` 零 DOM，`dsh-jump` 的 `keys.ts`/`hints.ts` 与 `dsh-tui-copy` 的 `arguments.ts`/`history.ts` 同样纯函数，DOM 与副作用只在最外层适配器

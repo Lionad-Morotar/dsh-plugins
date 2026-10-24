@@ -1,13 +1,13 @@
 # 编码约定（Coding Conventions）
 
-更新: 2026-10-23
+更新: 2026-10-24
 
 ## 命名模式
 
 **文件：** kebab-case（`gui-chunk.ts`、`generate-catalog.mjs`）；生成的加 `.generated` 后缀
 **函数：** 动词开头 camelCase（`normalizeSettings`、`fitCover`、`paperifyPalette`、`parseCopyInput`、`collectTurns`、`renderTurns`、`copyToClipboard`、`matchKey`、`collectHints`、`nativeHelpers`）；构造器 `create` 前缀（`createSettingsStore`、`createGui`、`createApp`、`createKeyState`、`createOverlay`、`createCopyCommand`）；注册 `register` 前缀（`registerCopyCommand`）；类型守卫 `is` 前缀（`isAnchor`、`isFitMode`、`isPiece`）
 **变量：** camelCase；模块级常量 SCREAMING_SNAKE（`STORAGE_KEY`、`DARK_ATTRIBUTE`、`ANCHORS`、`FIT_MODES`、`REGION_KEYS`、`FPS_RANGE`、`HOME_ROW_KEYS`、`DEFAULT_CONFIG`、`MAX_COUNT`、`MISSING_TOOL`、`HELPER_TIMEOUT_MS`）；缩写只给公认词（`ESC`/`BEL`/`ST`、`BADGE_W`/`BADGE_H`）
-**类型：** PascalCase；后缀表达角色——`Options`/`Deps`（用户可调与注入点）、`Entry`/`Snapshot`（构建期快照）、`Handle`/`Outcome`（带清理的返回值、一次操作的结果）、`Service`（宿主契约）、`Like`（宿主或 DOM 对象的结构化切片，只需列出本包真正读到的字段：`KeyEventLike`、`SessionEventLike`、`HostContextLike`、`CommandResultLike`）、`Effects`（被注入的副作用集：`ClipboardEffects`）；`readonly` 标注不可变数组（`types.ts` 的 `palette: readonly string[]`）
+**类型：** PascalCase；后缀表达角色——`Options`/`Deps`（用户可调与注入点）、`Entry`/`Snapshot`（构建期快照）、`Handle`/`Outcome`（带清理的返回值、一次操作的结果）、`Service`（宿主契约）、`Like`（宿主或 DOM 对象的结构化切片，只需列出本包真正读到的字段：`KeyEventLike`、`SessionEventLike`、`HostContextLike`、`CommandResultLike`、`TextFieldLike`）、`Effects`（被注入的副作用集：`ClipboardEffects`）；`readonly` 标注不可变数组（`types.ts` 的 `palette: readonly string[]`）；小写非导出别名放在同包内（`dsh-better-keybindings` 的 `caretTarget` 与 `CaretAction`、`CaretGranularity` 并列，前者是字符串联合别名而非类型对象）
 
 ## 代码风格
 
@@ -15,14 +15,14 @@
 
 **Lint：** 无。质量门是 tsc strict + vitest
 
-**包间差异（2026-10-23 实测）：** 单参数箭头函数的括号写法分裂——`ascii-rest-scenes`、皮肤包、`dsh-jump` 的参数位一律带括号（0 处裸参数），`dsh-tui-copy` 的 7 处参数位全部省略（`token => token !== ""`、`sequence => effects.write(sequence)`）。行宽：`ascii-rest-scenes` 最长 120、`dsh-jump` 最长 116，都在 120 内；`dsh-tui-copy` 仅 `src/command.ts` 的 `report` 一行到 141；皮肤包有 13 行超 120（最长 175），无格式化器兜底
+**包间差异（2026-10-24 实测）：** 单参数箭头函数的括号写法分裂——`ascii-rest-scenes`、皮肤包、`dsh-jump`、`dsh-better-keybindings` 的参数位一律带括号（0 处裸参数），`dsh-tui-copy` 的 7 处参数位全部省略（`token => token !== ""`、`sequence => effects.write(sequence)`）。行宽：`ascii-rest-scenes` 最长 120、`dsh-jump` 最长 116，都在 120 内；`dsh-tui-copy` 仅 `src/command.ts` 的 `report` 一行到 141；皮肤包有 13 行超 120（最长 175），无格式化器兜底
 
 **TypeScript 纪律（`tsconfig.base.json` 强制）：**
 - 禁 any：不受信输入先 `as unknown` 再逐字段窄化（`catalog.ts` 的 `normalizeSceneEntry` 是范本）
 - `noUncheckedIndexedAccess`：索引访问都按可能 undefined 处理
 - `verbatimModuleSyntax`：类型导入必写 `import type`
 - 导入必带 `.ts` 扩展名（`allowImportingTsExtensions`）
-- 包级 `types` 有别：`dsh-jump` 为 `[]`（纯浏览器侧，不碰 Node API），`dsh-tui-copy` 为 `["node"]`（要 `process`、`node:child_process`）
+- 包级 `types` 有别：`dsh-jump`、`dsh-better-keybindings` 为 `[]`（纯浏览器侧，不碰 Node API），`dsh-tui-copy` 为 `["node"]`（要 `process`、`node:child_process`）
 
 ## 导入组织
 

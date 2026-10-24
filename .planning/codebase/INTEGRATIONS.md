@@ -1,6 +1,6 @@
 # 外部集成（External Integrations）
 
-更新: 2026-10-23
+更新: 2026-10-24
 
 ## 外部服务
 
@@ -24,9 +24,10 @@
 - 每次 helper 统一 2 秒上限（`HELPER_TIMEOUT_MS`，`src/index.ts`），超时按失败处理并 kill 子进程；native 先发、最后 await，避免复制进程比用户切换窗口慢
 - 无网络、无 API key；OSC 52 内容只写进终端 fd，不经日志（日志会转义控制字符，破坏序列）
 
-**DSH Web 宿主（Cordis 上下文，`@lionad/dsh-client-ui-skin-ascii-rest` 与 `dsh-jump`）：**
+**DSH Web 宿主（Cordis 上下文，`@lionad/dsh-client-ui-skin-ascii-rest`、`dsh-jump` 与 `dsh-better-keybindings`）：**
 - 皮肤集成面完全收敛在 `packages/dsh-client-ui-skin-ascii-rest/src/client/dsh.ts`：手写结构化类型 `ClientContext`（`effect`/`get`/`on`）、`SlotsService`（`settings.section` 注册）、`ThemeService`（`overrideTokens`/`getTheme`）、`LocaleService`
 - jump 不使用任何 Cordis 服务（`inject: []`，宿主半 `apply` 为空）：它只挂 `window` capture 阶段 `keydown`，并用 `preventDefault` + `stopPropagation` 吞掉自己拥有的按键——`dsh-vscode-keyboard` 在 window 冒泡阶段转发 `defaultPrevented === false` 的键盘事件，不吞就会漏进内嵌 VS Code 的键位（`src/client/app.ts`）
+- better-keybindings 同样 `inject: []`、宿主半为空，但它的宿主耦合面是 DOM 契约而不是 Cordis 服务，共三条：编排器是 `[data-composer-input]`（Lexical `contenteditable`，行结构由 `<br>` 与零宽 spacer 组成，因此行边界只能靠 `Selection.modify` 而非节点遍历）；宿主滚动容器是 `[data-conversation-scroll]`（web 端由 `dsh-client-ui-chat` 的 `ChatViewport` 持有，负责 follow-tail 与 reading-intent 归因，本插件把它排除在光标补齐范围外）；输入框自身的滚动容器是 `[data-input-scroll]`（本插件的补齐目标）。这三条选择器是唯一的硬耦合点，DSH 改 DOM 时只有 `DEFAULT_EXCLUDE_SELECTOR` 与目标分类需要复查
 - 客户端半的装载协议：`lib/client.js` 顶层调用 `window.__ModuleLoader__.load({ id, factory })`，`id` 必须等于包名（loader 用它做模块表键），`factory(require)` 返回插件对象 `{name, inject, apply}`；两个 web 包都在 `package.json` 的 `exports["./client"]` 指向该文件、`dsh.client.platform: "web"`
 - cordis 调用 `apply(ctx, config)`：jump 的 client 入口只从第二参读配置，第一参保持原样（读它会抛 "cannot get property without inject"，直接拖垮整个 web boot）
 - 注入点：各包根 `cordis.patch.yml` 的 `insert` 一条 Loader row，三包 id 与 name 各不相同：
@@ -35,10 +36,11 @@
 | --- | --- | --- | --- |
 | `packages/dsh-client-ui-skin-ascii-rest` | `ui-skin-ascii-rest` | `@lionad/dsh-client-ui-skin-ascii-rest` | `skin.json`（皮肤管理器读取） |
 | `packages/dsh-jump` | `jump` | `dsh-jump` | 无独立清单，靠 `package.json` 的 `dsh` 字段 |
+| `packages/dsh-better-keybindings` | `better-keybindings` | `dsh-better-keybindings` | 无独立清单，靠 `package.json` 的 `dsh` 字段 |
 | `packages/dsh-tui-copy` | `dsh-tui-copy` | `dsh-tui-copy` | `dsh-plugin.json`（TUI 准入读取） |
 
 - 注意 `packages/dsh-jump/README.md` 的手工 patch 示例写的是 `id: dsh-jump`，与仓库内 `cordis.patch.yml` 的 `id: jump` 不一致；以文件为准（皮肤管理器只管皮肤那个 row 的 `disabled` 标志）
-- 安装方式 A（推荐）：profile 依赖（本机实测皮肤在 `~/.dsh/profiles/desktop/package.json`、jump 在 `~/.dsh/profiles/web/package.json`，均同时写 `dependencies` 与 `dsh.profile.bundles`，值为 `link:` 指向本仓）；方式 B：手工往 profile 的 `cordis.patch.yml` 追加 insert（顶层必须是 YAML 数组，只写注释会让 boot 失败）
+- 安装方式 A（推荐）：profile 依赖（本机实测皮肤在 `~/.dsh/profiles/desktop/package.json`、jump 在 `~/.dsh/profiles/web/package.json`、better-keybindings 在 `web` 与 `desktop` 两个 profile，均同时写 `dependencies` 与 `dsh.profile.bundles`，值为 `link:` 指向本仓）；方式 B：手工往 profile 的 `cordis.patch.yml` 追加 insert（顶层必须是 YAML 数组，只写注释会让 boot 失败）
 - `skin.json` 是皮肤管理器读取的清单：id `ascii-rest`、`bodyAttr: data-dsh-ascii-rest`、`dshCompatibility: 0.2.1rc2`、`wiring.bundleWired: false`、`wiring.id: ui-skin-ascii-rest`（与 patch row 对齐）、`order: 20`
 
 **dsh-tui 宿主（`packages/dsh-tui-copy`，本机实测 dsh-tui 0.16.1 / dsh 0.2.1-rc.2）：**

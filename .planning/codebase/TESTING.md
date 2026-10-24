@@ -1,30 +1,32 @@
 # 测试模式（Testing Patterns）
 
-更新: 2026-10-23
+更新: 2026-10-24
 
 ## 测试框架
 
 **运行器：**
 - vitest ^3.2.0（实测 v3.2.7）
-- 配置：三份 `vitest.config.ts`——`packages/dsh-client-ui-skin-ascii-rest/vitest.config.ts`、`packages/dsh-jump/vitest.config.ts`、`packages/dsh-tui-copy/vitest.config.ts`；三者内容同构：`environment: "node"` + include `test/**/*.test.ts`，jsdom 一律由测试手工 `new JSDOM()`。`packages/ascii-rest-scenes` 零配置，走 vitest 默认（node 环境、默认 include 仍能命中 `test/*.test.ts`）
+- 配置：四份 `vitest.config.ts`——`packages/dsh-client-ui-skin-ascii-rest/vitest.config.ts`、`packages/dsh-jump/vitest.config.ts`、`packages/dsh-better-keybindings/vitest.config.ts`、`packages/dsh-tui-copy/vitest.config.ts`；四者内容同构：`environment: "node"` + include `test/**/*.test.ts`，jsdom 一律由测试手工 `new JSDOM()`。`packages/ascii-rest-scenes` 零配置，走 vitest 默认（node 环境、默认 include 仍能命中 `test/*.test.ts`）
 
 **断言库：** vitest 内置 expect
 
 **运行命令：**
 ```bash
-pnpm test                                 # 根：pnpm -r test，递归四个包
+pnpm test                                 # 根：pnpm -r test，递归五个包
 pnpm --filter ascii-rest-scenes test      # 仅纯逻辑层
 pnpm --filter dsh-jump test               # 仅 web 跳跃插件
+pnpm --filter dsh-better-keybindings test # 仅 web/desktop 键盘修正
 pnpm --filter dsh-tui-copy test           # 仅 TUI /copy 插件
-pnpm typecheck                            # pnpm -r typecheck，四包 tsc 严格检查（质量门之二）
+pnpm typecheck                            # pnpm -r typecheck，五包 tsc 严格检查（质量门之二）
 ```
 
-**实测规模（2026-10-23 逐包 `vitest run` 核实，全绿）：**
+**实测规模（2026-10-24 逐包 `vitest run` 核实，全绿）：**
 - `ascii-rest-scenes`：4 文件 66 用例（palette 15、cover 22、catalog 8、options 21）
 - 皮肤包：6 文件 39 用例（bundle 8、scenes 7、tokens 10、regions 8、gui 3、surface 3）
 - `dsh-jump`：4 文件 36 用例（keys 15、app 10、hints 9、bundle 2）
+- `dsh-better-keybindings`：5 文件 60 用例（app 19、reveal 15、caret 12、keys 10、bundle 4）
 - `dsh-tui-copy`：6 文件 58 用例（clipboard 17、command 13、history 12、arguments 7、manifest 5、helper 4）
-- 合计 20 文件 199 用例（66 + 39 + 36 + 58）。本文旧版的「10 文件 105」是只有前两包时的口径；根 `README.md` 更早的「23 个测试」也是过期值，其开发章节现已写 20 文件 199 用例，与本次实测一致。
+- 合计 25 文件 259 用例（66 + 39 + 36 + 60 + 58）。本文旧版的「10 文件 105」是只有前两包时的口径；根 `README.md` 更早的「23 个测试」也是过期值，其开发章节现已写 25 文件 259 用例，与本次实测一致。
 - 口径说明：数字取自 vitest 的 `numTotalTests` /「Tests N passed」行，即 `it(...)` 实际执行数；四包当前都用裸 `it(`，没有 `it.each` / `test.each` 参数化，所以文件里 `it(` 的行数与用例数一致
 
 ## 测试文件组织
@@ -76,7 +78,8 @@ describe("catalog agreement", () => { /* … */ });
 
 **单元测试：** 主体。纯函数直接断言（palette 数学、cover 几何、归一化容错、`parseCopyInput` 语法、`collectTurns` 选择、`matchKey` 状态机）
 **集成测试：** 皮肤包 `test/bundle.test.ts`（356 行，本仓库王牌）：读构建出的 lib/ 真文件，`node:vm` + jsdom 手工扮演模块加载器，验证 id 注册、apply/inject/boot 导出、token 层、body 属性；另有 2.6s 用例逐场景分块跑帧，断言行宽恰为场景自己的 cols
-**交付形状测试（比皮肤包轻一档）：** `dsh-jump/test/bundle.test.ts`（25 行）不执行浏览器代码，只读 `lib/client.js` 断言文本标记——含 `window.__ModuleLoader__.load`、包名 id、以及 factory 返回对象必须有的 `name`/`inject`/`apply` 字样；`dsh-tui-copy/test/manifest.test.ts` 则以 `dsh-plugin.json` 导入 + `package.json` 对照，验证命令 id 末段、`commands.invoke` 的 scope、契约版本、`facets.host.entry` 与 `main` 一致、manifestVersion 钉住 0.15
+**纯算术 + DOM 接线两段（dsh-better-keybindings）：** `keys.ts`/`caret.ts`/`reveal.ts` 三份是纯函数测试，不建 jsdom——光标动作的映射、文本框行边界字符串算术、盒模型滚动增量都能用字面量直接断言；`app.ts` 才手工 `new JSDOM()` 并注入两样东西：桩 `Selection.modify`（jsdom 没有这个 API）与 `caretRect` 矩形提供者（jsdom 无布局引擎）。同一模块里 `toHaveLength(3)` 之外的关键断言是「`defaultPrevented === true` 且光标落点正确」——因为「拦住默认滚动」本身才是被测行为
+**交付形状测试（比皮肤包轻一档）：** `dsh-jump/test/bundle.test.ts`（25 行）与 `dsh-better-keybindings/test/bundle.test.ts`（36 行，另断言 `preventDefault` 与 `modify` 两个原语仍在产物里）不执行浏览器代码，只读 `lib/client.js` 断言文本标记——含 `window.__ModuleLoader__.load`、包名 id、以及 factory 返回对象必须有的 `name`/`inject`/`apply` 字样；`dsh-tui-copy/test/manifest.test.ts` 则以 `dsh-plugin.json` 导入 + `package.json` 对照，验证命令 id 末段、`commands.invoke` 的 scope、契约版本、`facets.host.entry` 与 `main` 一致、manifestVersion 钉住 0.15
 **真进程用例：** `dsh-tui-copy/test/helper.test.ts` 的 `runHelper` 直接用 `cat` / `sh -c "exit 3"` / 缺失程序名 / `sleep 30` 四个真进程，验证退出码透传、ENOENT 折成 `MISSING_TOOL`、以及约 2s 的 `HELPER_TIMEOUT_MS` 上限（实测该用例 2023ms，超时断言 `< 6000ms`，用例级 timeout 10s）；这是唯一会真等 2 秒的用例，故该包整体耗时 2.39s
 **E2E：** 未使用（无浏览器驱动、无终端会话录制）
 

@@ -1,20 +1,32 @@
 # 代码库关注点（Codebase Concerns）
 
-更新: 2026-10-23
+更新: 2026-10-24
 
 ## 技术债
 
 **README 测试数字靠手维护，无防漂移机制：**
-- 问题：`README.md` 开发一节写「`pnpm test` # 四个包递归，20 文件 199 用例」，这是 2026-10-23 实测值（`ascii-rest-scenes` 66 + `dsh-client-ui-skin-ascii-rest` 39 + `dsh-jump` 36 + `dsh-tui-copy` 58）；数字与代码无联动，下一个包或下一个测试文件就会让它再次过期。同类漂移此前出现过两次：根 README 曾写「23 个测试」，皮肤包 README 曾写「38 个用例」（实测 39，本次一并改为 39）
+- 问题：`README.md` 开发一节写「`pnpm test` # 五个包递归，25 文件 259 用例」，这是 2026-10-24 实测值（`ascii-rest-scenes` 66 + 皮肤 39 + `dsh-jump` 36 + `dsh-better-keybindings` 60 + `dsh-tui-copy` 58）；数字与代码无联动，下一个包或下一个测试文件就会让它再次过期。同类漂移已出现过三次：根 README 曾写「23 个测试」，皮肤包 README 曾写「38 个用例」，加第五个包时又整轮改了一次
 - 文件：`README.md`、`packages/dsh-client-ui-skin-ascii-rest/README.md`
 - 影响：低——误导新读者预期；三处数字各写各的，加一个用例就可能全漂
-- 修复路径：长期改成不写数字（「`pnpm test`，四包递归」），让计数只存在于 `.planning/codebase/TESTING.md`；或加一条测试断言文档数字与实测一致
+- 修复路径：长期改成不写数字（「`pnpm test`，五包递归」），让计数只存在于 `.planning/codebase/TESTING.md`；或加一条测试断言文档数字与实测一致
 
 **根 package.json 的 react/@types/react 依赖语义模糊：**
 - 问题：react ^19 放根 devDependencies，但产品代码从不打包它（构建 external，运行时取宿主副本）；实测全仓对 react 的唯一引用是 `packages/dsh-client-ui-skin-ascii-rest/src/client/page.ts` 的 `import type { ReactNode }`，没有值导入
 - 文件：`package.json`、`packages/dsh-client-ui-skin-ascii-rest/scripts/build.mjs`
 - 影响：极低，阅读成本项
 - 修复路径：可下沉到皮肤包 devDependencies 或注释说明「仅类型用」
+
+**dsh-better-keybindings 的富文本路径依赖 `Selection.modify`，jsdom 无法覆盖：**
+- 问题：富文本光标只能靠 `Selection.modify(alter, direction, granularity)` 移动——这是三家引擎内部用于 Home/End 的原语，也是唯一能正确处理 Lexical 节点树、bidi 与软换行的方案；但 jsdom 没有这个 API，单测里只能注入桩验证「调用参数正确」，无法验证「位移真的对」。文本框路径是纯字符串算术，可完整覆盖
+- 文件：`packages/dsh-better-keybindings/src/client/caret.ts`、`test/app.test.ts`
+- 影响：中——若浏览器行为变更或 modify 在某个引擎上语义不同，单测不会红。本轮用 playwright 在真实 Chromium 上做过人工验证（行边界、软换行、嵌套 span/br、Shift 扩选、Ctrl 跳到文档边界、光标可见性、聊天区不动），但这些验证不在 CI 里，也不覆盖 WebKit/Firefox
+- 修复路径：若将来加 E2E 基建，把这条真机断言搬进去；在那之前改 `caret.ts` 的富文本分支必须手动跑一次真机
+
+**dsh-better-keybindings 与宿主的耦合是 DOM 选择器，不是版本化契约：**
+- 问题：插件靠 `[data-composer-input]`（可编辑目标）、`[data-input-scroll]`（光标补齐目标）、`[data-conversation-scroll]`（必须排除的宿主滚动容器）三个属性选择器工作。这些属性目前由 `dsh-client-ui-chat` 与 composer 组件输出，但没有公开契约承诺它们存在
+- 文件：`packages/dsh-better-keybindings/src/client/app.ts` 的 `DEFAULT_EXCLUDE_SELECTOR`
+- 影响：中低——DSH 改属性名时，插件表现是「静默失效」或更糟：「补齐时开始动聊天区」。后者是本插件存在意义的反面，且不会有异常抛出来
+- 修复路径：补齐逻辑已经「宁可不动」——排除选择器命不中时最多回到浏览器默认的 scroll-into-view，不会再制造新 bug；但要在 DSH 升级后连同真机验证一起复查这三个选择器，`README.md` 的「Surface coverage」一节已写明这条依赖
 
 **无 lint/格式化基建：**
 - 问题：全仓无 ESLint/Prettier/Biome/EditorConfig 配置（实测根目录），风格纯靠约定
@@ -61,8 +73,8 @@
 
 ## 脆弱区域
 
-**三份 build 脚本，纪律都靠注释与人记住：**
-- 文件：`packages/dsh-client-ui-skin-ascii-rest/scripts/build.mjs`（ESM/CJS 双格式 + 34 分块 + 不可缩进）、`packages/dsh-jump/scripts/build.mjs`（host ESM / client CJS 套 `window.__ModuleLoader__.load`，默认导出要 `module.exports.default ?? module.exports` 解包）、`packages/dsh-tui-copy/scripts/build.mjs`（单文件 ESM，直接删掉整个 `lib/` 重写）
+**四份 build 脚本，纪律都靠注释与人记住：**
+- 文件：`packages/dsh-client-ui-skin-ascii-rest/scripts/build.mjs`（ESM/CJS 双格式 + 34 分块 + 不可缩进）、`packages/dsh-jump/scripts/build.mjs`（host ESM / client CJS 套 `window.__ModuleLoader__.load`，默认导出要 `module.exports.default ?? module.exports` 解包；`packages/dsh-better-keybindings/scripts/build.mjs` 是它的逐字副本，改一处要同步另一处）、`packages/dsh-tui-copy/scripts/build.mjs`（单文件 ESM，直接删掉整个 `lib/` 重写）
 - 脆弱原因：违反任何一条都是启动失败而非警告
 - 安全修改：改前先读对应测试。皮肤有 `test/bundle.test.ts` 把 lib/ 形状当契约、真执行分块；dsh-jump 的 `test/bundle.test.ts` 只读文本标记（2 用例）；dsh-tui-copy 没有 bundle 测试，`lib/index.js` 与 `src/` 失同步只能靠人肉发现
 
@@ -97,7 +109,7 @@
 
 **dsh-jump 的标签空间：** 单键 9、两键 81、三键 729（即不使用单键时，两键 + 三键合计可覆盖 810 个候选）。视口内候选超过 81 就进入混合长度区，即上文那条已知缺陷；超过 810 还会再混入四键。当前没有上限保护，也没有截断到前 N 个候选的逻辑。
 
-**交付物体量：** `lib/` 受版本控制文件 40 个（皮肤 37、dsh-jump 2、dsh-tui-copy 1），皮肤占 556K，两个新包各 12K。无增长压力。
+**交付物体量：** `lib/` 受版本控制文件 42 个（皮肤 37、dsh-jump 2、dsh-better-keybindings 2、dsh-tui-copy 1），皮肤占 556K，其余三个包合计约 27K。无增长压力。
 
 ## 风险依赖
 
@@ -126,6 +138,8 @@
 **dsh-jump 的 overlay 视觉层（74 行）：** 无直接测试文件。badge 定位、视口边缘夹取、`z-index`/`pointer-events`、pending 时的 1 / 0.3 透明度，只在 `test/app.test.ts` 里被间接断言（label 文本与 opacity 两个属性）；坐标取整与夹取分支没有用例。
 
 **dsh-jump 的入口与可见性判定：** `src/client/entry.ts` 的 `apply(ctx, config)` 两参契约无测试——a5414cc 修的正是这里（把 config 当第一参读会抛「cannot get property without inject」并拖垮整个 web boot），目前只有 bundle 的文本断言，等于修复没有回归钉。`defaultIsVisible`（`checkVisibility` / `offsetParent` / position:fixed 三分支）也没有用例：所有 app 测试都注入了 `isVisible`。
+
+**dsh-better-keybindings 的可见性补齐（`reveal.ts`）只有算术测试：** 15 个用例覆盖盒模型算式，但「真机上补完之后光标是否真的在视野里」没有自动化断言；真机验证过 `[data-input-scroll]` 场景，长 composer（30 行、内容超出容器）下光标确实可见。`reveal` 的 margin 取 4px，若宿主给 composer 加 padding 需要复查。
 
 **dsh-jump 的 bundle 测试偏弱：** 2 个用例、只读 `lib/client.js` 文本（`__ModuleLoader__.load`、包名、factory/name/inject/apply 字样），不执行代码；相比皮肤的 bundle 测试（8 用例，真把分块灌进 jsdom），它抓不到「包装对但运行即错」。
 
