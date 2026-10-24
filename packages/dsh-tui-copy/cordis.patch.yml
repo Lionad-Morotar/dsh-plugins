@@ -1,4 +1,0 @@
-# Enable dsh-tui-copy by inserting its Loader row.
-- insert:
-    - id: dsh-tui-copy
-      name: 'dsh-tui-copy'

@@ -190,7 +190,7 @@ export function registerCopyCommand(
       // attribution. Logged at info so a routine fallback stops looking like a
       // failure and drowning the warning that matters.
       const detail = error instanceof Error ? error.message : String(error);
-      ctx.logger?.info?.("dsh-tui-copy: registering /copy without Component attribution (" + detail + ")");
+      ctx.logger?.info?.("dsh-slash-commands: registering /copy without Component attribution (" + detail + ")");
     }
   }
 

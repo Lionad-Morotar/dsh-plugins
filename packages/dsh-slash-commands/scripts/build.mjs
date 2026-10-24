@@ -33,4 +33,4 @@ await rm(libRoot, { recursive: true, force: true });
 await mkdir(libRoot, { recursive: true });
 const { writeFile } = await import("node:fs/promises");
 await writeFile(join(libRoot, "index.js"), output.text, "utf8");
-console.log("dsh-tui-copy: wrote lib/index.js");
+console.log("dsh-slash-commands: wrote lib/index.js");

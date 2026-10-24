@@ -194,7 +194,7 @@ function registerCopyCommand(ctx, environment, effects) {
       return host.registerCommand(ctx, definition);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      ctx.logger?.info?.("dsh-tui-copy: registering /copy without Component attribution (" + detail + ")");
+      ctx.logger?.info?.("dsh-slash-commands: registering /copy without Component attribution (" + detail + ")");
     }
   }
   const commands = ctx.get("commands");
@@ -205,7 +205,7 @@ function registerCopyCommand(ctx, environment, effects) {
 }
 
 // src/index.ts
-var name = "dsh-tui-copy";
+var name = "dsh-slash-commands";
 var inject = ["commands"];
 var HELPER_TIMEOUT_MS = 2e3;
 async function runHelper(command, args, text) {
@@ -255,7 +255,7 @@ function apply(ctx) {
       ctx.logger?.info?.("/copy is ready: /copy [<number=1>] --all");
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      ctx.logger?.warn?.("dsh-tui-copy: /copy is unavailable on this composition: " + detail);
+      ctx.logger?.warn?.("dsh-slash-commands: /copy is unavailable on this composition: " + detail);
     }
   }, 0);
 }

@@ -1,5 +1,5 @@
 /**
- * Host half of dsh-tui-copy.
+ * Host half of dsh-slash-commands.
  *
  * The Loader mounts a plugin by package name; this half owns the one
  * registration the package makes. `inject` names `commands` because the plugin
@@ -17,7 +17,7 @@ import { MISSING_TOOL } from "./clipboard.ts";
 import { registerCopyCommand } from "./command.ts";
 import type { ClipboardEffects, HostContextLike } from "./command.ts";
 
-export const name = "dsh-tui-copy";
+export const name = "dsh-slash-commands";
 export const inject = ["commands"];
 
 /** The Cordis surface this plugin uses; spelled structurally so the package
@@ -103,7 +103,7 @@ export function apply(ctx: PluginContext): void {
       ctx.logger?.info?.("/copy is ready: /copy [<number=1>] --all");
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      ctx.logger?.warn?.("dsh-tui-copy: /copy is unavailable on this composition: " + detail);
+      ctx.logger?.warn?.("dsh-slash-commands: /copy is unavailable on this composition: " + detail);
     }
   }, 0);
 }

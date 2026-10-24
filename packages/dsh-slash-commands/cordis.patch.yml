@@ -1,0 +1,4 @@
+# Enable dsh-slash-commands by inserting its Loader row.
+- insert:
+    - id: dsh-slash-commands
+      name: 'dsh-slash-commands'

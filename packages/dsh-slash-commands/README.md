@@ -1,6 +1,6 @@
-# dsh-tui-copy
+# dsh-slash-commands
 
-在 dsh-tui 里用 `/copy` 把最近几轮的最终回复放进系统剪贴板，省掉从终端里划选的动作。
+DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回复放进系统剪贴板，web 与 desktop 用 `/rename` 改当前会话标题。
 
 ## 用法
 
@@ -44,8 +44,8 @@ SSH 会话里绝不尝试 `native`：那会写远端机器的剪贴板，写了�
 ```json
 // ~/.dsh/profiles/dsh-tui/package.json
 {
-  "dependencies": { "dsh-tui-copy": "link:/path/to/dsh-plugins/packages/dsh-tui-copy" },
-  "dsh": { "profile": { "bundles": ["...", "dsh-tui-copy"] } }
+  "dependencies": { "dsh-slash-commands": "link:/path/to/dsh-plugins/packages/dsh-slash-commands" },
+  "dsh": { "profile": { "bundles": ["...", "dsh-slash-commands"] } }
 }
 ```
 
@@ -57,8 +57,8 @@ SSH 会话里绝不尝试 `native`：那会写远端机器的剪贴板，写了�
 
 ```yaml
 - insert:
-    - id: dsh-tui-copy
-      name: 'dsh-tui-copy'
+    - id: dsh-slash-commands
+      name: 'dsh-slash-commands'
 ```
 
 ## 实现要点
