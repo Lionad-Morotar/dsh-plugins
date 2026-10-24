@@ -1,12 +1,22 @@
 /**
  * Host half of dsh-slash-commands.
  *
- * The Loader mounts a plugin by package name; this half owns the one
- * registration the package makes. `inject` names `commands` because the plugin
- * row activates as soon as its own layer mounts while the command registry is
- * mounted by a different row: without the declaration `apply` can run before
- * the service exists, register nothing, and leave the plugin installed but
- * inert (observed on the first real launch).
+ * One package, one host half, two commands with different homes:
+ *
+ * - `/rename` registers on the harness-wide `commands` registry. Every UI
+ *   adapter reads that catalog over the same remote surface, so this single
+ *   registration is what makes the command visible on web, desktop and TUI at
+ *   once. It needs no terminal.
+ * - `/copy` needs the TUI's terminal: its OSC 52 escape and clipboard helpers
+ *   only mean anything there. It registers through `tuiPluginHost` when the
+ *   composition admits third-party activations, falling back to the plain
+ *   registry otherwise.
+ *
+ * `inject` names `commands` because the plugin row activates as soon as its own
+ * layer mounts while the command registry is mounted by a different row:
+ * without the declaration `apply` can run before the service exists, register
+ * nothing, and leave the plugin installed but inert (observed on the first real
+ * launch).
  *
  * Registration is deferred one macrotask for the same reason on the other side:
  * `tuiPluginHost` is mounted by yet another row and is still absent when `apply`
@@ -16,9 +26,17 @@
 import { MISSING_TOOL } from "./clipboard.ts";
 import { registerCopyCommand } from "./command.ts";
 import type { ClipboardEffects, HostContextLike } from "./command.ts";
+import { registerRenameCommand } from "./rename-command.ts";
 
 export const name = "dsh-slash-commands";
-export const inject = ["commands"];
+
+/**
+ * Cordis refuses a service read from a plugin that did not declare it, so both
+ * services this package touches are listed here. `sessionTitle` is what
+ * `/rename` writes through; without the declaration the read throws a
+ * gateway-level contract error and the command reports itself unavailable.
+ */
+export const inject = ["commands", "sessionTitle"];
 
 /** The Cordis surface this plugin uses; spelled structurally so the package
  *  keeps no runtime dependency on the harness' internal type packages. */
@@ -88,13 +106,50 @@ function writeRaw(sequence: string): void {
   process.stdout.write(sequence);
 }
 
+/**
+ * Whether this process is the terminal front end.
+ *
+ * The split matters because the two commands are not interchangeable across
+ * surfaces: `/copy` writes the clipboard of the machine running this process
+ * (native helper, tmux buffer, OSC 52 escape), which on a web or desktop host is
+ * a server the user is not sitting at. Offering it there would be a command that
+ * silently copies into the wrong clipboard, so it is registered only where a
+ * terminal is the actual UI.
+ *
+ * The check is the terminal capability, not the profile name: any composition
+ * that mounts TUI's plugin host is a terminal, whatever the profile is called.
+ */
+function isTerminalSurface(ctx: PluginContext): boolean {
+  return ctx.get("tuiPluginHost", false) !== undefined || ctx.get("tuiToast", false) !== undefined;
+}
+
 export function apply(ctx: PluginContext): void {
   const environment = { platform: process.platform, env: { ...process.env } };
   const effects: ClipboardEffects = { write: writeRaw, exec: runHelper };
 
+  // `/rename` changes a session title through the harness-wide registry, so it
+  // is surface-independent and goes in immediately: the macrotask delay below
+  // exists for `tuiPluginHost`, which this command never touches.
+  try {
+    registerRenameCommand(ctx);
+    ctx.logger?.info?.("/rename is ready: /rename <new title>");
+  } catch (error) {
+    // A composition can mount its command surfaces differently; logged rather
+    // than thrown so the terminal half still gets its chance.
+    const detail = error instanceof Error ? error.message : String(error);
+    ctx.logger?.info?.("dsh-slash-commands: /rename is unavailable on this composition: " + detail);
+  }
+
   // One macrotask later the host row is mounted; registering from the same
   // tick as `apply` always missed it.
   setTimeout(() => {
+    if (!isTerminalSurface(ctx)) {
+      // Deliberately silent registration-free exit: on web and desktop the only
+      // clipboard worth writing is the browser's own, which those surfaces
+      // already provide. Registering anyway would put a dead command in the
+      // palette.
+      return;
+    }
     try {
       // The live activation context goes to registration untouched: the
       // mediated path validates the Cordis activation marker on it, which a

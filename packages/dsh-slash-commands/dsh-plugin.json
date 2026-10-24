@@ -24,6 +24,11 @@
       "name": "commands.invoke",
       "scope": "lionad.dsh-slash-commands.copy",
       "reason": "/copy 由用户手动发起，只读当前会话历史并写系统剪贴板"
+    },
+    {
+      "name": "commands.invoke",
+      "scope": "lionad.dsh-slash-commands.rename",
+      "reason": "/rename 由用户手动发起，只改当前会话的标题"
     }
   ],
   "contributes": {
@@ -32,6 +37,11 @@
         "id": "lionad.dsh-slash-commands.copy",
         "title": "/copy",
         "description": "Copy the last n assistant replies to the system clipboard (--all also includes your prompts)"
+      },
+      {
+        "id": "lionad.dsh-slash-commands.rename",
+        "title": "/rename",
+        "description": "Rename the current session (web and desktop; the TUI ships its own /rename)"
       }
     ]
   },

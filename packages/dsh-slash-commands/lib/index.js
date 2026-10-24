@@ -204,9 +204,77 @@ function registerCopyCommand(ctx, environment, effects) {
   return commands.register(definition);
 }
 
+// src/rename.ts
+var RENAME_COMMAND_NAME = "rename";
+var RENAME_COMMAND_DESCRIPTION = "Rename the current session";
+var RENAME_USAGE = "\u7528\u6CD5\uFF1A/rename <\u65B0\u6807\u9898>";
+function parseRenameInput(rawInput) {
+  const title = rawInput.trim();
+  if (title.length === 0) return { ok: false, message: RENAME_USAGE };
+  return { ok: true, title };
+}
+
+// src/rename-command.ts
+function titleServiceOf(ctx) {
+  const direct = ctx.sessionTitle;
+  if (direct !== void 0) return direct;
+  const viaGet = ctx.get?.("sessionTitle", false);
+  return typeof viaGet === "object" && viaGet !== null ? viaGet : void 0;
+}
+function titleRejectionOf(error) {
+  const name2 = typeof error === "object" && error !== null ? error.name : void 0;
+  if (name2 === "SessionTitleInvalidError") return "invalid";
+  const message = error instanceof Error ? error.message : String(error);
+  return /is not live|disposed|not active/iu.test(message) ? "not-live" : "disposed";
+}
+function rejectionMessage(rejection) {
+  switch (rejection) {
+    case "invalid":
+      return "/rename \u6807\u9898\u4E0D\u80FD\u4E3A\u7A7A\uFF08\u53BB\u6389\u9996\u5C3E\u7A7A\u767D\u540E\u6CA1\u6709\u53EF\u89C1\u5B57\u7B26\uFF09";
+    case "not-live":
+      return "/rename \u5F53\u524D\u4F1A\u8BDD\u4E0D\u5728\u6D3B\u52A8\u72B6\u6001\uFF0C\u65E0\u6CD5\u6539\u540D";
+    case "disposed":
+      return "/rename \u4F1A\u8BDD\u6807\u9898\u670D\u52A1\u5DF2\u505C\u7528\uFF0C\u65E0\u6CD5\u6539\u540D";
+  }
+}
+function createRenameCommand(ctx) {
+  return {
+    name: RENAME_COMMAND_NAME,
+    description: RENAME_COMMAND_DESCRIPTION,
+    // The TUI wraps hints in its own brackets; keep this one bracket-free.
+    input: { hint: "<new title>" },
+    handler(invocation) {
+      const parsed = parseRenameInput(invocation.rawInput);
+      if (!parsed.ok) return { kind: "error", text: parsed.message };
+      const service = titleServiceOf(ctx);
+      if (typeof service?.rename !== "function") {
+        return { kind: "error", text: "/rename \u9700\u8981 session-title \u670D\u52A1\uFF0C\u5F53\u524D\u7EC4\u5408\u6CA1\u6709\u6302\u8F7D\u5B83" };
+      }
+      const session = invocation.agent.session;
+      if (session === void 0) {
+        return { kind: "error", text: "/rename \u5F53\u524D\u4F1A\u8BDD\u4E0D\u53EF\u7528\uFF0C\u65E0\u6CD5\u6539\u540D" };
+      }
+      try {
+        const snapshot = service.rename(session, parsed.title);
+        return { kind: "success", text: "\u4F1A\u8BDD\u5DF2\u6539\u540D\u4E3A\uFF1A" + snapshot.title };
+      } catch (error) {
+        return { kind: "error", text: rejectionMessage(titleRejectionOf(error)) };
+      }
+    }
+  };
+}
+function registerRenameCommand(ctx) {
+  const definition = createRenameCommand(ctx);
+  const commands = ctx.get?.("commands", false) ?? ctx.commands;
+  if (typeof commands?.register !== "function") {
+    throw new Error("/rename cannot register: the commands service is not mounted on this context");
+  }
+  return commands.register(definition);
+}
+
 // src/index.ts
 var name = "dsh-slash-commands";
-var inject = ["commands"];
+var inject = ["commands", "sessionTitle"];
 var HELPER_TIMEOUT_MS = 2e3;
 async function runHelper(command, args, text) {
   const { spawn } = await import("node:child_process");
@@ -246,10 +314,23 @@ async function runHelper(command, args, text) {
 function writeRaw(sequence) {
   process.stdout.write(sequence);
 }
+function isTerminalSurface(ctx) {
+  return ctx.get("tuiPluginHost", false) !== void 0 || ctx.get("tuiToast", false) !== void 0;
+}
 function apply(ctx) {
   const environment = { platform: process.platform, env: { ...process.env } };
   const effects = { write: writeRaw, exec: runHelper };
+  try {
+    registerRenameCommand(ctx);
+    ctx.logger?.info?.("/rename is ready: /rename <new title>");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    ctx.logger?.info?.("dsh-slash-commands: /rename is unavailable on this composition: " + detail);
+  }
   setTimeout(() => {
+    if (!isTerminalSurface(ctx)) {
+      return;
+    }
     try {
       registerCopyCommand(ctx, environment, effects);
       ctx.logger?.info?.("/copy is ready: /copy [<number=1>] --all");

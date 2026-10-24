@@ -6,22 +6,23 @@ import { describe, expect, it } from "vitest";
 
 import manifest from "../dsh-plugin.json" with { type: "json" };
 import { COPY_COMMAND_NAME } from "../src/command.ts";
+import { RENAME_COMMAND_NAME } from "../src/rename.ts";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("the admission manifest", () => {
-  it("declares the command the plugin actually registers", () => {
+  it("declares the commands the plugin actually registers", () => {
     const ids = manifest.contributes.commands.map((command: { id: string }) => command.id);
     // The host resolves a command by the last dotted segment of its declared
     // contribution id, so a mismatch here is a command that never dispatches.
-    expect(ids.map((id: string) => id.split(".").at(-1))).toEqual([COPY_COMMAND_NAME]);
+    expect(ids.map((id: string) => id.split(".").at(-1))).toEqual([COPY_COMMAND_NAME, RENAME_COMMAND_NAME]);
   });
 
-  it("scopes commands.invoke to exactly that contribution", () => {
+  it("scopes commands.invoke to exactly those contributions", () => {
     const scopes = manifest.permissions
       .filter((permission: { name: string }) => permission.name === "commands.invoke")
       .map((permission: { scope: string }) => permission.scope);
-    expect(scopes).toEqual([manifest.contributes.commands[0]?.id]);
+    expect(scopes).toEqual(manifest.contributes.commands.map((command: { id: string }) => command.id));
   });
 
   it("requires the contract its command registration needs", () => {
