@@ -25,6 +25,10 @@
 | 一轮（round） | dsh-tui-copy 的复制单位：一次完整交流，取该轮最后一条非空正文回复；同轮内的注入消息（文件变更通知、技能正文、cron 通知）不算发言 |
 | 剪贴板三路（native / tmux-buffer / osc52） | dsh-tui-copy 一次复制并发触发的三条落地路径：本地工具（pbcopy 等）、tmux 缓冲、终端转义序列。只有 native 与 tmux 能靠退出码确认成功 |
 | dsh-plugin.json | Community Draft 0.15 清单形态：声明 facets/requires/permissions/contributes，宿主按 `commands.invoke` 逐插件管控命令 |
+| 光标动作（caret action） | better-keybindings 的纯映射输出：方向（forward/backward）+ 粒度（lineboundary/documentboundary）+ 是否扩选（extend）。键事件到该结构的转换不碰 DOM |
+| 行边界（line boundary） | 一次 Home/End 的落点口径。文本框按 `\n` 字符串算术求，富文本交给 `Selection.modify` 的 lineboundary，两者都不按视觉换行切 |
+| 目标分类（caretTarget） | 事件目标的三种归类：`text-field`（textarea 与文本类 input）、`contenteditable`、`none`。none 表示这条 Home/End 不是本插件的 |
+| 光标补齐（reveal） | 取消默认动作后浏览器不再做 scroll-into-view，由插件用盒模型算术把光标滚回可见区；会话滚动容器被显式排除在补齐范围外 |
 
 ## ADR 布局
 
@@ -41,3 +45,9 @@
 背景：web 客户端与 TUI 的宿主契约完全不同——web 侧需要 ModuleLoader 工厂与 browser bundle，TUI 侧需要 `commands` 服务注册与 Node 进程能力。
 决策：一个包只服务一个 profile。dsh-jump 是 web-only（`dsh.client.platform: web`），dsh-tui-copy 是 TUI-only（无 client 入口）。共用逻辑若出现，抽独立纯逻辑包而不是把两半塞进一个包。
 后果：包数量随 profile 增长；换来每个包的构建目标、依赖面与失败面都单一，装错 profile 时表现为「不生效」而非「启动失败」。
+
+### ADR-3: 键盘修正靠取消默认动作 + 浏览器自己的 Selection.modify
+
+背景：输入框（含 Lexical 富文本 composer）里按 Home/End 时，Chromium 执行的是「移动光标，再把所有可滚动祖先滚进视野」。在 DSH 里最近的祖先正是 `[data-conversation-scroll]`，于是聊天区被滚到顶/底而光标没动；光标已在边界时再按一次，只剩滚动可做，因此会反复滚动。同一个按键在纯 DOM 复现里把滚动容器从 589 拖到 0。
+决策：在 window 捕获阶段拦下可编辑目标上的 Home/End，一律 `preventDefault`，然后自己执行移动：文本框用字符串算行边界并调 `setSelectionRange`；富文本调 `Selection.modify(alter, direction, granularity)`，粒度按是否持有 Ctrl/Meta 取 lineboundary 或 documentboundary。取消默认动作同时取消了 scroll-into-view，因此由插件用盒模型算术补齐光标可见性，并显式排除会话滚动容器。
+后果：文本框方案完全可单测（纯字符串）；富文本方案依赖 `Selection.modify`，这是三家引擎内部用于 Home/End 的原语，天然处理 bidi 与软换行，但 jsdom 没有它，测试里只能注入桩、靠真机浏览器验证。规则一旦要支持别的键位，仍需同样走捕获阶段，否则 UI 会在默认动作之后才拿到事件。

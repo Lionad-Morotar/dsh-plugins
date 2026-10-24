@@ -1,6 +1,6 @@
 # Agents.md
 
-Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。四个包、三种形态：DSH 客户端 UI 皮肤 `@lionad/dsh-client-ui-skin-ascii-rest`（把 ascii.rest 的 ASCII 场景渲染为工作区背景，随亮暗主题换配色）与其纯逻辑层 `ascii-rest-scenes`（场景目录、cover 取景、调色板、设置归一化，DOM-free）；web 端键盘跳跃导航 `dsh-jump`；TUI 端 `/copy` 剪贴板命令 `dsh-tui-copy`。
+Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。五个包、四形态：DSH 客户端 UI 皮肤 `@lionad/dsh-client-ui-skin-ascii-rest`（把 ascii.rest 的 ASCII 场景渲染为工作区背景，随亮暗主题换配色）与其纯逻辑层 `ascii-rest-scenes`（场景目录、cover 取景、调色板、设置归一化，DOM-free）；web 端键盘跳跃导航 `dsh-jump`；web 与 desktop 共用的键盘修正 `dsh-better-keybindings`（输入框聚焦时 Home/End 移动光标而非滚动聊天区）；TUI 端 `/copy` 剪贴板命令 `dsh-tui-copy`。
 
 共同发行模型：Loader row 经 `cordis.patch.yml` 注入，`lib/` 构建产物提交入库，profile 安装态不跑构建。
 
@@ -26,6 +26,7 @@ Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。四个包、三种�
 | --- | --- |
 | `dsh-client-ui-skin-ascii-rest` | [README](./packages/dsh-client-ui-skin-ascii-rest/README.md)：皮肤配置面、分区透出与摆放 |
 | `dsh-jump` | [README](./packages/dsh-jump/README.md)：跳跃导航用法、v1 边界、web profile 安装 |
+| `dsh-better-keybindings` | [README](./packages/dsh-better-keybindings/README.md)：Home/End 光标语义、三端覆盖边界、web 与 desktop profile 安装 |
 | `dsh-tui-copy` | [README](./packages/dsh-tui-copy/README.md)：`/copy` 用法、剪贴板三路路径、TUI 安装 |
 
 你可以自行读取项目上下文文档，更新时也优先更新相关文档。
