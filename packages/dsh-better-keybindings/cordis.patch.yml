@@ -1,0 +1,4 @@
+# Enable dsh-better-keybindings by inserting its Loader row.
+- insert:
+    - id: better-keybindings
+      name: 'dsh-better-keybindings'
