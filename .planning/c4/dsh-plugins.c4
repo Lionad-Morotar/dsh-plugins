@@ -104,12 +104,18 @@ model {
       }
     }
 
-    container tuiCopy "dsh-tui-copy" {
-      description "tui profile 的 /copy 命令：把最近 n 轮回复并发写进三条剪贴板路径"
+    container tuiCopy "dsh-slash-commands" {
+      description "三端 slash 命令：tui 的 /copy 把最近 n 轮回复并发写进三条剪贴板路径，web 与 desktop 的 /rename 改会话标题"
       technology "TypeScript + esbuild，纯 host 半边，ESM 单文件 lib/index.js"
 
       component tuiEntry "src/index" {
-        description "宿主 apply 本体：inject commands、注册延后一宏任务、helper 统一 2 秒上限"
+        description "宿主 apply 本体：inject commands 与 sessionTitle、按终端能力分派哪条命令注册、/copy 注册延后一宏任务、helper 统一 2 秒上限"
+      }
+      component rename "rename" {
+        description "参数文法 /rename <title>：只去首尾空白，空标题按用法错误拒绝"
+      }
+      component renameCommand "rename-command" {
+        description "改名命令组装：标题交给 sessionTitle 归一化，失败按输入非法/会话不在活动态/服务停用分三类"
       }
       component command "command" {
         description "命令组装与注册：宿主中介优先，未准入回落 commands.register"
@@ -124,12 +130,12 @@ model {
         description "剪贴板三路并发：native / tmux-buffer / OSC 52，如实报 attempted/landed/degraded"
       }
       component manifest "dsh-plugin.json" {
-        description "TUI 准入清单（Community Draft 0.15）：声明 /copy 命令与 commands.invoke 权限"
+        description "准入清单（Community Draft 0.15）：声明 /copy 与 /rename 两条命令及各自的 commands.invoke 权限"
       }
     }
 
     container keybindings "dsh-better-keybindings" {
-      description "web 与 desktop 共用的键盘修正：输入框聚焦时 Home/End 移动光标到行首行尾，不再滚动聊天区"
+      description "web 与 desktop 共用的键盘修正：Home/End 移动光标而非滚动聊天区，PageUp/PageDown 改为半屏翻页"
       technology "TypeScript + esbuild，纯 client 半边，运行期零三方依赖"
 
       component kbEntry "client/entry" {
@@ -139,13 +145,13 @@ model {
         description "接线与全部 DOM 副作用：判目标、preventDefault、移动光标、补齐光标可见性、对称 teardown"
       }
       component kbKeys "client/keys" {
-        description "事件到光标动作的纯映射：行/文档粒度、是否扩选、目标分类"
+        description "事件到动作的纯映射：光标（行/文档粒度、是否扩选）与半屏翻页各一个入口，含目标分类与转录区命中判定"
       }
       component kbCaret "client/caret" {
         description "两套光标原语：文本框走字符串算术，富文本走 Selection.modify(lineboundary)"
       }
       component kbReveal "client/reveal" {
-        description "被抑制的 scroll-into-view 的替代：盒模型算术算最小滚动增量，聊天滚动容器显式排除"
+        description "两套滚动算术：光标补齐（最小增量，聊天滚动容器显式排除）与翻页落点（半屏、两端钳制、无位移不写）"
       }
     }
   }
@@ -204,7 +210,7 @@ model {
   jump.jumpApp -> jump.overlay "render(hints, pending) / destroy"
   jump.jumpApp -> dshHost "捕获阶段吞掉自己拥有的 keydown，不漏给宿主快捷键"
 
-  dshHost -> tuiCopy "Loader row 注入（id: dsh-tui-copy），加载 lib/index.js"
+  dshHost -> tuiCopy "Loader row 注入（id: dsh-slash-commands），加载 lib/index.js"
   tuiCopy.tuiEntry -> tuiCopy.command "延后一宏任务后调 registerCopyCommand"
   tuiCopy.command -> tuiCopy.args "parseCopyInput 解析文法"
   tuiCopy.command -> tuiCopy.history "collectTurns 选轮次，renderTurns 渲染"
