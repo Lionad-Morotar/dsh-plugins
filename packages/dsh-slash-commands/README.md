@@ -2,7 +2,25 @@
 
 DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回复放进系统剪贴板，web 与 desktop 用 `/rename` 改当前会话标题。
 
-## 用法
+## 命令归属
+
+三条端装的都是同一个包，但命令本身按端分派（判据是终端能力，不是 profile 名）：
+
+| 命令 | TUI | web | desktop | 说明 |
+| --- | --- | --- | --- | --- |
+| `/copy` | 有 | 无 | 无 | 写的是本机剪贴板，装到 web/desktop 上会是复制进用户永远粘不到的地方的死命令，因此只在终端组合注册 |
+| `/rename` | TUI 自带同名命令 | 有 | 有 | 走 harness 全局的命令注册表，一处注册三端可见。TUI 的本地命令表会遮蔽同名注册项，所以 TUI 侧始终用自带的那个 |
+
+## `/rename`
+
+```
+/rename 修复解析器边界#42      # 整行剩余部分即新标题
+/rename                        # 缺标题，回用法
+```
+
+标题只去首尾空白，中间的空格原样保留（那是你的措辞，不该被改写）。归一化与长度上限交给 `session-title` 服务，插件不重复实现一遍「什么算合法标题」。失败分三类说清：标题为空、会话不在活动状态、标题服务已停用。
+
+## `/copy`
 
 ```
 /copy          # 最近 1 轮的最终回复
@@ -37,7 +55,9 @@ SSH 会话里绝不尝试 `native`：那会写远端机器的剪贴板，写了�
 
 ## 安装
 
-包根带 `dsh-plugin.json`（Community Draft 0.15），会把 `/copy` 作为声明式命令贡献给 TUI 并申请 `commands.invoke`。
+包根带 `dsh-plugin.json`（Community Draft 0.15），把 `/copy` 与 `/rename` 作为声明式命令贡献出去，并各自申请 `commands.invoke` 权限。
+
+装到哪个 profile 取决于要哪些命令：只有 tui profile 能拿到 `/copy`，`/rename` 三端都有。
 
 **A. 以 profile 依赖安装（推荐）**
 
@@ -67,7 +87,8 @@ SSH 会话里绝不尝试 `native`：那会写远端机器的剪贴板，写了�
 - `src/history.ts` 从会话日志选轮次并渲染，纯函数，不碰终端。
 - `src/clipboard.ts` 是剪贴板三档路径，effects 全注入，每个分支都能在无终端环境下测。
 - `src/command.ts` 组装命令；优先走宿主中介的 `tuiPluginHost.registerCommand`（命令会带插件身份，宿主能按 `commands.invoke` 逐插件管控），未准入时回落到 `commands.register`，让命令仍然可用。本机 dsh-tui 组合实测未向第三方激活授予 Component 身份（`componentIdentityOf` 返回 undefined），因此实际走的是回落路径，命令可用但不带归属。
-- `src/index.ts` 是宿主半，`inject = ['commands']`：插件行的激活时机早于命令服务挂载，不声明依赖会出现 `apply` 先跑、注册不到、装完即失效（首次真机启动即如此）。注册再延后一个宏任务，因为 `tuiPluginHost` 由另一行挂载，`apply` 时它还不存在（实测 apply 时缺失、约 250ms 后出现）。注册失败时 `apply` 的 catch 会 warn。
+- `src/rename.ts` 是 `/rename` 的文法（纯函数），`src/rename-command.ts` 组装命令并把标题交给 `sessionTitle`。
+- `src/index.ts` 是宿主半，`inject = ['commands', 'sessionTitle']`，两者都必须声明：漏了 `sessionTitle` 时 Cordis 抛 gateway 契约错误，被 catch 吞掉后表现为「命令执行失败」却给不出原因；`commands` 则是插件行激活早于命令服务挂载，不声明会出现 `apply` 先跑、注册不到、装完即失效（首次真机启动即如此）。它还决定端别分派：探到终端服务才注册 `/copy`，`/rename` 无条件注册。注册再延后一个宏任务，因为 `tuiPluginHost` 由另一行挂载，`apply` 时它还不存在（实测 apply 时缺失、约 250ms 后出现）。
 
 `lib/` 是构建产物且**要提交**：harness 从安装包直接读它，不会替你跑构建。改了 `src/` 就 `pnpm build` 再提交。
 

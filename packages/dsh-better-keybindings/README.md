@@ -1,7 +1,8 @@
 # dsh-better-keybindings
 
-Keyboard fixes for the DeepSeek Harness client. One job today: make Home and
-End move the caret when you are typing, instead of yanking the conversation.
+Keyboard fixes for the DeepSeek Harness client. Two jobs: make Home and End
+move the caret when you are typing instead of yanking the conversation, and
+make PageUp/PageDown page by half a screen so reading keeps its place.
 
 ## The bug
 
@@ -30,12 +31,29 @@ and performs the move itself:
 | Shift+Home / Shift+End | Extend the selection to that boundary |
 | Alt+Home / Alt+End | Left alone (the host owns those chords) |
 | Home / End with no editable focused | Left alone: the chat area keeps its scrolling |
+| PageUp / PageDown | Scroll the transcript by half a viewport |
+| Alt+PageUp / Alt+PageDown | Left alone |
 
 Rich text goes through `Selection.modify(alter, direction, granularity)`, the
 primitive browsers use internally for these keys. It is the only approach that
 survives the composer's node tree (Lexical spans, line breaks, zero-width
 spacers) and it gets bidi and soft wrapping right, which a hand-rolled node walk
 does not. Text fields use plain string arithmetic on their selection API.
+
+## Why half a page
+
+A full-viewport page shares no row between before and after: the line you were
+reading leaves the screen and you have to find it again. Half a page always
+keeps half the previous screen in view, which is what makes paging readable at
+speed. `pageTarget` computes and clamps the landing itself rather than handing
+the job to `scrollBy`, because writing the same `scrollTop` at either end still
+fires a scroll event that the host attributes to a reading intent.
+
+The stroke is claimed in the two situations that mean "page the transcript":
+the target is editable (its ancestors include the scrollport), or the stroke
+landed inside the scrollport / was reported against BODY (clicking the
+transcript focuses nothing, which is the ordinary reading state). Paging aimed
+at another scroll surface (a sidebar list, a picker, a menu) stays native.
 
 Because cancelling the keydown also cancels the browser's scroll-into-view, the
 plugin reveals the caret itself. The conversation scrollport is explicitly
@@ -47,10 +65,14 @@ is "stop scrolling the chat" must never scroll it as a side effect.
 
 - Web GUI: covered by this package.
 - Desktop app: covered, because the desktop shell runs the same client bundles.
-- TUI: nothing to fix. `@deepseek-harness-tui/dsh-tui` implements Home/End
-  per line in its own `PromptInput` (`key.home` -> `lastIndexOf("\\n")`), its
-  transcript never binds these keys, and it exposes no plugin seam for
-  rebinding them anyway. This package is web-only on purpose.
+- TUI: Home/End needs nothing. `@deepseek-harness-tui/dsh-tui` implements
+  Home/End per line in its own `PromptInput` (`key.home` ->
+  `lastIndexOf("\n")`), and its transcript never binds these keys.
+- TUI half-page paging: not covered here. The page size is hardcoded in the
+  TUI's `Chat` and `PromptInput`, and its plugin shortcut registry refuses bare
+  PageUp/PageDown, so there is no seam a plugin can use. It is applied through
+  the profile's `patchedDependencies` instead (see `.planning/codebase/CONCERNS.md`).
+  This package is web-only on purpose.
 
 ## Install (web profile)
 

@@ -10,7 +10,7 @@
 | profile | DSH 的用户配置目录形态（如 `~/.dsh/profiles/desktop`、`web`、`dsh-tui`），经 `dsh plugin --profile <name> install` 安装插件 |
 | Loader row | DSH 配置中声明插件启用的一条记录；`cordis.patch.yml` 以 insert 方式注入 |
 | cordis.patch.yml | 各插件包自带的 patch 文件，向 profile 的 patch 数组追加 Loader row；顶层必须是 YAML 数组 |
-| host 半边 / client 半边 | 插件按运行环境切分的两半：host 跑在 DSH 进程（Node），client 跑在 web 客户端浏览器。皮肤与 dsh-jump 有两半（host 为空壳），dsh-tui-copy 只有 host 半边 |
+| host 半边 / client 半边 | 插件按运行环境切分的两半：host 跑在 DSH 进程（Node），client 跑在 web 客户端浏览器。皮肤与 dsh-jump 有两半（host 为空壳），dsh-slash-commands 只有 host 半边 |
 | ModuleLoader 工厂 | web 客户端半边的加载契约：`window.__ModuleLoader__.load({id, factory})`，`id` 必须等于包名，factory 返回 `{name, inject, apply}` |
 | 皮肤（skin） | 替换 DSH 客户端工作区背景/配色的 UI 插件；`skin.json` 描述皮肤元数据 |
 | 场景（scene） | ascii.rest 的一个 ASCII 图形作品；皮肤内置 34 个场景，可在设置页切换 |
@@ -22,8 +22,10 @@
 | 跳跃模式（jump mode） | dsh-jump 的激活态：视口内可交互元素各得一个 label，按键命中即执行。分点击模式（Cmd+H）与聚焦模式（Cmd+U） |
 | label / hint | jump 模式给候选元素打的键盘徽标。前九个用单键 `a s d f g h j k l`；候选超过九个时全部改为等长两键（有序组合），避免单键 label 吞掉更长 label 的首字符 |
 | 候选（candidate） | 由 `candidateSelector` 枚举出的可标注元素（`a[href], button, input, select, textarea, [role=*], [tabindex]`），激活时快照一次 |
-| 一轮（round） | dsh-tui-copy 的复制单位：一次完整交流，取该轮最后一条非空正文回复；同轮内的注入消息（文件变更通知、技能正文、cron 通知）不算发言 |
-| 剪贴板三路（native / tmux-buffer / osc52） | dsh-tui-copy 一次复制并发触发的三条落地路径：本地工具（pbcopy 等）、tmux 缓冲、终端转义序列。只有 native 与 tmux 能靠退出码确认成功 |
+| 一轮（round） | dsh-slash-commands 的复制单位：一次完整交流，取该轮最后一条非空正文回复；同轮内的注入消息（文件变更通知、技能正文、cron 通知）不算发言 |
+| 半屏翻页（half page） | 一次 PageUp/PageDown 的位移口径：视口高度的一半。整屏翻页两屏之间没有共用行，读者会丢失阅读锚点；半屏恒定保留上一屏的一半内容 |
+| 端别归属（surface gate） | 同一条命令是否在某端注册。判据取能力而非 profile 名：`/copy` 需要终端（探 `tuiPluginHost` 与 `tuiToast`），`/rename` 只需要命令注册表 |
+| 剪贴板三路（native / tmux-buffer / osc52） | dsh-slash-commands 一次复制并发触发的三条落地路径：本地工具（pbcopy 等）、tmux 缓冲、终端转义序列。只有 native 与 tmux 能靠退出码确认成功 |
 | dsh-plugin.json | Community Draft 0.15 清单形态：声明 facets/requires/permissions/contributes，宿主按 `commands.invoke` 逐插件管控命令 |
 | 光标动作（caret action） | better-keybindings 的纯映射输出：方向（forward/backward）+ 粒度（lineboundary/documentboundary）+ 是否扩选（extend）。键事件到该结构的转换不碰 DOM |
 | 行边界（line boundary） | 一次 Home/End 的落点口径。文本框按 `\n` 字符串算术求，富文本交给 `Selection.modify` 的 lineboundary，两者都不按视觉换行切 |
@@ -43,8 +45,15 @@
 ### ADR-2: 插件按 profile 分家，不追求单包跨端
 
 背景：web 客户端与 TUI 的宿主契约完全不同——web 侧需要 ModuleLoader 工厂与 browser bundle，TUI 侧需要 `commands` 服务注册与 Node 进程能力。
-决策：一个包只服务一个 profile。dsh-jump 是 web-only（`dsh.client.platform: web`），dsh-tui-copy 是 TUI-only（无 client 入口）。共用逻辑若出现，抽独立纯逻辑包而不是把两半塞进一个包。
+决策：一个包只服务一个 profile 的构建形态。dsh-jump 是 web-only（`dsh.client.platform: web`），dsh-slash-commands 是 host-only（无 client 入口）。共用逻辑若出现，抽独立纯逻辑包而不是把两半塞进一个包。
+后果：dsh-slash-commands 的 host 半边可以同时被三端装载，因为 slash 命令的消费面是 harness 全局的命令注册表而非某一端 UI；此时按端区分的是命令本身（见 ADR-4），不是包。
 后果：包数量随 profile 增长；换来每个包的构建目标、依赖面与失败面都单一，装错 profile 时表现为「不生效」而非「启动失败」。
+
+### ADR-4: 命令按能力分派到端，不按 profile 名硬编码
+
+背景：`/copy` 写的是本进程所在机器的剪贴板（本地 helper、tmux buffer、OSC 52），装到 web 或 desktop 上会是一条把内容复制进用户永远粘不到的地方的死命令；`/rename` 只改会话标题，走全局命令注册表，三端读的是同一份目录。
+决策：判据取能力而非 profile 名（profile 只是标签）。`/copy` 在探到终端服务时才注册，`/rename` 无条件注册。
+后果：web 端的命令面板里不会出现 `/copy`（实测确认）。代价是同一条命令的可见性依赖运行期探测而非静态声明，写测试时必须把有终端与无终端两种上下文都覆盖。
 
 ### ADR-3: 键盘修正靠取消默认动作 + 浏览器自己的 Selection.modify
 

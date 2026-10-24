@@ -10,7 +10,7 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 | [`ascii-rest-scenes`](packages/ascii-rest-scenes) | 上面那个皮肤用到的纯逻辑层：场景目录、cover 取景、调色板与纸色转换、设置归一化 |
 | [`dsh-jump`](packages/dsh-jump) | 键盘跳跃导航，web profile 专用：Cmd+H 给可点击元素打 label 按键即点，Cmd+U 聚焦元素供键盘交互，Esc 退出 |
 | [`dsh-better-keybindings`](packages/dsh-better-keybindings) | 键盘修正，web 与 desktop profile 共用：输入框聚焦时 Home/End 把光标移到行首行尾，不再把聊天区滚到顶或底 |
-| [`dsh-tui-copy`](packages/dsh-tui-copy) | tui profile 专用 `/copy`：把最近 n 轮最终回复放进系统剪贴板，`--all` 连你的发言一起带 |
+| [`dsh-slash-commands`](packages/dsh-slash-commands) | 三端 slash 命令：tui 的 `/copy` 把最近 n 轮最终回复放进系统剪贴板（`--all` 连你的发言一起带），web 与 desktop 的 `/rename` 改当前会话标题 |
 
 ## 安装皮肤
 
@@ -54,7 +54,7 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 ```sh
 pnpm install
 pnpm build      # 产出 lib/（包内分块 + 主入口），lib 是要提交的，profile 直接读它
-pnpm test       # 五个包递归，25 文件 259 用例
+pnpm test       # 五个包递归，28 文件 324 用例
 pnpm typecheck
 ```
 
