@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { isScrollable, revealDelta, textFieldScroll, type ScrollBox } from "../src/client/reveal.ts";
+import { isScrollable, pageTarget, revealDelta, textFieldScroll, type ScrollBox } from "../src/client/reveal.ts";
 
 function box(over: Partial<ScrollBox> = {}): ScrollBox {
   return {
@@ -122,5 +122,51 @@ describe("textFieldScroll", () => {
   it("a single-line field at offset zero resets the horizontal axis", () => {
     const single = { ...metrics, clientHeight: 20, scrollHeight: 20, clientWidth: 100, scrollWidth: 300, scrollLeft: 200 };
     expect(textFieldScroll(single, "a".repeat(80), 0).left).toBe(0);
+  });
+});
+
+describe("page landing", () => {
+  /** A scrollport 760px tall with the given document height. */
+  const box = (scrollTop: number, scrollHeight = 3760) => ({ scrollTop, scrollHeight, clientHeight: 760 });
+
+  it("moves half the viewport forward", () => {
+    expect(pageTarget(box(0), 1, 0.5)).toEqual({ top: 380, moved: true });
+  });
+
+  it("moves half the viewport backward", () => {
+    expect(pageTarget(box(1000), -1, 0.5)).toEqual({ top: 620, moved: true });
+  });
+
+  it("rounds to whole pixels: a fractional scrollTop is not addressable", () => {
+    // 357 * 0.5 = 178.5, which must not reach the DOM as a float.
+    expect(pageTarget({ scrollTop: 0, scrollHeight: 3000, clientHeight: 357 }, 1, 0.5).top).toBe(179);
+  });
+
+  it("clamps at the top and reports no movement", () => {
+    expect(pageTarget(box(0), -1, 0.5)).toEqual({ top: 0, moved: false });
+  });
+
+  it("clamps at the bottom to the exact last position", () => {
+    // 3760 - 760 = 3000 is the furthest a page may land.
+    expect(pageTarget(box(2900), 1, 0.5)).toEqual({ top: 3000, moved: true });
+  });
+
+  it("reports no movement when already at the bottom", () => {
+    expect(pageTarget(box(3000), 1, 0.5)).toEqual({ top: 3000, moved: false });
+  });
+
+  it("keeps a not-yet-measured viewport from making the key dead", () => {
+    // A hidden or unmeasured scrollport has clientHeight 0; a zero page step
+    // would be a key that does nothing at all.
+    expect(pageTarget({ scrollTop: 100, scrollHeight: 900, clientHeight: 0 }, 1, 0.5)).toEqual({ top: 101, moved: true });
+  });
+
+  it("treats content shorter than the viewport as unmovable", () => {
+    expect(pageTarget({ scrollTop: 0, scrollHeight: 200, clientHeight: 760 }, 1, 0.5)).toEqual({ top: 0, moved: false });
+  });
+
+  it("honours a different fraction without changing the shape", () => {
+    expect(pageTarget(box(0), 1, 1).top).toBe(760);
+    expect(pageTarget(box(0), 1, 0.25).top).toBe(190);
   });
 });

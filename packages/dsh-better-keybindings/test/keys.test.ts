@@ -4,7 +4,14 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { matchCaretKey, type caretTarget } from "../src/client/keys.ts";
+import {
+  HALF_PAGE,
+  isBody,
+  landsInScrollport,
+  matchCaretKey,
+  matchScrollKey,
+  type caretTarget,
+} from "../src/client/keys.ts";
 
 type Mods = Partial<{ altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; isComposing: boolean }>;
 
@@ -81,5 +88,85 @@ describe("target typing", () => {
   it("accepts exactly the three known target kinds", () => {
     const kinds: caretTarget[] = ["none", "text-field", "contenteditable"];
     expect(kinds).toHaveLength(3);
+  });
+});
+
+describe("page keys", () => {
+  it("maps PageDown forward and PageUp backward over half a viewport", () => {
+    expect(matchScrollKey(key("PageDown"), true)).toEqual({ direction: 1, fraction: HALF_PAGE });
+    expect(matchScrollKey(key("PageUp"), true)).toEqual({ direction: -1, fraction: HALF_PAGE });
+  });
+
+  it("half a viewport is literally one half", () => {
+    expect(HALF_PAGE).toBe(0.5);
+  });
+
+  it("ignores the stroke when no editable target has focus", () => {
+    // Nothing focused means the user is paging the transcript, which is the
+    // browser's own job and needs no help from here.
+    expect(matchScrollKey(key("PageDown"), false)).toBeNull();
+  });
+
+  it("leaves Alt chords alone: history navigation and host bindings live there", () => {
+    expect(matchScrollKey(key("PageDown", { altKey: true }), true)).toBeNull();
+  });
+
+  it("ignores IME composition", () => {
+    expect(matchScrollKey(key("PageDown", { isComposing: true }), true)).toBeNull();
+  });
+
+  it("accepts modifier variants, which terminals and shells do deliver", () => {
+    // Unlike Home/End there is no modifier meaning to preserve here, so a
+    // Ctrl/Meta-carrying PageDown is still the same request.
+    expect(matchScrollKey(key("PageDown", { ctrlKey: true }), true)).toEqual({ direction: 1, fraction: HALF_PAGE });
+    expect(matchScrollKey(key("PageDown", { metaKey: true }), true)).toEqual({ direction: 1, fraction: HALF_PAGE });
+    expect(matchScrollKey(key("PageDown", { shiftKey: true }), true)).toEqual({ direction: 1, fraction: HALF_PAGE });
+  });
+
+  it("every other key is ignored", () => {
+    for (const other of ["Home", "End", "ArrowUp", " ", ""]) {
+      expect(matchScrollKey(key(other), true)).toBeNull();
+    }
+  });
+});
+
+describe("scrollport landing", () => {
+  /** A stand-in element whose closest() reports one fixed ancestor. */
+  const elementWhoseAncestor = (found: boolean) => ({
+    closest: () => (found ? {} : null),
+  });
+
+  it("recognizes a target inside the transcript", () => {
+    expect(landsInScrollport(elementWhoseAncestor(true) as unknown as EventTarget, "[data-conversation-scroll]")).toBe(true);
+  });
+
+  it("rejects a target outside it", () => {
+    expect(landsInScrollport(elementWhoseAncestor(false) as unknown as EventTarget, "[data-conversation-scroll]")).toBe(false);
+  });
+
+  it("tolerates a null or non-element target", () => {
+    expect(landsInScrollport(null, "[data-conversation-scroll]")).toBe(false);
+    expect(landsInScrollport({} as EventTarget, "[data-conversation-scroll]")).toBe(false);
+  });
+});
+
+describe("document-level targets", () => {
+  it("recognizes BODY as the document-level focus state", () => {
+    // Clicking the transcript focuses nothing, so the browser reports the
+    // stroke against BODY. That is the ordinary reading case.
+    expect(isBody({ tagName: "BODY" } as unknown as EventTarget)).toBe(true);
+  });
+
+  it("recognizes the document node itself", () => {
+    expect(isBody({ nodeType: 9 } as unknown as EventTarget)).toBe(true);
+  });
+
+  it("does not mistake a real element for the document", () => {
+    expect(isBody({ tagName: "DIV", nodeType: 1 } as unknown as EventTarget)).toBe(false);
+  });
+
+  it("tolerates null and primitives", () => {
+    expect(isBody(null)).toBe(false);
+    expect(isBody("BODY" as unknown as EventTarget)).toBe(false);
   });
 });

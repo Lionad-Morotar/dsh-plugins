@@ -78,3 +78,73 @@ export function classifyTarget(node: EventTarget | null): caretTarget {
 
 /** Input types that carry a text caret and honour setSelectionRange. */
 const TEXT_INPUT_TYPES = new Set(["text", "search", "url", "tel", "email", "password", "number", ""]);
+
+/** The one scroll fraction this plugin implements; see {@link matchScrollKey}. */
+export const HALF_PAGE = 0.5;
+
+/** One page-scroll request: which way, and over how much of the viewport. */
+export interface ScrollAction {
+  /** Negative walks toward the start, positive toward the end. */
+  direction: -1 | 1;
+  /** Fraction of the viewport height to move. */
+  fraction: number;
+}
+
+const SCROLL_KEY_DIRECTION = new Map<string, -1 | 1>([
+  ["PageUp", -1],
+  ["PageDown", 1],
+]);
+
+/**
+ * Map PageUp/PageDown onto a half-viewport scroll, or null when the stroke is
+ * not ours.
+ *
+ * `fromInput` is the whole point: the browser's own PageUp/PageDown inside a
+ * text field means "scroll my ancestors", and on the Harness composer those
+ * ancestors include the conversation scrollport. That is the same defect the
+ * Home/End path fixes, and it makes paging lose the user's place while they are
+ * typing. With no input focused the stroke stays native, because there the user
+ * is asking to page the transcript.
+ *
+ * Alt is excluded like the caret keys (history navigation, host chords); IME
+ * composition is excluded because the input method owns the surface. Ctrl/Meta
+ * are NOT excluded: PageUp/PageDown have no modifier meaning here, and some
+ * terminals and desktop shells deliver them with a modifier attached.
+ */
+export function matchScrollKey(event: CaretKeyEvent, fromInput: boolean): ScrollAction | null {
+  if (!fromInput) return null;
+  if (event.isComposing) return null;
+  if (event.altKey) return null;
+  const direction = SCROLL_KEY_DIRECTION.get(event.key);
+  if (direction === undefined) return null;
+  return { direction, fraction: HALF_PAGE };
+}
+
+/**
+ * Whether the stroke was reported against the document body.
+ *
+ * With no element owning focus the browser dispatches key events at BODY (or
+ * at `document`). Reading the transcript is exactly that state: clicking it
+ * focuses nothing, and the user still means to page the transcript.
+ */
+export function isBody(target: EventTarget | null): boolean {
+  if (target === null || typeof target !== "object") return false;
+  const element = target as { tagName?: unknown; nodeType?: unknown };
+  return element.tagName === "BODY" || element.nodeType === 9;
+}
+
+/**
+ * Whether a PageUp/PageDown stroke should be claimed even with no editable
+ * focus, given where the event landed.
+ *
+ * The chat area keeps its native paging when nothing is focused, so this is
+ * only true for a target inside the conversation scrollport's own subtree
+ * (a non-editable element inside the transcript, or the scrollport itself) —
+ * exactly the case where the browser would scroll the transcript by a full
+ * viewport and the user asked for half.
+ */
+export function landsInScrollport(target: EventTarget | null, scrollportSelector: string): boolean {
+  const element = target as Element | null;
+  if (element === null || typeof element !== "object" || typeof element.closest !== "function") return false;
+  return element.closest(scrollportSelector) !== null;
+}

@@ -286,3 +286,183 @@ describe("lifecycle", () => {
     expect(el.selectionStart).toBe(6);
   });
 });
+
+describe("page scrolling", () => {
+  /**
+   * A transcript scrollport with stubbed metrics (jsdom has no layout), wrapping
+   * the input the way the real DOM does: the composer sits inside the
+   * conversation scrollport, which is exactly why a native PageDown inside it
+   * scrolls the transcript.
+   */
+  function scrollport(scrollTop = 1000): HTMLDivElement {
+    const scroller = doc.createElement("div");
+    scroller.setAttribute("data-conversation-scroll", "");
+    Object.defineProperties(scroller, {
+      scrollTop: { value: scrollTop, writable: true, configurable: true },
+      scrollHeight: { value: 3760, configurable: true },
+      clientHeight: { value: 760, configurable: true },
+    });
+    doc.body.append(scroller);
+    return scroller;
+  }
+
+  /** A textarea already inside the given scrollport. */
+  function composer(value: string, start = 0, end = start, host?: HTMLElement): HTMLTextAreaElement {
+    const el = textarea(value, start, end);
+    (host ?? doc.body).append(el);
+    el.focus();
+    return el;
+  }
+
+  it("a focused text field pages the transcript by half a viewport", () => {
+    const scroller = scrollport(1000);
+    mount();
+    const el = composer("hello", 0, 0, scroller);
+
+    const e = keydown({ key: "PageDown" });
+    el.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(scroller.scrollTop).toBe(1380);
+  });
+
+  it("PageUp walks the same half viewport backward", () => {
+    const scroller = scrollport(1000);
+    mount();
+    const el = composer("hello", 0, 0, scroller);
+
+    el.dispatchEvent(keydown({ key: "PageUp" }));
+
+    expect(scroller.scrollTop).toBe(620);
+  });
+
+  it("a contenteditable composer pages the transcript the same way", () => {
+    const scroller = scrollport(1000);
+    mount();
+    const { el } = editable();
+    el.textContent = "hi";
+    scroller.append(el);
+
+    el.dispatchEvent(keydown({ key: "PageDown" }));
+
+    expect(scroller.scrollTop).toBe(1380);
+  });
+
+  it("the caret never moves: this is a scrolling key, not a caret key", () => {
+    const scroller = scrollport(1000);
+    mount();
+    const el = composer("alpha beta", 3, 3, scroller);
+
+    el.dispatchEvent(keydown({ key: "PageDown" }));
+
+    expect(el.selectionStart).toBe(3);
+    expect(el.selectionEnd).toBe(3);
+  });
+
+  it("clamps at the bottom instead of overshooting", () => {
+    const scroller = scrollport(2900);
+    mount();
+    const el = composer("x", 0, 0, scroller);
+
+    el.dispatchEvent(keydown({ key: "PageDown" }));
+
+    expect(scroller.scrollTop).toBe(3000);
+  });
+
+  it("a page at the very end does not write scrollTop at all", () => {
+    // Writing the same value still fires a scroll event, which the host would
+    // attribute to a reading intent. The end of the transcript is a no-op.
+    const scroller = scrollport(3000);
+    mount();
+    let writes = 0;
+    let current = 3000;
+    Object.defineProperty(scroller, "scrollTop", {
+      configurable: true,
+      get: () => current,
+      set: (value: number) => {
+        writes += 1;
+        current = value;
+      },
+    });
+    const el = composer("x", 0, 0, scroller);
+
+    el.dispatchEvent(keydown({ key: "PageDown" }));
+
+    expect(writes).toBe(0);
+  });
+
+  it("pages by half even with no input focused, when the stroke lands in the transcript", () => {
+    // The requirement is about the transcript's paging itself, not about where
+    // the focus is: reading the transcript is exactly when the user pages it.
+    const scroller = scrollport(1000);
+    mount();
+    const e = keydown({ key: "PageDown" });
+    scroller.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    expect(scroller.scrollTop).toBe(1380);
+  });
+
+  it("pages by half when the stroke is reported at BODY, the no-focus reading state", () => {
+    // Clicking the transcript focuses nothing at all, so the browser reports
+    // PageDown against BODY; that is the main way this key gets used.
+    const scroller = scrollport(1000);
+    mount();
+    const e = keydown({ key: "PageDown" });
+    doc.body.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    expect(scroller.scrollTop).toBe(1380);
+  });
+
+  it("leaves paging native for targets outside the transcript", () => {
+    // A sidebar list, a picker or a menu owns its own PageUp/PageDown; halving
+    // those would silently change an unrelated surface.
+    scrollport(1000);
+    mount();
+    const elsewhere = doc.createElement("div");
+    doc.body.append(elsewhere);
+    const e = keydown({ key: "PageDown" });
+    elsewhere.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("Alt+PageDown is left alone", () => {
+    const scroller = scrollport(1000);
+    mount();
+    const el = composer("x", 0, 0, scroller);
+    const e = keydown({ key: "PageDown", altKey: true });
+    el.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("ignores the stroke during IME composition", () => {
+    const scroller = scrollport(1000);
+    mount();
+    const el = composer("x", 0, 0, scroller);
+    const e = keydown({ key: "PageDown", isComposing: true });
+    el.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("a page stroke with no scrollport on the page is claimed but moves nothing", () => {
+    // Claiming keeps a full-page native scroll from happening; there being no
+    // transcript to page means the visible effect is correctly nothing.
+    mount();
+    const el = composer("x");
+    const e = keydown({ key: "PageDown" });
+    el.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("Home and End still prefer the caret over scrolling", () => {
+    // The two rules must not overlap: Home in a focused field moves the caret
+    // and never pages the transcript.
+    const scroller = scrollport(1000);
+    mount();
+    const el = composer("one\ntwo", 6, 6, scroller);
+
+    el.dispatchEvent(keydown({ key: "Home" }));
+
+    expect(el.selectionStart).toBe(4);
+    expect(scroller.scrollTop).toBe(1000);
+  });
+});

@@ -138,3 +138,38 @@ function countLines(value: string, offset: number): number {
   }
   return line;
 }
+/** One scrollport's own geometry, the only state a page step needs. */
+export interface ScrollMetrics {
+  readonly scrollTop: number;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+}
+
+/** Where a page step lands, clamped to the scrollable range. */
+export interface PageTarget {
+  /** Destination scrollTop, already clamped. */
+  readonly top: number;
+  /** Whether the scrollport had room to move at all. */
+  readonly moved: boolean;
+}
+
+/**
+ * Compute the destination of one page step.
+ *
+ * Clamping here rather than letting the browser do it keeps the arithmetic
+ * testable and gives the app layer a cheap way to skip a no-op write: at
+ * either end of the transcript a further PageDown has nowhere to go, and
+ * writing the same scrollTop would still fire a scroll event that the host's
+ * reading-intent machinery attributes to the user.
+ *
+ * A one-pixel minimum keeps a zero-height viewport (a hidden transcript, a
+ * not-yet-measured element) from turning the key into a dead one.
+ */
+export function pageTarget(metrics: ScrollMetrics, direction: -1 | 1, fraction: number): PageTarget {
+  const viewport = metrics.clientHeight;
+  const step = viewport > 1 ? Math.round(viewport * fraction) : 1;
+  const maxTop = Math.max(0, metrics.scrollHeight - viewport);
+  const requested = metrics.scrollTop + direction * Math.max(1, step);
+  const top = Math.min(Math.max(requested, 0), maxTop);
+  return { top, moved: top !== metrics.scrollTop };
+}

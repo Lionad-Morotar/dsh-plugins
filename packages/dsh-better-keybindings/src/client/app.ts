@@ -14,9 +14,16 @@
  * target, only without Alt. Everything else falls through untouched, so the
  * chat area keeps its own Home/End whenever no text field is focused.
  */
-import { classifyTarget, matchCaretKey, type CaretKeyEvent } from "./keys.ts";
+import {
+  classifyTarget,
+  isBody,
+  landsInScrollport,
+  matchCaretKey,
+  matchScrollKey,
+  type CaretKeyEvent,
+} from "./keys.ts";
 import { moveRichText, moveTextField, type CaretSelection, type TextFieldLike } from "./caret.ts";
-import { isScrollable, revealDelta, textFieldScroll, type Rect, type ScrollBox } from "./reveal.ts";
+import { isScrollable, pageTarget, revealDelta, textFieldScroll, type Rect, type ScrollBox } from "./reveal.ts";
 
 export interface KeysWindow {
   document: Document;
@@ -49,9 +56,21 @@ export interface AppDeps {
    * that container to reveal it.
    */
   excludeSelector?: string;
+  /** The transcript scrollport a page key scrolls; defaults to the host's. */
+  scrollportSelector?: string;
 }
 
 const DEFAULT_EXCLUDE_SELECTOR = "[data-conversation-scroll]";
+
+/**
+ * The transcript scrollport, which owns the keys this plugin repurposes.
+ *
+ * Separate from {@link AppDeps.excludeSelector} even though the default value
+ * is the same selector, because the two mean different things: exclusion says
+ * "never move this container", while this says "this is the container a page
+ * key is about".
+ */
+const DEFAULT_SCROLLPORT_SELECTOR = "[data-conversation-scroll]";
 
 export interface KeysApp {
   /** Mount the window listener. Returns the symmetric teardown. */
@@ -70,6 +89,7 @@ export interface KeysApp {
 export function createApp(deps: AppDeps = {}): KeysApp {
   const win = deps.window ?? (globalThis as unknown as KeysWindow);
   const excludeSelector = deps.excludeSelector ?? DEFAULT_EXCLUDE_SELECTOR;
+  const scrollportSelector = deps.scrollportSelector ?? DEFAULT_SCROLLPORT_SELECTOR;
 
   function richCaretRect(): Rect | null {
     if (deps.caretRect !== undefined) return deps.caretRect();
@@ -162,11 +182,33 @@ export function createApp(deps: AppDeps = {}): KeysApp {
     if (delta.left !== undefined) field.scrollLeft = delta.left;
   }
 
+  /**
+   * Scroll one page step inside the transcript.
+   *
+   * Half a viewport, not a full one: a full page leaves no shared row between
+   * before and after, so the reader loses their anchor and has to re-find the
+   * line they were on. Half a page always keeps half the previous content in
+   * view, which is what makes paging readable at speed.
+   *
+   * The destination is computed and clamped here rather than handed to
+   * `scrollBy`, so a no-op at either end never emits a scroll event the host
+   * would attribute to a reading intent.
+   */
+  function pageTranscript(target: Element, direction: -1 | 1, fraction: number): void {
+    const box = (target.closest(scrollportSelector) ?? win.document.querySelector(scrollportSelector)) as HTMLElement | null;
+    if (box === null) return;
+    const landing = pageTarget(
+      { scrollTop: box.scrollTop, scrollHeight: box.scrollHeight, clientHeight: box.clientHeight },
+      direction,
+      fraction,
+    );
+    if (!landing.moved) return;
+    box.scrollTop = landing.top;
+  }
+
   return {
     apply(): () => void {
       const onKeyDown = (event: KeyboardEvent): void => {
-        const target = classifyTarget(event.target);
-        if (target === "none") return;
         const like: CaretKeyEvent = {
           key: event.key,
           altKey: event.altKey,
@@ -175,6 +217,33 @@ export function createApp(deps: AppDeps = {}): KeysApp {
           shiftKey: event.shiftKey,
           isComposing: event.isComposing,
         };
+
+        // Page keys come first: they are the only stroke this plugin claims on
+        // a non-editable target, and the caret branch below returns early for
+        // exactly that case.
+        //
+        // Claimed in two situations, both of which would otherwise page the
+        // transcript by a full viewport: the stroke came from an editable
+        // (whose ancestors include the scrollport), or it landed inside the
+        // scrollport itself. A stroke anywhere else is somebody's own paging
+        // (a sidebar list, a picker, a menu) and stays native.
+        // The browser reports the stroke against BODY whenever nothing owns
+        // focus, and clicking the transcript does not focus anything: that is
+        // the ordinary "scrolling while reading" case and must be claimed too.
+        // What must stay native is a stroke aimed at a different scroll surface
+        // (a sidebar list, a picker, a menu), which is exactly a target that is
+        // neither editable nor inside this transcript.
+        const editableFocused = event.target !== null && classifyTarget(event.target) !== "none";
+        const aimedAtTranscript = isBody(event.target) || landsInScrollport(event.target, scrollportSelector);
+        const scroll = editableFocused || aimedAtTranscript ? matchScrollKey(like, true) : null;
+        if (scroll !== null) {
+          event.preventDefault();
+          pageTranscript(event.target as Element, scroll.direction, scroll.fraction);
+          return;
+        }
+
+        const target = classifyTarget(event.target);
+        if (target === "none") return;
         const action = matchCaretKey(like, target);
         if (action === null) return;
 
