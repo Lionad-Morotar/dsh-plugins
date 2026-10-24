@@ -1,6 +1,6 @@
 # 架构（Architecture）
 
-更新: 2026-10-24
+更新: 2026-10-25
 
 ## 系统总览
 
@@ -24,14 +24,14 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 │               └─ 命中 → 视口内元素的 click 事件序列 / focus
 └─ tui 面：commands 服务、tuiPluginHost、tuiToast
     └─ Loader row 按包名挂载
-        └─ dsh-tui-copy（单 host 半边，无客户端产物）
+        └─ dsh-slash-commands（单 host 半边，无客户端产物；一条命令可服务三端）
             ├─ src/index.ts 的 apply：inject = ["commands"]，注册延后一宏任务
             ├─ command.ts 组装与注册（宿主中介优先，未准入回落 commands.register）
             ├─ arguments.ts 文法 │ history.ts 轮次选取与渲染 │ clipboard.ts 三路触发
             └─ 副作用 → 子进程 helper / 终端 OSC 52 / tmux buffer → 系统剪贴板
 ```
 
-五个包、四种形态，共用同一发行模型：四个可挂载的包（皮肤、`dsh-jump`、`dsh-better-keybindings`、`dsh-tui-copy`）各自在包根 `cordis.patch.yml` 插一条 Loader row（`id` 为短名、`name` 为包名），三者的 `lib/` 构建产物提交入库，profile 安装态直接读包内 `lib/`、不跑构建。`ascii-rest-scenes` 没有 Loader row、没有产物，它是直发源码（`exports` 指向 `src/index.ts`）的纯逻辑库，被皮肤以 `workspace:*` 依赖。宿主按包名挂载两侧，因此纯 client 的 `dsh-jump` 与 `dsh-better-keybindings` 也必须留一个可解析的宿主入口。
+五个包、四种形态，共用同一发行模型：四个可挂载的包（皮肤、`dsh-jump`、`dsh-better-keybindings`、`dsh-slash-commands`）各自在包根 `cordis.patch.yml` 插一条 Loader row（`id` 为短名、`name` 为包名），三者的 `lib/` 构建产物提交入库，profile 安装态直接读包内 `lib/`、不跑构建。`ascii-rest-scenes` 没有 Loader row、没有产物，它是直发源码（`exports` 指向 `src/index.ts`）的纯逻辑库，被皮肤以 `workspace:*` 依赖。宿主按包名挂载两侧，因此纯 client 的 `dsh-jump` 与 `dsh-better-keybindings` 也必须留一个可解析的宿主入口。
 
 ## 组件职责
 
@@ -62,22 +62,26 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 | label 浮层 | 单容器 fixed 全屏、pointer-events:none、按前缀亮暗 | `packages/dsh-jump/src/client/overlay.ts` |
 | 跳跃默认值 | 首页行九键、Cmd+H/Cmd+U、候选选择器 | `packages/dsh-jump/src/client/config.ts` |
 | 客户端工厂 | 返回 {name,inject,apply}，配置从 apply 第二参读 | `packages/dsh-jump/src/client/entry.ts` |
-| 命令文法 | `/copy [n] [--all]` 解析，非法输入直接拒绝而非猜范围 | `packages/dsh-tui-copy/src/arguments.ts` |
-| 轮次选取 | 从会话日志选最后 n 轮「最后一条非空正文」，渲染为剪贴板文本 | `packages/dsh-tui-copy/src/history.ts` |
-| 剪贴板三路 | native / tmux-buffer / OSC 52 并发触发、attempted/landed/degraded 判定 | `packages/dsh-tui-copy/src/clipboard.ts` |
-| 命令组装与注册 | 宿主中介路径优先、未准入回落 `commands.register`、toast 播报 | `packages/dsh-tui-copy/src/command.ts` |
-| 宿主激活 | `inject = ["commands"]`、延后一宏任务注册、helper 2 秒上限 | `packages/dsh-tui-copy/src/index.ts` |
+| 命令文法（copy） | `/copy [n] [--all]` 解析，非法输入直接拒绝而非猜范围 | `packages/dsh-slash-commands/src/arguments.ts` |
+| 命令文法（rename） | `/rename <title>` 解析：只去首尾空白，空标题按用法错误拒绝 | `packages/dsh-slash-commands/src/rename.ts` |
+| 改名命令组装 | 标题交给 `sessionTitle` 归一化，失败按输入非法/会话不在活动态/服务停用分三类 | `packages/dsh-slash-commands/src/rename-command.ts` |
+| 端别分派 | 按终端能力决定 `/copy` 是否注册；`/rename` 无条件注册 | `packages/dsh-slash-commands/src/index.ts` |
+| 半屏翻页 | PageUp/PageDown 落点计算与钳制，到底部不写 scrollTop | `packages/dsh-better-keybindings/src/client/reveal.ts` |
+| 轮次选取 | 从会话日志选最后 n 轮「最后一条非空正文」，渲染为剪贴板文本 | `packages/dsh-slash-commands/src/history.ts` |
+| 剪贴板三路 | native / tmux-buffer / OSC 52 并发触发、attempted/landed/degraded 判定 | `packages/dsh-slash-commands/src/clipboard.ts` |
+| 命令组装与注册 | 宿主中介路径优先、未准入回落 `commands.register`、toast 播报 | `packages/dsh-slash-commands/src/command.ts` |
+| 宿主激活 | `inject = ["commands", "sessionTitle"]`、延后一宏任务注册 /copy、helper 2 秒上限 | `packages/dsh-slash-commands/src/index.ts` |
 | 构建（jump） | ESM 宿主 + CJS client 包进 ModuleLoader factory | `packages/dsh-jump/scripts/build.mjs` |
-| 构建（copy） | 单文件 ESM 宿主产物，不压缩 | `packages/dsh-tui-copy/scripts/build.mjs` |
+| 构建（copy） | 单文件 ESM 宿主产物，不压缩 | `packages/dsh-slash-commands/scripts/build.mjs` |
 
 ## 模式总览
 
 **总体：** 多形态插件集合（皮肤双半边 / web 单 client 半边（jump 与 better-keybindings）/ tui 单 host 半边）+ 纯逻辑内核 + 构建期代码生成 + 按需分块加载 + Loader row 挂载发行
 
 **关键特征：**
-- 纯/DOM 边界硬隔离：`ascii-rest-scenes` 零 DOM，`dsh-jump` 的 `keys.ts`/`hints.ts` 与 `dsh-tui-copy` 的 `arguments.ts`/`history.ts` 同样纯函数，DOM 与副作用只在最外层适配器
+- 纯/DOM 边界硬隔离：`ascii-rest-scenes` 零 DOM，`dsh-jump` 的 `keys.ts`/`hints.ts` 与 `dsh-slash-commands` 的 `arguments.ts`/`history.ts` 同样纯函数，DOM 与副作用只在最外层适配器
 - 「提交构建产物」的发行模型：三个有产物的包（皮肤 / jump / copy）`lib/` 全部入库，安装态零构建；`ascii-rest-scenes` 直发源码（`exports` 指向 `src/index.ts`）
-- 手写结构化契约替代 SDK 类型依赖（`src/client/dsh.ts`、`dsh-tui-copy/src/command.ts` 的 `HostContextLike`）
+- 手写结构化契约替代 SDK 类型依赖（`src/client/dsh.ts`、`dsh-slash-commands/src/command.ts` 的 `HostContextLike`）
 - 校验前移：不受信数据（生成目录、localStorage、上游 meta、`/copy` 参数）在入口清洗为 null/默认值/错误结果，不抛异常
 - 半边形态由平台决定：web 面必须给工厂返回值，tui 面只有一个宿主 apply
 
@@ -85,11 +89,11 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 
 **纯逻辑层：** `packages/ascii-rest-scenes/src/`；仅内部互引 + 构建期消费上游；被皮肤、其测试、生成脚本共用（jump 与 copy 不依赖它）
 **客户端行为层：** 皮肤包与 `dsh-jump` 的 `src/client/`；依赖 DOM 与（皮肤侧的）loader；模块作用域禁止调 `getLoader()`（bundle 顶层先于 boot 运行）。`dsh-jump` 不用 loader，纯 client 半边只靠 `entry.ts` 组装插件对象
-**宿主半边：** 皮肤包与 `dsh-jump` 的 `src/index.ts` 刻意为空，但 Loader 双侧挂载要求 main 可解析；`dsh-tui-copy` 的 `src/index.ts` 反过来是全部行为所在（apply 本体）
+**宿主半边：** 皮肤包与 `dsh-jump` 的 `src/index.ts` 刻意为空，但 Loader 双侧挂载要求 main 可解析；`dsh-slash-commands` 的 `src/index.ts` 反过来是全部行为所在（apply 本体）
 
 ## 两种半边形态
 
-| 维度 | web 半边（皮肤、`dsh-jump`） | tui 半边（`dsh-tui-copy`） |
+| 维度 | web 半边（皮肤、`dsh-jump`） | host 半边（`dsh-slash-commands`） |
 |------|------|------|
 | 宿主入口 | `src/index.ts` 空 apply，仅保证 main 可解析 | `src/index.ts` 即 apply 本体 |
 | 客户端入口 | `exports["./client"]` 指向 `lib/client.js`，构建期包进 `window.__ModuleLoader__.load({id, factory})` | 无 |
@@ -123,7 +127,7 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 4. 消费：每次 keydown 仍进 `matchKey`；命中完整 label 即 `overlay.destroy`、模式归 idle，click 模式按 pointerdown→mousedown→pointerup→mouseup→click 真实序列派发（构造器取自目标 realm），focus 模式调 `el.focus()`
 5. 退出：Esc 或任意 meta 组合键；模式激活期间所有 keydown 一律 `preventDefault + stopPropagation`，避免泄漏给宿主快捷键
 
-### 复制流（`dsh-tui-copy`）
+### 复制流（`dsh-slash-commands`）
 
 1. 参数：`/copy` 原始输入进 `parseCopyInput`（`arguments.ts`）：计数须是正整数、超过 50 按 50 夹取（`MAX_COUNT`），`--all`/`-a` 可任意顺序，重复计数或非法 token 一律报用法
 2. 选轮次：`collectTurns`（`history.ts`）按 `turn/start`、`step/start` 跟踪当前轮，取每轮最后一条非空 `assistant/message`；`--all` 只拼 `source.kind === 'user'` 的真人输入
@@ -140,13 +144,13 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 **MountHandle：** stop + pause/resume/now（`mount.ts`）——暂停不同于 fps:0：暂停零开销保帧，供窗口失焦
 **ClientBundleRegistration：** `{id, factory}`——加载器收下的唯一形状，factory 返回插件对象（`dsh-jump/scripts/build.mjs` 的 `wrap`）
 **Hint / KeyState：** `{element, label, rect}` 快照与 `{mode, pending}` 状态（`dsh-jump/src/client/hints.ts`、`keys.ts`）——DOM 只进参数，状态机可无 DOM 测试
-**CopyRequest / CopyTurn：** 一次复制的范围（`count`/`includeUser`）与已归约的一轮文本（`dsh-tui-copy/src/arguments.ts`、`history.ts`）——文法与选取、渲染三段可分别验证
+**CopyRequest / CopyTurn：** 一次复制的范围（`count`/`includeUser`）与已归约的一轮文本（`dsh-slash-commands/src/arguments.ts`、`history.ts`）——文法与选取、渲染三段可分别验证
 **ClipboardOutcome：** `{attempted, landed, bytes, degraded}`（`clipboard.ts`）——「试了什么」「哪条确认成功」「是否需要降级提示」分开表达
 
 ## 入口点
 
 **构建：** `generate-catalog.mjs`（`build`/`build:catalog`，支持 `--check`）；三个包的 `scripts/build.mjs`（皮肤 / jump / copy），根 `build` 走 `pnpm -r build`
-**运行：** `lib/index.js`（宿主 apply）、`lib/client.js`（`__ModuleLoader__.load` 工厂）、`lib/client.gui.js` 与 34 个 `lib/client.<scene>.js`（分块 id 必须形如 `<package>/<file>`，否则加载器拒收）；`dsh-jump` 只有 `lib/index.js` + `lib/client.js`（实测 2 文件），`dsh-tui-copy` 只有 `lib/index.js`（实测 1 文件）
+**运行：** `lib/index.js`（宿主 apply）、`lib/client.js`（`__ModuleLoader__.load` 工厂）、`lib/client.gui.js` 与 34 个 `lib/client.<scene>.js`（分块 id 必须形如 `<package>/<file>`，否则加载器拒收）；`dsh-jump` 与 `dsh-better-keybindings` 各 2 文件（`lib/index.js` + `lib/client.js`），`dsh-slash-commands` 只有 `lib/index.js`（实测 1 文件，13223 B）
 
 ## 架构约束
 
@@ -158,9 +162,9 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 - **apply 签名：** web 侧 `apply(ctx, config)` 的第二参才是插件配置；从第一参读配置会抛错并带崩整个 web boot（git a5414cc 修的就是这条）
 - **client 半边零重依赖：** `dsh-jump` 运行期无三方依赖，client bundle 只有自家模块；新增 UI 依赖应先问是否值得让每个 web profile 都背上
 - **剪贴板 helper 必须有时限：** 所有 spawn 统一 2 秒上限（`HELPER_TIMEOUT_MS`），超时按失败处理并 kill 子进程；无上限的 helper 会让 `/copy` 永远没有反馈
-- **apply 早于服务挂载：** 依赖的服务必须进 `inject`（`dsh-tui-copy` 的 `["commands"]`），而 `tuiPluginHost` 这类由别的 row 后挂的服务只能软探测（`ctx.get(name, false)`）并延后一宏任务注册
+- **apply 早于服务挂载：** 依赖的服务必须进 `inject`（`dsh-slash-commands` 的 `["commands"]`），而 `tuiPluginHost` 这类由别的 row 后挂的服务只能软探测（`ctx.get(name, false)`）并延后一宏任务注册
 - **注册上下文不可伪造：** 宿主中介路径校验 Cordis 激活标记，必须原样传 `apply` 收到的 `ctx`；effects 另开参数，不与身份上下文混用
-- **循环依赖：** 未发现；依赖单向（client → scenes 包 → 上游 meta）；`dsh-jump` 与 `dsh-tui-copy` 互不依赖，也不依赖另外两个包
+- **循环依赖：** 未发现；依赖单向（client → scenes 包 → 上游 meta）；`dsh-jump`、`dsh-better-keybindings`、`dsh-slash-commands` 互不依赖，也不依赖另外两个包
 
 ## 反模式（本仓库明令规避的）
 
@@ -181,7 +185,7 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 
 ### 在 apply 里同步注册依赖别的 row 的服务
 
-**问题：** 插件行激活早于命令服务与 `tuiPluginHost` 挂载；`dsh-tui-copy` 首次真机启动即「装完但静默无效」——apply 跑了，什么也没注册上。
+**问题：** 插件行激活早于命令服务与 `tuiPluginHost` 挂载；`dsh-slash-commands` 首次真机启动即「装完但静默无效」——apply 跑了，什么也没注册上。
 **本仓库做法：** 声明 `inject = ["commands"]` 固定命令服务；对后挂的 `tuiPluginHost` 用软探测加一个宏任务延后注册，两条路都走不通才抛错。
 
 ### 剪贴板只走一条路
@@ -191,10 +195,10 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 
 ## 错误处理
 
-**策略：** 校验返回 null/默认值/错误结果而非抛出，调用方负责告警。可选 service（locale、tuiToast）用 `ctx.get` 容缺；必需 service（slots/theme/commands）声明进 `inject`。唯一刻意的抛出：命令两条注册路都不存在时（`dsh-tui-copy/src/command.ts`）——静默失效比激活报错更难诊断。
+**策略：** 校验返回 null/默认值/错误结果而非抛出，调用方负责告警。可选 service（locale、tuiToast）用 `ctx.get` 容缺；必需 service（slots/theme/commands）声明进 `inject`。唯一刻意的抛出：命令两条注册路都不存在时（`dsh-slash-commands/src/command.ts`）——静默失效比激活报错更难诊断。
 
 ## 横切关注
 
-**日志：** 无框架。皮肤对不可恢复契约违背抛带 `ascii-rest:` 前缀的 Error；`dsh-tui-copy` 用宿主 `ctx.logger` 的 `info`/`warn`（常规回落记 info，真失败记 warn）。
-**校验：** 集中在 `ascii-rest-scenes` 的 `catalog.ts`/`options.ts`、`dsh-tui-copy/src/arguments.ts`（输入文法）、`dsh-jump/src/client/hints.ts`（候选裁剪）。
-**认证：** 不适用（无账号、无网络请求）。`dsh-tui-copy` 的 `commands.invoke` 权限声明在 `dsh-plugin.json`，由宿主在命令通道侧执行，插件自身不做鉴权。
+**日志：** 无框架。皮肤对不可恢复契约违背抛带 `ascii-rest:` 前缀的 Error；`dsh-slash-commands` 用宿主 `ctx.logger` 的 `info`/`warn`（常规回落记 info，真失败记 warn）。
+**校验：** 集中在 `ascii-rest-scenes` 的 `catalog.ts`/`options.ts`、`dsh-slash-commands/src/arguments.ts`（输入文法）、`dsh-jump/src/client/hints.ts`（候选裁剪）。
+**认证：** 不适用（无账号、无网络请求）。`dsh-slash-commands` 的 `commands.invoke` 权限声明在 `dsh-plugin.json`，由宿主在命令通道侧执行，插件自身不做鉴权。
