@@ -18,7 +18,7 @@ model {
   }
 
   system dshPlugins "DSH 插件集" {
-    description "Lionad 的 DeepSeek Harness 插件 monorepo：四包三形态，共用 Loader row 发行模型"
+    description "Lionad 的 DeepSeek Harness 插件 monorepo：五包四形态，共用 Loader row 发行模型"
 
     container skin "@lionad/dsh-client-ui-skin-ascii-rest" {
       description "DSH 客户端 UI 皮肤：把 ascii.rest 场景渲染为工作区背景，随亮暗主题换配色"
@@ -127,6 +127,27 @@ model {
         description "TUI 准入清单（Community Draft 0.15）：声明 /copy 命令与 commands.invoke 权限"
       }
     }
+
+    container keybindings "dsh-better-keybindings" {
+      description "web 与 desktop 共用的键盘修正：输入框聚焦时 Home/End 移动光标到行首行尾，不再滚动聊天区"
+      technology "TypeScript + esbuild，纯 client 半边，运行期零三方依赖"
+
+      component kbEntry "client/entry" {
+        description "客户端工厂：返回 {name, inject, apply}，apply 只挂一个捕获阶段 keydown"
+      }
+      component kbApp "client/app" {
+        description "接线与全部 DOM 副作用：判目标、preventDefault、移动光标、补齐光标可见性、对称 teardown"
+      }
+      component kbKeys "client/keys" {
+        description "事件到光标动作的纯映射：行/文档粒度、是否扩选、目标分类"
+      }
+      component kbCaret "client/caret" {
+        description "两套光标原语：文本框走字符串算术，富文本走 Selection.modify(lineboundary)"
+      }
+      component kbReveal "client/reveal" {
+        description "被抑制的 scroll-into-view 的替代：盒模型算术算最小滚动增量，聊天滚动容器显式排除"
+      }
+    }
   }
 
   system dshHost "DSH 宿主" {
@@ -193,6 +214,14 @@ model {
   dshHost -> tuiCopy.manifest "admission-loader 读清单绑定插件身份，按 commands.invoke 管控"
   tuiCopy.clipboard -> systemClipboard "native：pbcopy / clip / wl-copy / xclip / xsel"
   tuiCopy.clipboard -> terminalHost "tmux load-buffer 与 OSC 52（tmux 内包 DCS 透传）"
+
+  dshHost -> keybindings "Loader row 注入（id: better-keybindings），加载 lib/client.js 工厂"
+  keybindings.kbEntry -> dshHost "window.__ModuleLoader__.load({id, factory})，id 必须等于包名"
+  keybindings.kbEntry -> keybindings.kbApp "createApp().apply()"
+  keybindings.kbApp -> keybindings.kbKeys "每次 keydown 先 classifyTarget 再 matchCaretKey"
+  keybindings.kbApp -> keybindings.kbCaret "命中后 moveTextField / moveRichText"
+  keybindings.kbApp -> keybindings.kbReveal "取消默认动作后自己把光标滚回可视区"
+  keybindings.kbApp -> dshHost "捕获阶段拦下 Home/End：默认动作本会滚动 data-conversation-scroll"
 }
 
 deployment {
@@ -201,9 +230,11 @@ deployment {
     host machine "用户机器" {
       runtime dshRuntime "desktop profile：DSH 宿主进程" {
         instanceOf dshPlugins.skin
+        instanceOf dshPlugins.keybindings
       }
       runtime webRuntime "web profile：DSH 宿主进程" {
         instanceOf dshPlugins.jump
+        instanceOf dshPlugins.keybindings
       }
       runtime tuiRuntime "tui profile：DSH 宿主进程" {
         instanceOf dshPlugins.tuiCopy
@@ -223,7 +254,7 @@ deployment {
 views {
   view index {
     title "系统全景：DSH 插件集"
-    description "四包三形态：皮肤两包分层、jump 纯 client、tui-copy 纯 host；DSH 宿主 + 上游 ascii.rest + 剪贴板边界"
+    description "五包四形态：皮肤两包分层、jump 与 keybindings 纯 client、tui-copy 纯 host；DSH 宿主 + 上游 ascii.rest + 剪贴板边界"
     include *
     autoLayout LeftRight
   }
@@ -245,6 +276,14 @@ views {
   view jump of dshPlugins.jump {
     title "跳跃导航容器内部"
     description "纯 client 半边：入口 + 快照/状态机/浮层三段 + 仅保可解析的宿主空壳"
+    include *
+    include dshHost
+    autoLayout LeftRight
+  }
+
+  view keybindings of dshPlugins.keybindings {
+    title "键盘修正容器内部"
+    description "纯 client 半边：一个捕获阶段 keydown + 映射/光标/可见性三段纯逻辑"
     include *
     include dshHost
     autoLayout LeftRight
@@ -286,6 +325,15 @@ views {
     dshPlugins.jump.jumpApp -> dshPlugins.jump.overlay "render(hints, pending) 画徽标"
     dshPlugins.jump.jumpApp -> dshPlugins.jump.overlay "命中完整 label 后 destroy"
     dshPlugins.jump.jumpApp -> dshHost "激活期间 keydown 一律 preventDefault + stopPropagation"
+  }
+
+  dynamic view caretFlow {
+    title "光标流：Home/End 在输入框内"
+    user -> dshPlugins.keybindings.kbApp "在 composer 里按 Home"
+    dshPlugins.keybindings.kbApp -> dshPlugins.keybindings.kbKeys "classifyTarget + matchCaretKey（行粒度）"
+    dshPlugins.keybindings.kbApp -> dshPlugins.keybindings.kbCaret "preventDefault 后 Selection.modify(lineboundary)"
+    dshPlugins.keybindings.kbApp -> dshPlugins.keybindings.kbReveal "把光标滚回 composer 自己的可视区"
+    dshPlugins.keybindings.kbApp -> dshHost "聊天滚动容器不在补齐范围内，保持原 scrollTop"
   }
 
   dynamic view copyFlow {
