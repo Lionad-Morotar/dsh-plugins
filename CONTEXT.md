@@ -20,8 +20,9 @@
 | 设置归一化 | 用户 GUI 调参到内部 options 的规范化（`options.ts`） |
 | lil-gui | 设置面板调参控件库 |
 | 跳跃模式（jump mode） | dsh-jump 的激活态：视口内可交互元素各得一个 label，按键命中即执行。分点击模式（Cmd+H）与聚焦模式（Cmd+U） |
-| label / hint | jump 模式给候选元素打的键盘徽标。前九个用单键 `a s d f g h j k l`；候选超过九个时全部改为等长两键（有序组合），避免单键 label 吞掉更长 label 的首字符 |
-| 候选（candidate） | 由 `candidateSelector` 枚举出的可标注元素（`a[href], button, input, select, textarea, [role=*], [tabindex]`），激活时快照一次 |
+| label / hint | jump 模式给候选元素打的键盘徽标。按本轮候选数一次性定长度：≤9 单键 `a s d f g h j k l`、≤81 两键、≤729 三键。同轮恒等长，否则短 label 会吞掉长 label 的首字符 |
+| 候选（candidate） | 由 `candidateSelector` 枚举出的可标注元素，激活时快照一次。三族：原生控件与 `[tabindex]`、Harness 实际渲染的可激活 ARIA widget 角色（`config.ts` 的 `ACTIVATABLE_ROLES`，不含 `row`/`columnheader`/`gridcell` 这类结构角色）、可编辑宿主与 `[role=textbox]`/`[role=searchbox]` |
+| 激活语义（activation） | label 命中后执行哪种动作，由目标而非按键模式决定：文本输入面 focus 并把光标折叠到末尾，其余控件派发真实鼠标序列。依据是合成鼠标事件不可信、浏览器不为其执行聚焦默认动作，而 focus 又不让按钮产生行为 |
 | 一轮（round） | dsh-slash-commands 的复制单位：一次完整交流，取该轮最后一条非空正文回复；同轮内的注入消息（文件变更通知、技能正文、cron 通知）不算发言 |
 | 半屏翻页（half page） | 一次 PageUp/PageDown 的位移口径：视口高度的一半。整屏翻页两屏之间没有共用行，读者会丢失阅读锚点；半屏恒定保留上一屏的一半内容 |
 | 端别归属（surface gate） | 同一条命令是否在某端注册。判据取能力而非 profile 名：`/copy` 需要终端（探 `tuiPluginHost` 与 `tuiToast`），`/rename` 只需要命令注册表 |

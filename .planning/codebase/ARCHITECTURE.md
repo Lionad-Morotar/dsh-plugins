@@ -122,9 +122,9 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 ### 跳跃流（`dsh-jump`）
 
 1. 激活：捕获阶段 keydown 交给 `matchKey`（`keys.ts`），仅「meta 单独按下 + 非组合态」的 `h`/`u` 进入 click/focus 模式
-2. 快照：`collectRound` 调 `collectHints`（`hints.ts`），按 `candidateSelector` 取候选 → 视口矩形相交 + 可见性判定 → 丢弃包住其它候选的祖先 → 按序分派 label；候选 ≤9 全部单键，否则整轮等长两键
+2. 快照：`collectRound` 调 `collectHints`（`hints.ts`），按 `candidateSelector` 取候选 → 视口矩形相交 + 可见性判定 → 丢弃包住其它候选的祖先 → 按序分派 label；`keysPerLabel` 按候选数一次性定长度（≤9 单键 / ≤81 两键 / ≤729 三键），同轮恒等长
 3. 渲染：`overlay.render(hints, pending)`（`overlay.ts`）画 fixed 全屏容器与 label 徽章，未匹配前缀的徽章降透明度
-4. 消费：每次 keydown 仍进 `matchKey`；命中完整 label 即 `overlay.destroy`、模式归 idle，click 模式按 pointerdown→mousedown→pointerup→mouseup→click 真实序列派发（构造器取自目标 realm），focus 模式调 `el.focus()`
+4. 消费：每次 keydown 仍进 `matchKey`；命中完整 label 即 `overlay.destroy`、模式归 idle，再按 `activationOf`（`target.ts`）分派——文本输入面走 `focusTextEntry`（focus + 选区折叠到末尾），其余在 click 模式按 pointerdown→mousedown→pointerup→mouseup→click 真实序列派发（构造器取自目标 realm）、focus 模式调 `el.focus()`。分派依据是目标而非模式：合成鼠标事件不可信，不触发聚焦默认动作，而 focus 不让按钮产生行为
 5. 退出：Esc 或任意 meta 组合键；模式激活期间所有 keydown 一律 `preventDefault + stopPropagation`，避免泄漏给宿主快捷键
 
 ### 复制流（`dsh-slash-commands`）
