@@ -1,0 +1,4 @@
+[submodule "refs/deepseek-harness-for-vs-code"]
+	path = refs/deepseek-harness-for-vs-code
+	url = git@github.com:Lionad-Morotar/Deepseek-Harness-for-VS-Code.git
+	ignore = all

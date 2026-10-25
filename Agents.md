@@ -29,4 +29,12 @@ Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。五个包、四形�
 | `dsh-better-keybindings` | [README](./packages/dsh-better-keybindings/README.md)：Home/End 光标语义、三端覆盖边界、web 与 desktop profile 安装 |
 | `dsh-slash-commands` | [README](./packages/dsh-slash-commands/README.md)：`/copy` 与 `/rename` 的端别归属、剪贴板三路路径、三端安装 |
 
+## 只读参考仓库
+
+下表仓库以 git submodule 形式挂在 `refs/` 下，均为 `ignore = all`，日常不参与构建与测试，仅供查阅实现细节。
+
+| 路径 | 说明 |
+| --- | --- |
+| [refs/deepseek-harness-for-vs-code](./refs/deepseek-harness-for-vs-code) | VS Code 扩展 fork 的只读参考仓库。指针记录本地领先 origin/main 20 个提交的 main，push 上游后新克隆才取得到。 |
+
 你可以自行读取项目上下文文档，更新时也优先更新相关文档。
