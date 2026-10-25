@@ -23,10 +23,10 @@ pnpm typecheck                            # pnpm -r typecheck，五包 tsc 严�
 **实测规模（2026-10-24 逐包 `vitest run` 核实，全绿）：**
 - `ascii-rest-scenes`：4 文件 66 用例（palette 15、cover 22、catalog 8、options 21）
 - 皮肤包：6 文件 39 用例（bundle 8、scenes 7、tokens 10、regions 8、gui 3、surface 3）
-- `dsh-jump`：4 文件 36 用例（keys 15、app 10、hints 9、bundle 2）
+- `dsh-jump`：5 文件 60 用例（app 16、target 15、keys 15、hints 12、bundle 2）
 - `dsh-better-keybindings`：5 文件 96 用例（app 30、reveal 24、keys 20、caret 12、bundle 4）
 - `dsh-slash-commands`：9 文件 87 用例（clipboard 17、rename-command 16、command 13、history 12、arguments 7、rename 7、manifest 5、surface 5、helper 4）
-- 合计 28 文件 324 用例（66 + 39 + 36 + 96 + 87）。本文旧版的「10 文件 105」是只有前两包时的口径；根 `README.md` 更早的「23 个测试」也是过期值，其开发章节现已写 28 文件 324 用例，与本次实测一致。
+- 合计 29 文件 348 用例（66 + 39 + 60 + 96 + 87）。本文旧版的「10 文件 105」是只有前两包时的口径；根 `README.md` 更早的「23 个测试」也是过期值，其开发章节现已写 29 文件 348 用例，与本次实测一致。
 - 口径说明：数字取自 vitest 的 `numTotalTests` /「Tests N passed」行，即 `it(...)` 实际执行数；四包当前都用裸 `it(`，没有 `it.each` / `test.each` 参数化，所以文件里 `it(` 的行数与用例数一致
 
 ## 测试文件组织

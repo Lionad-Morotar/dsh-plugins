@@ -42,12 +42,11 @@
 
 ## 已知缺陷
 
-**dsh-jump 在超过 81 个候选时，两键 label 会吃掉三键 label 的前缀：**
-- 现象：`generateLabels` 的注释写「每轮等长 label」，`packages/dsh-jump/README.md` 写「超过九个后每个 hint 得到等长的两键 label」；但 81 个两键标签用完后会直接接三键（实测 `generateLabels(false)` 的第 82 个值是 `asa`）。此时同轮里既有两键也有三键，`matchKey` 在输入 `a`、`s` 时发现 `as` 已在 labels 中，立即判定完成并清空 pending（探针实测输出 `{"type":"label","key":"s"} pending=""`），第 82 个候选永远轮不到
-- 文件：`packages/dsh-jump/src/client/hints.ts`、`packages/dsh-jump/src/client/keys.ts`
-- 影响：中低——需要单轮视口内可交互元素超过 81 个才触发；触发时排名最末的元素不可达，且行为与文档承诺不符
-- 修复路径：按本轮候选数选统一长度（>81 时整轮改三键，或给短 label 保留占位），而不是只按「≤9 才用单键」二分
-- 备注：`packages/dsh-jump/test/hints.test.ts` 的「extends to three-key labels after the two-key space is exhausted」把 `labels[81] === "asa"` 当作预期，等于把这个混合长度钉成了契约，修复缺陷时该用例要一起改
+**（2026-10-25 已修复）dsh-jump 在超过 81 个候选时，两键 label 会吃掉三键 label 的前缀：**
+- 原现象：`generateLabels` 按层往外发，81 个两键用完后直接接三键（实测第 82 个值是 `asa`），同一轮混长；`matchKey` 输入 `a`、`s` 时发现 `as` 已在 labels 中便立即判完成，第 82 个候选永远轮不到
+- 修复：`generateLabels(keys)` 改为接受固定长度，`collectHints` 用 `keysPerLabel(count)` 按本轮候选数一次性选定（≤9 单键 / ≤81 两键 / ≤729 三键），整轮等长
+- 回归钉：`packages/dsh-jump/test/hints.test.ts` 的「moves the whole round to three-key labels once the two-key space is exhausted」与「keeps every round's labels the same length, so no label can shadow another」（后者在 9/10/81/82 四个边界上断言长度集合大小为 1）
+- 影响面：≤81 候选时分配结果与修复前逐字一致，无行为变化
 
 **历史缺陷已修复且各有回归测试钉死：** token 死循环（`packages/dsh-client-ui-skin-ascii-rest/test/bundle.test.ts`「does not republish the token layer…」）、构建缩进污染场景画面（git 97406ea，`build.mjs` 的 `wrap` 注释记录机理）。此外 a5414cc 修过 dsh-jump 客户端入口把 config 当第一参读导致的 web 启动失败，但这一条没有回归测试（见「测试覆盖缺口」）。
 
@@ -113,7 +112,7 @@
 - 上限：ascii.rest 约 240 件作品，更多类别标成 scenes 则线性变大
 - 扩展路径：无需行动；meta 每件几百字节，一次校验成本微秒级（`builtin.ts` 注释已论证）
 
-**dsh-jump 的标签空间：** 单键 9、两键 81、三键 729（即不使用单键时，两键 + 三键合计可覆盖 810 个候选）。视口内候选超过 81 就进入混合长度区，即上文那条已知缺陷；超过 810 还会再混入四键。当前没有上限保护，也没有截断到前 N 个候选的逻辑。
+**dsh-jump 的标签空间：** 单键 9、两键 81、三键 729，按本轮候选数一次性选定长度（`keysPerLabel`），同轮恒等长；超过 729 进四键。当前没有上限保护，也没有截断到前 N 个候选的逻辑——真出现上千候选时四键 label 会很长，但不会不可达。
 
 **交付物体量：** `lib/` 受版本控制文件 42 个（皮肤 37、dsh-jump 2、dsh-better-keybindings 2、dsh-slash-commands 1），皮肤占 556K，其余三个包合计约 27K。无增长压力。
 
