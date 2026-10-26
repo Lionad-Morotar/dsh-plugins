@@ -1,6 +1,6 @@
 # dsh-slash-commands
 
-DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回复放进系统剪贴板，web 与 desktop 用 `/rename` 改当前会话标题。
+DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回复放进系统剪贴板，web 与 desktop 用 `/rename` 改当前会话标题、用 `/resume` 切换到另一个会话。
 
 ## 命令归属
 
@@ -10,6 +10,21 @@ DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回�
 | --- | --- | --- | --- | --- |
 | `/copy` | 有 | 无 | 无 | 写的是本机剪贴板，装到 web/desktop 上会是复制进用户永远粘不到的地方的死命令，因此只在终端组合注册 |
 | `/rename` | TUI 自带同名命令 | 有 | 有 | 走 harness 全局的命令注册表，一处注册三端可见。TUI 的本地命令表会遮蔽同名注册项，所以 TUI 侧始终用自带的那个 |
+| `/resume` | 无 | 有 | 有 | 只在客户端半注册：切换会话是客户端 UI 导航（`ctx.uiWorkspace`），宿主没有这个能力 |
+
+## `/resume`
+
+`/resume` 是一个切换动作，语义等同在侧边栏点击那个会话：列出会话、选一条、导航过去。它不续写、不加载上下文、不产生第二轮对话——那些是侧边栏本来就不做的事。
+
+命令打开时停在「当前项目」这一档。顶部两行是范围（tab），选「全部会话」把列表换成所有会话，选「当前项目」换回来。当前档带 `当前` 徽标，但不再是高亮位：高亮位留给「你正在用的那个会话」，不看屏幕直接回车时才不会被范围切换抢走。
+
+已归档的会话两档都不出现。它们在侧边栏里本来就被收起来了，列在这里等于给 `/resume` 开一道后门。因为压根不加载，搜索也翻不出来。
+
+搜索是纯本地过滤（fuzzy 匹配会话标题），跨两档都生效，但只在当前档的行集里找。新建未命名的空会话与子代理会话不出现：前者切过去是开始工作而不是继续工作，后者的 id 是续写地址而不是一个可打开的对话。
+
+宿主没有 tab 控件，范围切换靠的是重新打开同一个弹层——`PopupSelectController.open()` 的契约就写着「A reopen supersedes the previous shell」，重开时旧绑定的回收结算发现自己已失效便退出，既不消费 token 也不关闭新弹层。
+
+选中的会话若就是当前会话，直接 no-op：重开当前会话会重挂对话，丢掉滚动位置和草稿。
 
 ## `/rename`
 
@@ -55,9 +70,9 @@ SSH 会话里绝不尝试 `native`：那会写远端机器的剪贴板，写了�
 
 ## 客户端半与复制按钮
 
-web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `package.json` 的 `dsh.client` 与 `exports["./client"]` 两处一起被发现。它给页面的剪贴板写入套上一道上限。
+web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `package.json` 的 `dsh.client` 与 `exports["./client"]` 两处一起被发现。它做两件事：注册 `/resume`，以及给页面的剪贴板写入套上一道上限。
 
-这是替运行环境兜底，不是本包的功能。harness 渲染的复制按钮在 `await navigator.clipboard.writeText()` 前后置了一个「复制中」标志，而那个 promise 在文档失焦时并不总是会 settle——它可能永远悬着。标志于是永不释放，第一次点击永远不结束，之后每次点击都被当成重复操作丢掉。表现出来的不是「复制失败」，是「按钮从此死了」。
+后一件事是替运行环境兜底，不是本包的功能。harness 渲染的复制按钮在 `await navigator.clipboard.writeText()` 前后置了一个「复制中」标志，而那个 promise 在文档失焦时并不总是会 settle——它可能永远悬着。标志于是永不释放，第一次点击永远不结束，之后每次点击都被当成重复操作丢掉。表现出来的不是「复制失败」，是「按钮从此死了」。
 
 插件换不掉那些按钮，但它们都走 `navigator.clipboard.writeText` 这一个口子，所以客户端半把这个方法包了一层：
 
@@ -69,9 +84,9 @@ web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `packa
 
 ## 安装
 
-包根带 `dsh-plugin.json`（Community Draft 0.15），把 `/copy` 与 `/rename` 作为声明式命令贡献出去，并各自申请 `commands.invoke` 权限。
+包根带 `dsh-plugin.json`（Community Draft 0.15），把 `/copy` 与 `/rename` 作为声明式命令贡献出去，并各自申请 `commands.invoke` 权限。`/resume` 不在这个清单里：它是纯客户端贡献，靠 `package.json#dsh.client` 被发现，写进 manifest 的 `contributes` 反而会和它对不上。
 
-装到哪个 profile 取决于要哪些命令：只有 tui profile 能拿到 `/copy`，`/rename` 三端都有。
+装到哪个 profile 取决于要哪些命令：只有 tui profile 能拿到 `/copy`，`/rename` 三端都有，`/resume` 在 web 与 desktop。
 
 **A. 以 profile 依赖安装（推荐）**
 
@@ -102,6 +117,8 @@ web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `packa
 - `src/clipboard.ts` 是剪贴板三档路径，effects 全注入，每个分支都能在无终端环境下测。
 - `src/command.ts` 组装命令；优先走宿主中介的 `tuiPluginHost.registerCommand`（命令会带插件身份，宿主能按 `commands.invoke` 逐插件管控），未准入时回落到 `commands.register`，让命令仍然可用。本机 dsh-tui 组合实测未向第三方激活授予 Component 身份（`componentIdentityOf` 返回 undefined），因此实际走的是回落路径，命令可用但不带归属。
 - `src/rename.ts` 是 `/rename` 的文法（纯函数），`src/rename-command.ts` 组装命令并把标题交给 `sessionTitle`。
+- `src/client/resume.ts` 是 `/resume` 的全部判定（行集、范围过滤、切换派发），DOM-free、协作者全用结构化类型接收，因此切换语义不需要浏览器就能测。
+- `src/client/resume-command.ts` 只做接线：读 `ctx.sessions.list` 与 `ctx.workspaces.list` 的快照，把范围重开交给 `ctx.commandUi.popupFor(actx).open()`。快照必须在 `options` 里读而不是注册时读——插件常驻期间会话会新建、结束、归档，注册时抓一次到第二次调用就过期了。
 - `src/client/clipboard-shim.ts` 是有界的剪贴板写入：预算、兜底、以及「包装只装一次」的实现（`writeText` 通常挂在原型上，还原时要删掉自己加的影子属性而不是把原型方法拷成自有属性）。
 - `src/index.ts` 是宿主半，`inject = ['commands', 'sessionTitle']`，两者都必须声明：漏了 `sessionTitle` 时 Cordis 抛 gateway 契约错误，被 catch 吞掉后表现为「命令执行失败」却给不出原因；`commands` 则是插件行激活早于命令服务挂载，不声明会出现 `apply` 先跑、注册不到、装完即失效（首次真机启动即如此）。它还决定端别分派：探到终端服务才注册 `/copy`，`/rename` 无条件注册。注册再延后一个宏任务，因为 `tuiPluginHost` 由另一行挂载，`apply` 时它还不存在（实测 apply 时缺失、约 250ms 后出现）。
 

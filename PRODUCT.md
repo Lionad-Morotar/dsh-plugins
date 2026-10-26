@@ -9,6 +9,7 @@ Lionad 个人的 DeepSeek Harness（DSH）插件集合。产品线从单一皮�
 - 视觉：把 [ascii.rest](https://ascii.rest) 的 ASCII 场景艺术搬进 DSH 工作区背景，随亮暗主题呈现可调参的场景视觉
 - 键盘：给 DSH Web GUI 加 Cmd+H / Cmd+U 跳跃导航，免鼠标点选；修正输入框内 Home/End 的默认行为，让按键跟随光标语义而不是滚动聊天区
 - 剪贴板：给 DSH TUI 加 `/copy`，把最近 n 轮回复直接放进系统剪贴板
+- 会话切换：给 web 与 desktop 加 `/resume`，像点侧边栏一样切到另一个会话，默认只看当前项目，可切到全部，不碰归档
 
 ## 目标用户
 
@@ -23,7 +24,7 @@ Lionad 个人的 DeepSeek Harness（DSH）插件集合。产品线从单一皮�
 | `ascii-rest-scenes` | 可独立测试的纯逻辑层：场景目录、cover 取景几何、墨水-纸色调色板、设置归一化 |
 | `dsh-jump` | Web GUI 键盘跳跃导航：Cmd+H 打 label 即点、Cmd+U 打 label 即聚焦、Esc 退出；纯 client 半边 |
 | `dsh-better-keybindings` | Web 与 desktop 共用的键盘修正：输入框聚焦时 Home/End / Ctrl+Home/End / Shift+Home/End 按行或按文档移动光标，并抑制浏览器的滚动副作用；纯 client 半边 |
-| `dsh-slash-commands` | 三端 slash 命令：TUI 的 `/copy` 把最近 n 轮最终回复进系统剪贴板（`--all` 连真人发言一起带），web 与 desktop 的 `/rename` 改当前会话标题；纯 host 半边，按终端能力分派命令 |
+| `dsh-slash-commands` | 三端 slash 命令：TUI 的 `/copy` 把最近 n 轮最终回复进系统剪贴板（`--all` 连真人发言一起带），web 与 desktop 的 `/rename` 改当前会话标题、`/resume` 切换会话；host 半按终端能力分派命令，client 半注册 `/resume` 并给页面剪贴板写入加上限 |
 
 ## 品牌承诺与体验目标
 
@@ -39,6 +40,6 @@ Lionad 个人的 DeepSeek Harness（DSH）插件集合。产品线从单一皮�
 - 上游场景源 ascii.rest 钉在 commit `c556be4`，升级走 git 依赖换 sha + 重新生成场景目录
 - 三种清单形态并存：skin 包用 `skin.json`（皮肤管理器读）、dsh-slash-commands 用 `dsh-plugin.json`（Community Draft 0.15，声明式命令与 `commands.invoke` 权限）、dsh-jump 只有 `cordis.patch.yml`。共同点是都带 Loader row patch
 - 皮肤包 `files` 白名单严格控制发布面；仓库 private，但 LICENSE MIT
-- dsh-jump 与 dsh-better-keybindings 只面向 web 类 profile（desktop 跑同一套客户端 bundle，因此一并覆盖）；dsh-slash-commands 三端都装，但命令本身按端归属：`/copy` 写本机剪贴板，只在终端组合注册，`/rename` 走全局命令注册表，三端都可用
+- dsh-jump 与 dsh-better-keybindings 只面向 web 类 profile（desktop 跑同一套客户端 bundle，因此一并覆盖）；dsh-slash-commands 三端都装，但命令本身按端归属：`/copy` 写本机剪贴板，只在终端组合注册，`/rename` 走全局命令注册表三端可用，`/resume` 走客户端导航因此只在 web 与 desktop
 - 翻页单位是「半屏」而非「整屏」：整屏翻页两屏之间没有共用行，读者按一下就把刚读到的位置推出视野，半屏永远留着上一屏的一半内容作锚点
 - TUI 端不存在这条修正面：`@deepseek-harness-tui/dsh-tui` 的 PromptInput 原生就是按行处理 Home/End，且没有对外的键位覆写缝，故 better-keybindings 不产出 TUI 半边
