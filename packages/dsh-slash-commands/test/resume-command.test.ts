@@ -17,6 +17,7 @@ function context(options: {
   byId?: Record<string, { displayTitle?: string; running?: boolean; blank?: boolean; cwd?: string; origin?: "subagent" }>;
   archived?: string[];
   withPopup?: boolean;
+  search?: string;
 }) {
   const ids = options.ids ?? [];
   const byId = options.byId ?? {};
@@ -24,11 +25,21 @@ function context(options: {
   const openSession = vi.fn();
   const open = vi.fn();
   const scoped = vi.fn();
+  const setSearch = vi.fn();
+  const search = options.search ?? "";
   const reachable = options.withPopup !== false;
   const ctx: ResumeWiringContext = {
     commandUi: {
       register: () => () => {},
-      ...(reachable ? { popupFor: () => ({ open }) } : {}),
+      ...(reachable
+        ? {
+            popupFor: () => ({
+              open,
+              setSearch,
+              state: { getSnapshot: () => ({ open: true, search }) },
+            }),
+          }
+        : {}),
     },
     sessions: {
       list: { getSnapshot: () => ({ ids, byId }) },
@@ -40,7 +51,7 @@ function context(options: {
     workspaces: { list: { getSnapshot: () => ({ archivedSessionIds: archived }) } },
     uiWorkspace: { openSession },
   };
-  return { ctx, openSession, open, scoped };
+  return { ctx, openSession, open, scoped, setSearch };
 }
 
 /** The rows one open of the popup would show. */
@@ -159,6 +170,25 @@ describe("the /resume contribution", () => {
     await createResumeContribution(ctx).ui.onSelect({ id: "s2", label: "second" }, { sessionId: "s1" });
 
     expect(openSession).toHaveBeenCalledExactlyOnceWith("s2");
+  });
+
+  it("carries the search text across a scope switch, so the same filter keeps applying", async () => {
+    // The re-opened shell is fresh state: without replaying the query the user's
+    // filter is silently dropped and they have to type it again to keep looking
+    // at the same subset in the other scope.
+    const { ctx, setSearch } = context({ ids: ["s1"], byId: { s1: { displayTitle: "only" } }, search: "deploy" });
+
+    await createResumeContribution(ctx).ui.onSelect({ id: "scope:all", label: "全部会话" }, { sessionId: "s1" });
+
+    expect(setSearch).toHaveBeenCalledExactlyOnceWith("deploy");
+  });
+
+  it("does not touch the search when there is nothing to carry over", () => {
+    const { ctx, setSearch } = context({ ids: ["s1"], byId: { s1: { displayTitle: "only" } } });
+
+    createResumeContribution(ctx).ui.onSelect({ id: "scope:all", label: "全部会话" }, { sessionId: "s1" });
+
+    expect(setSearch).not.toHaveBeenCalled();
   });
 
   it("localizes the search copy it hands the shell", () => {

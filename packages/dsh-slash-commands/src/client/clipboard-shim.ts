@@ -122,9 +122,20 @@ export async function writeBounded(
  * focusable but invisible and outside the accessibility tree, and it must be
  * removed even when the copy fails: leaving it behind would put a stray node in
  * the body after every failed attempt.
+ *
+ * `select()` focuses the scratch field, so the fallback briefly takes focus from
+ * whatever had it. Removing the field does not give it back: the page is left with
+ * no focused element, and a user typing into the composer while a copy runs finds
+ * their next keystrokes going nowhere. The element that had focus is therefore
+ * captured first and focused again on the way out, failure included, because the
+ * field took it in both cases.
  */
 export function bindExecCommandCopy(document: Document): ClipboardFallback {
   return (text: string): boolean => {
+    // `activeElement` is the body when nothing is focused; focusing the body back
+    // would hand the page a target it never had.
+    const active = document.activeElement;
+    const restore = active !== null && active !== document.body ? active : null;
     const field = document.createElement("textarea");
     field.value = text;
     field.setAttribute("readonly", "");
@@ -143,6 +154,7 @@ export function bindExecCommandCopy(document: Document): ClipboardFallback {
       return false;
     } finally {
       document.body.removeChild(field);
+      if (restore !== null) (restore as HTMLElement).focus?.();
     }
   };
 }

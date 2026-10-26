@@ -54,6 +54,10 @@ export interface ResumeWorkspaceLike {
 /** The popup surface a scope pick re-opens onto; `open` supersedes the old shell. */
 export interface ResumePopupLike {
   open(command: string, spec: ResumePopupSpec, context: InvokingSession, segment: { via: "enter"; token: string }): void;
+  /** Re-applies the filter after a reopen; a no-op while no shell is open. */
+  setSearch?(search: string): void;
+  /** Read-only shell state, used to carry the filter across a reopen. */
+  readonly state?: { getSnapshot(): { readonly search: string } };
 }
 
 /** The spec half of the popup, i.e. the contribution's `ui` without its kind tag. */
@@ -127,6 +131,11 @@ export function createResumeContribution(ctx: ResumeWiringContext): ResumeContri
       return false;
     }
     if (popup === undefined) return false;
+    // The filter is read before the reopen because the reopen resets the shell:
+    // a fresh open starts with an empty query, so a user who had narrowed the list
+    // and then switched scope would silently lose their filter and have to type it
+    // again to keep looking at the same subset.
+    const search = popup.state?.getSnapshot().search ?? "";
     // The controller swaps its binding before the old settlement resumes, and the
     // old settlement drops out on that mismatch, so this re-open survives the
     // pick that opened it. The token is replayed unchanged because the original
@@ -135,6 +144,7 @@ export function createResumeContribution(ctx: ResumeWiringContext): ResumeContri
       via: "enter",
       token: `/${RESUME_COMMAND_NAME} `,
     });
+    if (search !== "") popup.setSearch?.(search);
     return true;
   };
 

@@ -293,7 +293,7 @@ describe("installing the bounded writer", () => {
 
 describe("the legacy selection fallback", () => {
   /** A minimal document standing in for the DOM the fallback manipulates. */
-  function fakeDocument(options: { copyResult: boolean }) {
+  function fakeDocument(options: { copyResult: boolean; focused?: unknown }) {
     const appended: unknown[] = [];
     const removed: unknown[] = [];
     const textarea = {
@@ -302,6 +302,8 @@ describe("the legacy selection fallback", () => {
       setAttribute: vi.fn(),
       select: vi.fn(),
       setSelectionRange: vi.fn(),
+      focus: vi.fn(),
+      remove: vi.fn(),
     };
     const document = {
       createElement: vi.fn(() => textarea),
@@ -311,6 +313,7 @@ describe("the legacy selection fallback", () => {
         removeChild: vi.fn((node: unknown) => removed.push(node)),
       },
       getSelection: vi.fn(() => ({ removeAllRanges: vi.fn(), addRange: vi.fn(), rangeCount: 0 })),
+      activeElement: options.focused ?? null,
     };
     return { document, textarea, appended, removed };
   }
@@ -336,6 +339,35 @@ describe("the legacy selection fallback", () => {
   it("reports the document's answer rather than assuming success", () => {
     expect(bindExecCommandCopy(fakeDocument({ copyResult: false }).document as never)("hi")).toBe(false);
     expect(bindExecCommandCopy(fakeDocument({ copyResult: true }).document as never)("hi")).toBe(true);
+  });
+
+  it("hands focus back to the element that had it, so the composer keeps the caret", () => {
+    // `select()` focuses the scratch field. Without an explicit restore the page
+    // is left with no focused element after the field is removed, and the user's
+    // typing goes nowhere even though the copy succeeded.
+    const composer = { focus: vi.fn() };
+    const { document } = fakeDocument({ copyResult: true, focused: composer });
+
+    bindExecCommandCopy(document as never)("hi");
+
+    expect(composer.focus).toHaveBeenCalledOnce();
+  });
+
+  it("restores focus even when the copy failed, since the field took it either way", () => {
+    const composer = { focus: vi.fn() };
+    const { document } = fakeDocument({ copyResult: false, focused: composer });
+
+    bindExecCommandCopy(document as never)("hi");
+
+    expect(composer.focus).toHaveBeenCalledOnce();
+  });
+
+  it("does not call focus on a body-level fallback, which would take focus from nowhere", () => {
+    // With nothing focused, `activeElement` is the body; focusing it would give the
+    // page a focus target it did not ask for.
+    const { document } = fakeDocument({ copyResult: true });
+
+    expect(() => bindExecCommandCopy(document as never)("hi")).not.toThrow();
   });
 
   it("keeps the field out of the accessibility tree and off the layout", () => {

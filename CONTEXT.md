@@ -72,7 +72,7 @@
 
 决策：不去改那些按钮（它们由 harness 渲染，插件换不掉），而是在客户端半包装页面的 `navigator.clipboard.writeText`——所有复制按钮都走这个口子。包装给平台调用 120 ms 预算，超时即用 `execCommand('copy')` 兜底，两条都失败则 reject。包装的安装与还原走 `ctx.effect`，因此 profile 重载不会留下第二层。
 
-后果：全局生效，页面上任何调用 `writeText` 的地方都会经过它，这是换取覆盖 harness 按钮的代价。平台调用真的悬住时，真实写入与兜底写入各发生一次（同一段文本，用户分辨不出）。这是替运行环境兜底而不是本包的产品功能，host 侧不得依赖它；真正的上游修法是在 harness 里给这次 await 加上限并补兜底，届时这一层应删除。
+后果：全局生效，页面上任何调用 `writeText` 的地方都会经过它，这是换取覆盖 harness 按钮的代价。平台调用真的悬住时，真实写入与兜底写入各发生一次（同一段文本，用户分辨不出）。兜底路径的 `select()` 会短暂夺走焦点，因此必须把焦点还给原来持有它的元素，否则用户正在输入的输入框会静默失焦。这是替运行环境兜底而不是本包的产品功能，host 侧不得依赖它；真正的上游修法是在 harness 里给这次 await 加上限并补兜底，届时这一层应删除。
 
 ### ADR-6: resume 的范围用重开弹层表达，不用弹层内 tab
 
@@ -80,4 +80,4 @@
 
 决策：走重开。`PopupSelectController` 是公开类，`open(command, spec, context, segment)` 的契约原文写着「A reopen supersedes the previous shell」，且 `settle()` 在 `onSelect` 返回后先比对 binding，不匹配就直接 return——既不消费 token 也不关闭弹层。所以从 `onSelect` 里重开是安全的，正是宿主给出的替换路径。
 
-后果：范围是真的两档而不是分组列表的视觉暗示，用户可以来回切而不会丢失「我现在在看哪一档」。代价是业务代码要读 `ctx.commandUi.popupFor(actx)` 这个面（`actx` 由 `ctx.sessions.scope(sessionId)` 得到）；`popupFor` 在 Session generation 已释放时会抛错，因此调用点必须 catch 并降级为不做切换。档位不跨次记忆——每次打开都从 `project` 起，因为这条命令回答的是「我现在去哪」。
+后果：范围是真的两档而不是分组列表的视觉暗示，用户可以来回切而不会丢失「我现在在看哪一档」。重开是全新弹层状态，因此搜索词要在重开前读出、重开后设回，否则切档会丢掉用户已输入的过滤条件。代价是业务代码要读 `ctx.commandUi.popupFor(actx)` 这个面（`actx` 由 `ctx.sessions.scope(sessionId)` 得到）；`popupFor` 在 Session generation 已释放时会抛错，因此调用点必须 catch 并降级为不做切换。档位不跨次记忆——每次打开都从 `project` 起，因为这条命令回答的是「我现在去哪」。
