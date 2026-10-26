@@ -2,35 +2,90 @@
  * Build the shipped `lib/` tree.
  *
  * The Harness loads a plugin's host half straight out of the installed package
- * (`main`), and never runs a build step, so `lib/` is a build product that is
- * committed and this script is the only thing that writes it.
+ * (`main`) and serves the client half out of `exports["./client"]`, and it never
+ * runs a build step, so `lib/` is a build product that is committed and this
+ * script is the only thing that writes it.
+ *
+ *   lib/index.js   Host half, plain ESM (Node imports it directly).
+ *   lib/client.js  Browser half, CJS wrapped in a ModuleLoader factory.
  */
 import { build } from "esbuild";
-import { mkdir, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "..");
 const libRoot = join(packageRoot, "lib");
+const require = createRequire(join(packageRoot, "package.json"));
+const manifest = require(join(packageRoot, "package.json"));
 
-const result = await build({
-  entryPoints: [join(packageRoot, "src", "index.ts")],
-  bundle: true,
-  format: "esm",
-  platform: "node",
-  target: "es2022",
-  minify: false,
-  write: false,
-  legalComments: "none",
-  logLevel: "silent",
+/**
+ * The ModuleLoader wrapper for the client half. `window.__ModuleLoader__.load`
+ * accepts only `{id, factory}` and the id must equal the package name, because
+ * the loader keys its module table on it. The factory must return the plugin
+ * object `{name, inject, apply}`; an IIFE result is rejected at mount.
+ *
+ * The bundle text is inserted verbatim and deliberately NOT re-indented: the
+ * minified code may contain multi-line template literals, and padding every line
+ * would inject that padding into the string itself.
+ */
+function wrap(id, code) {
+  return `window.__ModuleLoader__.load({
+  id: ${JSON.stringify(id)},
+  factory: (require) => {
+    var module = { exports: {} };
+    var exports = module.exports;
+${code}
+    return module.exports.default ?? module.exports;
+  }
 });
+`;
+}
 
-const output = result.outputFiles?.[0];
-if (output === undefined) throw new Error("esbuild produced nothing for src/index.ts");
+/**
+ * Bundle one entry. The halves differ in module system and getting this wrong is
+ * a boot failure, not a warning: the host half is imported by Node from an ESM
+ * package, while the client half is evaluated by the browser as a classic script
+ * inside the factory.
+ *
+ * The host half is left unminified. This package has no bundle test, so a
+ * mismatch between `src/` and `lib/` can only be caught by reading the committed
+ * output; minifying it would hide that evidence to save a few kilobytes in a file
+ * Node reads once at boot.
+ */
+async function bundle(entry, format) {
+  const host = format === "esm";
+  const result = await build({
+    entryPoints: [entry],
+    bundle: true,
+    format,
+    platform: host ? "node" : "browser",
+    target: "es2022",
+    minify: !host,
+    write: false,
+    legalComments: "none",
+    logLevel: "silent",
+  });
+  const output = result.outputFiles?.[0];
+  if (output === undefined) throw new Error(`esbuild produced nothing for ${entry}`);
+  return output.text;
+}
 
 await rm(libRoot, { recursive: true, force: true });
 await mkdir(libRoot, { recursive: true });
-const { writeFile } = await import("node:fs/promises");
-await writeFile(join(libRoot, "index.js"), output.text, "utf8");
-console.log("dsh-slash-commands: wrote lib/index.js");
+
+await writeFile(join(libRoot, "index.js"), await bundle(join(packageRoot, "src", "index.ts"), "esm"), "utf8");
+
+const client = await bundle(join(packageRoot, "src", "client", "entry.ts"), "cjs");
+await writeFile(join(libRoot, "client.js"), wrap(manifest.name, client), "utf8");
+
+const written = ["index.js", "client.js"];
+const sizes = await Promise.all(
+  written.map(async file => {
+    const bytes = await readFile(join(libRoot, file));
+    return `${file.padEnd(16)} ${String(bytes.length).padStart(8)} B`;
+  }),
+);
+process.stdout.write(`${written.length} files\n${sizes.join("\n")}\n`);

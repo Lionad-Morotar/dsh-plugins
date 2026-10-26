@@ -53,6 +53,20 @@ SSH 会话里绝不尝试 `native`：那会写远端机器的剪贴板，写了�
 
 剪贴板工具的统一上限是 2 秒：X server 卡住或工具在空消息循环上等待时，按失败处理并继续，不会一直挂着不给反馈。
 
+## 客户端半与复制按钮
+
+web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `package.json` 的 `dsh.client` 与 `exports["./client"]` 两处一起被发现。它给页面的剪贴板写入套上一道上限。
+
+这是替运行环境兜底，不是本包的功能。harness 渲染的复制按钮在 `await navigator.clipboard.writeText()` 前后置了一个「复制中」标志，而那个 promise 在文档失焦时并不总是会 settle——它可能永远悬着。标志于是永不释放，第一次点击永远不结束，之后每次点击都被当成重复操作丢掉。表现出来的不是「复制失败」，是「按钮从此死了」。
+
+插件换不掉那些按钮，但它们都走 `navigator.clipboard.writeText` 这一个口子，所以客户端半把这个方法包了一层：
+
+- 平台调用给 120 ms 预算，超时就当它不会回来了，不陪它等。
+- 同时用 `execCommand('copy')` 补一次（临时 textarea + 选中 + 复制），这条路是同步的，悬不住。
+- 两条路都失败时 reject，让调用方走它自己的失败分支，而不是拿着一个永不结算的 promise 干等。
+
+代价要说清：包装是全局的，页面上所有 `writeText` 调用都会经过它；并且平台调用真的悬住时，真实写入和兜底写入会各发生一次（同一段文本，用户分辨不出来）。
+
 ## 安装
 
 包根带 `dsh-plugin.json`（Community Draft 0.15），把 `/copy` 与 `/rename` 作为声明式命令贡献出去，并各自申请 `commands.invoke` 权限。
@@ -88,6 +102,7 @@ SSH 会话里绝不尝试 `native`：那会写远端机器的剪贴板，写了�
 - `src/clipboard.ts` 是剪贴板三档路径，effects 全注入，每个分支都能在无终端环境下测。
 - `src/command.ts` 组装命令；优先走宿主中介的 `tuiPluginHost.registerCommand`（命令会带插件身份，宿主能按 `commands.invoke` 逐插件管控），未准入时回落到 `commands.register`，让命令仍然可用。本机 dsh-tui 组合实测未向第三方激活授予 Component 身份（`componentIdentityOf` 返回 undefined），因此实际走的是回落路径，命令可用但不带归属。
 - `src/rename.ts` 是 `/rename` 的文法（纯函数），`src/rename-command.ts` 组装命令并把标题交给 `sessionTitle`。
+- `src/client/clipboard-shim.ts` 是有界的剪贴板写入：预算、兜底、以及「包装只装一次」的实现（`writeText` 通常挂在原型上，还原时要删掉自己加的影子属性而不是把原型方法拷成自有属性）。
 - `src/index.ts` 是宿主半，`inject = ['commands', 'sessionTitle']`，两者都必须声明：漏了 `sessionTitle` 时 Cordis 抛 gateway 契约错误，被 catch 吞掉后表现为「命令执行失败」却给不出原因；`commands` 则是插件行激活早于命令服务挂载，不声明会出现 `apply` 先跑、注册不到、装完即失效（首次真机启动即如此）。它还决定端别分派：探到终端服务才注册 `/copy`，`/rename` 无条件注册。注册再延后一个宏任务，因为 `tuiPluginHost` 由另一行挂载，`apply` 时它还不存在（实测 apply 时缺失、约 250ms 后出现）。
 
 `lib/` 是构建产物且**要提交**：harness 从安装包直接读它，不会替你跑构建。改了 `src/` 就 `pnpm build` 再提交。
