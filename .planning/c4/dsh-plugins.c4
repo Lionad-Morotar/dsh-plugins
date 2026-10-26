@@ -104,12 +104,24 @@ model {
       }
     }
 
-    container tuiCopy "dsh-slash-commands" {
-      description "三端 slash 命令：tui 的 /copy 把最近 n 轮回复并发写进三条剪贴板路径，web 与 desktop 的 /rename 改会话标题"
-      technology "TypeScript + esbuild，纯 host 半边，ESM 单文件 lib/index.js"
+    container slashCommands "dsh-slash-commands" {
+      description "三端 slash 命令：tui 的 /copy 把最近 n 轮回复并发写进三条剪贴板路径；web 与 desktop 的 /rename 改会话标题、/resume 切到另一条会话，另给页面的剪贴板写入加上限"
+      technology "TypeScript + esbuild，host 半边 lib/index.js（ESM）+ client 半边 lib/client.js（ModuleLoader 工厂）"
 
       component tuiEntry "src/index" {
         description "宿主 apply 本体：inject commands 与 sessionTitle、按终端能力分派哪条命令注册、/copy 注册延后一宏任务、helper 统一 2 秒上限"
+      }
+      component clientEntry "client/entry" {
+        description "客户端 apply 本体：inject commandUi/sessions/workspaces/uiWorkspace，用 effect 注册有界剪贴板与 /resume 两件事"
+      }
+      component resume "client/resume" {
+        description "/resume 的全部纯判定：会话行集投影、范围档（project/all）、切换派发，DOM-free"
+      }
+      component resumeCommand "client/resume-command" {
+        description "/resume 接线：打开时读会话与归档快照，范围行经 popupFor 重开弹层并把搜索词带过去，会话行调 uiWorkspace.openSession"
+      }
+      component clipboardShim "client/clipboard-shim" {
+        description "有界剪贴板写入：包装页面 navigator.clipboard.writeText，120 ms 预算 + execCommand 兜底，必然结算；兜底夺走的焦点归还给原持有元素"
       }
       component rename "rename" {
         description "参数文法 /rename <title>：只去首尾空白，空标题按用法错误拒绝"
@@ -130,7 +142,7 @@ model {
         description "剪贴板三路并发：native / tmux-buffer / OSC 52，如实报 attempted/landed/degraded"
       }
       component manifest "dsh-plugin.json" {
-        description "准入清单（Community Draft 0.15）：声明 /copy 与 /rename 两条命令及各自的 commands.invoke 权限"
+        description "准入清单（Community Draft 0.15）：只声明宿主侧的 /copy 与 /rename 及各自的 commands.invoke 权限；/resume 是纯客户端贡献，不在此清单"
       }
     }
 
@@ -157,7 +169,7 @@ model {
   }
 
   system dshHost "DSH 宿主" {
-    description "外部宿主：Cordis 上下文 + 模块加载器；web 面 slots/theme/locale，tui 面 commands/tuiPluginHost/tuiToast"
+    description "外部宿主：Cordis 上下文 + 模块加载器；web 面 slots/theme/locale 与 commandUi/sessions/workspaces/uiWorkspace，tui 面 commands/tuiPluginHost/tuiToast"
     technology "Cordis 4 + DSH 0.2 rc"
   }
 
@@ -179,6 +191,11 @@ model {
   system terminalHost "终端与 tmux" {
     description "终端侧剪贴板通道：tmux buffer 与 OSC 52 转义；能否落地取决于终端设置"
     technology "tmux load-buffer + ESC ] 52 ; c ; base64 BEL（tmux 内包 DCS 透传）"
+  }
+
+  system browserClipboard "浏览器剪贴板" {
+    description "页面侧剪贴板写入：navigator.clipboard.writeText 与 execCommand('copy') 兜底；文档失焦或无用户激活时平台调用可能永不结算"
+    technology "Clipboard API + 临时选区复制"
   }
 
   user -> dshPlugins "使用与维护"
@@ -210,16 +227,23 @@ model {
   jump.jumpApp -> jump.overlay "render(hints, pending) / destroy"
   jump.jumpApp -> dshHost "捕获阶段吞掉自己拥有的 keydown，不漏给宿主快捷键"
 
-  dshHost -> tuiCopy "Loader row 注入（id: dsh-slash-commands），加载 lib/index.js"
-  tuiCopy.tuiEntry -> tuiCopy.command "延后一宏任务后调 registerCopyCommand"
-  tuiCopy.command -> tuiCopy.args "parseCopyInput 解析文法"
-  tuiCopy.command -> tuiCopy.history "collectTurns 选轮次，renderTurns 渲染"
-  tuiCopy.command -> tuiCopy.clipboard "copyToClipboard 三路并发"
-  tuiCopy.command -> dshHost "优先 tuiPluginHost.registerCommand，未准入回落 commands.register；tuiToast 播报"
-  tuiCopy.history -> dshHost "读 invocation.agent.session 的事件流"
-  dshHost -> tuiCopy.manifest "admission-loader 读清单绑定插件身份，按 commands.invoke 管控"
-  tuiCopy.clipboard -> systemClipboard "native：pbcopy / clip / wl-copy / xclip / xsel"
-  tuiCopy.clipboard -> terminalHost "tmux load-buffer 与 OSC 52（tmux 内包 DCS 透传）"
+  dshHost -> slashCommands "Loader row 注入（id: dsh-slash-commands），按端加载半边"
+  dshHost -> slashCommands.tuiEntry "三端加载宿主半边 lib/index.js"
+  dshHost -> slashCommands.clientEntry "web 与 desktop 加载客户端半边 lib/client.js 工厂"
+  slashCommands.clientEntry -> slashCommands.resumeCommand "apply 内用 effect 注册 /resume 贡献"
+  slashCommands.clientEntry -> slashCommands.clipboardShim "apply 内用 effect 安装有界写入"
+  slashCommands.resumeCommand -> slashCommands.resume "resumeRows 建行集、scopeRows 切档、switchTo 派发"
+  slashCommands.resumeCommand -> dshHost "commandUi.popupFor(actx).open 重开弹层；uiWorkspace.openSession 切会话"
+  slashCommands.clipboardShim -> browserClipboard "包装 writeText：120 ms 预算 + execCommand 兜底"
+  slashCommands.tuiEntry -> slashCommands.command "延后一宏任务后调 registerCopyCommand"
+  slashCommands.command -> slashCommands.args "parseCopyInput 解析文法"
+  slashCommands.command -> slashCommands.history "collectTurns 选轮次，renderTurns 渲染"
+  slashCommands.command -> slashCommands.clipboard "copyToClipboard 三路并发"
+  slashCommands.command -> dshHost "优先 tuiPluginHost.registerCommand，未准入回落 commands.register；tuiToast 播报"
+  slashCommands.history -> dshHost "读 invocation.agent.session 的事件流"
+  dshHost -> slashCommands.manifest "admission-loader 读清单绑定插件身份，按 commands.invoke 管控（只覆盖宿主侧命令）"
+  slashCommands.clipboard -> systemClipboard "native：pbcopy / clip / wl-copy / xclip / xsel"
+  slashCommands.clipboard -> terminalHost "tmux load-buffer 与 OSC 52（tmux 内包 DCS 透传）"
 
   dshHost -> keybindings "Loader row 注入（id: better-keybindings），加载 lib/client.js 工厂"
   keybindings.kbEntry -> dshHost "window.__ModuleLoader__.load({id, factory})，id 必须等于包名"
@@ -237,13 +261,15 @@ deployment {
       runtime dshRuntime "desktop profile：DSH 宿主进程" {
         instanceOf dshPlugins.skin
         instanceOf dshPlugins.keybindings
+        instanceOf dshPlugins.slashCommands
       }
       runtime webRuntime "web profile：DSH 宿主进程" {
         instanceOf dshPlugins.jump
         instanceOf dshPlugins.keybindings
+        instanceOf dshPlugins.slashCommands
       }
       runtime tuiRuntime "tui profile：DSH 宿主进程" {
-        instanceOf dshPlugins.tuiCopy
+        instanceOf dshPlugins.slashCommands
       }
       runtime clipboardHost "本机剪贴板工具与终端" {
         instanceOf systemClipboard
@@ -260,7 +286,7 @@ deployment {
 views {
   view index {
     title "系统全景：DSH 插件集"
-    description "五包四形态：皮肤两包分层、jump 与 keybindings 纯 client、tui-copy 纯 host；DSH 宿主 + 上游 ascii.rest + 剪贴板边界"
+    description "五包四形态：皮肤两包分层、jump 与 keybindings 纯 client、slash 命令 host 与 client 双半边；DSH 宿主 + 上游 ascii.rest + 两处剪贴板边界"
     include *
     autoLayout LeftRight
   }
@@ -295,11 +321,11 @@ views {
     autoLayout LeftRight
   }
 
-  view copy of dshPlugins.tuiCopy {
-    title "复制命令容器内部"
-    description "纯 host 半边：文法、轮次渲染、三路剪贴板与两条注册路径"
+  view copy of dshPlugins.slashCommands {
+    title "slash 命令容器内部"
+    description "宿主半边：文法、轮次渲染、三路剪贴板与两条注册路径；客户端半边：/resume 的行集与切换、有界剪贴板包装"
     include *
-    include dshHost, systemClipboard, terminalHost
+    include dshHost, systemClipboard, terminalHost, browserClipboard
     autoLayout LeftRight
   }
 
@@ -344,14 +370,36 @@ views {
 
   dynamic view copyFlow {
     title "复制流：/copy 到剪贴板"
-    user -> dshPlugins.tuiCopy.tuiEntry "/copy [n] [--all]"
-    dshPlugins.tuiCopy.tuiEntry -> dshPlugins.tuiCopy.command "registerCopyCommand（延后一宏任务）"
-    dshPlugins.tuiCopy.command -> dshPlugins.tuiCopy.args "parseCopyInput"
-    dshPlugins.tuiCopy.command -> dshPlugins.tuiCopy.history "collectTurns + renderTurns"
-    dshPlugins.tuiCopy.command -> dshPlugins.tuiCopy.clipboard "copyToClipboard 并发三路"
-    dshPlugins.tuiCopy.clipboard -> systemClipboard "native：pbcopy / clip / wl-copy / xclip / xsel"
-    dshPlugins.tuiCopy.clipboard -> terminalHost "tmux load-buffer + OSC 52"
-    dshPlugins.tuiCopy.command -> dshHost "tuiToast 播报，降级改警告色"
+    user -> dshPlugins.slashCommands.tuiEntry "/copy [n] [--all]"
+    dshPlugins.slashCommands.tuiEntry -> dshPlugins.slashCommands.command "registerCopyCommand（延后一宏任务）"
+    dshPlugins.slashCommands.command -> dshPlugins.slashCommands.args "parseCopyInput"
+    dshPlugins.slashCommands.command -> dshPlugins.slashCommands.history "collectTurns + renderTurns"
+    dshPlugins.slashCommands.command -> dshPlugins.slashCommands.clipboard "copyToClipboard 并发三路"
+    dshPlugins.slashCommands.clipboard -> systemClipboard "native：pbcopy / clip / wl-copy / xclip / xsel"
+    dshPlugins.slashCommands.clipboard -> terminalHost "tmux load-buffer + OSC 52"
+    dshPlugins.slashCommands.command -> dshHost "tuiToast 播报，降级改警告色"
+  }
+
+  dynamic view resumeFlow {
+    title "切换流：/resume 到目标会话"
+    user -> dshPlugins.slashCommands.clientEntry "/resume"
+    dshPlugins.slashCommands.clientEntry -> dshPlugins.slashCommands.resumeCommand "commandUi.register 的贡献被弹层调用"
+    dshPlugins.slashCommands.resumeCommand -> dshPlugins.slashCommands.resume "resumeRows 建行集（丢空白/归档/子代理，按 cwd 定项目档）"
+    dshPlugins.slashCommands.resumeCommand -> dshHost "读 sessions.list 与 workspaces.list 快照"
+    user -> dshPlugins.slashCommands.resumeCommand "选中顶部范围行：project 或 all"
+    dshPlugins.slashCommands.resumeCommand -> dshHost "commandUi.popupFor(actx).open 重开弹层换档，搜索词先读后设回"
+    user -> dshPlugins.slashCommands.resumeCommand "选中会话行"
+    dshPlugins.slashCommands.resumeCommand -> dshHost "uiWorkspace.openSession(id) 导航过去，不续写、不加载上下文"
+  }
+
+  dynamic view clipboardFlow {
+    title "剪贴板包装流：页面的 writeText 加上限"
+    dshHost -> dshPlugins.slashCommands.clientEntry "激活客户端半边：apply 期内即刻安装，不等第一次复制"
+    dshPlugins.slashCommands.clientEntry -> dshPlugins.slashCommands.clipboardShim "installBoundedClipboard 包住页面全局 writeText"
+    user -> browserClipboard "点任意复制按钮：navigator.clipboard.writeText"
+    browserClipboard -> dshPlugins.slashCommands.clipboardShim "先给平台调用 120 ms 预算"
+    dshPlugins.slashCommands.clipboardShim -> browserClipboard "超时或失败则 execCommand('copy') 兜底，退出时还原 activeElement 的焦点"
+    dshPlugins.slashCommands.clipboardShim -> dshPlugins.slashCommands.clientEntry "两路都失败才 reject，调用方的复制中标志总能释放"
   }
 
   deployment view deployment {
