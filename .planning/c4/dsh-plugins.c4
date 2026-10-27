@@ -78,29 +78,44 @@ model {
     }
 
     container jump "dsh-jump" {
-      description "web profile 的键盘跳跃导航：Cmd+H 点击 / Cmd+U 聚焦，视口内候选分派单键或两键 label"
-      technology "TypeScript + esbuild，纯 client 半边，运行期零三方依赖"
+      description "web profile 的键盘跳跃导航：组合键激活后视口内候选分派单键或两键 label；激活键可在设置页就地重录并存进 localStorage"
+      technology "TypeScript + esbuild，纯 client 半边，运行期零三方依赖（React 由 loader 的平台模块供给）"
 
       component hostStub "src/index" {
         description "宿主半边空 apply：Loader 双侧按包名挂载，main 必须可解析"
       }
       component jumpEntry "client/entry" {
-        description "客户端工厂：返回 {name, inject, apply}，配置只从 apply 第二参读"
+        description "客户端工厂：boot(require) 留下 loader 的 require 以便取 React 与判平台，apply 只从第二参读配置"
+      }
+      component jumpRuntime "client/runtime" {
+        description "组装点：一份 BindingsStore 同时交给导航监听器与设置行——各建一份也能各写各读，但改键后监听器会继续用旧键直到刷新；settings.general.item 上注册 id=jump、order=18 的行，slot 服务未就绪时经 ctx.inject 延后而非单次采样"
       }
       component jumpApp "client/app" {
-        description "跳跃接线：捕获阶段 keydown、浮层驱动、命中执行 click/focus、对称 teardown"
+        description "接线与全部 DOM 副作用：捕获阶段 keydown、命中按目标派发 click 序列或 focus 并折叠光标、对称 teardown；激活键每次匹配时从 store 现取，不在挂载时固定"
       }
       component jumpConfig "client/config" {
-        description "默认值：九键首页行、Cmd+H/Cmd+U、候选选择器"
+        description "设计固定面（非用户状态）：候选选择器三族与可激活角色表、HOME_ROW_KEYS；激活键默认值已移出本模块"
       }
       component hints "client/hints" {
         description "视口快照：可见性裁剪、祖先去重、整轮等长 label 分派，纯函数"
       }
       component keys "client/keys" {
-        description "三态状态机：idle/click/focus，前缀累积与死路清空，无 DOM"
+        description "三态状态机：idle/click/focus，前缀累积与死路清空；激活键经同一绑定模型判定，无 DOM"
       }
       component overlay "client/overlay" {
         description "label 浮层：单容器 fixed 全屏、pointer-events:none、按前缀亮暗"
+      }
+      component bindings "client/bindings + client/recorder" {
+        description "和弦（Chord）模型与录制折算：按平台给默认值（macOS 用 ⌘、其余 Ctrl）、归一化、保留键/缺修饰键/重复占用三类校验、匹配与键帽形态；运行期匹配器与设置录制必须走同一处校验，否则能存下一个永远匹配不到的和弦"
+      }
+      component jumpStore "client/store" {
+        description "localStorage 文档 dsh-jump:bindings:v1：读出恒为全量（坏文档按动作回落默认），写入先归一化，值真变才通知；storage 的读取本身也可能抛（受限 iframe）"
+      }
+      component settingsRow "client/settings-row + settings-controller + copy" {
+        description "设置行与录制状态机：控制器 DOM-free（begin/press/reset），行用 useSyncExternalStore 投影；录制期在 document 捕获阶段独占键盘并吞掉每个键（否则和弦顺带触发宿主绑定），Esc 取消；文案中英两套"
+      }
+      component target "client/target" {
+        description "目标激活语义：文本输入面（contenteditable、带光标的 input、role=textbox）只能 focus，其余控件靠真实鼠标序列；按钮语义优先于 ARIA 文本角色"
       }
     }
 
@@ -146,6 +161,11 @@ model {
       }
     }
 
+    component marketToolchain "scripts/ 市场投稿三件套" {
+      description "从三个 web 包的 package.json 与 locale 派生市场索引与社区目录条目：先断言安装承诺（engines、bundle patch、icon、locale、禁安装脚本、pack 产物），再生成 market/index.json（format 1）与 market/awesome/*.yml"
+      technology "Node ESM 脚本（pnpm check:market / build:market / build:awesome）"
+    }
+
     container keybindings "dsh-better-keybindings" {
       description "web 与 desktop 共用的键盘修正：Home/End 移动光标而非滚动聊天区，PageUp/PageDown 改为半屏翻页"
       technology "TypeScript + esbuild，纯 client 半边，运行期零三方依赖"
@@ -174,7 +194,7 @@ model {
   }
 
   system localStorage "浏览器 localStorage" {
-    description "用户设置持久化，键 dsh-skin:ascii-rest:settings，皮肤独占读写"
+    description "浏览器侧设置持久化：皮肤写 dsh-skin:ascii-rest:settings，跳跃导航写 dsh-jump:bindings:v1；两者互不读取，受限 iframe 里读取 storage 本身可能抛"
     style { shape storage }
   }
 
@@ -191,6 +211,15 @@ model {
   system terminalHost "终端与 tmux" {
     description "终端侧剪贴板通道：tmux buffer 与 OSC 52 转义；能否落地取决于终端设置"
     technology "tmux load-buffer + ESC ] 52 ; c ; base64 BEL（tmux 内包 DCS 透传）"
+  }
+
+  system pluginMarket "DSH 插件市场" {
+    description "插件管理器按索引 URL 拉 market/index.json 并解析，据条目决定可安装版本与安装 spec（git source 钉 commit + path）"
+    technology "format 1 索引，宿主 @deepseek-ai/dsh-plugin-market-index 校验"
+  }
+
+  system awesomeCatalog "awesome-dsh-plugin 社区目录" {
+    description "第三方社区目录，用自己的 validateEntries 复核每个条目；拒收 SVG 图标，要求 GitHub 托管的 180px 光栅图"
   }
 
   system browserClipboard "浏览器剪贴板" {
@@ -218,14 +247,25 @@ model {
   skin.mountRenderer -> asciiRest "构建期逐个打包 pieces 为 client.<id>.js 分块"
   skin.scenes -> asciiRest "salt-flat 静态内联兜底"
 
-  dshHost -> jump "Loader row 注入（id: jump），加载 lib/client.js 工厂"
+  dshHost -> jump "Loader row 注入（id: jump），加载 lib/client.js 工厂；slots/locale 服务与 React 平台模块都由宿主供给"
   jump.jumpEntry -> dshHost "window.__ModuleLoader__.load({id, factory})，id 必须等于包名"
-  jump.jumpEntry -> jump.jumpApp "createApp({config}).apply()"
-  jump.jumpApp -> jump.jumpConfig "读激活键与 candidateSelector"
-  jump.jumpApp -> jump.keys "每次 keydown 进 matchKey"
+  jump.jumpEntry -> jump.jumpRuntime "createRuntime({ctx, platform, React, config})"
+  jump.jumpRuntime -> jump.jumpApp "createApp({config, bindings: store, platform}).apply()"
+  jump.jumpRuntime -> jump.settingsRow "createBindingsController({store}) + JumpSettingsRow"
+  jump.jumpRuntime -> jump.jumpStore "先建一份 store 再同时交给导航与设置行：两份 store 会让改键后监听器继续用旧键直到刷新"
+  jump.jumpRuntime -> dshHost "ctx.inject([slots]) 后 slots.register({name: settings.general.item, id: jump, order: 18})"
+  jump.jumpApp -> jump.jumpConfig "读 candidateSelector 与 HOME_ROW_KEYS（激活键已不在此处）"
+  jump.jumpApp -> jump.keys "每次 keydown 进 matchKey，并现取 store 里的激活键"
+  jump.jumpApp -> jump.target "命中后 activationOf 决定 focus 还是真实鼠标序列"
   jump.jumpApp -> jump.hints "collectHints 快照视口候选并分派 label"
   jump.jumpApp -> jump.overlay "render(hints, pending) / destroy"
   jump.jumpApp -> dshHost "捕获阶段吞掉自己拥有的 keydown，不漏给宿主快捷键"
+  jump.keys -> jump.bindings "matchesBinding 逐修饰键判定激活键，输入法组合态一律不消费"
+  jump.settingsRow -> jump.bindings "recordChord 折算候选并过 bindingIssue 校验；formatBinding 印键帽"
+  jump.settingsRow -> jump.jumpStore "press 命中后 store.set，reset 回默认，并订阅别处写入"
+  jump.settingsRow -> dshHost "录制期在 document 捕获阶段独占键盘并吞掉每个键；行样式对齐宿主设置行"
+  jump.jumpStore -> jump.bindings "读出与写入都过 normalizeBindings，坏文档按动作回落默认"
+  jump.jumpStore -> localStorage "读写 dsh-jump:bindings:v1"
 
   dshHost -> slashCommands "Loader row 注入（id: dsh-slash-commands），按端加载半边"
   dshHost -> slashCommands.tuiEntry "三端加载宿主半边 lib/index.js"
@@ -252,6 +292,13 @@ model {
   keybindings.kbApp -> keybindings.kbCaret "命中后 moveTextField / moveRichText"
   keybindings.kbApp -> keybindings.kbReveal "取消默认动作后自己把光标滚回可视区"
   keybindings.kbApp -> dshHost "捕获阶段拦下 Home/End：默认动作本会滚动 data-conversation-scroll"
+
+  dshPlugins.marketToolchain -> dshPlugins.jump "读 package.json 与 locale，派生条目的 install spec 与双语文案"
+  dshPlugins.marketToolchain -> dshPlugins.keybindings "同上"
+  dshPlugins.marketToolchain -> dshPlugins.slashCommands "同上；客户端半边靠 dsh.client 字段被市场发现"
+  dshPlugins.marketToolchain -> pluginMarket "产出 market/index.json（format 1，git source 钉当前 HEAD，icon 内联为 data URI）"
+  dshPlugins.marketToolchain -> awesomeCatalog "产出 market/awesome/<owner>__<repo>--<包名>.yml，图标取 GitHub raw 上的 180px 光栅图"
+  pluginMarket -> dshHost "插件管理器按索引安装；装完仍是同一套 Loader row 挂载，索引不改变运行时形态"
 }
 
 deployment {
@@ -259,16 +306,19 @@ deployment {
     technology "DSH profile 依赖 + cordis.patch.yml Loader row，单实例"
     host machine "用户机器" {
       runtime dshRuntime "desktop profile：DSH 宿主进程" {
+        technology "slash 命令同时提供 host 与 client 半边，桌面壳加载同一套 web client bundle"
         instanceOf dshPlugins.skin
         instanceOf dshPlugins.keybindings
         instanceOf dshPlugins.slashCommands
       }
       runtime webRuntime "web profile：DSH 宿主进程" {
+        technology "slash 命令同时提供 host 与 client 半边"
         instanceOf dshPlugins.jump
         instanceOf dshPlugins.keybindings
         instanceOf dshPlugins.slashCommands
       }
       runtime tuiRuntime "tui profile：DSH 宿主进程" {
+        technology "只有 host 半边：拿到 /copy 与 TUI 自带的 /rename，没有 /resume 与剪贴板包装"
         instanceOf dshPlugins.slashCommands
       }
       runtime clipboardHost "本机剪贴板工具与终端" {
@@ -286,8 +336,9 @@ deployment {
 views {
   view index {
     title "系统全景：DSH 插件集"
-    description "五包四形态：皮肤两包分层、jump 与 keybindings 纯 client、slash 命令 host 与 client 双半边；DSH 宿主 + 上游 ascii.rest + 两处剪贴板边界"
+    description "五包四形态：皮肤两包分层、jump 与 keybindings 纯 client、slash 命令 host 与 client 双半边；DSH 宿主 + 上游 ascii.rest + 两处剪贴板边界，另有从包元数据派生市场索引的分发通道"
     include *
+    include dshHost, pluginMarket, awesomeCatalog
     autoLayout LeftRight
   }
 
@@ -307,9 +358,9 @@ views {
 
   view jump of dshPlugins.jump {
     title "跳跃导航容器内部"
-    description "纯 client 半边：入口 + 快照/状态机/浮层三段 + 仅保可解析的宿主空壳"
+    description "纯 client 半边：入口 → 组装点（一份 store 分给导航与设置行）→ 导航三段（快照/状态机/浮层）与设置三段（和弦模型/存储/录制行），另加目标激活语义与仅保可解析的宿主空壳"
     include *
-    include dshHost
+    include dshHost, localStorage
     autoLayout LeftRight
   }
 
@@ -350,13 +401,30 @@ views {
 
   dynamic view jumpFlow {
     title "跳跃流：激活、快照、消费"
-    user -> dshPlugins.jump.jumpApp "Cmd+H 点击 / Cmd+U 聚焦"
-    dshPlugins.jump.jumpEntry -> dshPlugins.jump.jumpApp "apply(ctx, config)"
+    user -> dshPlugins.jump.jumpApp "按下当前绑定的点击/聚焦组合键"
+    dshPlugins.jump.jumpEntry -> dshPlugins.jump.jumpRuntime "apply(ctx, config)"
+    dshPlugins.jump.jumpRuntime -> dshPlugins.jump.jumpApp "createApp 时把同一份 store 作为绑定源传入"
+    dshPlugins.jump.jumpApp -> dshPlugins.jump.jumpStore "matchKey 前现取激活键"
+    dshPlugins.jump.jumpStore -> dshPlugins.jump.bindings "normalizeBindings 归还当前和弦"
     dshPlugins.jump.jumpApp -> dshPlugins.jump.keys "matchKey 判定模式与前缀"
     dshPlugins.jump.jumpApp -> dshPlugins.jump.hints "collectHints 视口裁剪 + 等长 label"
     dshPlugins.jump.jumpApp -> dshPlugins.jump.overlay "render(hints, pending) 画徽标"
+    dshPlugins.jump.jumpApp -> dshPlugins.jump.target "activationOf 判定目标要哪种动作"
     dshPlugins.jump.jumpApp -> dshPlugins.jump.overlay "命中完整 label 后 destroy"
     dshPlugins.jump.jumpApp -> dshHost "激活期间 keydown 一律 preventDefault + stopPropagation"
+  }
+
+  dynamic view settingsFlowJump {
+    title "设置流：就地重录激活键"
+    description "录制期键盘被设置行独占，认可的和弦写进同一个 store，导航监听器无需重启即换键"
+    user -> dshPlugins.jump.settingsRow "点设置行上的键帽进入录制"
+    dshPlugins.jump.settingsRow -> dshPlugins.jump.settingsRow "document 捕获阶段 preventDefault + stopPropagation 吞掉每个键"
+    dshPlugins.jump.settingsRow -> dshPlugins.jump.bindings "recordChord 折算候选，bindingIssue 校验保留键/缺修饰键/重复"
+    dshPlugins.jump.settingsRow -> dshPlugins.jump.jumpStore "accepted 后 store.set 持久化"
+    dshPlugins.jump.jumpStore -> dshPlugins.jump.bindings "写入前先归一化"
+    dshPlugins.jump.jumpStore -> localStorage "写 dsh-jump:bindings:v1"
+    dshPlugins.jump.jumpStore -> dshPlugins.jump.settingsRow "值真变才通知，行经 useSyncExternalStore 重渲染"
+    dshPlugins.jump.jumpStore -> dshPlugins.jump.jumpApp "同一实例的值变化，下一次按键即按新和弦匹配"
   }
 
   dynamic view caretFlow {
