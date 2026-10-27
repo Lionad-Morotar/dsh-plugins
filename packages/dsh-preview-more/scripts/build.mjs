@@ -91,6 +91,14 @@ async function bundle(entry, format, { external = [], loader = {}, plugins = [] 
     define: {
       "process.env.NODE_ENV": JSON.stringify("production"),
       "process.versions.node": "undefined",
+      // three's DRACOLoader resolves its decoder paths at module scope with
+      // `new URL(..., import.meta.url)`. A CJS bundle has no import.meta, so
+      // esbuild substitutes an empty object and the URL constructor throws
+      // during evaluation: the whole chunk fails before the loader is ever
+      // reached. These URLs are never fetched (see draco-assets.d.ts: the
+      // decoder is inlined and _loadLibrary is overridden), they only have to
+      // be valid, so they point at a reserved host.
+      "import.meta.url": JSON.stringify("https://dsh-preview-more.invalid/client.js"),
     },
     logLevel: "silent",
   });

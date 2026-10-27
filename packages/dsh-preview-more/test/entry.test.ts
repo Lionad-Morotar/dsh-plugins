@@ -3,6 +3,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { boot, clientPlugin } from "../src/client/entry.ts";
 import { reactStub } from "./support/react-stub.ts";
 
+/**
+ * Run a callback with `document` set to a stand-in, then restore it.
+ *
+ * The entry reaches for `globalThis.document` because it must work in a host
+ * whose document is not the module's own; a Node test has none at all.
+ * @param doc - document stand-in.
+ * @param run - callback to run while it is installed.
+ * @returns whatever the callback returned.
+ */
+function withDocument<T>(doc: Document, run: () => T): T {
+  const had = Object.prototype.hasOwnProperty.call(globalThis, "document");
+  const previous = Reflect.get(globalThis, "document") as unknown;
+  Reflect.set(globalThis, "document", doc);
+  try {
+    return run();
+  } finally {
+    if (had) Reflect.set(globalThis, "document", previous);
+    else Reflect.deleteProperty(globalThis, "document");
+  }
+}
+
 /** One recorded registration, kept so a test can assert order and disposability. */
 interface Recorded {
   readonly kind: "definition" | "body" | "locale" | "inject" | "viewer";
@@ -141,5 +162,20 @@ describe("client entry", () => {
       const dispose = clientPlugin.apply(ctx);
       dispose();
     }).not.toThrow();
+  });
+
+  it("installs the stylesheet the surfaces need in order to paint", () => {
+    const installed: string[] = [];
+    const doc = {
+      head: { append: (tag: { textContent: string }) => installed.push(tag.textContent) },
+      querySelector: () => null,
+      createElement: () => ({ dataset: {}, textContent: "", remove: () => undefined }),
+    } as unknown as Document;
+
+    // Without this rule set an unstyled canvas has no box and paints nothing,
+    // which reaches the reader as "the preview does not work".
+    const dispose = withDocument(doc, () => clientPlugin.apply(fakeContext().ctx));
+    expect(installed.some((css) => css.includes(".preview-more-scene"))).toBe(true);
+    dispose();
   });
 });

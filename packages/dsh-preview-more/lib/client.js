@@ -3,7 +3,94 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
-"use strict";var f=Object.defineProperty;var F=Object.getOwnPropertyDescriptor;var R=Object.getOwnPropertyNames;var S=Object.prototype.hasOwnProperty;var E=(e,t)=>{for(var n in t)f(e,n,{get:t[n],enumerable:!0})},T=(e,t,n,o)=>{if(t&&typeof t=="object"||typeof t=="function")for(let r of R(t))!S.call(e,r)&&r!==n&&f(e,r,{get:()=>t[r],enumerable:!(o=F(t,r))||o.enumerable});return e};var M=e=>T(f({},"__esModule",{value:!0}),e);var D={};E(D,{boot:()=>O,clientPlugin:()=>C,default:()=>z,loadChunk:()=>m});module.exports=M(D);var y=[{family:"scene3d",extensions:["glb","gltf","obj","stl","3mf"],titleKey:"scene3d.title"},{family:"raster",extensions:["tif","tiff","avif"],titleKey:"raster.title"}];function g(){return y.flatMap(e=>[...e.extensions])}function w(e){return y.find(t=>t.family===e)?.extensions??[]}function v(e){let t=e.slice(e.lastIndexOf("/")+1),n=t.lastIndexOf(".");if(n<=0)return null;let o=t.slice(n+1).toLowerCase();return y.find(r=>r.extensions.includes(o))?.family??null}var V="dsh-preview-more";function h(e,t){if(typeof e.inject!="function")return;let{React:n,t:o,family:r}=t,s=V+":"+r,i=n.lazy(async()=>({default:(await t.loadChunk(r)).Viewer})),c=function(a){return n.createElement(n.Suspense,{fallback:null},n.createElement(i,{...a,t:o}))};e.inject(["betterSidebar"],d=>{let a=d.get("betterSidebar");if(!(a===void 0||typeof a.registerFileViewer!="function"))return a.registerFileViewer({id:s,title:()=>o(r+".title"),exts:w(r),priority:10,fetchStrategy:"custom",load:async(l,k,b)=>({bytes:await t.readFile(k.sessionId,l,b??new AbortController().signal),path:l}),component:c})})}var p="previewMore";function P(){return{zh:{"scene3d.title":"3D \u6A21\u578B","raster.title":"\u56FE\u7247","state.loading":"\u6B63\u5728\u8BFB\u53D6\u2026","state.decoding":"\u6B63\u5728\u89E3\u7801\u2026","state.failed":"\u65E0\u6CD5\u9884\u89C8\u8BE5\u6587\u4EF6","state.retry":"\u91CD\u8BD5","state.tooLarge":"\u6587\u4EF6\u8FC7\u5927\uFF0C\u65E0\u6CD5\u5728\u6D4F\u89C8\u5668\u5185\u89E3\u7801","state.unsupported":"\u8BE5\u683C\u5F0F\u6682\u4E0D\u652F\u6301","state.empty":"\u6587\u4EF6\u91CC\u6CA1\u6709\u53EF\u663E\u793A\u7684\u51E0\u4F55\u4F53","scene3d.reset":"\u91CD\u7F6E\u89C6\u89D2","scene3d.wireframe":"\u7EBF\u6846","scene3d.facts":"\u7F51\u683C\u6570 {meshes} \xB7 \u4E09\u89D2\u9762 {triangles}","raster.page":"\u7B2C {current} / {total} \u9875","raster.previous":"\u4E0A\u4E00\u9875","raster.next":"\u4E0B\u4E00\u9875"},en:{"scene3d.title":"3D model","raster.title":"Image","state.loading":"Reading\u2026","state.decoding":"Decoding\u2026","state.failed":"This file cannot be previewed","state.retry":"Retry","state.tooLarge":"The file is too large to decode in the browser","state.unsupported":"This format is not supported yet","state.empty":"The file contains no displayable geometry","scene3d.reset":"Reset view","scene3d.wireframe":"Wireframe","scene3d.facts":"{meshes} meshes \xB7 {triangles} triangles","raster.page":"Page {current} of {total}","raster.previous":"Previous page","raster.next":"Next page"}}}var u=null,x=new Map;function m(e){let t=x.get(e);if(t!==void 0)return t;if(u===null)return Promise.reject(new Error("dsh-preview-more: the loader require was not handed over"));let n=u.async("./client."+e+".js").then(o=>{let r=o;if(typeof r.Body!="function"||typeof r.Viewer!="function")throw new Error("dsh-preview-more: chunk "+e+" is missing Body or Viewer");return r});return x.set(e,n),n}function A(){if(u===null)throw new Error("dsh-preview-more: the loader require was not handed over");return u("react")}var L="dsh-preview-more/";function I(e){return async(t,n,o)=>{let r=await e.remote.workspaceFiles.readBytes(t,n,{},o);if(!r.ok)throw new Error("read failed: "+j(r.error),{cause:r.error});return r.value.data}}function j(e){if(e instanceof Error)return e.message;if(typeof e=="string")return e;if(e!==null&&typeof e=="object"){let t=e.code;if(typeof t=="string")return t}return"unknown error"}function B(e,t,n){let o=e.lazy(async()=>({default:n(await t())}));return function(s){return e.createElement(e.Suspense,{fallback:null},e.createElement(o,s))}}var C={name:"dsh-preview-more",inject:["documentPreviews","slots","locale","remote","remote.workspaceFiles"],apply(e){let t=A(),n=e.locale.bind(p),o=I(e),r=[],s=i=>{typeof e.effect=="function"?e.effect(i,"dsh-preview-more: registration"):r.push(i())};s(()=>e.locale.register(p,P()));for(let i of["scene3d","raster"]){let c=g().filter(l=>v("x."+l)===i);if(c.length===0)continue;let d=L+i;s(()=>e.documentPreviews.register({id:d,extensions:c,binaryExtensions:c,priority:"extension",title:()=>n(i+".title"),loading:"renderer",wrap:!1}));let a=B(t,()=>m(i),l=>l.Body);s(()=>e.slots.inject("sidebar.right.tab.document",()=>e.slots.register({name:"sidebar.right.tab.document",key:d,locale:p,inject:()=>({readFile:o})},a))),h(e,{React:t,t:n,readFile:o,family:i,loadChunk:m})}return()=>{for(let i of r)i()}}};function O(e){u=e}var z=C;
+"use strict";var f=Object.defineProperty;var R=Object.getOwnPropertyDescriptor;var E=Object.getOwnPropertyNames;var T=Object.prototype.hasOwnProperty;var M=(e,t)=>{for(var r in t)f(e,r,{get:t[r],enumerable:!0})},V=(e,t,r,o)=>{if(t&&typeof t=="object"||typeof t=="function")for(let n of E(t))!T.call(e,n)&&n!==r&&f(e,n,{get:()=>t[n],enumerable:!(o=R(t,n))||o.enumerable});return e};var A=e=>V(f({},"__esModule",{value:!0}),e);var N={};M(N,{boot:()=>q,clientPlugin:()=>P,default:()=>_,loadChunk:()=>g});module.exports=A(N);var m=[{family:"scene3d",extensions:["glb","gltf","obj","stl","3mf"],titleKey:"scene3d.title"},{family:"raster",extensions:["tif","tiff","avif"],titleKey:"raster.title"}];function w(){return m.flatMap(e=>[...e.extensions])}function v(e){return m.find(t=>t.family===e)?.extensions??[]}function h(e){let t=e.slice(e.lastIndexOf("/")+1),r=t.lastIndexOf(".");if(r<=0)return null;let o=t.slice(r+1).toLowerCase();return m.find(n=>n.extensions.includes(o))?.family??null}var L="dsh-preview-more";function x(e,t){if(typeof e.inject!="function")return;let{React:r,t:o,family:n}=t,a=L+":"+n,i=r.lazy(async()=>({default:(await t.loadChunk(n)).Viewer})),d=function(s){return r.createElement(r.Suspense,{fallback:null},r.createElement(i,{...s,t:o}))};e.inject(["betterSidebar"],c=>{let s=c.get("betterSidebar");if(!(s===void 0||typeof s.registerFileViewer!="function"))return s.registerFileViewer({id:a,title:()=>o(n+".title"),exts:v(n),priority:10,fetchStrategy:"custom",load:async(l,F,S)=>({bytes:await t.readFile(F.sessionId,l,S??new AbortController().signal),path:l}),component:d})})}var u="previewMore";function b(){return{zh:{"scene3d.title":"3D \u6A21\u578B","raster.title":"\u56FE\u7247","state.loading":"\u6B63\u5728\u8BFB\u53D6\u2026","state.decoding":"\u6B63\u5728\u89E3\u7801\u2026","state.failed":"\u65E0\u6CD5\u9884\u89C8\u8BE5\u6587\u4EF6","state.retry":"\u91CD\u8BD5","state.tooLarge":"\u6587\u4EF6\u8FC7\u5927\uFF0C\u65E0\u6CD5\u5728\u6D4F\u89C8\u5668\u5185\u89E3\u7801","state.unsupported":"\u8BE5\u683C\u5F0F\u6682\u4E0D\u652F\u6301","state.empty":"\u6587\u4EF6\u91CC\u6CA1\u6709\u53EF\u663E\u793A\u7684\u51E0\u4F55\u4F53","scene3d.reset":"\u91CD\u7F6E\u89C6\u89D2","scene3d.wireframe":"\u7EBF\u6846","scene3d.facts":"\u7F51\u683C\u6570 {meshes} \xB7 \u4E09\u89D2\u9762 {triangles}","raster.page":"\u7B2C {current} / {total} \u9875","raster.previous":"\u4E0A\u4E00\u9875","raster.next":"\u4E0B\u4E00\u9875"},en:{"scene3d.title":"3D model","raster.title":"Image","state.loading":"Reading\u2026","state.decoding":"Decoding\u2026","state.failed":"This file cannot be previewed","state.retry":"Retry","state.tooLarge":"The file is too large to decode in the browser","state.unsupported":"This format is not supported yet","state.empty":"The file contains no displayable geometry","scene3d.reset":"Reset view","scene3d.wireframe":"Wireframe","scene3d.facts":"{meshes} meshes \xB7 {triangles} triangles","raster.page":"Page {current} of {total}","raster.previous":"Previous page","raster.next":"Next page"}}}var y="dsh-preview-more",j=`
+.preview-more-scene,
+.preview-more-raster {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 240px;
+  overflow: hidden;
+}
+
+.preview-more-canvas,
+.preview-more-canvas-image,
+.preview-more-image {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.preview-more-canvas > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.preview-more-canvas-image,
+.preview-more-image {
+  object-fit: contain;
+}
+
+.preview-more-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--dsh-text-secondary, currentColor);
+  border-top: 1px solid var(--dsh-border-subtle, transparent);
+}
+
+.preview-more-facts {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-more-action {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--dsh-border-strong, currentColor);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.preview-more-action:hover:not(:disabled) {
+  background: var(--dsh-surface-hover, rgba(127, 127, 127, 0.12));
+}
+
+.preview-more-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.preview-more-status {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--dsh-text-secondary, currentColor);
+  flex: 0 0 auto;
+}
+
+.preview-more-detail {
+  margin: 4px 0 8px;
+  font-family: var(--dsh-font-mono, monospace);
+  font-size: 11px;
+  opacity: 0.8;
+  word-break: break-word;
+}
+`;function C(e){let t=`style[data-plugin-css="${y}"]`;if(e.querySelector(t)!==null)return()=>{};let r=e.createElement("style");return r.dataset.plugin=y,r.dataset.pluginCss=y,r.textContent=j,e.head.append(r),()=>r.remove()}var p=null,k=new Map;function g(e){let t=k.get(e);if(t!==void 0)return t;if(p===null)return Promise.reject(new Error("dsh-preview-more: the loader require was not handed over"));let r=p.async("./client."+e+".js").then(o=>{let n=o;if(typeof n.Body!="function"||typeof n.Viewer!="function")throw new Error("dsh-preview-more: chunk "+e+" is missing Body or Viewer");return n});return k.set(e,r),r}function I(){if(p===null)throw new Error("dsh-preview-more: the loader require was not handed over");return p("react")}var z="dsh-preview-more/";function B(e){return async(t,r,o)=>{let n=await e.remote.workspaceFiles.readBytes(t,r,{},o);if(!n.ok)throw new Error("read failed: "+O(n.error),{cause:n.error});return n.value.data}}function O(e){if(e instanceof Error)return e.message;if(typeof e=="string")return e;if(e!==null&&typeof e=="object"){let t=e.code;if(typeof t=="string")return t}return"unknown error"}function D(e,t,r){let o=e.lazy(async()=>({default:r(await t())}));return function(a){return e.createElement(e.Suspense,{fallback:null},e.createElement(o,a))}}var P={name:"dsh-preview-more",inject:["documentPreviews","slots","locale","remote","remote.workspaceFiles"],apply(e){let t=I(),r=e.locale.bind(u),o=B(e),n=[],a=i=>{typeof e.effect=="function"?e.effect(i,"dsh-preview-more: registration"):n.push(i())};a(()=>e.locale.register(u,b())),a(()=>{let i=globalThis.document;return i===void 0?(()=>{}):C(i)});for(let i of["scene3d","raster"]){let d=w().filter(l=>h("x."+l)===i);if(d.length===0)continue;let c=z+i;a(()=>e.documentPreviews.register({id:c,extensions:d,binaryExtensions:d,priority:"extension",title:()=>r(i+".title"),loading:"renderer",wrap:!1}));let s=D(t,()=>g(i),l=>l.Body);a(()=>e.slots.inject("sidebar.right.tab.document",()=>e.slots.register({name:"sidebar.right.tab.document",key:c,locale:u,inject:()=>({readFile:o})},s))),x(e,{React:t,t:r,readFile:o,family:i,loadChunk:g})}return()=>{for(let i of n)i()}}};function q(e){p=e}var _=P;
 
 module.exports.boot(require);
     return module.exports.default ?? module.exports;

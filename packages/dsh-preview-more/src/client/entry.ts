@@ -24,6 +24,7 @@ import { registerBetterSidebarViewers } from "./better-sidebar.ts";
 import { claimedExtensions, familyOf, type PreviewFamily } from "./formats.ts";
 import { dictionaries, LOCALE_NAMESPACE } from "./locale.ts";
 import type { PreviewContext } from "./runtime.ts";
+import { insertStyles } from "./styles.ts";
 
 /** The factory's `require`; the only handle on `require.async` and platform modules. */
 interface LoaderRequire {
@@ -162,6 +163,14 @@ export const clientPlugin = {
     };
 
     register(() => ctx.locale.register(LOCALE_NAMESPACE, dictionaries()));
+
+    // The host does not style plugin markup, and an unstyled canvas has no box:
+    // the surface would mount, decode, and paint nothing. One stylesheet covers
+    // both hosts, and it is inserted once per document rather than per mount.
+    register(() => {
+      const doc = globalThis.document;
+      return doc === undefined ? (() => undefined) : insertStyles(doc);
+    });
 
     for (const family of ["scene3d", "raster"] as const) {
       const extensions = claimedExtensions().filter((suffix) => familyOf("x." + suffix) === family);
