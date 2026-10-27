@@ -51,12 +51,13 @@ Loader row 由包内 `cordis.patch.yml` 注入，不需要手工改 profile 配�
 ## 开发
 
 ```bash
-pnpm --filter dsh-preview-more build     # 产出 lib/，产物入库
-pnpm --filter dsh-preview-more test
+pnpm --filter dsh-preview-more build      # 产出 lib/，产物入库
+pnpm --filter dsh-preview-more check:lib  # 校验 lib/ 与 src/ 同步
+pnpm --filter dsh-preview-more test       # 先跑 check:lib 再跑用例
 pnpm --filter dsh-preview-more typecheck
 ```
 
-`lib/` 是提交进仓库的构建产物，profile 安装态不跑构建，所以改源码后必须重跑 build。
+`lib/` 是提交进仓库的构建产物，profile 安装态不跑构建，所以改源码后必须重跑 build。产物落后于源码不是「稍后补」的小事：profile 装的就是 `lib/`，陈旧的 `lib/` 会让插件在宿主里激活失败，而单插件激活失败会连带整个 Web 端启动中断。`check:lib` 把这件事变成可自动判定的门，`test` 已经前置调用它。
 
 ## 边界
 

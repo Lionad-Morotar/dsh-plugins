@@ -1,13 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { boot, clientPlugin } from "../src/client/entry.ts";
-
-/** A React stand-in: the entry only builds components, never renders them. */
-const ReactStub = {
-  createElement: () => null,
-  lazy: (factory: () => Promise<unknown>) => factory,
-  Suspense: () => null,
-};
+import { reactStub } from "./support/react-stub.ts";
 
 /** One recorded registration, kept so a test can assert order and disposability. */
 interface Recorded {
@@ -72,10 +66,15 @@ function fakeContext(): { ctx: never; log: Recorded[]; run: () => void } {
 }
 
 beforeEach(() => {
-  boot((specifier: string) => {
-    if (specifier === "react") return ReactStub;
+  const require = (specifier: string): unknown => {
+    if (specifier === "react") return reactStub();
     throw new Error("unexpected platform require: " + specifier);
-  });
+  };
+  // Chunks are never fetched in these tests; the entry only rejects when it is.
+  require.async = async (specifier: string): Promise<unknown> => {
+    throw new Error("unexpected async require: " + specifier);
+  };
+  boot(require);
 });
 
 describe("client entry", () => {

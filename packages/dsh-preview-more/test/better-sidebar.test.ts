@@ -1,13 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { registerBetterSidebarViewers } from "../src/client/better-sidebar.ts";
-
-/** A React stand-in: the adapter builds elements but never renders them. */
-const React = {
-  createElement: () => null,
-  lazy: (factory: () => Promise<unknown>) => factory,
-  Suspense: () => null,
-};
+import { reactStub } from "./support/react-stub.ts";
 
 /** What the adapter records about a viewer registration. */
 interface Registered {
@@ -38,7 +32,7 @@ function contextWith(service: unknown): { ctx: never; registered: Registered[] }
 }
 
 const deps = {
-  React,
+  React: reactStub(),
   t: (key: string) => "translated:" + key,
   readFile: vi.fn(async () => new Uint8Array([1, 2, 3])),
   family: "scene3d" as const,

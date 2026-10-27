@@ -139,20 +139,40 @@ function dracoPlugin(payloads) {
 
 /**
  * Build every artifact and report sizes.
+ *
+ * With `--check` nothing is written: the build runs into memory and the script
+ * exits non-zero when the committed `lib/` differs from what `src/` produces.
+ * That flag is the only defence against a stale committed product, which is a
+ * real failure mode here because profiles never rebuild: a plugin installed from
+ * a commit whose `lib/` lags its `src/` activates the old code.
+ * @param checkOnly - compare against the committed tree instead of writing it.
  */
-async function main() {
-  await rm(libRoot, { recursive: true, force: true });
-  await mkdir(libRoot, { recursive: true });
+async function main(checkOnly) {
+  if (!checkOnly) {
+    await rm(libRoot, { recursive: true, force: true });
+    await mkdir(libRoot, { recursive: true });
+  }
 
   const written = [];
+  /** Artifacts held in memory while only comparing. */
+  const produced = new Map();
 
-  await writeFile(join(libRoot, "index.js"), await bundle(join(packageRoot, "src", "index.ts"), "esm"), "utf8");
+  /** Write one artifact, or keep it in memory when only comparing. */
+  const emit = async (file, text) => {
+    if (checkOnly) {
+      produced.set(file, text);
+      return;
+    }
+    await writeFile(join(libRoot, file), text, "utf8");
+  };
+
+  await emit("index.js", await bundle(join(packageRoot, "src", "index.ts"), "esm"));
   written.push("index.js");
 
   // React is a platform module the loader seeds: bundling it would ship a second
   // React and break every hook in the bodies.
   const client = await bundle(join(packageRoot, "src", "client", "entry.ts"), "cjs", { external: ["react", "react/jsx-runtime"] });
-  await writeFile(join(libRoot, "client.js"), wrap(manifest.name, client, { boot: true }), "utf8");
+  await emit("client.js", wrap(manifest.name, client, { boot: true }));
   written.push("client.js");
 
   const payloads = await dracoPayloads();
@@ -162,8 +182,24 @@ async function main() {
       plugins: family === "scene3d" ? [dracoPlugin(payloads)] : [],
     });
     const file = `client.${family}.js`;
-    await writeFile(join(libRoot, file), wrap(`${manifest.name}/${file}`, code), "utf8");
+    await emit(file, wrap(`${manifest.name}/${file}`, code));
     written.push(file);
+  }
+
+  if (checkOnly) {
+    const stale = [];
+    for (const file of written) {
+      const next = produced.get(file) ?? "";
+      const committed = await readFile(join(libRoot, file), "utf8").catch(() => null);
+      if (committed !== next) stale.push(file);
+    }
+    if (stale.length > 0) {
+      process.stderr.write(`lib/ is stale for: ${stale.join(", ")}\ncommit the rebuilt lib/ or the installed plugin runs the old code\n`);
+      process.exitCode = 1;
+      return;
+    }
+    process.stdout.write(`lib/ matches src/ (${String(written.length)} files)\n`);
+    return;
   }
 
   const sizes = await Promise.all(
@@ -175,4 +211,4 @@ async function main() {
   process.stdout.write(`${written.length} files\n${sizes.join("\n")}\n`);
 }
 
-await main();
+await main(process.argv.includes("--check"));

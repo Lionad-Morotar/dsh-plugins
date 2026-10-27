@@ -25,8 +25,9 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json"
+    "test": "node scripts/build.mjs --check && vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "check:lib": "node scripts/build.mjs --check"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",
