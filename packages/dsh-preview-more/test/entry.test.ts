@@ -89,12 +89,14 @@ describe("client entry", () => {
     const dispose = clientPlugin.apply(ctx);
     const definitions = log.filter((entry) => entry.kind === "definition");
 
-    expect(definitions).toHaveLength(1);
-    const scene = definitions[0]?.value as Record<string, unknown>;
-    expect(scene.id).toBe("dsh-preview-more/scene3d");
-    expect(scene.extensions).toEqual(["glb", "gltf", "obj", "stl", "3mf"]);
-    expect(scene.priority).toBe("extension");
-    expect(scene.loading).toBe("renderer");
+    // The count is the catalogue's, so adding a family here is a deliberate act.
+    expect(definitions.map((entry) => entry.value.id)).toEqual(["dsh-preview-more/scene3d", "dsh-preview-more/raster"]);
+    for (const definition of definitions) {
+      expect(definition.value.priority).toBe("extension");
+      expect(definition.value.loading).toBe("renderer");
+    }
+    expect(definitions[0]?.value.extensions).toEqual(["glb", "gltf", "obj", "stl", "3mf"]);
+    expect(definitions[1]?.value.extensions).toEqual(["tif", "tiff", "avif"]);
     dispose();
   });
 
@@ -103,13 +105,13 @@ describe("client entry", () => {
     const dispose = clientPlugin.apply(ctx);
     const bodies = log.filter((entry) => entry.kind === "body");
 
-    expect(bodies).toHaveLength(1);
-    const body = bodies[0]?.value as Record<string, unknown>;
-    expect(body.name).toBe("sidebar.right.tab.document");
-    expect(body.key).toBe("dsh-preview-more/scene3d");
-    expect(body.locale).toBe("previewMore");
-    const inject = body.inject as () => Record<string, unknown>;
-    expect(typeof inject().readFile).toBe("function");
+    expect(bodies.map((entry) => entry.value.key)).toEqual(["dsh-preview-more/scene3d", "dsh-preview-more/raster"]);
+    for (const body of bodies) {
+      expect(body.value.name).toBe("sidebar.right.tab.document");
+      expect(body.value.locale).toBe("previewMore");
+      const inject = body.value.inject as () => Record<string, unknown>;
+      expect(typeof inject().readFile).toBe("function");
+    }
     dispose();
   });
 

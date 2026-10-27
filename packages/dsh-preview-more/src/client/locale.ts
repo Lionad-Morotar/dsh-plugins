@@ -31,6 +31,8 @@ export function dictionaries(): Record<"zh" | "en", Record<string, string>> {
       "scene3d.wireframe": "线框",
       "scene3d.facts": "网格数 {meshes} · 三角面 {triangles}",
       "raster.page": "第 {current} / {total} 页",
+      "raster.previous": "上一页",
+      "raster.next": "下一页",
     },
     en: {
       "scene3d.title": "3D model",
@@ -46,6 +48,8 @@ export function dictionaries(): Record<"zh" | "en", Record<string, string>> {
       "scene3d.wireframe": "Wireframe",
       "scene3d.facts": "{meshes} meshes · {triangles} triangles",
       "raster.page": "Page {current} of {total}",
+      "raster.previous": "Previous page",
+      "raster.next": "Next page",
     },
   };
 }

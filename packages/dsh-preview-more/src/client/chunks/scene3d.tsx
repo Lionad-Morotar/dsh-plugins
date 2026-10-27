@@ -19,10 +19,10 @@ import { wasmBinary, wasmWrapper } from "virtual:draco-assets";
 
 import { parseSessionFileAddress } from "../address.ts";
 import { formatMessage } from "../locale.ts";
+import type { ReadFile } from "../runtime.ts";
 import type { SceneFacts, SceneHandle } from "../scene3d.ts";
 
-/** Read a file's complete bytes through the host workspace service. */
-export type ReadFile = (sessionId: string, path: string, signal: AbortSignal) => Promise<Uint8Array>;
+export type { ReadFile } from "../runtime.ts";
 
 /** What the native body receives from the host, narrowed to the fields used. */
 export interface BodyProps {

@@ -15,6 +15,9 @@ export interface FileTarget {
   readonly path: string;
 }
 
+/** Read one file's complete bytes: the shape every preview body calls. */
+export type ReadFile = (sessionId: string, path: string, signal: AbortSignal) => Promise<Uint8Array>;
+
 /** What `ctx.remote.workspaceFiles.readBytes` resolves to on success. */
 export interface ReadBytesValue {
   readonly data: Uint8Array;

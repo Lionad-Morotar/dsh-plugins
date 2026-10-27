@@ -10,6 +10,9 @@ describe("format catalogue", () => {
     expect(claimed).toContain("obj");
     expect(claimed).toContain("stl");
     expect(claimed).toContain("3mf");
+    expect(claimed).toContain("tif");
+    expect(claimed).toContain("tiff");
+    expect(claimed).toContain("avif");
   });
 
   it("never claims a suffix the built-in preview already renders", () => {
@@ -22,6 +25,12 @@ describe("format catalogue", () => {
   it("matches a family case-insensitively and ignores the directory", () => {
     expect(familyOf("/tmp/a/b/model.GLB")).toBe("scene3d");
     expect(familyOf("model.gltf")).toBe("scene3d");
+    expect(familyOf("/tmp/scan.TIFF")).toBe("raster");
+  });
+
+  it("routes each suffix to the renderer that can draw it", () => {
+    expect(familyOf("model.stl")).toBe("scene3d");
+    expect(familyOf("sheet.avif")).toBe("raster");
   });
 
   it("returns null for a name it does not claim", () => {
@@ -32,5 +41,6 @@ describe("format catalogue", () => {
 
   it("names the chunk after the family", () => {
     expect(chunkOf("scene3d")).toBe("./client.scene3d.js");
+    expect(chunkOf("raster")).toBe("./client.raster.js");
   });
 });

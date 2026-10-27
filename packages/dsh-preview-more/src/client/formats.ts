@@ -38,6 +38,14 @@ export const PREVIEW_FORMATS: readonly PreviewFormat[] = [
     extensions: ["glb", "gltf", "obj", "stl", "3mf"],
     titleKey: "scene3d.title",
   },
+  {
+    // tiff/tif and avif are the two image suffixes the built-in preview refuses:
+    // tiff is listed as an unviewable binary, avif is missing from its image
+    // list entirely, so neither shadows a working renderer.
+    family: "raster",
+    extensions: ["tif", "tiff", "avif"],
+    titleKey: "raster.title",
+  },
 ];
 
 /** Every suffix the plugin claims, in catalogue order. */
