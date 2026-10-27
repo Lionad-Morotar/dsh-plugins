@@ -41,7 +41,11 @@ const LABELS = {
 };
 
 const args = process.argv.slice(2);
-const sourceMode = args.includes("--source") ? args[args.indexOf("--source") + 1] : "git";
+// npm is the default now that the package is published: the index should point at
+// the thing users install, and pinning a commit made every package edit require a
+// regeneration cycle. Pass --source git only to preview a release that has not
+// reached the registry yet.
+const sourceMode = args.includes("--source") ? args[args.indexOf("--source") + 1] : "npm";
 const checkOnly = args.includes("--check");
 if (sourceMode !== "git" && sourceMode !== "npm") {
   console.error("error: --source must be git or npm");
@@ -64,6 +68,25 @@ function localized(en, zh) {
   return { en, zh };
 }
 
+/**
+ * Read the registry's own publish time for one version, in Unix seconds.
+ *
+ * The index renders this as "published X ago" next to the entry, so it has to be
+ * the moment the version reached the registry. Failing loudly beats emitting a
+ * timestamp from the wrong clock.
+ */
+function npmPublishTimestamp(name, version) {
+  // `npm view <name> time.<version>` yields nothing for a nested field, so read the
+  // whole time map and pick the version out of it.
+  const raw = execFileSync("npm", ["view", name, "time", "--registry", "https://registry.npmjs.org", "--json"], { cwd: repoRoot, stdio: "pipe" }).toString().trim();
+  const times = JSON.parse(raw);
+  const iso = times[version];
+  if (typeof iso !== "string") throw new Error("registry has no publish time for " + name + "@" + version + "; publish before building an npm-sourced index");
+  const seconds = Math.floor(Date.parse(iso) / 1000);
+  if (!Number.isInteger(seconds)) throw new Error("could not parse publish time for " + name + "@" + version + ": " + iso);
+  return seconds;
+}
+
 function entryFor({ directory, category, keywords }) {
   const packageRoot = join(repoRoot, "packages", directory);
   const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
@@ -76,6 +99,10 @@ function entryFor({ directory, category, keywords }) {
   const source = sourceMode === "npm"
     ? { type: "npm" }
     : { type: "git", url: REPO_URL, commit: headCommit, path: "packages/" + directory };
+  // In npm mode the version's publish time is whatever the registry recorded, not
+  // whenever this checkout happened to commit. A git timestamp here would be a
+  // plausible-looking lie: the field means "when did this version reach users".
+  const versionTimestamp = sourceMode === "npm" ? npmPublishTimestamp(pkg.name, pkg.version) : publishTimestamp;
   return {
     name: pkg.name,
     title: localized(en.meta.title, zh.meta.title),
@@ -88,7 +115,7 @@ function entryFor({ directory, category, keywords }) {
     versions: [
       {
         version: pkg.version,
-        publishTimestamp,
+        publishTimestamp: versionTimestamp,
         source,
         engines: { dsh: pkg.engines.dsh },
       },
