@@ -2,7 +2,7 @@
 
 Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。五个包、四形态：DSH 客户端 UI 皮肤 `@lionad/dsh-client-ui-skin-ascii-rest`（把 ascii.rest 的 ASCII 场景渲染为工作区背景，随亮暗主题换配色）与其纯逻辑层 `ascii-rest-scenes`（场景目录、cover 取景、调色板、设置归一化，DOM-free）；web 端键盘跳跃导航 `dsh-jump`；web 与 desktop 共用的键盘修正 `dsh-better-keybindings`（输入框聚焦时 Home/End 移动光标而非滚动聊天区；PageUp/PageDown 改为半屏翻页）；三端 slash 命令 `dsh-slash-commands`（TUI 的 `/copy` 剪贴板、web 与 desktop 的 `/rename` 会话改名与 `/resume` 会话切换）。
 
-共同发行模型：Loader row 经 `cordis.patch.yml` 注入，`lib/` 构建产物提交入库，profile 安装态不跑构建。三个 web 类包（`dsh-jump`、`dsh-better-keybindings`、`dsh-slash-commands`）另有市场投稿面：`scripts/` 下的三个脚本从包自身元数据派生 `market/index.json`（format 1 索引）与 `market/awesome/*.yml`（社区目录条目），改包元数据后要重跑而不是手改产物。
+共同发行模型：Loader row 经 `cordis.patch.yml` 注入，`lib/` 构建产物提交入库，profile 安装态不跑构建。其中 `dsh-jump` 已发到 npm（`0.1.0`）并有市场投稿面：`scripts/` 下的三个脚本从包自身元数据派生 `market/index.json`（format 1 索引，钉 npm 版本）与 `market/awesome/*.yml`（社区目录条目），改包元数据后要重跑而不是手改产物。`dsh-better-keybindings` 与 `dsh-slash-commands` 仍在日常使用中验证，以 `private: true` 声明自用，不参与索引，清单检查器会断言它们保持 private。
 
 ## 项目上下文
 
