@@ -54,7 +54,7 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 ```sh
 pnpm install
 pnpm build      # 产出 lib/（包内分块 + 主入口），lib 是要提交的，profile 直接读它
-pnpm test       # 五个包递归，40 文件 513 用例
+pnpm test       # 五个包递归，40 文件 515 用例
 pnpm typecheck
 ```
 

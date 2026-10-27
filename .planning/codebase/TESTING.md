@@ -23,11 +23,11 @@ pnpm typecheck                            # pnpm -r typecheck，五包 tsc 严�
 **实测规模（2026-10-27 逐包 `vitest run` 核实，全绿）：**
 - `ascii-rest-scenes`：4 文件 66 用例（palette 15、cover 22、catalog 8、options 21）
 - 皮肤包：6 文件 39 用例（bundle 8、scenes 7、tokens 10、regions 8、gui 3、surface 3）
-- `dsh-jump`：12 文件 151 用例（target 22、app 20、keys 19、bindings 20、hints 12、settings-controller 11、store 10、settings-row 10、recorder 8、runtime 8、entry 6、bundle 5）
+- `dsh-jump`：12 文件 153 用例（target 22、app 20、keys 19、bindings 20、hints 12、settings-controller 11、runtime 10、store 10、settings-row 10、recorder 8、entry 6、bundle 5）
 - `dsh-better-keybindings`：5 文件 96 用例（app 32、reveal 24、keys 24、caret 12、bundle 4）
 - `dsh-slash-commands`：13 文件 157 用例（resume 23、clipboard-browser 25、clipboard 17、resume-command 17、rename-command 16、command 13、history 12、arguments 7、rename 7、surface 6、client-entry 5、manifest 5、helper 4）
-- 合计 40 文件 513 用例（66 + 39 + 151 + 96 + 161）。根 `README.md` 的开发章节本轮已同步为同一组数字；此前写的是「33 文件 426 用例」，`dsh-jump` 增加可配置快捷键后多出 7 文件 83 用例（漂移机理见 CONCERNS.md 的技术债条目）。
-- 口径说明：数字取自 vitest 的 `numTotalTests` /「Tests N passed」行，即 `it(...)` 实际执行数；五包当前都用裸 `it(`，没有 `it.each` / `test.each` 参数化，所以文件里 `it(` 的行数与用例数一致（实测 513 行对 513 用例）
+- 合计 40 文件 515 用例（66 + 39 + 153 + 96 + 161）。根 `README.md` 的开发章节本轮已同步为同一组数字；此前写的是「33 文件 426 用例」，`dsh-jump` 增加可配置快捷键后多出 7 文件 85 用例（漂移机理见 CONCERNS.md 的技术债条目）。
+- 口径说明：数字取自 vitest 的 `numTotalTests` /「Tests N passed」行，即 `it(...)` 实际执行数；五包当前都用裸 `it(`，没有 `it.each` / `test.each` 参数化，所以文件里 `it(` 的行数与用例数一致（实测 515 行对 515 用例）
 
 ## 测试文件组织
 

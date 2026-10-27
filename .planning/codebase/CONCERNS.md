@@ -5,7 +5,7 @@
 ## 技术债
 
 **README 测试数字靠手维护，无防漂移机制：**
-- 问题：`README.md` 开发一节的测试计数靠手维护，2026-10-27 这轮之前写的是「`pnpm test` # 五个包递归，29 文件 348 用例」，比实测少 4 文件 78 用例——`dsh-slash-commands` 的客户端半边带了 4 个新测试文件进来，README 没跟上（本轮已同步为 33 文件 426 用例）；数字与代码无联动，下一个包或下一个测试文件就会让它再次过期。同类漂移已出现过四次：根 README 曾写「23 个测试」，皮肤包 README 曾写「38 个用例」，加第五个包时整轮改过一次，这次又落后一轮
+- 问题：`README.md` 开发一节的测试计数靠手维护，2026-10-27 这轮之前写的是「`pnpm test` # 五个包递归，29 文件 348 用例」，比实测少 4 文件 78 用例——`dsh-slash-commands` 的客户端半边带了 4 个新测试文件进来，README 没跟上（本轮已同步为 40 文件 515 用例）；数字与代码无联动，下一个包或下一个测试文件就会让它再次过期。同类漂移已出现过四次：根 README 曾写「23 个测试」，皮肤包 README 曾写「38 个用例」，加第五个包时整轮改过一次，这次又落后一轮
 - 文件：`README.md`、`packages/dsh-client-ui-skin-ascii-rest/README.md`
 - 影响：低——误导新读者预期；两处数字各写各的，加一个用例就可能全漂；本轮靠人工对齐，仍无机制防再漂
 - 修复路径：长期改成不写数字（「`pnpm test`，五包递归」），让计数只存在于 `.planning/codebase/TESTING.md`；或加一条测试断言文档数字与实测一致
@@ -174,4 +174,4 @@
 - **「dsh-jump 的 Cmd+H / Cmd+U 写死是缺陷」**：不成立，属于 v1 边界且 README 的「v1 boundaries」已声明。补充实测：入口 `apply(_ctx, config?)` 已经把第二参 spread 进 `DEFAULT_CONFIG`，所以改键在代码层可行，缺的是 profile 侧如何传 config 的声明与文档，不是硬编码死路。
 - **「TODO/FIXME 堆积」**：不成立。实测四个包的 `src`/`test`/`scripts` 中 TODO/FIXME/HACK/XXX 零匹配。
 - **「五包测试环境/版本不一致」**：不成立。同用 vitest ^3.2.0（实测同跑 v3.2.7）。皮肤包的 `vitest.config.ts` 注释说明 bundle 测试要手工扮演模块加载器，vitest 自带 jsdom 会装出第二个 window；dsh-jump 与 better-keybindings 用 node 环境 + 显式 `new JSDOM` 出于同一理由；dsh-slash-commands 用 node 环境，宿主半边本就不碰 DOM，客户端半边的 `document` 与 scheduler 从参数注入，所以也不需要 jsdom；`ascii-rest-scenes` 零配置。
-- **「README 说明文档大面积过期」**：不成立。只有测试数字一处过期，且本轮已同步为 33 文件 426 用例；34 场景数与 `catalog.generated.ts` 实测一致，安装 / 升级流程描述与当前脚本行为一致。数字本身易漂移的问题单列在技术债，不构成「文档大面积过期」。
+- **「README 说明文档大面积过期」**：不成立。只有测试数字一处过期，且本轮已同步为 40 文件 515 用例；34 场景数与 `catalog.generated.ts` 实测一致，安装 / 升级流程描述与当前脚本行为一致。数字本身易漂移的问题单列在技术债，不构成「文档大面积过期」。

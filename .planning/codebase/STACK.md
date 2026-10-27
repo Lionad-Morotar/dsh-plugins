@@ -12,7 +12,7 @@
 - CSS——`packages/dsh-client-ui-skin-ascii-rest/src/client/styles.ts`（内联字符串）与 `vendor/lil-gui.css`（以 text loader 打进 gui 分块）
 - JSON——`skin.json`（皮肤清单）、`locale/zh.json`、`locale/en.json`（实测各 39 个键）、`packages/dsh-slash-commands/dsh-plugin.json`（TUI 准入清单，manifestVersion `0.15`）
 
-五包 TypeScript 源码规模（实测 `find packages/*/src -name '*.ts'` 计数与 `cat | wc -l`）：`packages/ascii-rest-scenes` 8 文件 2489 行、`packages/dsh-client-ui-skin-ascii-rest` 17 文件 3224 行、`packages/dsh-jump` 8 文件 760 行、`packages/dsh-better-keybindings` 6 文件 728 行、`packages/dsh-slash-commands` 11 文件 1530 行（宿主侧 7 个 + `src/client/` 4 个）。
+五包 TypeScript 源码规模（实测 `find packages/*/src -name '*.ts'` 计数与 `cat | wc -l`）：`packages/ascii-rest-scenes` 8 文件 2489 行、`packages/dsh-client-ui-skin-ascii-rest` 17 文件 3224 行、`packages/dsh-jump` 15 文件 1833 行（宿主侧 1 个 + `src/client/` 14 个）、`packages/dsh-better-keybindings` 6 文件 728 行、`packages/dsh-slash-commands` 11 文件 1573 行（宿主侧 7 个 + `src/client/` 4 个）。
 
 ## 运行时
 
@@ -34,9 +34,9 @@
 - `packages/dsh-jump`、`packages/dsh-better-keybindings` 与 `packages/dsh-slash-commands` 无任何 `dependencies`：前两者是零三方依赖的 DOM 侧插件（esbuild 把源码打成一个 client 包），后者宿主半边只用 Node 内置模块（`node:child_process`、`process.stdout`），客户端半边由 esbuild 打成 browser bundle（`platform: "browser"`、CJS、压缩），同样零三方依赖
 
 **测试：**
-- vitest ^3.2.0（实测运行版本 v3.2.7）——五包各自 `vitest run`，根 `pnpm test` 即 `pnpm -r test`。实测 33 个测试文件 / 426 用例：`packages/ascii-rest-scenes` 4 文件 66 用例（catalog 8 + cover 22 + options 21 + palette 15）、`packages/dsh-client-ui-skin-ascii-rest` 6 文件 39 用例（bundle 8 + gui 3 + regions 8 + scenes 7 + surface 3 + tokens 10）、`packages/dsh-jump` 5 文件 68 用例（app 17 + hints 12 + keys 15 + target 22 + bundle 2）、`packages/dsh-better-keybindings` 5 文件 96 用例（app 32 + reveal 24 + keys 24 + caret 12 + bundle 4）、`packages/dsh-slash-commands` 13 文件 157 用例（resume 23 + clipboard-browser 25 + clipboard 17 + resume-command 17 + rename-command 16 + command 13 + history 12 + arguments 7 + rename 7 + surface 6 + client-entry 5 + manifest 5 + helper 4）
+- vitest ^3.2.0（实测运行版本 v3.2.7）——五包各自 `vitest run`，根 `pnpm test` 即 `pnpm -r test`。实测 40 个测试文件 / 515 用例：`packages/ascii-rest-scenes` 4 文件 66 用例（catalog 8 + cover 22 + options 21 + palette 15）、`packages/dsh-client-ui-skin-ascii-rest` 6 文件 39 用例（bundle 8 + gui 3 + regions 8 + scenes 7 + surface 3 + tokens 10）、`packages/dsh-jump` 12 文件 153 用例（app 20 + bindings 20 + bundle 5 + entry 6 + hints 12 + keys 19 + recorder 8 + runtime 10 + settings-controller 11 + settings-row 10 + store 10 + target 22）、`packages/dsh-better-keybindings` 5 文件 96 用例（app 32 + reveal 24 + keys 24 + caret 12 + bundle 4）、`packages/dsh-slash-commands` 13 文件 161 用例（resume 27 + clipboard-browser 25 + clipboard 17 + resume-command 17 + rename-command 16 + command 13 + history 12 + arguments 7 + rename 7 + surface 6 + client-entry 5 + manifest 5 + helper 4）
 - jsdom ^30.1.3（+`@types/jsdom`）——只装在 `packages/dsh-client-ui-skin-ascii-rest`、`packages/dsh-jump` 与 `packages/dsh-better-keybindings`：三包的测试手工 `new JSDOM()` 造 window 并桩 `getBoundingClientRect`，不启用 vitest 的 jsdom 环境（`environment: "node"`）；`packages/dsh-slash-commands` 连 jsdom 都不装，`document` 与 scheduler 都从参数注入
-- `packages/dsh-slash-commands` 不用 jsdom；剪贴板 effects（`exec` / `write`）全注入，客户端半边的测试同样只注入假对象（假 `commandUi` / `sessions` / `workspaces` / `uiWorkspace`、假 scheduler 与假 document），不建 DOM，157 个用例在纯 node 环境跑
+- `packages/dsh-slash-commands` 不用 jsdom；剪贴板 effects（`exec` / `write`）全注入，客户端半边的测试同样只注入假对象（假 `commandUi` / `sessions` / `workspaces` / `uiWorkspace`、假 scheduler 与假 document），不建 DOM，161 个用例在纯 node 环境跑
 - `vitest.config.ts` 存在于皮肤、jump、better-keybindings、slash-commands 四包；`packages/ascii-rest-scenes` 无配置文件，走 vitest 默认 include
 
 **构建/开发：**
