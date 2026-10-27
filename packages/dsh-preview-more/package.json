@@ -1,0 +1,51 @@
+{
+  "name": "dsh-preview-more",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness right-sidebar previews for 3D models, CAD drawings and high-bit-depth images",
+  "license": "MIT",
+  "author": "Lionad <1806234223@qq.com>",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json",
+    "./icon": "./icon.svg"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": []
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "dxf-viewer": "^1.0.50",
+    "esbuild": "^0.28.2",
+    "three": "^0.186.1",
+    "utif": "^3.1.0",
+    "vitest": "^3.2.0"
+  },
+  "files": [
+    "lib",
+    "locale",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "dsh": ">=0.2.0-rc.2 <0.3.0-0"
+  },
+  "icon": "./icon.svg"
+}

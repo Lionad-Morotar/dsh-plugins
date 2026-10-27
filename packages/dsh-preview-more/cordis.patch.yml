@@ -1,0 +1,4 @@
+# Enable dsh-preview-more by inserting its Loader row.
+- insert:
+    - id: preview-more
+      name: 'dsh-preview-more'
