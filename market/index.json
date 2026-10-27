@@ -74,11 +74,11 @@
       "versions": [
         {
           "version": "0.1.0",
-          "publishTimestamp": 1793122132,
+          "publishTimestamp": 1793127619,
           "source": {
             "type": "git",
             "url": "https://github.com/Lionad-Morotar/dsh-plugins",
-            "commit": "fa73ec743c3749af24699cfe7f6384971bd12e93",
+            "commit": "09e0d755c92cb93f304f750493c382fe9953553d",
             "path": "packages/dsh-jump"
           },
           "engines": {
