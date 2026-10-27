@@ -17,6 +17,7 @@
  */
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
+import { ThreeMFLoader } from "three/addons/loaders/3MFLoader.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
@@ -89,17 +90,44 @@ export function createDracoLoader(sources: DecoderSources): DRACOLoader {
 }
 
 /** A loader reduced to the one call this module makes. */
-interface MeshLoader {
+export interface MeshLoader {
   load(buffer: ArrayBuffer): Promise<unknown>;
+}
+
+/** The mesh containers this viewport can read. */
+export type MeshKind = "gltf" | "obj" | "stl" | "3mf";
+
+/**
+ * Classify one filename into the container it holds.
+ *
+ * The suffix is the only signal available before the bytes are parsed, and the
+ * catalogue promises exactly these five suffixes, so this is the whole
+ * behaviour of format selection in one testable function.
+ * @param path - decoded file path.
+ * @returns the container kind, or null for a suffix no loader reads.
+ */
+export function meshKindOf(path: string): MeshKind | null {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const suffix = name.slice(dot + 1).toLowerCase();
+  if (suffix === "glb" || suffix === "gltf") return "gltf";
+  if (suffix === "obj") return "obj";
+  if (suffix === "stl") return "stl";
+  if (suffix === "3mf") return "3mf";
+  return null;
 }
 
 /**
  * Choose the loader for one filename.
+ *
+ * Exported for tests: parsing is the part that can be wrong per format, while
+ * the viewport around it is the same code for all of them.
  * @param path - decoded file path.
  * @param draco - Draco loader shared with the glTF loader.
  * @returns a loader exposing `load` for the file kind.
  */
-function loaderFor(path: string, draco: DRACOLoader): MeshLoader {
+export function loaderFor(path: string, draco: DRACOLoader): MeshLoader {
   const suffix = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
   if (suffix === "glb" || suffix === "gltf") {
     const loader = new GLTFLoader();
@@ -119,6 +147,12 @@ function loaderFor(path: string, draco: DRACOLoader): MeshLoader {
     const loader = new STLLoader();
     return { load: async (buffer) => loader.parse(buffer) };
   }
+  if (suffix === "3mf") {
+    // 3MF is a zip of XML parts, so the loader needs the XML DOM. It is
+    // synchronous in every host this runs in, which is why it is not gated.
+    const loader = new ThreeMFLoader();
+    return { load: async (buffer) => loader.parse(buffer) };
+  }
   return {
     load: async () => {
       throw new Error("dsh-preview-more: no mesh loader for " + path);
@@ -129,12 +163,14 @@ function loaderFor(path: string, draco: DRACOLoader): MeshLoader {
 /**
  * Collapse a loader result into a scene root.
  *
- * glTF resolves to `{scene}`, OBJ to a Group, STL to a bare BufferGeometry.
- * One shape leaves this function so the framing code never branches.
+ * glTF resolves to `{scene}`, OBJ and 3MF to a Group, STL to a bare
+ * BufferGeometry. One shape leaves this function so the framing code never
+ * branches. Exported for tests: this collapse is where a new format's return
+ * shape would otherwise break silently.
  * @param parsed - whatever the loader resolved.
  * @returns the root node to add to the viewport.
  */
-function rootOf(parsed: unknown): Group {
+export function rootOf(parsed: unknown): Group {
   if (parsed !== null && typeof parsed === "object") {
     const withScene = parsed as { scene?: unknown };
     if (withScene.scene instanceof Group) return withScene.scene;
