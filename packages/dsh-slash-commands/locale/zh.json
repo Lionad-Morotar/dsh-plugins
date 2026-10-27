@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "斜杠命令",
+    "description": "终端里 /copy 最近几轮回复，web 与桌面用 /rename 改会话标题、/resume 切换会话。"
+  }
+}

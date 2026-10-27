@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-labelledby="keybindings-title">
+  <title id="keybindings-title">dsh-better-keybindings</title>
+  <defs>
+    <linearGradient id="keybindings-bg" x1="8" y1="6" x2="40" y2="44" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5C7BFF" />
+      <stop offset="1" stop-color="#2B39DB" />
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="13" fill="url(#keybindings-bg)" />
+  <rect x="9" y="31.5" width="30" height="3" rx="1.5" fill="#FFFFFF" fill-opacity="0.45" />
+  <rect x="9" y="25" width="3" height="16" rx="1.5" fill="#FFFFFF" />
+  <rect x="36" y="25" width="3" height="16" rx="1.5" fill="#FFFFFF" />
+  <rect x="22.5" y="11" width="3" height="22" rx="1.5" fill="#FFFFFF" />
+  <rect x="19.5" y="11" width="9" height="3" rx="1.5" fill="#FFFFFF" />
+  <rect x="19.5" y="30" width="9" height="3" rx="1.5" fill="#FFFFFF" />
+</svg>

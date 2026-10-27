@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "键盘修正",
+    "description": "输入框里按 Home/End 移动光标而不是滚动会话，PageUp/PageDown 变半屏翻页。"
+  }
+}

@@ -1,6 +1,10 @@
 # dsh-slash-commands
 
+<img src="./assets/icon.svg" width="72" height="72" alt="dsh-slash-commands icon" align="right" />
+
 DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回复放进系统剪贴板，web 与 desktop 用 `/rename` 改当前会话标题、用 `/resume` 切换到另一个会话。
+
+[命令归属](#命令归属) · [安装](#安装) · [实现要点](#实现要点) · [开发](#开发)
 
 ## 命令归属
 
@@ -92,19 +96,25 @@ web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `packa
 
 装到哪个 profile 取决于要哪些命令：只有 tui profile 能拿到 `/copy`，`/rename` 三端都有，`/resume` 在 web 与 desktop。
 
-**A. 以 profile 依赖安装（推荐）**
+### 从索引源安装
+
+包发到 npm 之后最短的路径是插件管理器：打开 Discover，加上市场索引 URL，安装条目。条目的安装命令是 `dsh plugin --profile <profile> add dsh-slash-commands`，`<profile>` 换成 `dsh-tui`、`web` 或桌面端用的那个。
+
+### 从本仓库安装
+
+在包发布之前，让 profile 指向本地的 checkout：
 
 ```json
 // ~/.dsh/profiles/dsh-tui/package.json
 {
-  "dependencies": { "dsh-slash-commands": "link:/path/to/dsh-plugins/packages/dsh-slash-commands" },
+  "dependencies": { "dsh-slash-commands": "link:../dsh-plugins/packages/dsh-slash-commands" },
   "dsh": { "profile": { "bundles": ["...", "dsh-slash-commands"] } }
 }
 ```
 
-然后 `dsh plugin --profile dsh-tui install`，重启 DSH。
+然后 `dsh plugin --profile dsh-tui install`，重启 DSH。`link:` 里的路径相对 `~/.dsh/profiles/dsh-tui` 解析，按 checkout 在你机器上的实际位置调整。
 
-**B. 手工 patch**
+### 手工 patch
 
 在 profile 的 `cordis.patch.yml` 末尾加：
 
@@ -113,6 +123,12 @@ web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `packa
     - id: dsh-slash-commands
       name: 'dsh-slash-commands'
 ```
+
+## 展示元数据
+
+插件管理器读 `locale/en.json` 与 `locale/zh.json` 拿标题和一句话描述，不执行插件代码；图标经 `exports["./icon"]` 取出，以 `data:` URL 形式提供 SVG。`assets/icon-180.png` 是同一张图在 180px 的渲染，供只收位图的 GitHub 目录条目使用。
+
+`engines.dsh` 是 `>=0.2.0-rc.2 <0.3.0-0`。自有 `engines.dsh` 区间会单独生效：只要它存在，宿主就不再参考 `peerDependencies`；预发布版本也参与区间比较，所以 0.2 的 release candidate 被接纳，0.3 不被接纳。
 
 ## 实现要点
 
@@ -126,7 +142,7 @@ web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `packa
 - `src/client/clipboard-shim.ts` 是有界的剪贴板写入：预算、兜底、以及「包装只装一次」的实现（`writeText` 通常挂在原型上，还原时要删掉自己加的影子属性而不是把原型方法拷成自有属性）。
 - `src/index.ts` 是宿主半，`inject = ['commands', 'sessionTitle']`，两者都必须声明：漏了 `sessionTitle` 时 Cordis 抛 gateway 契约错误，被 catch 吞掉后表现为「命令执行失败」却给不出原因；`commands` 则是插件行激活早于命令服务挂载，不声明会出现 `apply` 先跑、注册不到、装完即失效（首次真机启动即如此）。它还决定端别分派：探到终端服务才注册 `/copy`，`/rename` 无条件注册。注册再延后一个宏任务，因为 `tuiPluginHost` 由另一行挂载，`apply` 时它还不存在（实测 apply 时缺失、约 250ms 后出现）。
 
-`lib/` 是构建产物且**要提交**：harness 从安装包直接读它，不会替你跑构建。改了 `src/` 就 `pnpm build` 再提交。
+`lib/` 是构建产物且要提交：harness 从安装包直接读它，不会替你跑构建。改了 `src/` 就 `pnpm build` 再提交。
 
 ## 开发
 

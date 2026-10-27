@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Slash commands",
+    "description": "/copy the last replies from the terminal, /rename the current session, /resume to switch to another one."
+  }
+}
