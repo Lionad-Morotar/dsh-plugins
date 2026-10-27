@@ -2,6 +2,8 @@
 
 Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 
+![dsh-jump：按下组合键后，侧栏与输入框上浮出字母标签](./packages/dsh-jump/assets/jump-active.png)
+
 ## 包
 
 | 包 | 说明 |
