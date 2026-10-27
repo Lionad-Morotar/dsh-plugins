@@ -9,9 +9,14 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "check:market": "node scripts/check-market-manifest.mjs",
+    "build:market": "node scripts/build-market-index.mjs",
+    "check:market-index": "node scripts/build-market-index.mjs --check",
+    "build:awesome": "node scripts/build-awesome-entry.mjs"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-plugin-market-index": "0.2.1-rc.4",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "esbuild": "^0.28.2",
