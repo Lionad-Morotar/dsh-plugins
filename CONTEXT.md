@@ -19,7 +19,7 @@
 | 墨水-纸色（ink-on-paper） | 皮肤调色板模型：亮主题=深墨浅纸，暗主题反转（`palette.ts`） |
 | 设置归一化 | 用户 GUI 调参到内部 options 的规范化（`options.ts`） |
 | lil-gui | 设置面板调参控件库 |
-| 跳跃模式（jump mode） | dsh-jump 的激活态：视口内可交互元素各得一个 label，按键命中即执行。分点击模式（Cmd+H）与聚焦模式（Cmd+U） |
+| 跳跃模式（jump mode） | dsh-jump 的激活态：视口内可交互元素各得一个 label，按键命中即执行。分点击模式与聚焦模式，各自绑一个可改的组合键（默认 Cmd+H / Cmd+U，非 Mac 为 Ctrl+H / Ctrl+U） |
 | label / hint | jump 模式给候选元素打的键盘徽标。按本轮候选数一次性定长度：≤9 单键 `a s d f g h j k l`、≤81 两键、≤729 三键。同轮恒等长，否则短 label 会吞掉长 label 的首字符 |
 | 候选（candidate） | 由 `candidateSelector` 枚举出的可标注元素，激活时快照一次。三族：原生控件与 `[tabindex]`、Harness 实际渲染的可激活 ARIA widget 角色（`config.ts` 的 `ACTIVATABLE_ROLES`，不含 `row`/`columnheader`/`gridcell` 这类结构角色）、可编辑宿主与 `[role=textbox]`/`[role=searchbox]` |
 | 激活语义（activation） | label 命中后执行哪种动作，由目标而非按键模式决定：文本输入面 focus 并把光标折叠到末尾，其余控件派发真实鼠标序列。依据是合成鼠标事件不可信、浏览器不为其执行聚焦默认动作，而 focus 又不让按钮产生行为 |
@@ -34,6 +34,12 @@
 | resume 范围（scope） | `/resume` 列表的两档行集：`project`（当前会话所在目录）与 `all`（全部会话）。默认 `project`，切换方式是重开弹层而不是弹层内的 tab 控件——宿主没有 tab 控件 |
 | 有界剪贴板（bounded clipboard） | dsh-slash-commands 客户端半给页面 `navigator.clipboard.writeText` 加的包装：平台调用限时，超时后用 `execCommand('copy')` 兜底，两种结果都必然结算。理由见 ADR-5 |
 | 光标补齐（reveal） | 取消默认动作后浏览器不再做 scroll-into-view，由插件用盒模型算术把光标滚回可见区；会话滚动容器被显式排除在补齐范围外 |
+| 组合键（chord） | 一次激活的键位声明：物理键 + 完整修饰键集合，而非裸字母。运行时匹配（`matchesBinding`）与设置页录制（`recordChord`）共用同一份校验，两侧判定不许分叉——录制接受而匹配认不出的组合键，用户会存下一个什么都不做的键 |
+| 绑定文档（bindings document） | dsh-jump 存在浏览器 `localStorage`（键 `dsh-jump:bindings:v1`）的一份设置：按动作各存一条组合键。读必全量容错（半截文档按动作回退默认值而不是抛错），写必先归一化，因此永远不会同时存在两种形态 |
+| 设置行（settings row） | 插件往宿主设置面注入的一行 UI，经 `ctx.slots.inject` + `slots.register` 注册。jump 的行挂 `settings.general.item`、id `jump`、order 18（17 已被 ui-chat 的 link-opening 占用）；皮肤挂 `settings.section`、order 116 |
+| 市场投稿面（market submission） | 三个 web 类包对外承诺「别人装得上」的那一面：`engines.dsh` 兼容区间、`exports` 里的 icon 与 locale、`dsh.bundle.patch` 可挂载、`files` 白名单与 `npm pack` 产物面。由 `scripts/check-market-manifest.mjs` 逐条断言，任一失败即为「不可发布」而非「不整齐」 |
+| 市场索引（market index） | `market/index.json`，format 1：由包自身元数据派生（不手写），icon 内联为 data URI，安装来源默认钉 git commit + `path:/packages/<name>`。写完用宿主自己的 `parseMarketIndex` 复解一遍，因此成功运行是一次正向测试 |
+| awesome 条目（catalog entry） | `market/awesome/*.yml`，给 awesome-dsh-plugin 社区目录的投稿形态，文件名按 `owner__repo--<sub-dir>.yml` 折叠。社区目录拒收 SVG，因此必须提供 GitHub raw 可达的 `assets/icon-180.png` 光栅图 |
 
 ## ADR 布局
 
@@ -43,7 +49,7 @@
 
 背景：DSH profile 安装插件后直接读包内 `lib/`，不执行任何构建步骤。
 决策：`packages/*/lib/` 提交进仓库，`.gitignore` 以 `!packages/*/lib/` 显式豁免。
-后果：改 `src/` 后必须重新 `pnpm build` 并提交，否则安装态跑旧代码；换来安装零构建的确定性。四包一致适用。
+后果：改 `src/` 后必须重新 `pnpm build` 并提交，否则安装态跑旧代码；换来安装零构建的确定性。四个发行包一致适用（皮肤、`dsh-jump`、`dsh-better-keybindings`、`dsh-slash-commands`，实测入库 43 个文件）；`ascii-rest-scenes` 是被依赖的源码库，不经 `lib/`，产物由消费方构建时一并编译。
 
 ### ADR-2: 插件按 profile 分家，不追求单包跨端
 
@@ -83,3 +89,13 @@
 后果：范围是真的两档而不是分组列表的视觉暗示，用户可以来回切而不会丢失「我现在在看哪一档」。重开是全新弹层状态，因此搜索词要在重开前读出、重开后设回，否则切档会丢掉用户已输入的过滤条件。代价是业务代码要读 `ctx.commandUi.popupFor(actx)` 这个面（`actx` 由 `ctx.sessions.scope(sessionId)` 得到）；`popupFor` 在 Session generation 已释放时会抛错，因此调用点必须 catch 并降级为不做切换。档位不跨次记忆——每次打开都从 `project` 起，因为这条命令回答的是「我现在去哪」。
 
 范围行与会话行是两个分组（「范围」与「会话」）。弹层按 `option.group` 渲染 sticky 标题，不分组时会话行会归入前一个分组、接在「范围」标题下面，两个开关与一串会话由此读成同一个列表里的一类东西。分组标题是弹层唯一能提供的块级分隔，所以分节只能靠它；搜索滤掉整个空组，因此不会留下孤立标题。范围行另带灰色尾注说明选它的后果（「只看本目录」/「含其他项目」），会话行只有标题——这条差异让两类行在样式上不再可互换。
+
+### ADR-7: 市场条目从包自身派生，产物入库但人工触发重算
+
+背景：三个 web 类包要投进 DSH 插件市场与 awesome 社区目录。手写索引的失败方式很具体：字段是一次安装承诺，而版本、icon、兼容区间都会随包漂移，手写的那份只会在别人装不上时才暴露。反过来，把生成塞进 postinstall 或 pre-commit 也不成立，后者会让每次提交都改一个 8 KB 的 JSON。
+
+决策：索引与目录条目都是生成物，且生成器自己就是校验器。`scripts/build-market-index.mjs` 从 `package.json` 与 `locale` 派生 `market/index.json`，写完立刻用宿主自己的 `parseMarketIndex` 复解；`scripts/check-market-manifest.mjs` 单独断言宿主真正读取的字段（`engines.dsh` 区间、icon 可解析、`dsh.bundle.patch` 在 `files` 里、`npm pack` 产物不含源码与测试、禁 install 生命周期脚本）。重算由人显式运行，不挂进 git hook。
+
+后果：产物入库，所以托管地址指向的是仓库里的一份静态文件，加索引 URL 就能装；代价是产物会相对 HEAD 过期（当前索引钉在生成时的 commit，之后每次提交都会拉大这个差），需要发版或投稿前记得重跑。`--source npm` 与 `--source git` 两条来源形态都支持，但默认走 git：三个包还没发布，git 来源能让「索引已托管、包未上 npm」这段过渡期也可安装。若日后接上 CI，正确的位置是发布流程里重算并校验，而不是提交期。
+
+另外两个相关裁决一起记在这里：三个可投稿包移除了 `private: true`（私有包出现在市场条目里就是承诺一次装不上的安装），皮肤包保持私有不受检；市场的宿主兼容门读 `engines.dsh` 的显式 `>=floor <ceiling` 区间，字符串形态（如皮肤 `skin.json` 里的 `dshCompatibility: "0.2.1rc2"`）不在该检查面内。
