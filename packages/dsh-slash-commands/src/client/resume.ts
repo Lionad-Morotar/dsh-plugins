@@ -37,8 +37,18 @@ export const DEFAULT_SCOPE: ResumeScope = "project";
 /** Row id prefix for scope rows, so a pick can tell a scope from a session. */
 export const SCOPE_ROW_PREFIX = "scope:";
 
-/** The group the scope rows live in; session rows stay ungrouped under them. */
+/** The group the scope rows live in. */
 export const SCOPE_GROUP = { name: "scope", label: "范围" } as const;
+
+/**
+ * The group the session rows live in.
+ *
+ * Sessions used to stay ungrouped, which put them inside the 范围 block: the shell
+ * renders one sticky heading per group and an ungrouped run continues whichever
+ * block precedes it, so two scope switches and the session list read as one list
+ * of similar rows. A second heading is the only block boundary the shell offers.
+ */
+export const SESSION_GROUP = { name: "sessions", label: "会话" } as const;
 
 /** The catalog shape this command reads out of `ctx.sessions.list`. */
 export interface SessionListLike {
@@ -60,6 +70,8 @@ export interface ResumeRow {
   readonly id: string;
   readonly label: string;
   readonly badge?: string;
+  /** Trailing note; the shell renders it dim on the right, so it reads as a hint. */
+  readonly detail?: string;
   readonly group?: { readonly name: string; readonly label: string };
   readonly active?: boolean;
 }
@@ -79,6 +91,18 @@ export interface SessionOpener {
   openSession(sessionId: string): void;
 }
 
+/** What the all-sessions scope widens to, shown as the switch's trailing note. */
+const ALL_SCOPE_DETAIL = "含其他项目";
+
+/**
+ * What the project scope narrows to. It depends on whether there is a directory to
+ * narrow to: without one the row set is every session, so promising a directory
+ * filter would describe behaviour this opening does not have.
+ */
+function projectScopeDetail(scoped: boolean): string {
+  return scoped ? "只看本目录" : "无目录，等同全部";
+}
+
 /**
  * One scope row.
  *
@@ -86,11 +110,16 @@ export interface SessionOpener {
  * shell's highlight there, and an accept made without looking would then re-pick
  * the scope in use instead of confirming the session the user is already in. A
  * badge states the same fact without claiming the default pick.
+ *
+ * The row also carries a `detail` so a switch reads as a switch: a session row's
+ * label is a title and nothing else, while a switch states what picking it does.
+ * That difference is what keeps the two sections from looking interchangeable.
  */
-export function scopeRow(scope: ResumeScope, current: boolean): ResumeRow {
+export function scopeRow(scope: ResumeScope, current: boolean, scoped = true): ResumeRow {
   return {
     id: `${SCOPE_ROW_PREFIX}${scope}`,
     label: scope === "project" ? "当前项目" : "全部会话",
+    detail: scope === "all" ? ALL_SCOPE_DETAIL : projectScopeDetail(scoped),
     group: SCOPE_GROUP,
     ...(current ? { badge: "当前" } : {}),
   };
@@ -103,9 +132,14 @@ export function scopeOfRow(id: string): ResumeScope | undefined {
   return RESUME_SCOPES.includes(scope as ResumeScope) ? (scope as ResumeScope) : undefined;
 }
 
-/** The scope rows of one opening, in fixed order, badging the one in use. */
-export function scopeRows(scope: ResumeScope): readonly ResumeRow[] {
-  return RESUME_SCOPES.map(candidate => scopeRow(candidate, candidate === scope));
+/**
+ * The scope rows of one opening, in fixed order, badging the one in use.
+ *
+ * @param scoped - whether this opening actually narrows by directory, so the
+ * project switch can describe itself truthfully on the fallback path.
+ */
+export function scopeRows(scope: ResumeScope, scoped = true): readonly ResumeRow[] {
+  return RESUME_SCOPES.map(candidate => scopeRow(candidate, candidate === scope, scoped));
 }
 
 /** The scope a scope pick leads to; picking the one already in use changes nothing. */
@@ -152,6 +186,7 @@ export function resumeRows(state: SessionListLike, input: ResumeRowsInput): read
     rows.push({
       id,
       label: session.displayTitle !== undefined && session.displayTitle !== "" ? session.displayTitle : id,
+      group: SESSION_GROUP,
       ...(session.running === true ? { badge: "运行中" } : {}),
       ...(id === input.currentSessionId ? { active: true } : {}),
     });
@@ -159,9 +194,17 @@ export function resumeRows(state: SessionListLike, input: ResumeRowsInput): read
   return rows;
 }
 
-/** Scope rows first, then the session rows of that scope: one option list. */
+/**
+ * Scope rows first, then the session rows of that scope: one option list, two
+ * sections.
+ *
+ * @param state - the catalog snapshot.
+ * @param input - which scope to project and who is using it.
+ * @returns the switches, then that scope's sessions, each in its own group.
+ */
 export function resumeOptions(state: SessionListLike, input: ResumeRowsInput): readonly ResumeRow[] {
-  return [...scopeRows(input.scope), ...resumeRows(state, input)];
+  const scoped = input.scope === "all" || input.currentCwd !== undefined;
+  return [...scopeRows(input.scope, scoped), ...resumeRows(state, input)];
 }
 
 /**

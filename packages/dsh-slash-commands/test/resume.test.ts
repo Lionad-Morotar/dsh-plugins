@@ -158,6 +158,46 @@ describe("/resume scope tabs", () => {
     expect(scopeRow("all", false).group?.label).toBe("范围");
   });
 
+  it("gives session rows their own section, so the scope heading stops reading as theirs", () => {
+    // With sessions ungrouped they render straight under the 范围 heading, which
+    // makes two switches and a session list look like one run-on list. A second
+    // heading is the only block boundary the shell offers.
+    const state = catalog([{ id: "s1", title: "only" }]);
+
+    expect(rowsOf(state, "s1", "all")[0]?.group).toEqual({ name: "sessions", label: "会话" });
+  });
+
+  it("leaves the session row itself alone: same label, badge, anchor and order", () => {
+    // Only the section heading is new. Everything a user reads inside the row
+    // stays exactly what it was.
+    const state = catalog([
+      { id: "s1", title: "idle" },
+      { id: "s2", title: "busy", running: true },
+    ]);
+
+    expect(rowsOf(state, "s2", "all")).toEqual([
+      { id: "s1", label: "idle", group: { name: "sessions", label: "会话" } },
+      { id: "s2", label: "busy", badge: "运行中", group: { name: "sessions", label: "会话" }, active: true },
+    ]);
+  });
+
+  it("describes what each scope widens to, so the switches do not read as rows", () => {
+    // A switch states its consequence; a session row states a title. Giving the
+    // switches a trailing note is the difference the shell can render.
+    expect(RESUME_SCOPES.map(scope => scopeRow(scope, false).detail)).toEqual(["只看本目录", "含其他项目"]);
+  });
+
+  it("does not promise a directory filter the row set cannot deliver", () => {
+    // The project scope falls back to every session when the session in use has no
+    // directory, so a switch that always said 只看本目录 would be lying exactly
+    // where the fallback lives.
+    const state = catalog([{ id: "s1", title: "only" }]);
+
+    const [project] = resumeOptions(state, { currentSessionId: "s1", scope: "project", archived: [] });
+
+    expect(project?.detail).toBe("无目录，等同全部");
+  });
+
   it("recognises a scope row id and rejects a session id or a forged scope", () => {
     expect(scopeOfRow(`${SCOPE_ROW_PREFIX}all`)).toBe("all");
     expect(nextScope(`${SCOPE_ROW_PREFIX}project`)).toBe("project");

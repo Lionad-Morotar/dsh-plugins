@@ -148,7 +148,7 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 ### 切换流（/resume，客户端半边）
 
 1. 打开：`client/entry.ts` 用 `ctx.effect` 注册的贡献被弹出层调用（`available: () => true`，没有可切换的会话也显示，空态由弹层自己给），`options` 现读两份快照——`ctx.sessions.list.getSnapshot()` 与会话行里的 `cwd` 定项目档，`ctx.workspaces.list.getSnapshot().archivedSessionIds` 定归档集；`resumeRows` 逐条投影：丢空白、丢归档、丢子代理、丢弃不在当前 cwd 的（范围是 project 时；当前会话没有 cwd 时退回全部会话，而不是给一个空弹层），`switchTo` 对同会话 no-op
-2. 范围：选项列表顶部插两行范围行（`scope:project` / `scope:all`），当前档带 `当前` 徽标而不是 `active` 高亮位——高亮位是宿主弹层的默认选中行，用它标范围会让「不看屏幕直接回车」选中范围而不是会话
+2. 分节与范围：选项列表分两组，顶部两行范围行（`scope:project` / `scope:all`）在「范围」标题下，会话行在「会话」标题下。弹层按 `option.group` 渲染 sticky 标题，会话行不带分组时会归入前一组、直接接在「范围」标题下面，两个开关与一串会话由此读成同一个列表里的一类东西；分组标题是弹层唯一的块级分隔，所以分节只能靠它，搜索会滤掉整个空组因此不会留孤立标题。范围行另带灰色尾注说明选它的后果（「只看本目录」/「含其他项目」），当前会话没有目录时 project 档实际等于全部，尾注如实写「无目录，等同全部」。当前档带 `当前` 徽标而不是 `active` 高亮位——高亮位是宿主弹层的默认选中行，用它标范围会让「不看屏幕直接回车」选中范围而不是会话
 3. 切档：宿主弹层没有 tab 控件，范围行被选中时用 `ctx.commandUi.popupFor(ctx.sessions.scope(id)).open(...)` 重开同一个弹层，新的一次打开带着另一档行集；契约写明重开会取代旧的 shell，旧结算在 binding 不匹配时直接退出，既不消费 token 也不关新弹层。重开是全新弹层状态，所以重开前从 `popup.state` 读出搜索词、重开后用 `setSearch` 设回（空串不调），用户过滤到一半切档不必重打。`popupFor` 在会话 generation 已释放时会抛，调用点 catch 后降级为「不切档」，不弹错误
 4. 切会话：会话行被选中时调 `ctx.uiWorkspace.openSession(id)`，等同在侧边栏点击那个会话——不续写、不加载上下文、不产生第二轮对话
 

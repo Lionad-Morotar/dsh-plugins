@@ -81,3 +81,5 @@
 决策：走重开。`PopupSelectController` 是公开类，`open(command, spec, context, segment)` 的契约原文写着「A reopen supersedes the previous shell」，且 `settle()` 在 `onSelect` 返回后先比对 binding，不匹配就直接 return——既不消费 token 也不关闭弹层。所以从 `onSelect` 里重开是安全的，正是宿主给出的替换路径。
 
 后果：范围是真的两档而不是分组列表的视觉暗示，用户可以来回切而不会丢失「我现在在看哪一档」。重开是全新弹层状态，因此搜索词要在重开前读出、重开后设回，否则切档会丢掉用户已输入的过滤条件。代价是业务代码要读 `ctx.commandUi.popupFor(actx)` 这个面（`actx` 由 `ctx.sessions.scope(sessionId)` 得到）；`popupFor` 在 Session generation 已释放时会抛错，因此调用点必须 catch 并降级为不做切换。档位不跨次记忆——每次打开都从 `project` 起，因为这条命令回答的是「我现在去哪」。
+
+范围行与会话行是两个分组（「范围」与「会话」）。弹层按 `option.group` 渲染 sticky 标题，不分组时会话行会归入前一个分组、接在「范围」标题下面，两个开关与一串会话由此读成同一个列表里的一类东西。分组标题是弹层唯一能提供的块级分隔，所以分节只能靠它；搜索滤掉整个空组，因此不会留下孤立标题。范围行另带灰色尾注说明选它的后果（「只看本目录」/「含其他项目」），会话行只有标题——这条差异让两类行在样式上不再可互换。
