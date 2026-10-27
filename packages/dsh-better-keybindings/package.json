@@ -1,6 +1,7 @@
 {
   "name": "dsh-better-keybindings",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "description": "DeepSeek Harness keybinding fixes: Home/End move the caret inside text fields instead of scrolling the conversation",
   "license": "MIT",

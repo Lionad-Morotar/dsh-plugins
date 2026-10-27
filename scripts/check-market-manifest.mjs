@@ -19,8 +19,16 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..");
 
-/** Packages offered to an index; pure logic layers are not entries. */
-const PUBLISHABLE = ["dsh-jump", "dsh-better-keybindings", "dsh-slash-commands"];
+/**
+ * Packages offered to an index. The other two plugins are deliberately absent:
+ * they are still being validated in daily use, and an index entry is a promise
+ * that a stranger can install the thing. Keeping them out of this list is what
+ * makes the check refuse them, and each one therefore has to say `private` so
+ * that npm cannot publish what the index does not offer.
+ */
+const PUBLISHABLE = ["dsh-jump"];
+/** Workspace packages that must stay out of the index, and so must stay private. */
+const UNPUBLISHED = ["dsh-better-keybindings", "dsh-slash-commands"];
 const MAX_ICON_BYTES = 256 * 1024;
 const ICON_TYPES = new Map([[".svg", "image/svg+xml"], [".png", "image/png"], [".jpg", "image/jpeg"], [".jpeg", "image/jpeg"], [".webp", "image/webp"]]);
 /** Install lifecycle hooks would run code on a machine that only meant to add a plugin. */
@@ -209,6 +217,18 @@ for (const name of targets) {
   checkIcon(pkg, root);
   checkLocale(pkg, root);
   checkPackedSurface(pkg, root);
+}
+
+// An unpublished plugin is not a smaller version of a published one: it must be
+// `private`, or a stray `npm publish` would ship something the index never
+// promised and nothing here had checked.
+for (const name of UNPUBLISHED) {
+  const root = join(repoRoot, "packages", name);
+  if (!existsSync(join(root, "package.json"))) continue;
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  if (pkg.private !== true) {
+    fail(root, "not in the market list, so it must be private: true; otherwise npm could publish it unchecked");
+  }
 }
 
 if (errors.length > 0) {

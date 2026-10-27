@@ -23,10 +23,12 @@ const OUTPUT = join(repoRoot, "market", "index.json");
 const INDEX_URL = "https://raw.githubusercontent.com/Lionad-Morotar/dsh-plugins/main/market/index.json";
 const REPO_URL = "https://github.com/Lionad-Morotar/dsh-plugins";
 
+/**
+ * Packages the index offers. Only dsh-jump ships for now; the other two are
+ * still being validated in daily use and stay out until they are not.
+ */
 const PUBLISHABLE = [
   { directory: "dsh-jump", category: "ui", keywords: ["keyboard", "navigation", "accessibility", "vimium"] },
-  { directory: "dsh-better-keybindings", category: "ui", keywords: ["keyboard", "caret", "editing"] },
-  { directory: "dsh-slash-commands", category: "tools", keywords: ["commands", "clipboard", "session"] },
 ];
 
 const CATEGORIES = {

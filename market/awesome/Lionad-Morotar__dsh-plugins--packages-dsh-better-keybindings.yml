@@ -1,7 +1,0 @@
-url: https://github.com/Lionad-Morotar/dsh-plugins/tree/main/packages/dsh-better-keybindings
-name: Lionad-Morotar/dsh-plugins#dsh-better-keybindings
-category: ui
-icon: https://raw.githubusercontent.com/Lionad-Morotar/dsh-plugins/main/packages/dsh-better-keybindings/assets/icon-180.png
-description:
-  en: 'Home and End move the caret inside text fields instead of scrolling the conversation; PageUp and PageDown page by half a screen.'
-  zh: '输入框里按 Home/End 移动光标而不是滚动会话，PageUp/PageDown 变半屏翻页。'

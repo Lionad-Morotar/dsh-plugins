@@ -1,7 +1,0 @@
-url: https://github.com/Lionad-Morotar/dsh-plugins/tree/main/packages/dsh-slash-commands
-name: Lionad-Morotar/dsh-plugins#dsh-slash-commands
-category: tools
-icon: https://raw.githubusercontent.com/Lionad-Morotar/dsh-plugins/main/packages/dsh-slash-commands/assets/icon-180.png
-description:
-  en: '/copy the last replies from the terminal, /rename the current session, /resume to switch to another one.'
-  zh: '终端里 /copy 最近几轮回复，web 与桌面用 /rename 改会话标题、/resume 切换会话。'

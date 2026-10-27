@@ -40,7 +40,10 @@ if (!existsSync(join(packageRoot, "package.json"))) {
 const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 const en = JSON.parse(readFileSync(join(packageRoot, "locale", "en.json"), "utf8")).meta;
 const zh = JSON.parse(readFileSync(join(packageRoot, "locale", "zh.json"), "utf8")).meta;
-if (pkg.private !== undefined) throw new Error(name + " is private; a catalog entry would promise an install that cannot happen");
+if (pkg.private === true) {
+  console.error("error: packages/" + name + " is private; a catalog entry would promise an install that cannot happen");
+  process.exit(1);
+}
 
 /** The catalog folds the URL into a filename: owner__repo--sub-dir. */
 const url = "https://github.com/" + OWNER + "/" + REPO + "/tree/main/packages/" + name;

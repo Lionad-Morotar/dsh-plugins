@@ -74,103 +74,12 @@
       "versions": [
         {
           "version": "0.1.0",
-          "publishTimestamp": 1793097997,
+          "publishTimestamp": 1793122132,
           "source": {
             "type": "git",
             "url": "https://github.com/Lionad-Morotar/dsh-plugins",
-            "commit": "6b3e04d88a34a0b4cdf0e91f0ec1aef94a65e5ac",
+            "commit": "fa73ec743c3749af24699cfe7f6384971bd12e93",
             "path": "packages/dsh-jump"
-          },
-          "engines": {
-            "dsh": ">=0.2.0-rc.2 <0.3.0-0"
-          }
-        }
-      ]
-    },
-    {
-      "name": "dsh-better-keybindings",
-      "title": {
-        "en": "Better keybindings",
-        "zh": "键盘修正"
-      },
-      "description": {
-        "en": "Home and End move the caret inside text fields instead of scrolling the conversation; PageUp and PageDown page by half a screen.",
-        "zh": "输入框里按 Home/End 移动光标而不是滚动会话，PageUp/PageDown 变半屏翻页。"
-      },
-      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4IiByb2xlPSJpbWciIGFyaWEtbGFiZWxsZWRieT0ia2V5YmluZGluZ3MtdGl0bGUiPgogIDx0aXRsZSBpZD0ia2V5YmluZGluZ3MtdGl0bGUiPmRzaC1iZXR0ZXIta2V5YmluZGluZ3M8L3RpdGxlPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJrZXliaW5kaW5ncy1iZyIgeDE9IjgiIHkxPSI2IiB4Mj0iNDAiIHkyPSI0NCIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPgogICAgICA8c3RvcCBzdG9wLWNvbG9yPSIjNUM3QkZGIiAvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyQjM5REIiIC8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMyIgZmlsbD0idXJsKCNrZXliaW5kaW5ncy1iZykiIC8+CiAgPHJlY3QgeD0iOSIgeT0iMzEuNSIgd2lkdGg9IjMwIiBoZWlnaHQ9IjMiIHJ4PSIxLjUiIGZpbGw9IiNGRkZGRkYiIGZpbGwtb3BhY2l0eT0iMC40NSIgLz4KICA8cmVjdCB4PSI5IiB5PSIyNSIgd2lkdGg9IjMiIGhlaWdodD0iMTYiIHJ4PSIxLjUiIGZpbGw9IiNGRkZGRkYiIC8+CiAgPHJlY3QgeD0iMzYiIHk9IjI1IiB3aWR0aD0iMyIgaGVpZ2h0PSIxNiIgcng9IjEuNSIgZmlsbD0iI0ZGRkZGRiIgLz4KICA8cmVjdCB4PSIyMi41IiB5PSIxMSIgd2lkdGg9IjMiIGhlaWdodD0iMjIiIHJ4PSIxLjUiIGZpbGw9IiNGRkZGRkYiIC8+CiAgPHJlY3QgeD0iMTkuNSIgeT0iMTEiIHdpZHRoPSI5IiBoZWlnaHQ9IjMiIHJ4PSIxLjUiIGZpbGw9IiNGRkZGRkYiIC8+CiAgPHJlY3QgeD0iMTkuNSIgeT0iMzAiIHdpZHRoPSI5IiBoZWlnaHQ9IjMiIHJ4PSIxLjUiIGZpbGw9IiNGRkZGRkYiIC8+Cjwvc3ZnPgo=",
-      "author": "Lionad <1806234223@qq.com>",
-      "homepage": "https://github.com/Lionad-Morotar/dsh-plugins/tree/main/packages/dsh-better-keybindings#readme",
-      "repository": {
-        "url": "https://github.com/Lionad-Morotar/dsh-plugins",
-        "directory": "packages/dsh-better-keybindings"
-      },
-      "metadata": {
-        "category": "ui",
-        "keywords": [
-          "keyboard",
-          "caret",
-          "editing"
-        ],
-        "labels": [
-          "keyboard",
-          "official"
-        ],
-        "sortKeys": {}
-      },
-      "versions": [
-        {
-          "version": "0.1.0",
-          "publishTimestamp": 1793097997,
-          "source": {
-            "type": "git",
-            "url": "https://github.com/Lionad-Morotar/dsh-plugins",
-            "commit": "6b3e04d88a34a0b4cdf0e91f0ec1aef94a65e5ac",
-            "path": "packages/dsh-better-keybindings"
-          },
-          "engines": {
-            "dsh": ">=0.2.0-rc.2 <0.3.0-0"
-          }
-        }
-      ]
-    },
-    {
-      "name": "dsh-slash-commands",
-      "title": {
-        "en": "Slash commands",
-        "zh": "斜杠命令"
-      },
-      "description": {
-        "en": "/copy the last replies from the terminal, /rename the current session, /resume to switch to another one.",
-        "zh": "终端里 /copy 最近几轮回复，web 与桌面用 /rename 改会话标题、/resume 切换会话。"
-      },
-      "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4IiByb2xlPSJpbWciIGFyaWEtbGFiZWxsZWRieT0ic2xhc2gtdGl0bGUiPgogIDx0aXRsZSBpZD0ic2xhc2gtdGl0bGUiPmRzaC1zbGFzaC1jb21tYW5kczwvdGl0bGU+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9InNsYXNoLWJnIiB4MT0iOCIgeTE9IjYiIHgyPSI0MCIgeTI9IjQ0IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+CiAgICAgIDxzdG9wIHN0b3AtY29sb3I9IiM1QzdCRkYiIC8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzJCMzlEQiIgLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgcng9IjEzIiBmaWxsPSJ1cmwoI3NsYXNoLWJnKSIgLz4KICA8cG9seWdvbiBwb2ludHM9IjIxLDkgMjUsOSAxNywzOSAxMywzOSIgZmlsbD0iI0ZGRkZGRiIgLz4KICA8cmVjdCB4PSIyMy41IiB5PSIyNSIgd2lkdGg9IjE0IiBoZWlnaHQ9IjEyIiByeD0iNCIgZmlsbD0iI0ZGRkZGRiIgZmlsbC1vcGFjaXR5PSIwLjUiIC8+CiAgPHJlY3QgeD0iMjYuNSIgeT0iMjkuNSIgd2lkdGg9IjgiIGhlaWdodD0iMyIgcng9IjEuNSIgZmlsbD0iI0ZGRkZGRiIgLz4KPC9zdmc+Cg==",
-      "author": "Lionad <1806234223@qq.com>",
-      "homepage": "https://github.com/Lionad-Morotar/dsh-plugins/tree/main/packages/dsh-slash-commands#readme",
-      "repository": {
-        "url": "https://github.com/Lionad-Morotar/dsh-plugins",
-        "directory": "packages/dsh-slash-commands"
-      },
-      "metadata": {
-        "category": "tools",
-        "keywords": [
-          "commands",
-          "clipboard",
-          "session"
-        ],
-        "labels": [
-          "official"
-        ],
-        "sortKeys": {}
-      },
-      "versions": [
-        {
-          "version": "0.1.0",
-          "publishTimestamp": 1793097997,
-          "source": {
-            "type": "git",
-            "url": "https://github.com/Lionad-Morotar/dsh-plugins",
-            "commit": "6b3e04d88a34a0b4cdf0e91f0ec1aef94a65e5ac",
-            "path": "packages/dsh-slash-commands"
           },
           "engines": {
             "dsh": ">=0.2.0-rc.2 <0.3.0-0"
