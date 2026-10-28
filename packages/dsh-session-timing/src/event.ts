@@ -34,6 +34,12 @@ export type AssistantStream = readonly (
       readonly texts: readonly string[];
     }
   | {
+      readonly type: "reasoning-chunks";
+      readonly time0: number;
+      readonly dt: readonly number[];
+      readonly texts: readonly string[];
+    }
+  | {
       readonly type: "tool-call-chunks";
       readonly time0: number;
       readonly dt: readonly number[];

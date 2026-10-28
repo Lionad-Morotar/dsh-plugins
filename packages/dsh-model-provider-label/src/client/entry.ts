@@ -21,8 +21,8 @@ export const SLOT = "conversation.input.model.label";
  *
  * A single slot refuses a second registration at the same priority and renders
  * the lowest one, so this is the contract's replacement mechanism rather than a
- * collision: the shipped label plugin (and the 1017 badge plugin registered on
- * top of it) never mount.
+ * collision: the 1017 badge plugin, this slot's only other registrant, never
+ * mounts.
  */
 export const ENTRY_PRIORITY = -1;
 

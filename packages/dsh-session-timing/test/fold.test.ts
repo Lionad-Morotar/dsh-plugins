@@ -8,7 +8,7 @@
  * reported on its own line.
  */
 import { describe, expect, it } from "vitest";
-import { event, streamTokensAt } from "./fold-fixtures.ts";
+import { event, streamPackedRun, streamTokensAt } from "./fold-fixtures.ts";
 import { createTimingState, sessionTimingProjectionDefinition } from "../src/projection.ts";
 import { timingStateSchema, timingViewSchema } from "../src/schema.ts";
 
@@ -153,6 +153,48 @@ describe("session timing fold", () => {
     ]);
     // a: 300ms; b never resolved and turn/end dropped it; c: 100ms.
     expect(value.toolMs).toBe(400);
+  });
+
+  it("reads a packed reasoning run without walking undefined", () => {
+    // The host packs both text and reasoning deltas into runs; only a tool-call
+    // run keeps its fragments in `args`. A reasoning-first stream is the normal
+    // path for every reasoning model, so a run reader that assumes otherwise
+    // throws on the first settled message rather than on some rare input.
+    const value = view([
+      event(1_000, "step/start", { turn: 1, step: 1 }),
+      event(1_200, "assistant/attempt", { turn: 1, step: 1, stream: streamPackedRun(1_100, ["", "", "思考"]) }),
+      event(1_400, "assistant/message", {
+        turn: 1,
+        step: 1,
+        stream: streamPackedRun(1_100, ["", "", "思考"]),
+        usage: { outputTokens: 10 },
+      }),
+      event(1_600, "step/end", { turn: 1, step: 1 }),
+    ]);
+    // First non-empty reasoning fragment sits 102ms after the step anchor.
+    expect(value.ttftMs).toBe(102);
+    expect(value.ttftSteps).toBe(1);
+    expect(value.llmMs).toBe(400);
+  });
+
+  it("counts a packed text run and a name-bearing tool-call run the same way", () => {
+    const value = view([
+      event(1_000, "step/start", { turn: 1, step: 1 }),
+      event(1_500, "assistant/message", {
+        turn: 1,
+        step: 1,
+        stream: [
+          { type: "tool-call-chunks", time0: 1_050, dt: [5], args: ["", "{}"], name: "" },
+          ...streamPackedRun(1_200, ["", "答"], "text-chunks"),
+        ],
+        usage: { outputTokens: 4 },
+      }),
+      event(1_800, "step/end", { turn: 1, step: 1 }),
+    ]);
+    // The name-bearing tool-call run starts at its first member, 50ms in;
+    // without that rule the text run at 1_200 would have been the first token.
+    expect(value.ttftMs).toBe(50);
+    expect(value.llmMs).toBe(500);
   });
 
   it("leaves unrelated events on the same state reference", () => {

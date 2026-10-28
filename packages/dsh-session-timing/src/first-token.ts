@@ -36,7 +36,9 @@ export function isTokenDelta(chunk: StreamChunk): boolean {
 function runFirstTokenTime(run: AssistantStream[number]): number | undefined {
   if (run.type === "chunk") return isTokenDelta(run.chunk) ? run.time : undefined;
   if (run.type === "tool-call-chunks" && run.name !== undefined) return run.time0;
-  const fragments = run.type === "text-chunks" ? run.texts : run.args;
+  // `tool-call-chunks` carries fragments in `args`, both text and reasoning runs
+  // in `texts`; reading `args` for a reasoning run would walk undefined.
+  const fragments = run.type === "tool-call-chunks" ? run.args : run.texts;
   let time = run.time0;
   for (let index = 0; index < fragments.length; index += 1) {
     if (index > 0) time += run.dt[index - 1] ?? 0;

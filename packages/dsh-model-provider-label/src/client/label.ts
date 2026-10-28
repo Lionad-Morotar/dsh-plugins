@@ -49,12 +49,12 @@ export function labelFor(owner: ModelLabelOwner): string {
 }
 
 /**
- * The fixed release marker the shipped label printed for official Flash builds.
+ * The fixed release marker the 1017 badge plugin printed for official Flash builds.
  *
  * Shadowing that entry would otherwise drop a visible badge, and a badge is not
  * something a provider prefix should cost the reader. The identity is the same
- * three-way match the shipped plugin used: official providers only, the `flash`
- * catalog id, and the exact `DeepSeek-V4.1-Flash` display name.
+ * three-way match that plugin used: official providers only, the `flash` catalog
+ * id, and the exact `DeepSeek-V4.1-Flash` display name.
  * @param provider - the provider identity from the slot.
  * @param model - the model identity from the slot.
  * @returns the marker text, or null when this entry is not the official release.

@@ -70,7 +70,7 @@ pnpm typecheck
 `dsh-jump` 用于投进 DSH 插件市场与 awesome 社区目录（`dsh-better-keybindings`、`dsh-slash-commands`、`dsh-session-timing`、`dsh-model-provider-label` 仍在日常验证中，以 `private: true` 声明自用，清单检查器会断言它们保持 private）。索引与条目都是生成物，从包自身的 `package.json` 与 `locale` 派生，别手改：
 
 ```sh
-pnpm check:market            # 校验三个包的对外暴露面（宿主真正读取的字段）
+pnpm check:market            # 校验可投稿包的对外暴露面（宿主真正读取的字段），并断言自用包保持 private
 pnpm build:market            # 重算 market/index.json，安装来源钉当前 commit
 pnpm check:market-index      # 只校验不写盘
 pnpm build:awesome dsh-jump  # 重算 market/awesome/<owner>__<repo>--<subdir>.yml

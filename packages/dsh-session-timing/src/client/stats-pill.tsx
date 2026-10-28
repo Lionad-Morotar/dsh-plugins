@@ -1,11 +1,13 @@
 /**
  * The session statistics pill.
  *
- * This pill takes over the shipped `activity` seat in the composer dock, so it
- * has to be a strict superset of what it replaces: one static reading in compact
- * mode, the same dialog rows in detailed mode, plus the retry wait the shipped
- * fold cannot report (it measures model time from `step/start`, so a retried
- * step folds the failed attempt and the backoff into model time).
+ * This pill takes over the shipped `activity` seat in the composer dock and
+ * nothing else, so it has to be a superset of that seat specifically: one static
+ * reading in compact mode, the same dialog rows in detailed mode, plus the retry
+ * wait the shipped fold cannot report (it measures model time from `step/start`,
+ * so a retried step folds the failed attempt and the backoff into model time).
+ * The neighbouring `usage` seat is a separate entry id and keeps rendering on
+ * its own, which is why this module reads no token usage.
  *
  * Everything the platform owns arrives as props, never as imports. This module
  * is compiled into a loader factory where React, react-dom and the shared

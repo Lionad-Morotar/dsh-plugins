@@ -9,6 +9,10 @@
 - 宿主半注册 `sessionTiming` projection。它以 `llm/retry-started` 为界重锚模型用时、清空首 token 记录，并把每次重试 `llm/retry-started.time − llm/retry.time` 的实测等待单独累计。只累计「真的等到了」的重试：被取消的那次不发 `llm/retry-started`，其计划延迟不计。
 - 客户端半在 `conversation.composer.dock` 用 `id: activity`、`priority: -1` 接管自带的统计 pill，弹窗里多一行「重试用时」。compact 形态与自带的完全一致（只有速度读数）。
 
+## 版本下界
+
+`engines.dsh` 是 `>=0.2.1-rc.3 <0.3.0-0`，比同仓其他包高一个 rc。原因不在 API 许可，而在对端的实现事实：本包以 `id: activity` 接管统计 pill，而 0.2.0-rc.2 的 `dsh-client-ui-chat` 把统计 pill 注册为 `id: stats`（整个 `StatsPills` 一个条目），`activity` 这个 id 与 `usage` 拆分是在 0.2.1 里发生的。装在 rc.2 上不会报错，只会在输入框下方并排出现两份统计读数，且口径互相矛盾。
+
 ## 为什么不接管 `sessionStats`
 
 同一个 projection key 无法 shadow：版本相同会静默共享第一个注册，版本不同直接抛错。接管只能靠 patch 掉 `session-stats` 的 Loader row，并把注册顺序压在它前面。新增自己的 key 没有这个耦合，卸载即回到上游行为，代价只是多一份整日志折叠（registry 每个事件每个单元 O(1)）。
