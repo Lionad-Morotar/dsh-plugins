@@ -5,8 +5,13 @@
  * the whole reason the raster family exists. It is engine-free: no canvas, no
  * DOM, no WebGL, which is what lets the decode path be tested in plain Node.
  *
- * utif gives one IFD per page and decodes pixels separately, so multi-page
- * files cost one decode per page and no page is decoded until it is shown.
+ * utif gives one IFD per page, and this module decodes every page up front so
+ * the page control can report a total. Two costs follow, both accepted for now:
+ * the whole file is parsed once per page plus once for the count, and the RGBA
+ * pages stay resident, so a long multi-page scan costs hundreds of megabytes.
+ * Page-at-a-time decoding would need the count to come from somewhere other than
+ * a full pass, and it is the reason this module is a candidate for lazy loading
+ * if large scans show up in practice.
  */
 
 import type * as UtifModule from "utif";
