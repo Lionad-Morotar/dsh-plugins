@@ -34,7 +34,7 @@ const require = createRequire(join(packageRoot, "package.json"));
 const manifest = require(join(packageRoot, "package.json"));
 
 /** Renderer families, each one lazy chunk. Mirrors src/client/formats.ts. */
-const CHUNKS = ["scene3d", "raster"];
+const CHUNKS = ["scene3d", "raster", "cad"];
 
 /**
  * The ModuleLoader wrapper shared by the entry and every chunk.

@@ -12,7 +12,7 @@
  */
 
 /** Which renderer draws one family. */
-export type PreviewFamily = "scene3d" | "raster";
+export type PreviewFamily = "scene3d" | "raster" | "cad";
 
 /** One renderer family and the suffixes it owns. */
 export interface PreviewFormat {
@@ -45,6 +45,14 @@ export const PREVIEW_FORMATS: readonly PreviewFormat[] = [
     family: "raster",
     extensions: ["tif", "tiff", "avif"],
     titleKey: "raster.title",
+  },
+  {
+    // DXF is 2D CAD, a different renderer rather than another mesh format: it is
+    // a drawing of lines, arcs and hatches with layers, not a surface. DWG is
+    // deliberately absent, since every DWG decoder is GPL.
+    family: "cad",
+    extensions: ["dxf"],
+    titleKey: "cad.title",
   },
 ];
 

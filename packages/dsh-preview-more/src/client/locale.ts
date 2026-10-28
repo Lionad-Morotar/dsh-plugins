@@ -20,6 +20,7 @@ export function dictionaries(): Record<"zh" | "en", Record<string, string>> {
     zh: {
       "scene3d.title": "3D 模型",
       "raster.title": "图片",
+      "cad.title": "CAD 图纸",
       "state.loading": "正在读取…",
       "state.decoding": "正在解码…",
       "state.failed": "无法预览该文件",
@@ -33,10 +34,13 @@ export function dictionaries(): Record<"zh" | "en", Record<string, string>> {
       "raster.page": "第 {current} / {total} 页",
       "raster.previous": "上一页",
       "raster.next": "下一页",
+      "cad.fit": "适应窗口",
+      "cad.layers": "图层 {count}",
     },
     en: {
       "scene3d.title": "3D model",
       "raster.title": "Image",
+      "cad.title": "CAD drawing",
       "state.loading": "Reading…",
       "state.decoding": "Decoding…",
       "state.failed": "This file cannot be previewed",
@@ -50,6 +54,8 @@ export function dictionaries(): Record<"zh" | "en", Record<string, string>> {
       "raster.page": "Page {current} of {total}",
       "raster.previous": "Previous page",
       "raster.next": "Next page",
+      "cad.fit": "Fit view",
+      "cad.layers": "{count} layers",
     },
   };
 }

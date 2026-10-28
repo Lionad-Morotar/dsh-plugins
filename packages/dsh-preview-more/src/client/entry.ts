@@ -21,7 +21,7 @@
 import type { ComponentType, ReactElement } from "react";
 
 import { registerBetterSidebarViewers } from "./better-sidebar.ts";
-import { claimedExtensions, familyOf, type PreviewFamily } from "./formats.ts";
+import { claimedExtensions, families, familyOf, type PreviewFamily } from "./formats.ts";
 import { dictionaries, LOCALE_NAMESPACE } from "./locale.ts";
 import type { PreviewContext } from "./runtime.ts";
 import { insertStyles } from "./styles.ts";
@@ -172,7 +172,9 @@ export const clientPlugin = {
       return doc === undefined ? (() => undefined) : insertStyles(doc);
     });
 
-    for (const family of ["scene3d", "raster"] as const) {
+    // Derived from the catalogue rather than listed here, so adding a format
+    // touches formats.ts and nothing else.
+    for (const family of families()) {
       const extensions = claimedExtensions().filter((suffix) => familyOf("x." + suffix) === family);
       if (extensions.length === 0) continue;
       const id = ID_PREFIX + family;
