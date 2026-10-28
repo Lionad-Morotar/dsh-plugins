@@ -86,7 +86,15 @@ export function createDracoLoader(sources: DecoderSources): DRACOLoader {
     if (url.endsWith("draco_wasm_wrapper.js")) return Promise.resolve(sources.wasmWrapper);
     return Promise.reject(new Error("dsh-preview-more: unexpected Draco library " + url));
   };
-  (loader as unknown as { _loadLibrary: typeof loadLibrary })._loadLibrary = loadLibrary;
+  // three keeps this seam private, so overwriting it is a bet on a name that a
+  // future three could rename. Asserting the shape here makes that bet explicit:
+  // the failure becomes a named error at construction instead of a request to a
+  // fabricated host that nobody can diagnose from the console.
+  const seam = loader as unknown as { _loadLibrary?: unknown };
+  if (typeof seam._loadLibrary !== "function") {
+    throw new Error("dsh-preview-more: this three version has no DRACOLoader._loadLibrary, so the embedded decoder cannot be installed");
+  }
+  seam._loadLibrary = loadLibrary;
   return loader;
 }
 
