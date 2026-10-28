@@ -306,6 +306,7 @@ export const clientPlugin = {
             native: () => findShadowedSingle(ctx.slots.entries(SEAT_SLOT), self.component),
             openPicker: (sessionId) => openModelPicker(ctx, sessionId),
             translate: () => modelTranslator(ctx),
+            document: doc,
           };
           const Seat = createSeat(deps);
           self.component = Seat;

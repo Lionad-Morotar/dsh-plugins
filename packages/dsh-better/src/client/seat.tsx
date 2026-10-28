@@ -77,23 +77,55 @@ export interface SeatDeps {
   readonly openPicker: (sessionId: string | undefined) => boolean;
   /** Translator for this package's namespace, resolved lazily. */
   readonly translate: () => ((key: string, params?: Record<string, unknown>) => string) | undefined;
+  /** Document holding the shell's seat stylesheet, read for its class names. */
+  readonly document: Document | undefined;
 }
 
 /**
  * The class names the shell's seat uses.
  *
- * Written out because this package has no access to that module's stylesheet
- * object. They are literal strings in the shell's build (not content-hashed), so
- * they are stable, and reusing them is what keeps the trigger looking native.
+ * Read from the injected stylesheet, never written down: the prefix is a
+ * per-build content hash and differs between hosts that ship the same version.
+ * Verified on this machine, the CLI build uses `_7KE1Ra_` while the desktop
+ * application's bundle uses `htuFrW_` for the very same stylesheet, so a
+ * hard-coded set would render an unstyled button on one of them while looking
+ * correct on the other. Same reason and same technique as {@link readPopupClasses}.
  */
-const CLS = {
-  root: "_7KE1Ra_root",
-  trigger: "_7KE1Ra_trigger",
-  triggerIcon: "_7KE1Ra_triggerIcon",
-  triggerLabel: "_7KE1Ra_triggerLabel",
-  triggerEffort: "_7KE1Ra_triggerEffort",
-  chevron: "_7KE1Ra_chevron",
-} as const;
+export interface SeatClasses {
+  readonly root: string;
+  readonly trigger: string;
+  readonly triggerIcon: string;
+  readonly triggerLabel: string;
+  readonly triggerEffort: string;
+  readonly chevron: string;
+}
+
+/** Stable id the shell installs the seat stylesheet under. */
+const SEAT_STYLESHEET_ID = "@deepseek-ai/dsh-client-ui-model-selection/ModelSelect.module.css";
+
+/**
+ * Read the seat's class map out of the shell's injected stylesheet.
+ * @param doc - document holding the stylesheet.
+ * @returns the class map, or undefined while the stylesheet is missing.
+ */
+export function readSeatClasses(doc: Document | undefined): SeatClasses | undefined {
+  if (doc === undefined) return undefined;
+  const tag = doc.querySelector(`style[data-plugin-css="${SEAT_STYLESHEET_ID}"]`);
+  const css = tag?.textContent ?? "";
+  // The suffix is stable; only the six-character prefix varies per build, so it
+  // is captured rather than assumed.
+  const find = (part: string): string | undefined => new RegExp(`\\.(\\w+_${part})\\{`, "u").exec(css)?.[1];
+  const classes = {
+    root: find("root"),
+    trigger: find("trigger"),
+    triggerIcon: find("triggerIcon"),
+    triggerLabel: find("triggerLabel"),
+    triggerEffort: find("triggerEffort"),
+    chevron: find("chevron"),
+  };
+  for (const value of Object.values(classes)) if (value === undefined) return undefined;
+  return classes as SeatClasses;
+}
 
 /**
  * Build the seat component for one plugin instance.
@@ -103,15 +135,29 @@ const CLS = {
 export function createSeat(deps: SeatDeps): (props: SeatProps) => ReactNode {
   const primitives = resolvePrimitives(deps.load);
 
+  // Read once per mount rather than per render: the stylesheet is installed by
+  // the shell at load and does not change identity afterwards.
+  const classes = readSeatClasses(deps.document);
+
   function Seat(props: SeatProps): ReactNode {
     const Native = deps.native();
-    // A session that cannot select models, or a host whose entry has not landed
-    // yet, keeps the shell's own seat: this feature adds an entry point, and an
-    // entry point that opens nothing is worse than the one that shipped.
-    if (props.available === false || Native === undefined) {
+    // Three cases keep the shell's own seat, and each would otherwise ship a
+    // trigger that is worse than the one that came with the app: a session that
+    // cannot select models, a host whose entry has not landed yet, and a shell
+    // whose stylesheet this package failed to recognise (the trigger would be an
+    // unstyled button). This feature adds an entry point; it must not remove one.
+    if (props.available === false || Native === undefined || classes === undefined) {
       return Native === undefined ? null : <Native {...props} />;
     }
-    return <Trigger props={props} primitives={primitives} openPicker={deps.openPicker} translate={deps.translate} />;
+    return (
+      <Trigger
+        props={props}
+        primitives={primitives}
+        openPicker={deps.openPicker}
+        translate={deps.translate}
+        classes={classes}
+      />
+    );
   }
 
   return Seat;
@@ -123,6 +169,7 @@ interface TriggerProps {
   readonly primitives: ReturnType<typeof resolvePrimitives>;
   readonly openPicker: SeatDeps["openPicker"];
   readonly translate: SeatDeps["translate"];
+  readonly classes: SeatClasses;
 }
 
 /**
@@ -132,7 +179,7 @@ interface TriggerProps {
  * in its own component: the delegating branch above must not run it, and hook
  * order cannot depend on a prop.
  */
-function Trigger({ props, primitives, openPicker, translate }: TriggerProps): ReactNode {
+function Trigger({ props, primitives, openPicker, translate, classes }: TriggerProps): ReactNode {
   const { directory, t, sessionId, locked } = props;
   const state = useDirectorySnapshot(directory);
   // The seat's registration declares this package's namespace, so `t` speaks
@@ -164,10 +211,10 @@ function Trigger({ props, primitives, openPicker, translate }: TriggerProps): Re
   const IconChevron = primitives.IconChevronDownOutlineRegular;
 
   return (
-    <div className={CLS.root} data-dsh-better-seat="">
+    <div className={classes.root} data-dsh-better-seat="">
       <button
         type="button"
-        className={CLS.trigger}
+        className={classes.trigger}
         aria-label={aria}
         aria-haspopup="dialog"
         aria-expanded="false"
@@ -175,12 +222,12 @@ function Trigger({ props, primitives, openPicker, translate }: TriggerProps): Re
         disabled={locked}
         onClick={onClick}
       >
-        {IconData === undefined ? null : <IconData className={CLS.triggerIcon} size={16} />}
-        <span className={CLS.triggerLabel} data-provider-id={current?.provider} data-model-id={current?.model}>
+        {IconData === undefined ? null : <IconData className={classes.triggerIcon} size={16} />}
+        <span className={classes.triggerLabel} data-provider-id={current?.provider} data-model-id={current?.model}>
           {modelLabel}
         </span>
-        {effortLabel !== undefined && <span className={CLS.triggerEffort}>{effortLabel}</span>}
-        {IconChevron === undefined ? null : <IconChevron className={CLS.chevron} />}
+        {effortLabel !== undefined && <span className={classes.triggerEffort}>{effortLabel}</span>}
+        {IconChevron === undefined ? null : <IconChevron className={classes.chevron} />}
       </button>
     </div>
   );
