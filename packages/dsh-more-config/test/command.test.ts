@@ -57,8 +57,10 @@ describe("/mcp-timeout", () => {
   });
 
   it("resolves the target by entry id or unique serverName", async () => {
-    const { deps, updates } = makeDeps([{ id: "mcp-kimi-tools", serverName: "kimi" }]);
+    const { deps, updates, edits } = makeDeps([{ id: "mcp-kimi-tools", serverName: "kimi" }]);
     await run(deps, "kimi 660000");
+    // A set writes the shadow only; the mcp row stays the reconciler's.
+    expect(edits).toHaveLength(0);
     expect(updates).toHaveLength(1);
     expect(updates).toEqual([{ ns: "more-config", patch: { mcpTimeouts: [{ id: "mcp-kimi-tools", timeoutMs: 660000 }] } }]);
 
@@ -113,6 +115,33 @@ describe("/mcp-timeout", () => {
     const second = await run(deps, "kimi 660000");
     expect(second.kind).toBe("success");
     expect(updates).toHaveLength(1);
+  });
+
+  it("resets the shadow key before the row override", async () => {
+    const order: string[] = [];
+    const base = makeDeps([{ id: "mcp-kimi-tools", serverName: "kimi", override: { toolCallTimeoutMs: 660000 } }]);
+    const deps = {
+      ns: base.deps.ns,
+      settings: { ...base.deps.settings, update: async (...args: Parameters<typeof base.deps.settings.update>) => { order.push("update"); return base.deps.settings.update(...args); } },
+      configEditor: { ...base.deps.configEditor, edit: async (...args: Parameters<typeof base.deps.configEditor.edit>) => { order.push("edit"); return base.deps.configEditor.edit(...args); } },
+    } as typeof base.deps;
+    const result = await run(deps, "kimi default");
+    expect(result.kind).toBe("success");
+    expect(order).toEqual(["update", "edit"]);
+  });
+
+  it("a failed row edit after the shadow removal answers with the half-done state", async () => {
+    const base = makeDeps([{ id: "mcp-kimi-tools", serverName: "kimi", override: { toolCallTimeoutMs: 660000 } }]);
+    const deps = {
+      ...base.deps,
+      configEditor: { ...base.deps.configEditor, edit: async () => { throw new Error("overridden by home patch"); } },
+    } as typeof base.deps;
+    const result = await run(deps, "kimi default");
+    expect(result.kind).toBe("error");
+    expect(result.text).toContain("shadow");
+    expect(result.text).toContain("overridden by home patch");
+    expect(base.updates).toHaveLength(1);
+    expect(base.updates[0]?.patch).toEqual({ mcpTimeouts: [] });
   });
 
   it("reset removes the row override and the shadow key", async () => {

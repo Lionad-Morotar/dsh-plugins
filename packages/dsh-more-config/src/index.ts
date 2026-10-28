@@ -77,7 +77,11 @@ export function apply(ctx: PluginContextLike): void {
     logger: ctx.logger,
   });
   ctx.effect(() => {
-    void reconciler.attach();
+    // attach() runs an initial sync; its rejection must land in the logger,
+    // not in an unhandled-rejection report the panel cannot show.
+    reconciler.attach().catch(error => {
+      ctx.logger?.error?.(`${NS}: initial sync failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
     return () => reconciler.dispose();
   }, `${NS}: reconciler`);
 }

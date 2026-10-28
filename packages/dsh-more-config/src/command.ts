@@ -136,14 +136,26 @@ export function createMcpTimeoutCommand(deps: McpTimeoutDeps): McpTimeoutDefinit
       }
 
       if (parsed.kind.type === "reset") {
-        await deps.configEditor.edit(row.entry, current => {
-          const next = { ...current };
-          delete next.toolCallTimeoutMs;
-          return next;
-        });
+        // Shadow first, row second, deliberately. The two writes cannot be one
+        // transaction; if the second fails the leftover row override is an
+        // unmanaged override the sync reports but never touches, while the
+        // reverse order would leave the shadow key alive to silently re-write
+        // the old timeout on the next sync. An honest error and a retryable
+        // action beat a reset that undoes itself.
         const shadow = await currentShadow(deps);
         delete shadow[row.id];
         await deps.settings.update(deps.ns, { mcpTimeouts: toShadowEntries(shadow) });
+        try {
+          await deps.configEditor.edit(row.entry, current => {
+            const next = { ...current };
+            delete next.toolCallTimeoutMs;
+            return next;
+          });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          return { kind: "error", text: `${row.id} 的 shadow 键已移除，但行覆盖移除失败：${reason}
+该行暂时保持原超时且不会被自动改动；重试本命令或手改 profile patch。` };
+        }
         return { kind: "success", text: `${row.id} 的超时覆盖已移除，回到继承值；该 MCP 服务器连接将重启生效。` };
       }
 

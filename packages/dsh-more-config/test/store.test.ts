@@ -211,6 +211,41 @@ describe("createTimeoutsStore", () => {
     expect(listener.mock.calls.length).toBeGreaterThan(beforeDiscard);
   });
 
+  it("returns one stable snapshot reference until state moves", () => {
+    const scope = fakeScope({ value: [{ id: "a", timeoutMs: 1 }] });
+    const store = createTimeoutsStore(scope);
+    const first = store.getSnapshot();
+    expect(store.getSnapshot()).toBe(first);
+    expect(store.getSnapshot()).toBe(first);
+    store.editRow("a", "5000");
+    const second = store.getSnapshot();
+    expect(second).not.toBe(first);
+    expect(store.getSnapshot()).toBe(second);
+  });
+
+  it("a scope push during an in-flight save keeps edits staged after success", async () => {
+    // mutate resolves after the caller stages a further edit; the save's
+    // success must clear only what it planned, not the newer edit.
+    let release: ((value: boolean) => void) | undefined;
+    const gate = new Promise<boolean>(resolve => { release = resolve; });
+    const scope = fakeScope({ value: [{ id: "a", timeoutMs: 60000 }] });
+    const originalMutate = scope.mutate.bind(scope);
+    scope.mutate = async (ops, revision) => {
+      const accepted = await gate;
+      return accepted ? originalMutate(ops, revision) : false;
+    };
+    const store = createTimeoutsStore(scope);
+    store.editRow("a", "660000");
+    const saving = store.save();
+    store.editRow("a", "360000");
+    release?.(true);
+    await saving;
+    const snapshot = store.getSnapshot();
+    expect(snapshot.failed).toBe(false);
+    expect(snapshot.dirty).toBe(true);
+    expect(snapshot.rows[0]?.text).toBe("360000");
+  });
+
   it("a missing scope reports unavailable without throwing", () => {
     const store = createTimeoutsStore(undefined);
     const snapshot = store.getSnapshot();

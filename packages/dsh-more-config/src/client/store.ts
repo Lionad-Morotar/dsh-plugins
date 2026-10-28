@@ -112,7 +112,17 @@ export function createTimeoutsStore(scope: ScopeLike | undefined) {
   let failed = false;
   let offScope: (() => void) | undefined;
 
-  const snapshot = (): TimeoutsSnapshot => {
+  // The snapshot is derived, but a store consumed by useSyncExternalStore must
+  // return one stable reference until state actually moves: React's post-commit
+  // consistency check re-calls getSnapshot and Object.is-compares it, and a
+  // fresh literal every call turns that check into an infinite re-render. The
+  // version counter is the invalidation key: every path that can change what
+  // the snapshot would say bumps it, so the derivation below runs only between
+  // states, never between two calls in the same state.
+  let version = 0;
+  let cache: { readonly version: number; readonly snapshot: TimeoutsSnapshot } | undefined;
+
+  const derive = (): TimeoutsSnapshot => {
     const snap = scope?.getSnapshot();
     const live = toTimeoutMap(snap?.value?.mcpTimeouts);
     const base = toTimeoutMap(snap?.base?.mcpTimeouts);
@@ -137,10 +147,20 @@ export function createTimeoutsStore(scope: ScopeLike | undefined) {
     };
   };
 
+  const snapshot = (): TimeoutsSnapshot => {
+    if (cache === undefined || cache.version !== version) {
+      cache = { version, snapshot: derive() };
+    }
+    return cache.snapshot;
+  };
+
   const publish = () => {
+    version += 1;
     for (const listener of listeners) listener();
   };
 
+  // A scope change moves state too, even when nothing local staged: the mirror
+  // pushes new values (another surface saved) and the panel must follow.
   if (scope !== undefined) offScope = scope.subscribe(publish);
 
   return {
@@ -182,6 +202,11 @@ export function createTimeoutsStore(scope: ScopeLike | undefined) {
       const { ops, invalid } = planWrite(live, staged);
       if (ops.length === 0 || invalid || saving) return;
       if (!snap.writable || snap.status !== "ready") return;
+      // The await below is a real round trip: the user can keep editing while
+      // it is in flight. Prune by reference on success, so exactly the rows
+      // this save planned are cleared and any edit staged during the flight
+      // survives instead of being silently dropped.
+      const planned = new Map(staged);
       saving = true;
       publish();
       let accepted = false;
@@ -190,7 +215,11 @@ export function createTimeoutsStore(scope: ScopeLike | undefined) {
       } catch {
         accepted = false;
       }
-      if (accepted) staged.clear();
+      if (accepted) {
+        for (const [id, row] of planned) {
+          if (staged.get(id) === row) staged.delete(id);
+        }
+      }
       failed = !accepted;
       saving = false;
       publish();

@@ -105,7 +105,11 @@ export function createReconciler(deps: ReconcilerDeps) {
       off?.();
       off = deps.events.on(DOCUMENT_UPDATED_EVENT, (...args) => {
         if (args[0] !== deps.ns) return;
-        void sync("document-updated");
+        // The emitter never awaits its listeners; a rejected sync must reach
+        // the logger instead of the process-level unhandled-rejection report.
+        sync("document-updated").catch(error => {
+          deps.logger?.error?.(`more-config: document-updated sync failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
       });
       return sync("startup");
     },

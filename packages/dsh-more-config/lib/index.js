@@ -969,14 +969,20 @@ ${list2}` };
 ${list}` };
       }
       if (parsed.kind.type === "reset") {
-        await deps.configEditor.edit(row.entry, (current) => {
-          const next = { ...current };
-          delete next.toolCallTimeoutMs;
-          return next;
-        });
         const shadow2 = await currentShadow(deps);
         delete shadow2[row.id];
         await deps.settings.update(deps.ns, { mcpTimeouts: toShadowEntries(shadow2) });
+        try {
+          await deps.configEditor.edit(row.entry, (current) => {
+            const next = { ...current };
+            delete next.toolCallTimeoutMs;
+            return next;
+          });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          return { kind: "error", text: `${row.id} \u7684 shadow \u952E\u5DF2\u79FB\u9664\uFF0C\u4F46\u884C\u8986\u76D6\u79FB\u9664\u5931\u8D25\uFF1A${reason}
+\u8BE5\u884C\u6682\u65F6\u4FDD\u6301\u539F\u8D85\u65F6\u4E14\u4E0D\u4F1A\u88AB\u81EA\u52A8\u6539\u52A8\uFF1B\u91CD\u8BD5\u672C\u547D\u4EE4\u6216\u624B\u6539 profile patch\u3002` };
+        }
         return { kind: "success", text: `${row.id} \u7684\u8D85\u65F6\u8986\u76D6\u5DF2\u79FB\u9664\uFF0C\u56DE\u5230\u7EE7\u627F\u503C\uFF1B\u8BE5 MCP \u670D\u52A1\u5668\u8FDE\u63A5\u5C06\u91CD\u542F\u751F\u6548\u3002` };
       }
       if (parsed.kind.ms < MIN_TIMEOUT_MS) {
@@ -1057,7 +1063,9 @@ function createReconciler(deps) {
       off?.();
       off = deps.events.on(DOCUMENT_UPDATED_EVENT, (...args) => {
         if (args[0] !== deps.ns) return;
-        void sync("document-updated");
+        sync("document-updated").catch((error) => {
+          deps.logger?.error?.(`more-config: document-updated sync failed: ${error instanceof Error ? error.message : String(error)}`);
+        });
       });
       return sync("startup");
     },
@@ -1094,7 +1102,9 @@ function apply(ctx) {
     logger: ctx.logger
   });
   ctx.effect(() => {
-    void reconciler.attach();
+    reconciler.attach().catch((error) => {
+      ctx.logger?.error?.(`${NS}: initial sync failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
     return () => reconciler.dispose();
   }, `${NS}: reconciler`);
 }

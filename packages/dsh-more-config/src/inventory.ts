@@ -73,9 +73,9 @@ function stringOf(field: string, layers: readonly Record<string, unknown>[]): st
 /**
  * Project the profile's mcp-client rows.
  *
- * Non-mcp rows are dropped by entry name; matching pairs `entries()` with
- * `configuration()` by entry identity, so the handle a later `edit` receives is
- * the one the configEditor itself handed out.
+ * Non-mcp rows are dropped by entry name. Each row carries the `entry` handle
+ * from its configuration() layer straight through, because `configEditor.edit`
+ * validates that handle against its own entries() list.
  */
 export function readMcpInventory(configEditor: ConfigEditorLike): McpInventoryRow[] {
   const rows: McpInventoryRow[] = [];
