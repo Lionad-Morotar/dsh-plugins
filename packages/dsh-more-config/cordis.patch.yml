@@ -1,0 +1,5 @@
+# Enable dsh-more-config by inserting its Loader row. The row id is the
+# settings namespace its shadow config lives under.
+- insert:
+    - id: more-config
+      name: 'dsh-more-config'
