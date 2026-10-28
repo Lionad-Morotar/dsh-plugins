@@ -48,6 +48,10 @@ export interface Primitives {
   readonly observeStickyMenuGroups?: ((viewport: HTMLElement) => () => void) | undefined;
   /** The check mark a selected row shows. */
   readonly IconCheckOutlineRegular?: ComponentType<Record<string, never>> | undefined;
+  /** The composer trigger's leading glyph, matching the shell seat. */
+  readonly IconDataOutlineRegular?: ComponentType<{ className?: string; size?: number }> | undefined;
+  /** The composer trigger's trailing chevron. */
+  readonly IconChevronDownOutlineRegular?: ComponentType<{ className?: string }> | undefined;
   /** The host's label ranker: fuzzy subsequence scoring with boundary bonuses. */
   readonly rankByName?: RankByName | undefined;
 }
@@ -94,6 +98,10 @@ export function resolvePrimitives(load: ((specifier: string) => unknown) | null)
   if (menuGroup !== undefined) primitives.MenuGroup = menuGroup;
   const check = component<Record<string, never>>("IconCheckOutlineRegular");
   if (check !== undefined) primitives.IconCheckOutlineRegular = check;
+  const dataIcon = component<{ className?: string; size?: number }>("IconDataOutlineRegular");
+  if (dataIcon !== undefined) primitives.IconDataOutlineRegular = dataIcon;
+  const chevron = component<{ className?: string }>("IconChevronDownOutlineRegular");
+  if (chevron !== undefined) primitives.IconChevronDownOutlineRegular = chevron;
   const anchored = fn<NonNullable<Primitives["useAnchoredMaxHeight"]>>("useAnchoredMaxHeight");
   if (anchored !== undefined) primitives.useAnchoredMaxHeight = anchored;
   const sticky = fn<NonNullable<Primitives["observeStickyMenuGroups"]>>("observeStickyMenuGroups");

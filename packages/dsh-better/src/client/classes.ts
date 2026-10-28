@@ -28,6 +28,16 @@ export interface PopupClasses {
   readonly error: string;
   readonly errorText: string;
   readonly retry: string;
+  /**
+   * Effort badge strip and chips.
+   *
+   * These have no shell counterpart: the shell's row never shows effort, so there
+   * is no hashed class to borrow and the styles live in this package's own
+   * stylesheet.
+   */
+  readonly badges: string;
+  readonly badgeChip: string;
+  readonly badgeChipOn: string;
 }
 
 /** Stable id the shell installs the popup stylesheet under. */
@@ -44,6 +54,9 @@ export function readPopupClasses(doc: Document | undefined): PopupClasses | unde
   const css = tag?.textContent ?? "";
   const find = (part: string): string | undefined => new RegExp(`\\.(\\w+_${part})\\{`, "u").exec(css)?.[1];
   const classes = {
+    badges: "dshBetter_badges",
+    badgeChip: "dshBetter_badgeChip",
+    badgeChipOn: "dshBetter_badgeChipOn",
     card: find("card"),
     viewport: find("viewport"),
     row: find("row"),
@@ -59,8 +72,13 @@ export function readPopupClasses(doc: Document | undefined): PopupClasses | unde
     errorText: find("errorText"),
     retry: find("retry"),
   };
-  // All or nothing: a partial map would render rows with an undefined class
-  // name, which looks like a styling regression rather than a missing sheet.
-  for (const value of Object.values(classes)) if (value === undefined) return undefined;
+  // All or nothing for the borrowed shell classes: a partial map would render
+  // rows with an undefined class name, which looks like a styling regression
+  // rather than a missing sheet. This package's own chips are literal strings and
+  // always present.
+  for (const [name, value] of Object.entries(classes)) {
+    if (name === "badges" || name === "badgeChip" || name === "badgeChipOn") continue;
+    if (value === undefined) return undefined;
+  }
   return classes as PopupClasses;
 }
