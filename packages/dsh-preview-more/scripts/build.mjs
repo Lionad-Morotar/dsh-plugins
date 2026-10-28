@@ -1,0 +1,328 @@
+/**
+ * Build the shipped `lib/` tree.
+ *
+ * The Harness serves the client half straight out of the installed package
+ * (`exports["./client"]`) and never runs a build step, so `lib/` is a build
+ * product that is committed, and this script is the only thing that writes it.
+ *
+ *   lib/index.js            Host half, plain ESM.
+ *   lib/client.js           Entry, wrapped so the loader sees a factory.
+ *   lib/client.<family>.js  One lazy chunk per renderer family, same wrapper.
+ *
+ * The wrapper is not cosmetic: `window.__ModuleLoader__` accepts only
+ * `{id, factory}`, and a chunk's id must be `<package>/<file name>` or the
+ * loader refuses to register it. The entry additionally gets a `boot(require)`
+ * handover, because a bundle's top level runs before the factory and only the
+ * factory can reach the loader's `require` (needed for `require.async` and the
+ * seeded React instance).
+ *
+ * The Draco decoder is embedded here, not fetched at runtime: three's
+ * DRACOLoader resolves it through `new URL(..., import.meta.url)`, which cannot
+ * work in a plugin served from a versioned asset route. The virtual module
+ * `virtual:draco-assets` carries the payloads as text and bytes.
+ */
+import { build } from "esbuild";
+import { createRequire } from "node:module";
+import { gzipSync } from "node:zlib";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const packageRoot = join(here, "..");
+const libRoot = join(packageRoot, "lib");
+const require = createRequire(join(packageRoot, "package.json"));
+const manifest = require(join(packageRoot, "package.json"));
+
+/** Renderer families, each one lazy chunk. Mirrors src/client/formats.ts. */
+const CHUNKS = ["scene3d", "raster", "cad"];
+
+/**
+ * Assert the chunk list still covers every family the catalogue declares.
+ *
+ * `formats.ts` decides the families and `entry.ts` derives its registration from
+ * it, so a family added there but not here would register a renderer whose chunk
+ * was never built: the entry would load a 404 and the preview would sit on its
+ * loading state forever. Catching it here turns that into a build failure.
+ * @throws when the two disagree.
+ */
+async function assertChunksCoverCatalogue() {
+  const source = await readFile(join(packageRoot, "src", "client", "formats.ts"), "utf8");
+  const declared = [...source.matchAll(/family:\s*"([a-zA-Z0-9]+)"/gu)].map((match) => match[1]);
+  const families = [...new Set(declared)];
+  const missing = families.filter((family) => !CHUNKS.includes(family));
+  const extra = CHUNKS.filter((chunk) => !families.includes(chunk));
+  if (missing.length === 0 && extra.length === 0) return;
+  const problems = [
+    ...missing.map((family) => `formats.ts declares ${family} but CHUNKS does not build it`),
+    ...extra.map((chunk) => `CHUNKS builds ${chunk} but formats.ts declares no such family`),
+  ];
+  throw new Error(`chunk list and format catalogue disagree:\n  ${problems.join("\n  ")}`);
+}
+
+/**
+ * Gzipped size ceilings per emitted file.
+ *
+ * The route transfers these gzipped, so that is the number a reader pays. The
+ * ceiling is what keeps "add one format" from quietly turning every model
+ * preview into a multi-megabyte download.
+ */
+/**
+ * Attribution appended to every emitted bundle.
+ *
+ * esbuild's legalComments only carries comments that the library itself marked
+ * and placed in the code it ships. Several dependencies here keep their license
+ * in a sibling file instead, which leaves the distributed artifact silent about
+ * them. This banner names every third-party component that can end up inside a
+ * chunk, with a pointer to the full texts, so no artifact is redistributed
+ * without its notices.
+ */
+const LICENSE_BANNER = [
+  "/*! dsh-preview-more | MIT",
+  " * Bundles third-party code: three.js and utif (MIT),",
+  " * dxf-viewer (MPL-2.0), Google Draco (Apache-2.0).",
+  " * Full license texts: see THIRD-PARTY-NOTICES.md in this package.",
+  " */",
+].join("\n");
+
+const SIZE_BUDGETS = {
+  "client.js": 24 * 1024,
+  // three plus the inlined Draco decoder: the floor for a real mesh viewport.
+  "client.scene3d.js": 520 * 1024,
+  // utif is 83 KB of the raw 90 KB; the rest is this plugin's own code.
+  "client.raster.js": 40 * 1024,
+  // dxf-viewer carries its own three scene.
+  "client.cad.js": 560 * 1024,
+};
+
+/**
+ * The ModuleLoader wrapper shared by the entry and every chunk.
+ *
+ * The bundle text is inserted verbatim and deliberately not re-indented: a
+ * minified bundle may contain multi-line template literals, and padding every
+ * line would inject that padding into the string itself.
+ * @param id - module-table id: the package name, or `<package>/<file>` for a chunk.
+ * @param code - bundled CJS text.
+ * @param options - `boot` adds the `require` handover for the entry.
+ * @returns the script text the browser evaluates.
+ */
+function wrap(id, code, { boot = false } = {}) {
+  const handover = boot ? "\nmodule.exports.boot(require);" : "";
+  return `window.__ModuleLoader__.load({
+  id: ${JSON.stringify(id)},
+  factory: (require) => {
+    var module = { exports: {} };
+    var exports = module.exports;
+${code}${handover}
+    return module.exports.default ?? module.exports;
+  }
+});
+`;
+}
+
+/**
+ * Bundle one entry to minified text.
+ * @param entry - absolute entry path.
+ * @param format - `esm` for the Node host half, `cjs` for the browser halves.
+ * @param external - specifiers left to the platform (React, virtual modules).
+ * @param loader - esbuild loader overrides, e.g. text files.
+ * @param plugins - esbuild plugins, e.g. the Draco virtual module.
+ * @returns minified bundle text.
+ */
+async function bundle(entry, format, { external = [], loader = {}, plugins = [] } = {}) {
+  const result = await build({
+    entryPoints: [entry],
+    bundle: true,
+    format,
+    platform: format === "esm" ? "node" : "browser",
+    target: "es2022",
+    minify: true,
+    write: false,
+    // "eof" keeps the @license blocks third-party code ships, collected at the
+    // end of the file. Stripping them would redistribute MIT, Apache-2.0 and
+    // MPL-2.0 code with the notices removed, which is not ours to do. The full
+    // texts also live in THIRD-PARTY-NOTICES.md; this keeps them beside the code
+    // they cover. "eof" alone is not enough: a library whose license lives in a
+    // separate LICENSE file rather than a marked comment inside the source
+    // contributes nothing, so each bundle also gets the banner below.
+    legalComments: "eof",
+    banner: { js: LICENSE_BANNER },
+    external,
+    loader,
+    plugins,
+    jsx: "automatic",
+    // The Draco emscripten wrapper branches on `process.versions.node` and only
+    // then reaches for fs/path. Folding that probe to undefined lets the minifier
+    // drop the branch, so a renderer that happens to expose `process` cannot trip
+    // the factory require over a module the bundle does not have.
+    define: {
+      "process.env.NODE_ENV": JSON.stringify("production"),
+      "process.versions.node": "undefined",
+      // three's DRACOLoader resolves its decoder paths at module scope with
+      // `new URL(..., import.meta.url)`. A CJS bundle has no import.meta, so
+      // esbuild substitutes an empty object and the URL constructor throws
+      // during evaluation: the whole chunk fails before the loader is ever
+      // reached. These URLs are never fetched (see draco-assets.d.ts: the
+      // decoder is inlined and _loadLibrary is overridden), they only have to
+      // be valid, so they point at a reserved host.
+      "import.meta.url": JSON.stringify("https://dsh-preview-more.invalid/client.js"),
+    },
+    logLevel: "silent",
+  });
+  const output = result.outputFiles?.[0];
+  if (output === undefined) throw new Error(`esbuild produced nothing for ${entry}`);
+  return output.text;
+}
+
+/**
+ * The Draco payloads, read from the installed three package.
+ *
+ * Reading them from three's own `libs/draco/gltf` directory pins the decoder to
+ * the exact loader version this package bundles; a hand-copied payload would
+ * drift silently at the next three upgrade.
+ * @returns the wrapper text and wasm bytes.
+ */
+async function dracoPayloads() {
+  const dracoRoot = join(dirname(require.resolve("three/addons/loaders/DRACOLoader.js")), "..", "libs", "draco", "gltf");
+  const [wasmWrapper, wasmBinary] = await Promise.all([
+    readFile(join(dracoRoot, "draco_wasm_wrapper.js"), "utf8"),
+    readFile(join(dracoRoot, "draco_decoder.wasm")),
+  ]);
+  return { wasmWrapper, wasmBinary };
+}
+
+/**
+ * esbuild plugin serving `virtual:draco-assets`.
+ * @param payloads - decoder text and bytes.
+ * @returns the plugin.
+ */
+function dracoPlugin(payloads) {
+  return {
+    name: "draco-assets",
+    setup(buildContext) {
+      buildContext.onResolve({ filter: /^virtual:draco-assets$/ }, () => ({ path: "draco-assets", namespace: "draco" }));
+      buildContext.onLoad({ filter: /.*/, namespace: "draco" }, () => ({
+        contents: [
+          `export const wasmWrapper = ${JSON.stringify(payloads.wasmWrapper)};`,
+          `export const wasmBinary = new Uint8Array(${JSON.stringify(Array.from(payloads.wasmBinary))});`,
+        ].join("\n"),
+        loader: "js",
+      }));
+    },
+  };
+}
+
+/**
+ * Build every artifact and report sizes.
+ *
+ * With `--check` nothing is written: the build runs into memory and the script
+ * exits non-zero when the committed `lib/` differs from what `src/` produces.
+ * That flag is the only defence against a stale committed product, which is a
+ * real failure mode here because profiles never rebuild: a plugin installed from
+ * a commit whose `lib/` lags its `src/` activates the old code.
+ * @param checkOnly - compare against the committed tree instead of writing it.
+ */
+async function main(checkOnly) {
+  await assertChunksCoverCatalogue();
+  if (!checkOnly) {
+    await rm(libRoot, { recursive: true, force: true });
+    await mkdir(libRoot, { recursive: true });
+  }
+
+  const written = [];
+  /** Artifacts held in memory while only comparing. */
+  const produced = new Map();
+
+  /** Write one artifact, or keep it in memory when only comparing. */
+  const emit = async (file, text) => {
+    if (checkOnly) {
+      produced.set(file, text);
+      return;
+    }
+    await writeFile(join(libRoot, file), text, "utf8");
+  };
+
+  await emit("index.js", await bundle(join(packageRoot, "src", "index.ts"), "esm"));
+  written.push("index.js");
+
+  // React is a platform module the loader seeds: bundling it would ship a second
+  // React and break every hook in the bodies.
+  const client = await bundle(join(packageRoot, "src", "client", "entry.ts"), "cjs", { external: ["react", "react/jsx-runtime"] });
+  await emit("client.js", wrap(manifest.name, client, { boot: true }));
+  written.push("client.js");
+
+  const payloads = await dracoPayloads();
+  for (const family of CHUNKS) {
+    const code = await bundle(join(packageRoot, "src", "client", "chunks", `${family}.tsx`), "cjs", {
+      external: ["react", "react/jsx-runtime"],
+      plugins: family === "scene3d" ? [dracoPlugin(payloads)] : [],
+    });
+    const file = `client.${family}.js`;
+    await emit(file, wrap(`${manifest.name}/${file}`, code));
+    written.push(file);
+  }
+
+  /**
+   * Compare each emitted file's gzipped size against its ceiling.
+   *
+   * Both paths run this. The numbers only ever regress through a change someone
+   * then commits, so a check that fires only during a manual build would let the
+   * regression past the very gate that exists to catch it.
+   * @returns one message per file over budget.
+   */
+  const overBudget = async () => {
+    const over = [];
+    for (const [file, budget] of Object.entries(SIZE_BUDGETS)) {
+      const bytes = await readFile(join(libRoot, file));
+      const gzipped = gzipSync(bytes).length;
+      if (gzipped > budget) over.push(`${file}: ${String(gzipped)} B gzipped, budget ${String(budget)} B`);
+    }
+    return over;
+  };
+
+  if (checkOnly) {
+    const stale = [];
+    for (const file of written) {
+      const next = produced.get(file) ?? "";
+      const committed = await readFile(join(libRoot, file), "utf8").catch(() => null);
+      if (committed !== next) stale.push(file);
+    }
+    // The reverse direction matters as much: a chunk src/ no longer produces
+    // stays in the package forever if only the produced files are compared.
+    for (const entry of await readdir(libRoot)) {
+      if (!written.includes(entry)) stale.push(`${entry} (present in lib/, not produced by src/)`);
+    }
+    if (stale.length > 0) {
+      process.stderr.write(`lib/ is stale for: ${stale.join(", ")}\ncommit the rebuilt lib/ or the installed plugin runs the old code\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const over = await overBudget();
+    if (over.length > 0) {
+      process.stderr.write(`over size budget:\n  ${over.join("\n  ")}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    process.stdout.write(`lib/ matches src/ (${String(written.length)} files), every file within budget\n`);
+    return;
+  }
+
+  const sizes = await Promise.all(
+    written.map(async (file) => {
+      const bytes = await readFile(join(libRoot, file));
+      return `${file.padEnd(22)} ${String(bytes.length).padStart(9)} B`;
+    }),
+  );
+  process.stdout.write(`${written.length} files\n${sizes.join("\n")}\n`);
+
+  // The budgets are part of the product, not a wish: a chunk that grows past
+  // its ceiling means a reader who opens one model downloads something nobody
+  // asked for. Gzipped, because that is what the route actually transfers.
+  const over = await overBudget();
+  if (over.length > 0) {
+    process.stderr.write(`over size budget:\n  ${over.join("\n  ")}\n`);
+    process.exitCode = 1;
+  }
+}
+
+await main(process.argv.includes("--check"));

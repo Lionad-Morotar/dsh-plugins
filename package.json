@@ -14,7 +14,8 @@
     "build:market": "node scripts/build-market-index.mjs",
     "check:market-index": "node scripts/build-market-index.mjs --check",
     "build:awesome": "node scripts/build-awesome-entry.mjs",
-    "release": "pnpm --filter dsh-jump run release"
+    "release": "pnpm --filter dsh-jump run release",
+    "check:lib": "pnpm --filter dsh-preview-more run check:lib"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-plugin-market-index": "0.2.1-rc.4",
