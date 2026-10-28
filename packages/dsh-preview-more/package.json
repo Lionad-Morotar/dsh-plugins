@@ -45,7 +45,8 @@
     "icon.svg",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md"
   ],
   "engines": {
     "dsh": ">=0.2.0-rc.2 <0.3.0-0"

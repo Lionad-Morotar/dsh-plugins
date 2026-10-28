@@ -45,7 +45,7 @@ Loader row 由包内 `cordis.patch.yml` 注入，不需要手工改 profile 配�
 
 ## 实现约定
 
-- 引擎按需加载，一个渲染器一个 chunk：3D 引擎（three.js，约 1.2MB）在 `lib/client.scene3d.js`，TIFF 解码器（utif，约 90KB）在 `lib/client.raster.js`，CAD 渲染器（dxf-viewer 含自带的 three，约 1.3MB）在 `lib/client.cad.js`。三者都只在真的打开对应文件时下载。入口 `lib/client.js` 只带注册元数据与词条，约 8KB。
+- 引擎按需加载，一个渲染器一个 chunk，体积按 gzip 计（构建会在超预算时失败）：入口 `lib/client.js` 约 3KB；3D 引擎 three.js 在 `lib/client.scene3d.js` 约 265KB；TIFF 解码器 utif 在 `lib/client.raster.js` 约 30KB；CAD 渲染器（dxf-viewer 含自带的 three）在 `lib/client.cad.js` 约 340KB。三者都只在真的打开对应文件时下载。
 - 格式目录是唯一的事实源：`src/client/formats.ts` 决定谁接管哪些后缀、归哪个渲染器、chunk 叫什么名，注册循环从它派生，新增格式只动这个文件。
 - 一个 chunk 只产出一个文件：chunk 由带版本号的路由整体下发，运行期再分裂出的子文件没有可访问的地址，所以 chunk 内部的 import 一律静态。
 - Draco 解码器内联进 chunk，不走网络。three 的 `DRACOLoader` 用 `new URL(..., import.meta.url)` 找解码器，而插件 chunk 由带版本号的路由提供，没有可解析的文件布局，所以构建期把 `draco_wasm_wrapper.js` 与 `draco_decoder.wasm` 嵌进虚拟模块，再通过 `_loadLibrary` 从内存回给加载器。
@@ -63,6 +63,10 @@ pnpm --filter dsh-preview-more typecheck
 ```
 
 `lib/` 是提交进仓库的构建产物，profile 安装态不跑构建，所以改源码后必须重跑 build。产物落后于源码不是「稍后补」的小事：profile 装的就是 `lib/`，陈旧的 `lib/` 会让插件在宿主里激活失败，而单插件激活失败会连带整个 Web 端启动中断。`check:lib` 把这件事变成可自动判定的门，`test` 已经前置调用它。
+
+## 第三方组件
+
+`lib/` 里打包了四个第三方库：three.js（MIT）、utif（MIT）、dxf-viewer（MPL-2.0）、Google Draco（Apache-2.0）。完整许可文本与源码地址见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。本包自身是 MIT。
 
 ## 边界
 

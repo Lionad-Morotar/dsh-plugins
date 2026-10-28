@@ -24,7 +24,7 @@
 import { build } from "esbuild";
 import { createRequire } from "node:module";
 import { gzipSync } from "node:zlib";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -36,6 +36,29 @@ const manifest = require(join(packageRoot, "package.json"));
 
 /** Renderer families, each one lazy chunk. Mirrors src/client/formats.ts. */
 const CHUNKS = ["scene3d", "raster", "cad"];
+
+/**
+ * Assert the chunk list still covers every family the catalogue declares.
+ *
+ * `formats.ts` decides the families and `entry.ts` derives its registration from
+ * it, so a family added there but not here would register a renderer whose chunk
+ * was never built: the entry would load a 404 and the preview would sit on its
+ * loading state forever. Catching it here turns that into a build failure.
+ * @throws when the two disagree.
+ */
+async function assertChunksCoverCatalogue() {
+  const source = await readFile(join(packageRoot, "src", "client", "formats.ts"), "utf8");
+  const declared = [...source.matchAll(/family:\s*"([a-zA-Z0-9]+)"/gu)].map((match) => match[1]);
+  const families = [...new Set(declared)];
+  const missing = families.filter((family) => !CHUNKS.includes(family));
+  const extra = CHUNKS.filter((chunk) => !families.includes(chunk));
+  if (missing.length === 0 && extra.length === 0) return;
+  const problems = [
+    ...missing.map((family) => `formats.ts declares ${family} but CHUNKS does not build it`),
+    ...extra.map((chunk) => `CHUNKS builds ${chunk} but formats.ts declares no such family`),
+  ];
+  throw new Error(`chunk list and format catalogue disagree:\n  ${problems.join("\n  ")}`);
+}
 
 /**
  * Gzipped size ceilings per emitted file.
@@ -97,7 +120,13 @@ async function bundle(entry, format, { external = [], loader = {}, plugins = [] 
     target: "es2022",
     minify: true,
     write: false,
-    legalComments: "none",
+    // "eof" keeps the @license blocks third-party code ships, collected at the
+    // end of the file. Stripping them would redistribute MIT, Apache-2.0 and
+    // MPL-2.0 code with the notices removed, which is not ours to do. The full
+    // texts also live in THIRD-PARTY-NOTICES.md; this keeps them beside the code
+    // they cover. A library without a marked comment still gets its attribution
+    // there.
+    legalComments: "eof",
     external,
     loader,
     plugins,
@@ -174,6 +203,7 @@ function dracoPlugin(payloads) {
  * @param checkOnly - compare against the committed tree instead of writing it.
  */
 async function main(checkOnly) {
+  await assertChunksCoverCatalogue();
   if (!checkOnly) {
     await rm(libRoot, { recursive: true, force: true });
     await mkdir(libRoot, { recursive: true });
@@ -212,6 +242,24 @@ async function main(checkOnly) {
     written.push(file);
   }
 
+  /**
+   * Compare each emitted file's gzipped size against its ceiling.
+   *
+   * Both paths run this. The numbers only ever regress through a change someone
+   * then commits, so a check that fires only during a manual build would let the
+   * regression past the very gate that exists to catch it.
+   * @returns one message per file over budget.
+   */
+  const overBudget = async () => {
+    const over = [];
+    for (const [file, budget] of Object.entries(SIZE_BUDGETS)) {
+      const bytes = await readFile(join(libRoot, file));
+      const gzipped = gzipSync(bytes).length;
+      if (gzipped > budget) over.push(`${file}: ${String(gzipped)} B gzipped, budget ${String(budget)} B`);
+    }
+    return over;
+  };
+
   if (checkOnly) {
     const stale = [];
     for (const file of written) {
@@ -219,12 +267,23 @@ async function main(checkOnly) {
       const committed = await readFile(join(libRoot, file), "utf8").catch(() => null);
       if (committed !== next) stale.push(file);
     }
+    // The reverse direction matters as much: a chunk src/ no longer produces
+    // stays in the package forever if only the produced files are compared.
+    for (const entry of await readdir(libRoot)) {
+      if (!written.includes(entry)) stale.push(`${entry} (present in lib/, not produced by src/)`);
+    }
     if (stale.length > 0) {
       process.stderr.write(`lib/ is stale for: ${stale.join(", ")}\ncommit the rebuilt lib/ or the installed plugin runs the old code\n`);
       process.exitCode = 1;
       return;
     }
-    process.stdout.write(`lib/ matches src/ (${String(written.length)} files)\n`);
+    const over = await overBudget();
+    if (over.length > 0) {
+      process.stderr.write(`over size budget:\n  ${over.join("\n  ")}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    process.stdout.write(`lib/ matches src/ (${String(written.length)} files), every file within budget\n`);
     return;
   }
 
@@ -239,12 +298,7 @@ async function main(checkOnly) {
   // The budgets are part of the product, not a wish: a chunk that grows past
   // its ceiling means a reader who opens one model downloads something nobody
   // asked for. Gzipped, because that is what the route actually transfers.
-  const over = [];
-  for (const [file, budget] of Object.entries(SIZE_BUDGETS)) {
-    const bytes = await readFile(join(libRoot, file));
-    const gzipped = gzipSync(bytes).length;
-    if (gzipped > budget) over.push(`${file}: ${String(gzipped)} B gzipped, budget ${String(budget)} B`);
-  }
+  const over = await overBudget();
   if (over.length > 0) {
     process.stderr.write(`over size budget:\n  ${over.join("\n  ")}\n`);
     process.exitCode = 1;
