@@ -139,6 +139,23 @@ describe("insertStyles", () => {
     expect(childrenOf).toHaveLength(1);
   });
 
+  it("survives the first host unloading while the second still paints", () => {
+    // Both hosts can be mounted at once: the native document tab and the
+    // better-sidebar viewer. If teardown were owned rather than counted, the one
+    // that unloaded first would delete the stylesheet and the survivor would
+    // lose its canvas box mid-session, with no error to explain it.
+    const first = insertStyles(doc);
+    const second = insertStyles(doc);
+    const children = (doc.head as unknown as { children: unknown[] }).children;
+    expect(children).toHaveLength(1);
+
+    first();
+    expect(children).toHaveLength(1);
+
+    second();
+    expect(children).toHaveLength(0);
+  });
+
   it("only references custom properties the host actually defines", () => {
     // A var() with a fallback still renders, which is exactly why an invented
     // token name survives review: nothing breaks, the colour just stops

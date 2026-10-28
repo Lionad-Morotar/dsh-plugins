@@ -118,18 +118,18 @@ const CSS = `
 `;
 
 /**
- * Insert the stylesheet once per document.
+ * Insert the stylesheet once per document, for as long as anyone needs it.
  *
  * A plugin's surface can mount in either host (the native document tab or the
- * better-sidebar file viewer), and both can be open at once, so the guard is on
- * the document rather than on a component lifetime. The returned disposer
- * removes the tag only if this call inserted it.
+ * better-sidebar file viewer), and both can be open at once. The tag is shared,
+ * so it is reference counted rather than owned: whichever host unloads first
+ * must not tear the stylesheet out from under the other one.
  * @param doc - document to style.
- * @returns disposer that removes the tag when this call created it.
+ * @returns disposer releasing this host's claim on the tag.
  */
 export function insertStyles(doc: Document): () => void {
   const selector = `style[data-plugin-css="${STYLE_TAG}"]`;
-  if (doc.querySelector(selector) !== null) return () => undefined;
+  if (doc.querySelector(selector) !== null) return claim(doc, false);
   const tag = doc.createElement("style");
   // One attribute is the identity. A second one would be a second source of
   // truth that the selector does not consult.
@@ -143,8 +143,30 @@ export function insertStyles(doc: Document): () => void {
   const first = all[0] ?? null;
   const duplicated = first !== tag && first !== null;
   if (duplicated) tag.remove();
-  const inserted = !duplicated;
+  return claim(doc, !duplicated);
+}
+
+/** Claims per document, so a shared tag outlives the first host to unload. */
+const claims = new WeakMap<Document, { count: number; tag: HTMLStyleElement | null }>();
+
+/**
+ * Take a reference on the document's stylesheet tag.
+ * @param doc - document holding the tag.
+ * @param owned - whether this call created the tag.
+ * @returns disposer that drops one reference, removing the tag at zero.
+ */
+function claim(doc: Document, owned: boolean): () => void {
+  const entry = claims.get(doc) ?? { count: 0, tag: null };
+  entry.count += 1;
+  if (owned) entry.tag = doc.querySelector(`style[data-plugin-css="${STYLE_TAG}"]`);
+  claims.set(doc, entry);
+  let released = false;
   return () => {
-    if (inserted) tag.remove();
+    if (released) return;
+    released = true;
+    entry.count -= 1;
+    if (entry.count > 0) return;
+    claims.delete(doc);
+    entry.tag?.remove();
   };
 }
