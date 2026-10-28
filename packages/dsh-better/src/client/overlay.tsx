@@ -28,6 +28,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExt
 import type { ReactNode, Ref } from "react";
 
 import { readPopupClasses } from "./classes.ts";
+import { badgeLevels, effortLevelsOf, initialEffort, type CatalogGroupLike, type EffortLevel } from "./effort.ts";
 import { groupOptions } from "./groups.ts";
 import type { PopupControllerLike, PopupOptionLike, PopupStateLike } from "./popup.ts";
 import { resolvePrimitives, type KeyboardEventLike, type Primitives } from "./primitives.ts";
@@ -45,6 +46,17 @@ export interface OverlayProps {
   readonly popup?: PopupControllerLike | undefined;
   /** Locale lookup, injected by the slot's `locale` seat. */
   readonly t?: ((key: string) => string) | undefined;
+  /** The session's catalog groups, which carry each model's effort ladder. */
+  readonly catalog?: readonly CatalogGroupLike[] | undefined;
+  /**
+   * Submit a complete selection, including the effort level.
+   *
+   * The popup's own settlement rebuilds a choice from the row id, which cannot
+   * carry a level; this is the path that can.
+   */
+  readonly selectModel?:
+    | ((selection: { provider: string; model: string; reasoningEffort?: string }) => Promise<unknown> | undefined)
+    | undefined;
 }
 
 /** What one overlay mount needs but cannot import. */
@@ -133,7 +145,17 @@ export function createOverlay(deps: OverlayDeps): (props: OverlayProps) => React
     const Native = deps.native();
     if (popup === undefined || Native === undefined) return null;
     if (!ownsPicker(state) || popup.settle === undefined) return <Native {...props} />;
-    return <ModelPicker popup={popup} state={state} t={props.t} primitives={primitives} doc={deps.document} />;
+    return (
+      <ModelPicker
+        popup={popup}
+        state={state}
+        t={props.t}
+        primitives={primitives}
+        doc={deps.document}
+        catalog={props.catalog}
+        selectModel={props.selectModel}
+      />
+    );
   }
 
   return Overlay;
@@ -146,12 +168,23 @@ interface ModelPickerProps {
   readonly t: ((key: string) => string) | undefined;
   readonly primitives: Primitives;
   readonly doc: Document | undefined;
+  /**
+   * Catalog groups, the only place reasoning metadata lives.
+   *
+   * The popup's own rows carry no effort information at all: the shell's
+   * `selectionOf` reads it from the directory, so showing and choosing a level
+   * here means reading the same source rather than extending the rows.
+   */
+  readonly catalog: readonly CatalogGroupLike[] | undefined;
+  readonly selectModel:
+    | ((selection: { provider: string; model: string; reasoningEffort?: string }) => Promise<unknown> | undefined)
+    | undefined;
 }
 
 /**
  * The `/model` picker: the shell's surface with a provider-aware row list.
  */
-function ModelPicker({ popup, state, t, primitives, doc }: ModelPickerProps): ReactNode {
+function ModelPicker({ popup, state, t, primitives, doc, catalog, selectModel }: ModelPickerProps): ReactNode {
   const cardRef = useRef<HTMLElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -163,6 +196,10 @@ function ModelPicker({ popup, state, t, primitives, doc }: ModelPickerProps): Re
     [state.options, state.search, mode, primitives.rankByName],
   );
   const groups = useMemo(() => groupOptions(ranked), [ranked]);
+
+  // Effort state is per model, not per list: pointing at `max` for one model must
+  // not silently pre-select `max` for the next one whose ladder differs.
+  const [efforts, setEfforts] = useState<Record<string, string | undefined>>({});
 
   // The cursor is this surface's own. Opening parks it on the session's current
   // model, matching the shell's first-open behaviour; the shell's own index is
@@ -211,11 +248,58 @@ function ModelPicker({ popup, state, t, primitives, doc }: ModelPickerProps): Re
    * what makes a click that lands after the picker was superseded lose its write
    * rights instead of selecting into a stale binding.
    */
+  /**
+   * Settle one drawn row.
+   *
+   * Two paths, chosen by whether the model has a level to carry. A model without
+   * one goes through the shell's own settlement, which handles consumption and
+   * focus for us. A model with levels must submit the pair directly: the shell's
+   * settlement rebuilds the choice from the row id alone and would drop the level,
+   * leaving whatever was already in effect. That path closes the picker itself,
+   * because it does not run the shell's settlement.
+   */
+  const settleRow = useCallback(
+    (option: PopupOptionLike, effort: string | undefined): void => {
+      if (effort === undefined || selectModel === undefined) {
+        void popup.settle?.(popup.binding, option);
+        return;
+      }
+      const ref = modelRefOf(option);
+      if (ref === undefined) {
+        void popup.settle?.(popup.binding, option);
+        return;
+      }
+      void Promise.resolve(selectModel({ ...ref, reasoningEffort: effort })).finally(() => {
+        popup.dismiss({ focusComposer: true });
+      });
+    },
+    [popup, selectModel],
+  );
+
   const choose = useCallback(
     (option: PopupOptionLike): void => {
-      void popup.settle?.(popup.binding, option);
+      const ref = modelRefOf(option);
+      const levels = ref === undefined ? [] : effortLevelsOf(catalog ?? [], ref);
+      // The level the row is pointing at, defaulting to the one the adapter
+      // itself would use, so a plain row click is still a complete choice.
+      const pointed = levels.length === 0 ? undefined : (efforts[option.id] ?? initialEffort(levels, undefined, undefined));
+      settleRow(option, pointed);
     },
-    [popup],
+    [catalog, efforts, settleRow],
+  );
+
+  /**
+   * Submit a row with one specific effort level.
+   *
+   * A badge is an explicit choice, so it submits rather than merely highlighting:
+   * the user pointed at `max` on a model row, which is the whole gesture.
+   */
+  const pickEffort = useCallback(
+    (option: PopupOptionLike, level: string): void => {
+      setEfforts((previous) => ({ ...previous, [option.id]: level }));
+      settleRow(option, level);
+    },
+    [settleRow],
   );
 
   const chooseCursor = useCallback((): void => {
@@ -273,32 +357,60 @@ function ModelPicker({ popup, state, t, primitives, doc }: ModelPickerProps): Re
         ? state.searchLabels.empty
         : state.searchLabels.noResults;
 
-  const renderRow = (option: PopupOptionLike, index: number): ReactNode => (
-    <div
-      role="option"
-      aria-selected={index === active}
-      aria-label={option.badge === undefined ? undefined : `${option.label} ${option.badge}`}
-      className={index === active ? `${classes.row} ${classes.rowActive}` : classes.row}
-      key={option.id}
-      onClick={() => {
-        choose(option);
-      }}
-      onMouseEnter={() => {
-        setCursor(index);
-      }}
-    >
-      <span className={classes.label}>
-        <span className={classes.labelText}>{option.label}</span>
-        {option.badge !== undefined && <sup className={classes.badge}>{option.badge}</sup>}
-      </span>
-      {option.detail !== undefined && <span className={classes.detail}>{option.detail}</span>}
-      {option.active === true && (
-        <span className={classes.check}>
-          {primitives.IconCheckOutlineRegular === undefined ? null : <primitives.IconCheckOutlineRegular />}
+  const renderRow = (option: PopupOptionLike, index: number): ReactNode => {
+    const ref = modelRefOf(option);
+    const levels = badgeLevels(ref === undefined ? [] : effortLevelsOf(catalog ?? [], ref));
+    const pointed = efforts[option.id];
+    return (
+      <div
+        role="option"
+        aria-selected={index === active}
+        aria-label={option.badge === undefined ? undefined : `${option.label} ${option.badge}`}
+        className={index === active ? `${classes.row} ${classes.rowActive}` : classes.row}
+        key={option.id}
+        onClick={() => {
+          choose(option);
+        }}
+        onMouseEnter={() => {
+          setCursor(index);
+        }}
+      >
+        <span className={classes.label}>
+          <span className={classes.labelText}>{option.label}</span>
+          {option.badge !== undefined && <sup className={classes.badge}>{option.badge}</sup>}
         </span>
-      )}
-    </div>
-  );
+        {option.detail !== undefined && <span className={classes.detail}>{option.detail}</span>}
+        {levels.length > 0 && (
+          // Badges are buttons, not decoration: the row click takes the pointed
+          // level, and a badge click takes that specific one. stopPropagation
+          // keeps the badge's choice from also firing the row's own submit.
+          <span className={classes.badges} role="group" aria-label={t?.("listbox.aria") ?? ""}>
+            {levels.map((level: EffortLevel) => (
+              <button
+                type="button"
+                key={level.id}
+                className={
+                  level.id === pointed ? `${classes.badgeChip} ${classes.badgeChipOn}` : classes.badgeChip
+                }
+                title={level.description ?? level.name}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  pickEffort(option, level.id);
+                }}
+              >
+                {level.name}
+              </button>
+            ))}
+          </span>
+        )}
+        {option.active === true && levels.length === 0 && (
+          <span className={classes.check}>
+            {primitives.IconCheckOutlineRegular === undefined ? null : <primitives.IconCheckOutlineRegular />}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   // The card is drawn group by group so headings stay native; the cursor counts
   // across the whole list, which is why it is threaded through the mapping.
@@ -355,6 +467,23 @@ function ModelPicker({ popup, state, t, primitives, doc }: ModelPickerProps): Re
       {content}
     </primitives.MenuSurface>
   );
+}
+
+/**
+ * The provider/model pair a row names.
+ *
+ * Row ids are `${provider}/${model}` by the shell's convention, but the provider
+ * is authoritative on `group`, and a model id may itself contain a slash, so the
+ * split keeps everything after the first separator.
+ * @param option - the row.
+ * @returns the pair, or undefined for a row with no provider (a failure notice).
+ */
+function modelRefOf(option: PopupOptionLike): { provider: string; model: string } | undefined {
+  const provider = option.group?.name;
+  if (provider === undefined) return undefined;
+  const prefix = `${provider}/`;
+  const model = option.id.startsWith(prefix) ? option.id.slice(prefix.length) : option.id;
+  return { provider, model };
 }
 
 /**

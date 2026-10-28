@@ -46,6 +46,16 @@ export interface PopupOptionLike {
    * one is handed back to the shell instead of being settled unguarded.
    */
   readonly confirmation?: unknown;
+  /**
+   * Reasoning effort to submit with this row.
+   *
+   * Not read by the shell's own picker (its `onSelect` recomputes the value from
+   * the directory), but this surface sets it so a level the user actually chose
+   * is the one that travels. The shell's `selectionOf` prefers
+   * `current.reasoningEffort ?? model.reasoning.defaultEffort`, and a settled row
+   * is exactly the object its `onSelect` matches against.
+   */
+  readonly reasoningEffort?: string | undefined;
 }
 
 /** The store the controller publishes its state through. */
@@ -72,6 +82,10 @@ export interface PopupControllerLike {
    * naming by object is what lets the picker draw a row list the shell's own
    * filter never produced. Absent on a host that changed its controller shape,
    * in which case the picker declines to take over rather than picking blind.
+   *
+   * The second argument is whatever the spec's `onSelect` receives; passing a
+   * row carrying a chosen `reasoningEffort` is how this surface makes the effort
+   * visible instead of letting the adapter pick it silently.
    */
   settle?(binding: unknown, option: PopupOptionLike): Promise<void> | void;
   setSearch(search: string): void;
