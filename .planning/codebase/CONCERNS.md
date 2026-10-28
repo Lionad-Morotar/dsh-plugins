@@ -11,12 +11,11 @@
 - 影响：高——这是对外发布承诺，不是内部整洁；失败发生在订阅方的机器上，且没有任何脚本在提交后自动重算（`build:market` 必须手动跑）
 - 修复路径：投稿前先 push，或把 pin 换成已推送的 tag；再把「产物里的 commit 与 raw URL 必须能从 origin 取到」变成一条断言
 
-**`check:market-index` 不读已提交的索引，「校验」与「产物」是两件事：**
-- 现状：`scripts/build-market-index.mjs` 的 `--check` 分支（第 43 行读参数、108-123 行执行）把索引在内存里重算一遍、用宿主的 `parseMarketIndex` 复解、打印安装 spec，最后输出 `check only, nothing written`；全程没有 `readFileSync(market/index.json)`，也没有任何字节比较
-- 实测：当前仓库里 `pnpm check:market-index` 通过（exit 0，打印的三条安装 spec 钉在 `2aea6ad`），而磁盘上的 `market/index.json` 仍钉在 `6b3e04d`——同一条命令同时报「通过」和「产物是旧的」
-- 文件：`scripts/build-market-index.mjs:43`、`:108-123`
-- 影响：中高——名字让人以为它守住了产物，实际它只证明生成器还能跑；索引过期在自动化里完全不可见
-- 修复路径：`--check` 补一步「重算结果与磁盘文件逐字节相同」，不一致即非零退出；这一步才是把「忘记重跑 build:market」变成红灯的唯一办法
+**`check:market-index` 曾不读已提交的索引（已修复）：**
+- 原状：`--check` 把索引在内存里重算一遍、用宿主 `parseMarketIndex` 复解、打印安装 spec，全程不读磁盘、无字节比较。同一条命令可以同时报「通过」与「产物是旧的」
+- 实测过的失效形态：把 `market/index.json` 的 `plugins` 改成空数组，旧版 `--check` 仍以 0 退出
+- 现态：`--check` 先读落盘文件交给官方解析器校验，再把落盘内容与全新构建结果逐字节比对，任一不符即非零退出；校验器加载失败也从 warning 改为硬失败
+- 残留：过期索引仍需有人跑 `pnpm check:market-index` 才会被发现，仓库没有 CI，属流程缺口而非脚本缺口
 
 **皮肤包的 `dshCompatibility` 是不可解析的字符串：**
 - 现状：`packages/dsh-client-ui-skin-ascii-rest/skin.json:19` 是 `"dshCompatibility": "0.2.1rc2"`；同一个包的 `engines.dsh` 与 `peerDependencies["@deepseek-ai/dsh"]` 是显式区间 `>=0.2.0-rc.2 <0.3.0-0`。同一件事两种写法
@@ -33,7 +32,7 @@
 - 修复路径：加一个最小发布脚本（`pnpm -r publish --access public --tag next`）并在 README 写清发布顺序：先 build → 再 check:market → 再 publish → 最后 `build:market --source npm`；不引入 changesets 也能接受，前提是版本号手动规则写明
 
 **README 测试数字靠手维护，无防漂移机制：**
-- 问题：`README.md:57` 的测试计数靠手维护。基线 `5295e0c` 写的是「25 文件 259 用例」，HEAD 是「40 文件 515 用例」——这 23 个提交里这一行被改过 5 次（`b1ceab6` 28/324 → `d35e955` 29/348 → `91b591f` 33/426 → `3cda464` 40/513 → `2aea6ad` 40/515），每次都是人发现后手改，没有一次是被测试或脚本逼出来的；数字与代码无联动，下一个测试文件就会让它再次过期。同类漂移在更早的历史里也出现过：根 README 曾写「23 个测试」，皮肤包 README 曾写「38 个用例」
+- 问题：`README.md:57` 的测试计数靠手维护。基线 `5295e0c` 写的是「25 文件 259 用例」，HEAD 是「40 文件 529 用例」——这 23 个提交里这一行被改过 5 次（`b1ceab6` 28/324 → `d35e955` 29/348 → `91b591f` 33/426 → `3cda464` 40/513 → `2aea6ad` 40/515 → `842bb1f` 40/529），每次都是人发现后手改，没有一次是被测试或脚本逼出来的；数字与代码无联动，下一个测试文件就会让它再次过期。同类漂移在更早的历史里也出现过：根 README 曾写「23 个测试」，皮肤包 README 曾写「38 个用例」
 - 文件：`README.md`、`packages/dsh-client-ui-skin-ascii-rest/README.md`
 - 对照：皮肤包 README 写「39 个用例」，本轮实测该包 39 个 `it`，是对的；错的是根 README 那行，它跨五包求和，任何一包加用例都会让它失真——所以两处数字的维护成本并不相同，只有根 README 需要机制
 - 影响：低——误导新读者预期；加一个用例就可能全漂；本轮靠人工对齐，仍无机制防再漂
@@ -110,7 +109,7 @@
 
 ## 性能瓶颈
 
-**全量测试耗时分布（2026-10-27 夜实测，五包依次 `vitest run`，单包 `Duration`）：** `dsh-client-ui-skin-ascii-rest` 4.22s（其中 `test/bundle.test.ts` 4249ms，单用例「scene chunks emit frames…」3818ms）、`dsh-slash-commands` 2.81s（其中 `test/helper.test.ts` 2458ms，单用例「bounds a wedged helper…」2033ms）、`dsh-jump` 1.72s、`dsh-better-keybindings` 825ms、`ascii-rest-scenes` 543ms。整轮 `pnpm -r test` 墙钟 13.88s，用例合计 40 文件 515 个全绿。皮肤是唯一波动明显的一包：同一份代码连跑两次在 4.2s–6.6s 之间（`bundle.test.ts` 的 34 个分块 vm 执行受首跑冷缓存影响），其余四包的波动在 ±0.2s 内。
+**全量测试耗时分布（2026-10-27 夜实测，五包依次 `vitest run`，单包 `Duration`）：** `dsh-client-ui-skin-ascii-rest` 4.22s（其中 `test/bundle.test.ts` 4249ms，单用例「scene chunks emit frames…」3818ms）、`dsh-slash-commands` 2.81s（其中 `test/helper.test.ts` 2458ms，单用例「bounds a wedged helper…」2033ms）、`dsh-jump` 1.72s、`dsh-better-keybindings` 825ms、`ascii-rest-scenes` 543ms。整轮 `pnpm -r test` 墙钟 13.88s，用例合计 40 文件 529 个全绿。皮肤是唯一波动明显的一包：同一份代码连跑两次在 4.2s–6.6s 之间（`bundle.test.ts` 的 34 个分块 vm 执行受首跑冷缓存影响），其余四包的波动在 ±0.2s 内。
 
 **两处固定大头都可解释：**
 - 皮肤 bundle 用例：34 个分块逐一 vm 执行 + jsdom canvas stub 反复告警。作为构建产物契约测试，当前耗时可接受；要压只能采样化
@@ -142,7 +141,7 @@
 - 安全修改：升级 DSH 后手工验一遍「打开 /resume → 输入一段过滤词 → 切到全部会话 → 列表换了、弹层没关、搜索词还在」，这条没有自动化覆盖（`test/resume-command.test.ts` 用的是假 `popupFor` 与假搜索状态，只能保证我们按契约调用，保证不了宿主照契约实现）
 
 **dsh-jump 设置行的两个注册前提只写在注释里：**
-- 文件：`packages/dsh-jump/src/client/runtime.ts`（`SETTINGS_ORDER`、`ctx.inject` 分支）、`src/client/settings-row.ts`、`src/client/entry.ts`
+- 文件：`packages/dsh-jump/src/client/runtime.ts`（`SETTINGS_ORDER`、`ctx.inject` 分支）、`src/client/settings-page.ts`、`src/client/entry.ts`
 - 脆弱原因：两处都是「错了不报错」的形态。其一，设置行排在 `order: 18`：宿主的 15/16/17/20/30 分别被 developer-tools、shortcuts、link-opening（ui-chat）、composer-enter、performance-usage 占着，撞上不是异常而是两行按注册时机随机换位；这条已由 `test/runtime.test.ts`「keeps the row id and order clear of the host's own rows」枚举钉住，但枚举的是实测快照，宿主新增一行并挪号时测试不会红。其二，行必须经 `ctx.inject(["slots"], …)` 等就绪后注册，`ctx.get` 采样一次会静默返回 undefined、行永远不出现（`runtime.ts:99-102` 的注释与「waits for the slots service instead of sampling it once」用例记录的正是这个缺陷）。另外 `entry.ts` 用 `loaderRequire("react")` 拿宿主的 React 切片，四个 hook 缺一个就返回 `null` 并静默跳过整行——导航还在，设置入口没了
 - 安全修改：改 order 或注册时机前先跑 `test/runtime.test.ts` 与 `test/entry.test.ts`；升级 DSH 后重测宿主实际占用（当前快照：15/16/17/20/30/100 与 `shortcuts`/`link-opening`/`composer-enter`/`developer-tools` 四个 id）
 
@@ -206,7 +205,7 @@
 
 **dsh-better-keybindings 的可见性补齐（`reveal.ts`）只有算术测试：** 24 个用例覆盖盒模型算式（`test/reveal.test.ts`，本轮实测；包内共 5 文件 96 用例），但「真机上补完之后光标是否真的在视野里」没有自动化断言；真机验证过 `[data-input-scroll]` 场景，长 composer（30 行、内容超出容器）下光标确实可见。`reveal` 的 margin 取 4px，若宿主给 composer 加 padding 需要复查。该包 `test/bundle.test.ts` 的 4 个用例仍只读 `lib/client.js` 文本（`__ModuleLoader__.load`、包名、`preventDefault`/`modify` 两个原语、不含 `node:`），不执行工厂。
 
-**dsh-jump 的 bundle 测试（部分改善）：** 5 个用例，其中 2 个仍只读 `lib/client.js` 文本；另 3 个（`describe("client bundle at runtime")`）用假 `window.__ModuleLoader__` 与假 `react` 真跑一遍 `factory(require)`，断言注册 id、不抛错、返回的插件对象带 `name/inject/apply`。这条改动是 bd027ac 补的，专治「boot 曾是插件对象的方法而非顶层导出」那次文本全绿、加载即崩的缺陷。没覆盖的是真实渲染：`JumpSettingsRow` 的 React 树用替身 hook 执行，样式与交互仍靠 `settings-row.test.ts` 的 10 用例。
+**dsh-jump 的 bundle 测试（部分改善）：** 5 个用例，其中 2 个仍只读 `lib/client.js` 文本；另 3 个（`describe("client bundle at runtime")`）用假 `window.__ModuleLoader__` 与假 `react` 真跑一遍 `factory(require)`，断言注册 id、不抛错、返回的插件对象带 `name/inject/apply`。这条改动是 bd027ac 补的，专治「boot 曾是插件对象的方法而非顶层导出」那次文本全绿、加载即崩的缺陷。没覆盖的是真实渲染：`JumpSettingsPage` 的 React 树用替身 hook 执行，样式与交互仍靠 `settings-page.test.ts` 的 11 用例。
 
 **dsh-slash-commands 的宿主接线（apply 一整个 163 行文件）：** 仅 `runHelper` 被 `test/helper.test.ts` 覆盖（4 用例）。`inject` 声明、`setTimeout` 延迟、软探测、logger 回落、注册失败时的 warn 都没有测试；`test/command.test.ts` 的 13 用例测的是 `createCopyCommand` / `registerCopyCommand` 对假 ctx 与假 effects 的反应，不是真实宿主。
 
@@ -224,6 +223,6 @@
 - **「dsh-jump 的激活键写死是缺陷」**：曾经的 v1 边界，已随可配置组合键落地而失效。现状是两条键各有默认值（mac Cmd+H / Cmd+U，其它平台 Ctrl+H / Ctrl+U），用户在设置 → 通用 → 「跳跃导航快捷键」录制改键，绑定存在 `localStorage` 的 `dsh-jump:bindings:v1`，不写包配置；`config.ts` 只剩设计固定面（候选选择器、首页行九键），`DEFAULT_CONFIG` 不再承载键位。仍成立的部分只有一条：键位不走宿主快捷键注册表（裸 home-row 键会被判无修饰键、默认 Cmd+H/Cmd+U 又与保留组合键冲突），监听器因此是插件自有的。
 - **「TODO/FIXME 堆积」**：不成立。实测四个包的 `src`/`test`/`scripts` 中 TODO/FIXME/HACK/XXX 零匹配。
 - **「五包测试环境/版本不一致」**：不成立。同用 vitest ^3.2.0（实测同跑 v3.2.7）。皮肤包的 `vitest.config.ts` 注释说明 bundle 测试要手工扮演模块加载器，vitest 自带 jsdom 会装出第二个 window；dsh-jump 与 better-keybindings 用 node 环境 + 显式 `new JSDOM` 出于同一理由；dsh-slash-commands 用 node 环境，宿主半边本就不碰 DOM，客户端半边的 `document` 与 scheduler 从参数注入，所以也不需要 jsdom；`ascii-rest-scenes` 零配置。
-- **「README 说明文档大面积过期」**：不成立。只有测试数字一处过期，且本轮已同步为 40 文件 515 用例；34 场景数与 `catalog.generated.ts` 实测一致，安装 / 升级流程描述与当前脚本行为一致。数字本身易漂移的问题单列在技术债，不构成「文档大面积过期」。
+- **「README 说明文档大面积过期」**：不成立。只有测试数字一处过期，且本轮已同步为 40 文件 529 用例；34 场景数与 `catalog.generated.ts` 实测一致，安装 / 升级流程描述与当前脚本行为一致。数字本身易漂移的问题单列在技术债，不构成「文档大面积过期」。
 - **「`docs/` 全被 gitignore 命中、`verify-docs-index` 的 docsCandidates=0 是债务」**：判定为不成立，属用户个人约定。命中来自全局 `~/.gitignore_global`（`**/docs/debug`、`**/docs/qa`、`**/docs/reports`、`**/docs/reviews`、`**/docs/tdd`、`**/docs/thoughts`，`git check-ignore -v` 逐条指向该文件），`git ls-files docs` 为 0 而 `find docs -type f` 有 34 个文件；这些目录装的是过程产物（调试记录、评审意见、TDD 笔记），按用户全局约定本就不入库。`verify-docs-index.mjs` 自己也把零候选视为「两条不变量空真，降级为 warning 不阻断」（该脚本第 20、232 行）。它唯一的副作用是仓内文档引用不可解析：上一版 CONCERNS 指向的 `docs/reports/261023/dsh-slash-commands-command.md` 从来不存在，实际文件是 `dsh-tui-copy-command.md`，本轮已改正。
-- **「`settings-row.ts` 的样式插入与移除不对称」**：按代码判定为「单实例对称、多实例有已知取舍」，不记为待修缺陷。`insertRowStyles`（`settings-row.ts:135-144`）按 `style[data-plugin-css="dsh-jump/settings.css"]` 去重，命中时返回 `() => undefined`；`test/settings-row.test.ts` 的「inserts the stylesheet once and removes it on teardown」显式断言「第二次的拆除不能清掉第一个的样式」。`runtime.ts:125-128` 的拆除顺序是先撤行、再撤样式，所以单实例下不会出现「行还在、样式没了」。代价只落在「同一页面激活两份本插件」这种宿主并不提供的情形：第二份的拆除是空操作，第一份拆除时会把仍在服役的第二份样式一起摘掉。
+- **「`settings-page.ts` 的样式插入与移除不对称」**：按代码判定为「单实例对称、多实例有已知取舍」，不记为待修缺陷。`insertPageStyles` 按 `style[data-plugin-css="dsh-jump/page.css"]` 去重，命中时返回 `() => undefined`；`test/settings-page.test.ts` 的「inserts once and removes on teardown」显式断言「第二次的拆除不能清掉第一个的样式」。`runtime.ts` 的拆除顺序是先撤页面、再撤样式，所以单实例下不会出现「页面还在、样式没了」。代价只落在「同一页面激活两份本插件」这种宿主并不提供的情形：第二份的拆除是空操作，第一份拆除时会把仍在服役的第二份样式一起摘掉。

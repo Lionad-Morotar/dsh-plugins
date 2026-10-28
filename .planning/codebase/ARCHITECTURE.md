@@ -20,12 +20,12 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 │           ├─ 宿主半边 lib/index.js（apply 为空，仅保证可解析）
 │           └─ 客户端半边 lib/client.js（ModuleLoader 工厂，external React）
 │               ├─ entry.ts 只做交接：boot 拿 loader 的 require、检测平台、解析 React
-│               ├─ runtime.ts 唯一组装点：一个 store 同时喂导航监听与设置行（order 18）
+│               ├─ runtime.ts 唯一组装点：一个 store 同时喂导航监听与设置页（order 25）
 │               ├─ bindings.ts 激活键的唯一模型（Chord、默认值、校验、匹配、打印）
 │               │   ├─ store.ts localStorage 文档：「dsh-jump:bindings:v1」+ 订阅
 │               │   ├─ recorder.ts 一次真实 keydown → 候选 chord
 │               │   └─ settings-controller.ts 录制状态机（无渲染）
-│               ├─ settings-row.ts React 设置行（useSyncExternalStore 投影状态）
+│               ├─ settings-page.ts React 设置页（useSyncExternalStore 投影状态）
 │               ├─ app.ts 捕获阶段 keydown 与全部 DOM 副作用 │ keys.ts 三态状态机
 │               ├─ hints.ts 视口快照与 label 分派 │ overlay.ts 浮层 │ config.ts 候选面
 │               └─ target.ts 按目标决定 click 还是 focus │ 命中 → 鼠标序列 / focus
@@ -81,8 +81,8 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 | 激活键存储 | localStorage 文档 + 订阅；每次读都按 action 兜底、每次写先归一，损坏文档不抛 | `packages/dsh-jump/src/client/store.ts` |
 | 激活键录制 | 一次 keydown → pending/cancel/accepted/rejected；录制侧与匹配侧共用 `bindingIssue`，拒绝理由有具体优先级 | `packages/dsh-jump/src/client/recorder.ts` |
 | 设置行状态机 | begin/press/reset/subscribe 的状态与规则（修饰键单按不算、拒绝保持录制、Esc 放弃），不依赖渲染器 | `packages/dsh-jump/src/client/settings-controller.ts` |
-| 设置行视图 | General 设置列表里的一行：两枚可重录的键帽 + 恢复默认；录制期在捕获阶段独占键盘；状态经 `useSyncExternalStore` 投影；不 import React 而由调用方传入切片 | `packages/dsh-jump/src/client/settings-row.ts` |
-| 运行时组装 | 一个 store 同时喂导航与设置行，`ctx.inject(["slots"], …)` 等服务就绪后注册 `settings.general.item`（id `jump`、order 18） | `packages/dsh-jump/src/client/runtime.ts` |
+| 设置页视图 | 设置导航里的一个分区：每个模式一行（标题、说明、可重录的键帽、自己的恢复默认）；录制期在捕获阶段独占键盘；状态经 `useSyncExternalStore` 投影；不 import React 而由调用方传入切片 | `packages/dsh-jump/src/client/settings-page.ts` |
+| 运行时组装 | 一个 store 同时喂导航与设置页，`ctx.inject(["slots"], …)` 等服务就绪后注册 `settings.section`（id `jump`、order 25、`label` 为 thunk） | `packages/dsh-jump/src/client/runtime.ts` |
 | 激活语义分派 | 纯函数判定目标要 click 还是 focus：contenteditable > 标签（textarea/带光标的 input）> role；按钮类即使 `role=combobox` 也归 click | `packages/dsh-jump/src/client/target.ts` |
 | 设置行文案 | 中英两份字典，三种拒绝理由与 keycap 可访问名随语言成对切换 | `packages/dsh-jump/src/client/copy.ts` |
 | 投稿清单校验 | 逐条断言宿主真正读取的字段：`engines.dsh` 兼容门、经 `exports` 解析 icon、`dsh.bundle.patch` 可挂载、pack 产物不含 src/test、禁 install 生命周期脚本、locale/en.json 存在 | `scripts/check-market-manifest.mjs` |
@@ -123,7 +123,7 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 - 手写结构化契约替代 SDK 类型依赖（`src/client/dsh.ts`、`dsh-slash-commands/src/command.ts` 的 `HostContextLike`）
 - 校验前移：不受信数据（生成目录、localStorage、上游 meta、`/copy` 参数）在入口清洗为 null/默认值/错误结果，不抛异常
 - 半边形态由平台决定：web 面必须给工厂返回值，tui 面只有一个宿主 apply；两侧可以并存于一个包（`dsh-slash-commands`），此时它们是同一条 Loader row 下的两个入口，不是两套身份
-- 可配置状态走「纯数据 → 存储 → 状态机 → 视图」四段，`dsh-jump` 的激活键即样板：`bindings.ts` 只判据、`store.ts` 只持文档与通知、`settings-controller.ts` 只持录制模式、`settings-row.ts` 只投影。每段都能用 node 直测，React 只出现在最后一段且是参数
+- 可配置状态走「纯数据 → 存储 → 状态机 → 视图」四段，`dsh-jump` 的激活键即样板：`bindings.ts` 只判据、`store.ts` 只持文档与通知、`settings-controller.ts` 只持录制模式、`settings-page.ts` 只投影。每段都能用 node 直测，React 只出现在最后一段且是参数
 - 派生优于手写：`market/` 下两份产物与 `catalog.generated.ts` 同一立场——改包元数据后重跑脚本，而不是编辑产物
 
 ## 分层
@@ -143,7 +143,7 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 | apply 签名 | cordis 统一按 `apply(ctx, config)` 调用：皮肤、better-keybindings 与 `dsh-slash-commands` 的客户端半边只读 ctx，`dsh-jump` 从第二参读插件配置 | `apply(ctx)` |
 | 依赖声明 | `package.json` 的 `dsh.client.inject`（前三包均为空）；`dsh-slash-commands` 在 `src/client/entry.ts` 模块级导出 `inject = ["commandUi", "sessions", "workspaces", "uiWorkspace"]` | `inject = ["commands", "sessionTitle"]`，模块级导出 |
 | 注册时机 | Cordis 按 inject 依赖顺序激活；`dsh-jump` 的设置行再等 `ctx.inject(["slots"], …)`，因为 slots 可能后挂 | 声明 inject 之外再延后一个宏任务，等 `tuiPluginHost` 由别的 row 挂载 |
-| 宿主插槽 | 皮肤占自己的设置页；`dsh-jump` 占 `settings.general.item`（id `jump`、order 18）；`dsh-slash-commands` 不用插槽，两条贡献都走 `commandUi` | 不适用 |
+| 宿主插槽 | 皮肤与 `dsh-jump` 各占一个 `settings.section`（id 分别为皮肤自己的与 `jump`，order 116 与 25）；`dsh-slash-commands` 不用插槽，两条贡献都走 `commandUi` | 不适用 |
 | 准入回落 | 无 | `tuiPluginHost.registerCommand` 未准入时回落 `commands.register`，命令可用但不带归属 |
 | 产物 | `lib/index.js`（ESM）+`lib/client.js`（+ 皮肤的分块） | `lib/index.js`（单文件 ESM，不压缩） |
 
@@ -274,7 +274,7 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 ### 在设置行里用 `useState` 跟 store
 
 **问题：** `useState` + effect 在并发渲染下会撕裂：store 可能恰好在 render 与 subscribe 之间变化，那一帧就永远看不到新值。
-**本仓库做法：** `settings-row.ts` 只用 `useSyncExternalStore` 投影控制器状态；录制期的 keydown 监听器把回调放进 `useRef`，effect 只依赖 `recording`，否则每次按键都重挂监听、还可能漏掉结束录制的那一击。
+**本仓库做法：** `settings-page.ts` 只用 `useSyncExternalStore` 投影控制器状态；录制期的 keydown 监听器把回调放进 `useRef`，effect 只依赖 `recording`，否则每次按键都重挂监听、还可能漏掉结束录制的那一击。
 
 ### 剪贴板只走一条路
 

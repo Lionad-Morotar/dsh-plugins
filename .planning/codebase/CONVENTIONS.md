@@ -68,11 +68,11 @@
 - 全中文文件头：`dsh-jump` 12/12（原 4 份，新增 7 份同一风格）、`dsh-better-keybindings` 5/5（基线时即如此，旧文档漏记）
 - 英文文件头：皮肤包 6 份里 5 份有（`tokens.test.ts` 无）、`dsh-slash-commands` 13 份里 5 份有（`resume`、`resume-command`、`client-entry`、`clipboard-browser`、`surface`），其余 8 份不写文件头
 - 完全不写文件头：`ascii-rest-scenes` 4/4
-- 测试标题一律英文（515 个 `it` 与 110 个 `describe` 逐行核对，中文标题 0 条）；中文只出现在断言里的业务文案（`/rename` 的成功消息、`/resume` 的「范围」「全部会话」标签）与少数中文内联注释。
+- 测试标题一律英文（529 个 `it` 与 110 个 `describe` 逐行核对，中文标题 0 条）；中文只出现在断言里的业务文案（`/rename` 的成功消息、`/resume` 的「范围」「全部会话」标签）与少数中文内联注释。
 
 ## 函数设计
 
-**尺寸：** 单一职责为准（团队约定的阈是 500 行，超过就考虑拆分，见 AGENTS.md）；全仓最大仍是皮肤包 `app.ts` 508 行、`page.ts` 479 行、`styles.ts` 459 行，各管一件事。`dsh-jump` 因可配置组合键涨到 `app.ts` 260、`settings-row.ts` 259、`bindings.ts` 246；`dsh-better-keybindings` 为 `app.ts` 268、`reveal.ts` 175；`dsh-slash-commands` 为 `client/resume.ts` 225、`command.ts` 203、`client/clipboard-shim.ts` 203（`command.ts` 已从 204 微降到 203）
+**尺寸：** 单一职责为准（团队约定的阈是 500 行，超过就考虑拆分，见 AGENTS.md）；全仓最大仍是皮肤包 `app.ts` 508 行、`page.ts` 479 行、`styles.ts` 459 行，各管一件事。`dsh-jump` 因可配置快捷键与设置页涨到 `settings-page.ts` 284、`bindings.ts` 281、`app.ts` 279；`dsh-better-keybindings` 为 `app.ts` 268、`reveal.ts` 175；`dsh-slash-commands` 为 `client/resume.ts` 225、`command.ts` 203、`client/clipboard-shim.ts` 203（`command.ts` 已从 204 微降到 203）
 **参数：** 多于三个收拢为 options 对象（`MountOptions`、`PaperifyOptions`、`CoverOptions`、`AppDeps`、`OverlayDeps`、`ClipboardDeps`）
 **返回值：** 需要清理的返回卸载函数（`dsh-jump` 的 `apply()` 返回 teardown、`registerCopyCommand` 返回 disposer）；需额外控制的返回「函数 + 附加方法」的 Handle 形状（`MountHandle`、`JumpApp`）
 
@@ -85,7 +85,7 @@
 - `dsh-slash-commands`：`clipboard.ts` 把 `exec`/`write` 收进 `ClipboardDeps`，`command.ts` 再收进 `ClipboardEffects` 且与「激活上下文」分成两个参数（宿主校验 Cordis 激活标记，合成对象会被拒），真实实现（`spawn` + `process.stdout.write`）只留在 `src/index.ts`；客户端半边的 `clipboard-shim.ts` 把 `scheduler`（`setTimeout`/`clearTimeout`）与 `fallback` 收进 `WriteBoundedDeps`，`resume-command.ts` 把 `commandUi`/`sessions`/`workspaces`/`uiWorkspace` 收成 `ResumeWiringContext` 的字段
 
 **纯状态机与视图分离（2026-10-27 新增，`dsh-jump` 的设置行是范本）：** 一次交互的全部规则先落成一个不依赖渲染器的状态机，视图只做投影——
-- `client/settings-controller.ts`（106 行）持有「进入录制 / 提交 / 拒绝后重试 / Esc 取消 / 恢复默认」全部规则，输出 `BindingRowState`；`client/settings-row.ts`（259 行）只把该状态转成 `createElement` 树，不含判断
+- `client/settings-controller.ts`（129 行）持有「进入录制 / 提交 / 拒绝后重试 / Esc 取消 / 恢复默认（整体或单个动作）」全部规则，输出 `BindingRowState`；`client/settings-page.ts`（284 行）只把该状态转成 `createElement` 树，不含判断
 - 状态机的事实来源是 `client/bindings.ts` 的纯函数（`bindingIssue`、`matchesBinding`、`normalizeBinding`），录键器 `client/recorder.ts` 与运行时匹配共用同一套校验——两边若各写一份，设置页会存下一个运行时永远认不出的键
 - 跨模块的组合单独成层：`client/runtime.ts` 把 store、监听器与设置行拼在一起，专门为了让「两半必须共享同一个 store」这件事可被直接测试；`entry.ts` 只把真实 Cordis 上下文与 loader 的 `require` 适配上去
 - 测试替身同样按注入点供给：`RuntimeDeps` 留 `store`/`window`/`document` 三个可选注入位（jsdom 里 `globalThis` 既不是 window 也没有 document），`RowReact` 只声明组件真正用到的四个 React API

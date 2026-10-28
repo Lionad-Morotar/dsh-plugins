@@ -23,11 +23,11 @@ pnpm typecheck                            # pnpm -r typecheck，五包 tsc 严�
 **实测规模（2026-10-27 逐包 `vitest run` 核实，全绿）：**
 - `ascii-rest-scenes`：4 文件 66 用例（palette 15、cover 22、catalog 8、options 21）
 - 皮肤包：6 文件 39 用例（bundle 8、scenes 7、tokens 10、regions 8、gui 3、surface 3）
-- `dsh-jump`：12 文件 153 用例（target 22、app 20、keys 19、bindings 20、hints 12、settings-controller 11、runtime 10、store 10、settings-row 10、recorder 8、entry 6、bundle 5）
+- `dsh-jump`：12 文件 167 用例（app 24、bindings 23、keys 22、target 22、settings-controller 14、hints 12、settings-page 11、runtime 10、store 10、recorder 8、entry 6、bundle 5）
 - `dsh-better-keybindings`：5 文件 96 用例（app 32、reveal 24、keys 24、caret 12、bundle 4）
 - `dsh-slash-commands`：13 文件 161 用例（resume 27、clipboard-browser 25、clipboard 17、resume-command 17、rename-command 16、command 13、history 12、arguments 7、rename 7、surface 6、client-entry 5、manifest 5、helper 4）
-- 合计 40 文件 515 用例（66 + 39 + 153 + 96 + 161）。根 `README.md` 的开发章节本轮已同步为同一组数字；此前写的是「33 文件 426 用例」。相对 5295e0c 基线（28 文件 324 用例）多出的 12 文件 191 用例几乎全在新增功能面：`dsh-jump` 从 4 文件 36 用例扩到 12 文件 153 用例（可配置组合键），`dsh-slash-commands` 从 9 文件 87 用例扩到 13 文件 161 用例（客户端半边 `/resume` 与有界剪贴板），其余三包用例数未变（漂移机理见 CONCERNS.md 的技术债条目）。
-- 口径说明：数字取自 vitest 的 `numTotalTests` /「Tests N passed」行，即 `it(...)` 实际执行数；五包当前都用裸 `it(`，没有 `it.each` / `test.each` / `describe.each` 参数化，所以文件里 `it(` 的行数与用例数一致（实测 515 行对 515 用例）
+- 合计 40 文件 529 用例（66 + 39 + 167 + 96 + 161）。根 `README.md` 的开发章节本轮已同步为同一组数字；此前写的是「33 文件 426 用例」。相对 5295e0c 基线（28 文件 324 用例）多出的 12 文件 205 用例几乎全在新增功能面：`dsh-jump` 从 4 文件 36 用例扩到 12 文件 167 用例（可配置快捷键与设置页），`dsh-slash-commands` 从 9 文件 87 用例扩到 13 文件 161 用例（客户端半边 `/resume` 与有界剪贴板），其余三包用例数未变（漂移机理见 CONCERNS.md 的技术债条目）。
+- 口径说明：数字取自 vitest 的 `numTotalTests` /「Tests N passed」行，即 `it(...)` 实际执行数；五包当前都用裸 `it(`，没有 `it.each` / `test.each` / `describe.each` 参数化，所以文件里 `it(` 的行数与用例数一致（实测 529 行对 529 用例）
 - 耗时（2026-10-27 实测，`pnpm -r test` 并行下的包级 Duration）：皮肤包 6.3s、`ascii-rest-scenes` 15.1s、`dsh-slash-commands` 19.4s、`dsh-better-keybindings` 25.8s、`dsh-jump` 27.5s；包内最慢的单个用例是皮肤包 `bundle.test.ts` 的「逐场景分块跑帧」4.7s（冷启动首次实测 62.8s，同一命令复跑即回到 5s 内）与 `dsh-slash-commands/helper.test.ts` 的真超时用例 3.1s
 
 ## 测试文件组织
@@ -35,7 +35,7 @@ pnpm typecheck                            # pnpm -r typecheck，五包 tsc 严�
 **位置：** 集中式 `test/` 目录，与 `src/` 分离（非共置）
 **命名：** `<被测模块名>.test.ts`，与源文件一一对应（`src/palette.ts` ↔ `test/palette.test.ts`；`dsh-slash-commands` 的 `src/clipboard.ts` ↔ `test/clipboard.test.ts`）
 **三类例外：** 构建产物与清单契约不对应单个源文件——`test/bundle.test.ts` 测 `lib/` 的交付形状（皮肤包、`dsh-jump`、`dsh-better-keybindings` 各一份；`ascii-rest-scenes` 与 `dsh-slash-commands` 没有），`test/manifest.test.ts` 测 `dsh-plugin.json` 与 `src` 导出的一致性（仅 `dsh-slash-commands`）；`test/helper.test.ts` 则按被测函数命名，对应 `src/index.ts` 里的 `runHelper`。新增的两个客户端入口各有自己的契约文件：`dsh-jump/test/entry.test.ts` 与 `dsh-slash-commands/test/client-entry.test.ts`
-**多文件对一模块：** `dsh-jump` 加了可配置组合键后，`src/client/app.ts` 之外又拆出 `runtime` / `settings-row` / `settings-controller` / `recorder` / `store` / `target` / `bindings` 七个模块，各自有同名测试（`client/copy.ts` 例外：中英字典没有专属测试，只由 `settings-row.test.ts` 引用 `ZH` 间接覆盖）；`dsh-slash-commands` 的客户端半边同理（`client/resume.ts` ↔ `test/resume.test.ts`、`client/resume-command.ts` ↔ `test/resume-command.test.ts`、`client/clipboard-shim.ts` ↔ `test/clipboard-browser.test.ts`、`client/entry.ts` ↔ `test/client-entry.test.ts`）
+**多文件对一模块：** `dsh-jump` 加了可配置组合键后，`src/client/app.ts` 之外又拆出 `runtime` / `settings-page` / `settings-controller` / `recorder` / `store` / `target` / `bindings` 等模块，多数有同名测试（`client/copy.ts` 与 `client/react.ts` 例外：前者没有专属测试，由 `settings-page.test.ts` 引用 `ZH`/`EN` 间接覆盖；后者由页面与运行时测试经替身注入覆盖）；`dsh-slash-commands` 的客户端半边同理（`client/resume.ts` ↔ `test/resume.test.ts`、`client/resume-command.ts` ↔ `test/resume-command.test.ts`、`client/clipboard-shim.ts` ↔ `test/clipboard-browser.test.ts`、`client/entry.ts` ↔ `test/client-entry.test.ts`）
 
 ## 测试结构
 
@@ -60,7 +60,7 @@ describe("catalog agreement", () => { /* … */ });
 ## Mock
 
 **框架：** vitest 的 vi
-**用例分布：** 皮肤包 `gui.test.ts`（假 React 与 DOM 桩）；`dsh-jump/test/app.test.ts`（`vi.fn()` 记录冒泡泄漏、`vi.spyOn` 检查监听器增删）、`settings-controller.test.ts`（`vi.fn()` 当订阅者，断言状态机每次 emit 的内容）、`store.test.ts`（5 处 `vi.fn()` 当订阅者，配一个三方法全抛的存储替身验隐私模式容错）、`entry.test.ts`（`vi.fn()` 当 teardown 计数器）、`settings-row.test.ts`（`vi.spyOn` 盯 controller 的 `begin`，断言点按钮真的进了录制）；`dsh-slash-commands/test/clipboard.test.ts` 与 `command.test.ts`（`vi.fn()` 当 recorder，记录 shell-out、原始写入与宿主注册调用）；`client-entry.test.ts`（`vi.fn()` 记录 `commandUi.register` 的贡献与 `effect` 的标签）、`clipboard-browser.test.ts`（`vi.fn()` 当兜底与宿主方法）
+**用例分布：** 皮肤包 `gui.test.ts`（假 React 与 DOM 桩）；`dsh-jump/test/app.test.ts`（`vi.fn()` 记录冒泡泄漏、`vi.spyOn` 检查监听器增删）、`settings-controller.test.ts`（`vi.fn()` 当订阅者，断言状态机每次 emit 的内容）、`store.test.ts`（5 处 `vi.fn()` 当订阅者，配一个三方法全抛的存储替身验隐私模式容错）、`entry.test.ts`（`vi.fn()` 当 teardown 计数器）、`settings-page.test.ts`（用假 React 渲染后断言每模式一行的键帽、各自的恢复按钮与拒绝播报）；`dsh-slash-commands/test/clipboard.test.ts` 与 `command.test.ts`（`vi.fn()` 当 recorder，记录 shell-out、原始写入与宿主注册调用）；`client-entry.test.ts`（`vi.fn()` 记录 `commandUi.register` 的贡献与 `effect` 的标签）、`clipboard-browser.test.ts`（`vi.fn()` 当兜底与宿主方法）
 **范本：** loader stub——`installLoader`（`src/client/loader.ts`）注入假的 require，测分块契约不碰网络
 **必须 mock：** 模块加载器（`LoaderRequire`）、Storage（注入 map 后端）、终端副作用（`exec`/`write` 注入 recorder）
 **不 mock：** 纯逻辑层（真跑）；localStorage 用注入假 Storage 而非 mock 全局；`dsh-slash-commands` 的 helper 超时用例故意跑真进程（见下）
@@ -69,7 +69,7 @@ describe("catalog agreement", () => { /* … */ });
 
 **模式：** 就地字面量 + 小工厂函数，无独立 fixtures 目录：
 - 皮肤包：`gui.test.ts` 自建 SceneEntry/SceneModule 形状对象
-- `dsh-jump`：`place()` 装矩形桩、`buttons(n)` 批量造可见候选、`key()` 造 `KeyEventLike` 字面量；新增四套——内存存储工厂（`store.test.ts` 的 `memoryStorage(seed)`、`settings-controller.test.ts` / `settings-row.test.ts` / `runtime.test.ts` 的 `memory()`、`entry.test.ts` 的 `memoryStorage()`，四处各写一份、不共享，因为各自只关心自己那一两个方法）、`event(over)`（造 `RecordedEvent` 字面量，`bindings` 与 `recorder` 两份各自带一份 `Mods` 别名，配 `MAC = createDefaultBindings("macos")`）、`node()` + `fakeReact()` + `chords()` + `textOf()`（假 React 的 `createElement` 把结果摊平成 `{type, props, children}` 树，再靠 `chords()` 递归捞出按钮、`textOf()` 拼文本，用于设置行渲染）、`el(tag, attrs)`（现造元素并挂到 body，用于目标分类）
+- `dsh-jump`：`place()` 装矩形桩、`buttons(n)` 批量造可见候选、`key()` 造 `KeyEventLike` 字面量；新增四套——内存存储工厂（`store.test.ts` 的 `memoryStorage(seed)`、`settings-controller.test.ts` / `settings-page.test.ts` / `runtime.test.ts` 的 `memory()`、`entry.test.ts` 的 `memoryStorage()`，四处各写一份、不共享，因为各自只关心自己那一两个方法）、`event(over)`（造 `RecordedEvent` 字面量，`bindings` 与 `recorder` 两份各自带一份 `Mods` 别名，配 `MAC = createDefaultBindings("macos")`）、`node()` + `fakeReact()` + `chords()` + `textOf()`（假 React 的 `createElement` 把结果摊平成 `{type, props, children}` 树，再靠 `chords()` 递归捞出按钮、`textOf()` 拼文本，用于设置页渲染）、`el(tag, attrs)`（现造元素并挂到 body，用于目标分类）
 - `dsh-slash-commands`：`harness()` 造 exec/write recorder、`host()` 造最小上下文与 toast 记录、`sessionWith(turns)` + `assistant()` / `user()` 造会话日志；客户端半边另有两套：`client-entry.test.ts` 的 `context()` 造带 `effect` 记录的最小上下文，`clipboard-browser.test.ts` 的 `manualScheduler()`（手摇定时器，`fire()` 才触发回调）、`deferred()`（永不结算的 promise 替身）与 `Page` 假剪贴板
 
 会话日志夹具按真实事件形状手写（`turn/start` 先行、`user/message` 不带 turn），注释直接标出 `source.kind` 这类判据。
@@ -88,12 +88,12 @@ describe("catalog agreement", () => { /* … */ });
 **真进程用例：** `dsh-slash-commands/test/helper.test.ts` 的 `runHelper` 直接用 `cat` / `sh -c "exit 3"` / 缺失程序名 / `sleep 30` 四个真进程，验证退出码透传、ENOENT 折成 `MISSING_TOOL`、以及约 2s 的 `HELPER_TIMEOUT_MS` 上限（实测该用例 3.1s，其中超时那一条 2166ms，超时断言 `< 6000ms`，用例级 timeout 10s）；这是唯一会真等 2 秒的用例，它独自占掉该包 `test` 阶段的 3.16s／6.24s 一半以上
 **设置行与录制（2026-10-27 新增形态，`dsh-jump` 四份）：** 这一组测的是「用户在设置页重录快捷键」的全链路，全程不起浏览器、不装 react-dom——
 - `test/settings-controller.test.ts`（11 用例）只跑状态机：进入录制、单键提交、被拒后保持录制、Escape 取消、恢复默认、store 从外部被改动时状态跟着变（用例名为「another tab」，实际是直接调 `store.set`，不模拟 StorageEvent）、拒绝理由被新录制清掉。一个渲染器都不用
-- `test/settings-row.test.ts`（10 用例）用极小的 React 替身（只实现 `createElement`/`useEffect`/`useRef`/`useSyncExternalStore` 四个 API，把 `createElement` 结果摊平成树）断言渲染契约：两个和弦各自的平台标签、`aria-keyshortcuts`、录制中按钮文案换成提示但可访问名保留、拒绝理由落在 `role="status"`、点按钮调 controller、`useSyncExternalStore` 确实订到 `controller.subscribe` 且重映射后快照即变（用例名写的是「without a new mount」，实现上是用同一 controller 再取一次快照）、`insertRowStyles` 幂等且只移除自己那一片样式表
+- `test/settings-page.test.ts`（11 用例）用极小的 React 替身（只实现 `createElement`/`useEffect`/`useRef`/`useSyncExternalStore` 四个 API，把 `createElement` 结果摊平成树）断言渲染契约：每模式一行且各有自己的键帽与恢复按钮、恢复按钮在已等于出厂值时禁用而改过之后解禁、录制中按钮文案换成提示而另一行保持键位、拒绝理由落在 `role="status"`、裸键说明在场、中英字典切换、`insertPageStyles` 幂等且只移除自己那一片样式表，并逐条断言每条 CSS 规则都带 `[data-dsh-jump-page]` 作用域前缀
 - `test/runtime.test.ts`（10 用例）测组合：`store` 两半共享、改绑定后立即生效不用重挂载、被替换的旧和弦立刻失效、设置行排在宿主自己的快捷键行之后、宿主没有设置槽时监听器照常工作、loader 没种 React 时跳过设置行、等 `slots` 服务就绪而不是采样一次、id 与 order 不与宿主冲突、重复 dispose 安全
 - `test/store.test.ts`（10 用例）测持久化容错：脏/敌意文档按 action 逐个回落、写入前先归一化、同一对绑定写两次不通知、抛异常的存储（隐私模式）不让插件起不来、`reload()` 只在文档真变化时通知（注意：`store` 暴露了 `reload()`，但 `src/` 里目前没有 `storage` 事件接线，跨标签页同步的实际入口是宿主重载页面；测试只钉住 `reload()` 自身的语义）
 - `test/recorder.test.ts`（8 用例）与 `test/bindings.test.ts`（20 用例）是这一层的纯逻辑底：录键器与运行时匹配共用 `bindingIssue`，所以「设置页接受的键运行时一定认得出」这条不变量可以分头断言
 
-**捕获阶段监听的测法：** 录制监听挂在 `document` 的 capture 阶段并 `preventDefault` + `stopPropagation`（`settings-row.ts` 的 `useRecordingListener`），因此断言必须落在「这次 keydown 没有被宿主看到」而不是「值被改了」；`runtime.test.ts` 里则退一步只断言「旧和弦不再触发 overlay 出现」，因为那一层不该重复测事件吞噬细节
+**捕获阶段监听的测法：** 录制监听挂在 `document` 的 capture 阶段并 `preventDefault` + `stopPropagation`（`react.ts` 的 `useRecordingListener`），因此断言必须落在「这次 keydown 没有被宿主看到」而不是「值被改了」；`runtime.test.ts` 里则退一步只断言「旧和弦不再触发 overlay 出现」，因为那一层不该重复测事件吞噬细节
 
 **E2E：** 未使用（无浏览器驱动、无终端会话录制）
 

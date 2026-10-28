@@ -60,7 +60,8 @@ dsh-plugins/
     │   │       ├── bindings.ts          # chord 数据模型/默认值/归一/校验/匹配/打印（246 行）
     │   │       ├── recorder.ts          # 一次 keydown → 候选 chord（61 行）
     │   │       ├── settings-controller.ts # 录制状态机（106 行）
-    │   │       ├── settings-row.ts      # React 设置行 + 样式注入（259 行）
+    │   │       ├── settings-page.ts     # React 设置页 + 样式注入（284 行）
+    │   │       ├── react.ts             # React 切片与录制监听器（50 行）
     │   │       ├── store.ts             # localStorage 文档 + 订阅（132 行）
     │   │       ├── target.ts            # 目标激活语义分派（78 行）
     │   │       ├── copy.ts              # 中英文案字典（62 行）
@@ -69,7 +70,7 @@ dsh-plugins/
     │   │       └── config.ts            # 候选选择器三族与文本输入 role（104 行）
     │   ├── assets/                      # icon.svg / icon.png / icon-180.png（市场与皮肤管理器共用）
     │   ├── locale/{zh,en}.json          # 各 2 个 meta 键（title/description）
-    │   ├── test/                        # 12 个 *.test.ts（153 用例）
+    │   ├── test/                        # 12 个 *.test.ts（167 用例）
     │   ├── vitest.config.ts             # environment: node，jsdom 由测试手工驱动
     │   ├── cordis.patch.yml             # id: jump / name: dsh-jump
     │   └── lib/                         # 构建产物，刻意提交（2 个文件）
@@ -126,10 +127,10 @@ dsh-plugins/
 
 - 判据（纯数据，无 DOM）：`bindings.ts`（246 行，chord 模型与全部校验）、`config.ts`（104 行，候选选择器三族、`ACTIVATABLE_ROLES`、`TEXT_ENTRY_ROLES`、`HOME_ROW_KEYS`）、`target.ts`（78 行，click 还是 focus）、`copy.ts`（62 行）
 - 状态：`keys.ts`（103 行，一轮内的三态与前缀）、`hints.ts`（123 行，视口快照与等长 label）、`store.ts`（132 行，跨轮的 localStorage 文档）、`settings-controller.ts`（106 行，录制模式）
-- 视图：`overlay.ts`（74 行）画徽章，`settings-row.ts`（259 行）是唯一 React 模块（含内联 CSS 与样式标签注入）、`recorder.ts`（61 行）把 keydown 读成候选 chord
+- 视图：`overlay.ts`（74 行）画徽章，`settings-page.ts`（284 行）是唯一含内联 CSS 与样式标签注入的 React 视图（`react.ts` 50 行提供 React 切片与录制监听器）、`recorder.ts`（61 行）把 keydown 读成候选 chord
 - 接线：`app.ts`（260 行，唯一接窗口事件与派发真实点击的模块，另含对称 teardown）、`runtime.ts`（140 行，唯一组装点）、`entry.ts`（78 行，只做交接：require、平台、React，不决定组合）
 
-新增模块先问它属于哪一层：能写成纯函数就别进 `app.ts`/`settings-row.ts`。
+新增模块先问它属于哪一层：能写成纯函数就别进 `app.ts`/`settings-page.ts`。
 
 **`packages/dsh-better-keybindings/src/client/`：** 5 个 ts：`app.ts` 是唯一的窗口事件接线与 DOM 副作用汇点（光标补齐、半屏翻页、排除会话滚动容器的写入），`keys.ts`/`caret.ts`/`reveal.ts` 全为纯逻辑（映射、光标原语、盒模型与翻页落点算术），`entry.ts` 只组装插件对象。
 **`packages/dsh-slash-commands/src/`：** 11 个 ts，按命令与运行半边分文件。宿主侧 7 个：`arguments.ts`/`history.ts`/`clipboard.ts`/`command.ts` 归 `/copy`，`rename.ts`/`rename-command.ts` 归 `/rename`，`index.ts` 是宿主装配点（声明 `inject = ["commands", "sessionTitle"]`、按终端能力分派哪条命令注册）。客户端侧 4 个，全在 `src/client/`：`entry.ts` 是客户端装配点（声明 `inject = ["commandUi", "sessions", "workspaces", "uiWorkspace"]`，用 `ctx.effect` 注册有界剪贴板与 `/resume` 两件事），`resume.ts` 是 `/resume` 的全部纯判定（行集、范围、切换派发，DOM-free），`resume-command.ts` 只做接线（打开时读 `ctx.sessions.list` 与 `ctx.workspaces.list` 的快照），`clipboard-shim.ts` 是有界剪贴板写入。行数：宿主侧 `index.ts` 163、`command.ts` 203、`clipboard.ts` 165、`rename-command.ts` 153、`history.ts` 115、`arguments.ts` 56、`rename.ts` 35；客户端侧 `resume.ts` 225（四文件里最大，行集/范围/派发全在这里）、`clipboard-shim.ts` 203、`resume-command.ts` 182、`entry.ts` 73。
@@ -144,7 +145,7 @@ dsh-plugins/
 - `packages/dsh-jump/src/index.ts`：web 宿主半边 → `lib/index.js`（空 apply，7 行）
 - `packages/dsh-jump/src/client/entry.ts`：web 客户端半边 → `lib/client.js`（工厂返回值 `{name, inject, apply}`；`boot(require)` 是第二条顶层导出，工厂内被调用）
 - `packages/dsh-jump/src/client/runtime.ts`：插件组装点，`entry.ts` 与 `test/runtime.test.ts` 都从这里进
-- `packages/dsh-jump/src/client/settings-row.ts`：General 设置行（slot `settings.general.item` / id `jump` / order 18），由 `runtime.ts` 注册
+- `packages/dsh-jump/src/client/settings-page.ts`：设置导航里的一个分区（slot `settings.section` / id `jump` / order 25），由 `runtime.ts` 注册
 - `packages/dsh-better-keybindings/src/index.ts`：web 宿主半边 → `lib/index.js`（空 apply）
 - `packages/dsh-better-keybindings/src/client/entry.ts`：web 客户端半边 → `lib/client.js`
 - `packages/dsh-slash-commands/src/index.ts`：宿主半边 → `lib/index.js`（apply 本体，三端共用）
@@ -152,8 +153,8 @@ dsh-plugins/
 
 **发行与分发：** 每个可投稿包的 `package.json`（`author`/`homepage`/`repository`/`bugs`/`keywords`/`icon`/`engines.dsh`/`files` 与 `exports` 的 `./icon`、`./locale/*.json`）、`assets/icon-180.png`（社区目录要求光栅图）、`locale/{zh,en}.json`；产物 `market/index.json` 与 `market/awesome/*.yml` 由根 `scripts/` 派生，不手写（详见「特殊目录」）
 **配置：** 根 `tsconfig.base.json`；各包 `tsconfig.json`（皮肤包 `paths` 把 `ascii-rest-scenes` 映到源码；`dsh-jump` 的 `types` 为空数组，`dsh-slash-commands` 的为 `["node"]`）；皮肤 / jump / better-keybindings / slash-commands 各一份 `vitest.config.ts`（`ascii-rest-scenes` 零配置）；`skin.json`、`dsh-plugin.json`、四份 `cordis.patch.yml`（皮肤 / jump / better-keybindings / slash-commands；`ascii-rest-scenes` 是被依赖的库，没有 Loader row）
-**核心逻辑：** `catalog.ts`、`options.ts`（校验）；`app.ts`、`surface.ts`、`mount.ts`（渲染）；`keys.ts`、`hints.ts`、`bindings.ts`、`target.ts`（跳跃纯逻辑）；`runtime.ts`、`settings-controller.ts`、`settings-row.ts`（跳跃的组装与设置面）；`arguments.ts`、`history.ts`、`clipboard.ts`（复制纯逻辑与效果注入）；`resume.ts`、`resume-command.ts`、`clipboard-shim.ts`（客户端半边）
-**测试：** `packages/*/test/*.test.ts`，与 src/ 分离（非共置）；五个包合计 40 文件 515 用例（jump 12/153、slash 13/161、bk 5/96、皮肤 6/39、scenes 4/66）
+**核心逻辑：** `catalog.ts`、`options.ts`（校验）；`app.ts`、`surface.ts`、`mount.ts`（渲染）；`keys.ts`、`hints.ts`、`bindings.ts`、`target.ts`（跳跃纯逻辑）；`runtime.ts`、`settings-controller.ts`、`settings-page.ts`、`react.ts`（跳跃的组装与设置面）；`arguments.ts`、`history.ts`、`clipboard.ts`（复制纯逻辑与效果注入）；`resume.ts`、`resume-command.ts`、`clipboard-shim.ts`（客户端半边）
+**测试：** `packages/*/test/*.test.ts`，与 src/ 分离（非共置）；五个包合计 40 文件 529 用例（jump 12/167、slash 13/161、bk 5/96、皮肤 6/39、scenes 4/66）
 
 ## 命名约定
 
@@ -172,7 +173,7 @@ dsh-plugins/
 
 - 新的「什么算可跳」判据 → `config.ts` 的选择器或 `target.ts` 的 `activationOf`（测试随 `target.test.ts`）
 - 新的「跳到它算什么动作」→ `app.ts` 的命中分支，只在那里出现 DOM 副作用
-- 新的可配置项 → 默认值与校验进 `bindings.ts` 同级模块（纯数据），持久化进 `store.ts`，编辑状态进 `settings-controller.ts`，UI 进 `settings-row.ts`；四段各写各的测试，别把规则塞进 React 组件
+- 新的可配置项 → 默认值与校验进 `bindings.ts` 同级模块（纯数据），持久化进 `store.ts`，编辑状态进 `settings-controller.ts`，UI 进 `settings-page.ts`；四段各写各的测试，别把规则塞进 React 组件
 - 新的 chord 规则（保留键、修饰键约束）只改 `bindings.ts` 的 `bindingIssue`/`normalizeBinding`——录制器与运行时共用同一判据，改一处两侧同时生效；文案同步 `copy.ts` 的 `issues`
 - 新开一项设置行：slot 与 order 在 `runtime.ts`（当前 `settings.general.item` / 18，17 已被 ui-chat 占用），注册必须走 `ctx.inject(["slots"], …)`
 - 只改文案 → `copy.ts` 两份字典成对改（不要碰 `locale/*.json`，那里只有市场用的 2 个 meta 键）
@@ -204,7 +205,7 @@ dsh-plugins/
 - 生成：是（`scripts/build.mjs` 先删后建全量重建）
 - 提交：是（`.gitignore` 反排除 `!packages/*/lib/`）；改 src 必须重新 build 再提交
 
-**`packages/dsh-jump/lib/`：** 实测 2 个文件（`index.js` 78 B 的 ESM 宿主、`client.js` 16469 B 的 ModuleLoader 工厂）；生成是、提交是，同一条反排除规则。八个新模块（bindings / recorder / runtime / settings-controller / settings-row / store / target / copy）与设置行 CSS 都打进同一个 `client.js`，不额外分块。
+**`packages/dsh-jump/lib/`：** 实测 2 个文件（`index.js` 78 B 的 ESM 宿主、`client.js` 19361 B 的 ModuleLoader 工厂）；生成是、提交是，同一条反排除规则。九个新模块（bindings / recorder / runtime / settings-controller / settings-page / react / store / target / copy）与设置页 CSS 都打进同一个 `client.js`，不额外分块。
 **`packages/dsh-better-keybindings/lib/`：** 实测 2 个文件（`index.js` 92 B 的 ESM 宿主、`client.js` 6664 B 的 ModuleLoader 工厂）；生成是、提交是，同一条反排除规则。
 **`packages/dsh-slash-commands/lib/`：** 实测 2 个文件（`index.js` 13223 B，宿主 ESM、不压缩；`client.js` 4843 B，客户端 CJS 压缩后套 `window.__ModuleLoader__.load` 工厂）；生成是、提交是。
 

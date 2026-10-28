@@ -9,7 +9,7 @@
 | 命令 | 实现文件 | 子命令数 | 说明 |
 | ---- | -------- | -------- | ---- |
 | `pnpm build` | `pnpm -r build` | 5 | 递归五个包：四个包出 `lib/`，`ascii-rest-scenes` 出 `src/catalog.generated.ts` |
-| `pnpm test` | `pnpm -r test` | 5 | 递归五个包的 `vitest run`，实测 40 文件 515 用例 |
+| `pnpm test` | `pnpm -r test` | 5 | 递归五个包的 `vitest run`，实测 40 文件 529 用例 |
 | `pnpm typecheck` | `pnpm -r typecheck` | 5 | 递归 `tsc -p tsconfig.json`，`noEmit` |
 | `pnpm check:market` | `scripts/check-market-manifest.mjs` | 1 | 断言三个可投稿包面向市场索引的暴露面（宿主真正读取的字段） |
 | `pnpm build:market` | `scripts/build-market-index.mjs` | 1 | 从包自身元数据派生 `market/index.json`（format 1，git source） |
