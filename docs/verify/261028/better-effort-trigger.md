@@ -34,6 +34,21 @@
 3. **触发器必须真订阅目录**。只调 `getSnapshot()` 而不 `subscribe`，选择变更后触发器不会重渲染——表现为"等级选对了，但触发器还显示旧的"。
 4. **`conversation.input.model.label` 子 slot 不可复用**。它只对声明它的那个注册者提供 `renderSlot`，二次声明会抛 `already declared (by …)`。所以遮蔽 seat 时模型名只能自己从目录渲染；当前两个 profile 都没有该 slot 的贡献者，原生 fallback 同样是 `model.name`，行为一致。若将来装了给触发器加 provider 前缀的插件（`dsh-model-provider-label`），它的前缀不会出现在本包的触发器上。
 
+## 第五个坑：类名前缀是逐构建的哈希，且因宿主而异
+
+这条比前四个严重得多，因为它**不会在自测里暴露**。触发器的样式全部复用原生 `ModelSelect` 的类名，我最初把它们写死成 `_7KE1Ra_*`——那是 CLI 构建里的值。同一个版本在 desktop 应用的 bundle 里是 `htuFrW_*`：
+
+```js
+// cli（node_modules 内）
+const css = "._7KE1Ra_root{min-width:0;position:relative}._7KE1Ra_trigger{...}"
+// desktop（app.asar 内，同为 0.2.1-rc.3）
+const css = ".htuFrW_root{min-width:0;position:relative}.htuFrW_trigger{...}"
+```
+
+后果是我在 web 上验证通过、看起来完全正常，而你重启 desktop 后看到的是一个**完全没有样式的裸按钮**。修法与弹窗类名一致：按稳定的 `data-plugin-css` id 取出 `<style>` 再抓六位前缀；六项缺一就返回 undefined，整个触发器回落原生 seat，而不是退化成无样式按钮。
+
+`test/seat-classes.test.ts` 把这个场景钉住了：同时喂 CLI 与 desktop 两种前缀，断言都能读出来。
+
 ## 已知边界
 
 - 触发器遮蔽只在本包能打开选择器时生效（`/model` 贡献存在且会话可解析），否则回落到原生 seat。
