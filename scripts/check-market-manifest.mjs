@@ -28,7 +28,13 @@ const repoRoot = join(here, "..");
  */
 const PUBLISHABLE = ["dsh-jump"];
 /** Workspace packages that must stay out of the index, and so must stay private. */
-const UNPUBLISHED = ["dsh-better-keybindings", "dsh-slash-commands", "dsh-session-timing", "dsh-model-provider-label"];
+const UNPUBLISHED = [
+  "dsh-better-keybindings",
+  "dsh-slash-commands",
+  "dsh-session-timing",
+  "dsh-model-provider-label",
+  "dsh-better",
+];
 const MAX_ICON_BYTES = 256 * 1024;
 const ICON_TYPES = new Map([[".svg", "image/svg+xml"], [".png", "image/png"], [".jpg", "image/jpeg"], [".jpeg", "image/jpeg"], [".webp", "image/webp"]]);
 /** Install lifecycle hooks would run code on a machine that only meant to add a plugin. */
