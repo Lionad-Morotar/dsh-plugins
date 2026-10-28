@@ -58,7 +58,7 @@ export interface PreviewContext {
     register(definition: Record<string, unknown>, body: unknown): () => void;
   };
   readonly remote: { readonly workspaceFiles: ByteReader };
-  readonly effect?: (effect: () => unknown, label?: string) => void;
+  readonly effect: (effect: () => () => void, label?: string) => void;
   /**
    * Cordis's scoped injection: runs the callback in a scope that has the named
    * services, and re-runs it if one appears later. This is the only correct way
@@ -72,54 +72,4 @@ export interface PreviewContext {
 export interface InjectionScope {
   /** Read one service, or undefined when the scope did not resolve it. */
   get<T>(name: string): T | undefined;
-}
-
-/**
- * Register one reversible effect through whichever lifecycle the host offers.
- *
- * Cordis contexts expose `effect`; a host that does not (a bare test double)
- * still needs the registration to happen, so the fallback simply runs it and
- * keeps the disposer.
- * @param ctx - client plugin context.
- * @param run - effect body returning its disposer.
- * @returns the disposer, when the caller wants to call it directly.
- */
-export function effect(ctx: PreviewContext, run: () => () => void): (() => void) | undefined {
-  if (typeof ctx.effect === "function") {
-    ctx.effect(run);
-    return undefined;
-  }
-  return run();
-}
-
-/**
- * Read a file's complete bytes through the host's workspace service.
- *
- * The service caps a complete read (32 MiB by default) and refuses rather than
- * truncates, so an oversized model surfaces as a named error instead of a
- * silently half-parsed mesh.
- * @param reader - workspace file reader.
- * @param file - resolved session file target.
- * @param signal - cancellation for a tab that closed mid-read.
- * @returns the file bytes.
- */
-export async function readFileBytes(reader: ByteReader, file: FileTarget, signal?: AbortSignal): Promise<Uint8Array> {
-  const result = await reader.readBytes(file.sessionId, file.path, {}, signal);
-  if (!result.ok) throw new Error(`read failed: ${describeError(result.error)}`, { cause: result.error });
-  return result.value.data;
-}
-
-/**
- * One-line description of a thrown or wire-shaped failure.
- * @param error - anything a catch produced.
- * @returns a message safe to render.
- */
-export function describeError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  if (error !== null && typeof error === "object") {
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === "string") return code;
-  }
-  return "unknown error";
 }

@@ -28,6 +28,7 @@ import {
   DirectionalLight,
   GridHelper,
   Group,
+  LoadingManager,
   Mesh,
   MeshStandardMaterial,
   PerspectiveCamera,
@@ -187,7 +188,10 @@ export function meshKindOf(path: string): MeshKind | null {
 export function loaderFor(path: string, draco: DRACOLoader, siblings?: ReadonlyMap<string, Uint8Array>): MeshLoader {
   const suffix = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
   if (suffix === "glb" || suffix === "gltf") {
-    const loader = new GLTFLoader();
+    // Its own manager, not three's module-level default. A URL modifier set on
+    // the shared one would also rewrite every other loader's relative URLs for
+    // the life of the page, including another plugin's and the host's own.
+    const loader = new GLTFLoader(new LoadingManager());
     loader.setDRACOLoader(draco);
 
     // A .gltf names its buffers and textures by relative URI, and the loader's
@@ -211,6 +215,9 @@ export function loaderFor(path: string, draco: DRACOLoader, siblings?: ReadonlyM
     }
     const revoke = (): void => {
       for (const objectUrl of created.splice(0)) URL.revokeObjectURL(objectUrl);
+      // Drop the modifier with the URLs it handed out: keeping it would leave
+      // this document's bytes reachable to any later load on this manager.
+      loader.manager.setURLModifier(undefined);
     };
 
     return {

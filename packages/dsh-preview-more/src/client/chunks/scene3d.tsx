@@ -20,6 +20,7 @@ import { wasmBinary, wasmWrapper } from "virtual:draco-assets";
 import { parseSessionFileAddress } from "../address.ts";
 import { formatMessage } from "../locale.ts";
 import type { ReadFile } from "../runtime.ts";
+import { canAttempt, failureMessage, prepareAttempt } from "../mount.ts";
 import { decodeUriPath, mountScene, type SceneFacts, type SceneHandle } from "../scene3d.ts";
 
 export type { ReadFile } from "../runtime.ts";
@@ -78,8 +79,9 @@ function SceneSurface(props: {
 
   useEffect(() => {
     const container = containerRef.current;
-    if (container === null) return;
+    if (!canAttempt(container)) return;
     let disposed = false;
+    prepareAttempt({ container, clear: () => container.replaceChildren() });
     setState({ kind: "loading" });
 
     void (async () => {
@@ -94,7 +96,7 @@ function SceneSurface(props: {
         settledRef.current?.(true);
       } catch (error) {
         if (disposed) return;
-        setState({ kind: "failed", message: error instanceof Error ? error.message : String(error) });
+        setState({ kind: "failed", message: failureMessage(error) });
         settledRef.current?.(false);
       }
     })();
@@ -110,14 +112,20 @@ function SceneSurface(props: {
     handleRef.current?.setWireframe(wireframe);
   }, [wireframe, state.kind]);
 
+  // The canvas host stays mounted even on failure: the retry effect resolves it
+  // through the ref, so unmounting it here would leave the button with nothing
+  // to mount into and make a failed preview permanently unrecoverable.
   if (state.kind === "failed") {
     return (
-      <div className="preview-more-status" role="alert" data-testid="preview-more-scene-failed">
-        <p>{t("state.failed")}</p>
-        <p className="preview-more-detail">{state.message}</p>
-        <button type="button" className="preview-more-action" onClick={() => setAttempt((value) => value + 1)}>
-          {t("state.retry")}
-        </button>
+      <div className="preview-more-scene" data-testid="preview-more-scene">
+        <div ref={containerRef} className="preview-more-canvas" hidden />
+        <div className="preview-more-status" role="alert" data-testid="preview-more-scene-failed">
+          <p>{t("state.failed")}</p>
+          <p className="preview-more-detail">{state.message}</p>
+          <button type="button" className="preview-more-action" onClick={() => setAttempt((value) => value + 1)}>
+            {t("state.retry")}
+          </button>
+        </div>
       </div>
     );
   }
@@ -207,7 +215,13 @@ export function Body(props: BodyProps): React.ReactElement {
   if (bytes === null || absolutePath === undefined) {
     return <p className="preview-more-status">{t("state.loading")}</p>;
   }
-  const readSibling = siblingReader(readFile, target?.sessionId, absolutePath, tab.signal);
+  // Memoized on the values it closes over: a new identity per render would sit in
+  // the mount effect's dependency list and tear down the WebGL context (and
+  // re-read every sibling) on every unrelated re-render of this body.
+  const readSibling = useMemo(
+    () => siblingReader(readFile, target?.sessionId, absolutePath, tab.signal),
+    [readFile, target?.sessionId, absolutePath, tab.signal],
+  );
   return <SceneSurface bytes={bytes} path={absolutePath} t={t} onSettled={settle} readSibling={readSibling} />;
 }
 
@@ -244,12 +258,20 @@ export function Viewer(props: ViewerProps): React.ReactElement {
   const { t, customData, path, readFile, scope } = props;
   const bytes = customData?.bytes;
   const filePath = customData?.path ?? path;
+  // One controller for the life of the viewer, aborted on unmount. Creating it
+  // per render would throw the abort away and hand the effect a new identity
+  // every time, remounting the viewport for no reason.
+  const abortRef = useRef<AbortController | null>(null);
+  abortRef.current ??= new AbortController();
+  const signal = abortRef.current.signal;
+  useEffect(() => () => abortRef.current?.abort(), []);
+  const sessionId = scope?.sessionId;
+  const readSibling = useMemo(
+    () => (readFile === undefined || sessionId === undefined ? undefined : siblingReader(readFile, sessionId, filePath, signal)),
+    [readFile, sessionId, filePath, signal],
+  );
   if (bytes === undefined) {
     return <p className="preview-more-status">{t("state.loading")}</p>;
   }
-  const readSibling =
-    readFile === undefined || scope === undefined
-      ? undefined
-      : siblingReader(readFile, scope.sessionId, filePath, new AbortController().signal);
   return <SceneSurface bytes={bytes} path={filePath} t={t} readSibling={readSibling} />;
 }

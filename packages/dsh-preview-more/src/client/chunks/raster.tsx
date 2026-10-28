@@ -17,7 +17,8 @@ import * as utif from "utif";
 
 import { parseSessionFileAddress } from "../address.ts";
 import { formatMessage } from "../locale.ts";
-import { decodeMode, decodeTiff } from "../raster.ts";
+import { failureMessage } from "../mount.ts";
+import { RasterError, decodeMode, decodeTiff } from "../raster.ts";
 import type { ReadFile } from "../runtime.ts";
 
 /** What the native body receives from the host, narrowed to the fields used. */
@@ -100,11 +101,13 @@ function RasterSurface(props: {
     try {
       const pages = decodeTiff(bytes, utif);
       if (disposed) return;
-      setState(pages.length === 0 ? { kind: "failed", message: "no pages" } : { kind: "pages", pages });
+      setState(pages.length === 0 ? { kind: "failed", message: t("raster.noPages") } : { kind: "pages", pages });
       settledRef.current?.(pages.length > 0);
     } catch (error) {
       if (disposed) return;
-      setState({ kind: "failed", message: error instanceof Error ? error.message : String(error) });
+      // A decode failure carries a locale key; anything else is prose from utif
+      // or the platform, which is shown as-is because it names the real problem.
+      setState({ kind: "failed", message: error instanceof RasterError ? t(error.key) : failureMessage(error) });
       settledRef.current?.(false);
     }
 

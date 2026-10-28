@@ -18,6 +18,23 @@ type UtifApi = typeof UtifModule;
 export type DecodeMode = "tiff" | "native";
 
 /**
+ * A decode failure that names a locale key rather than a sentence.
+ *
+ * The decoder has no translator and should not grow one: it runs in plain Node
+ * with no locale in scope. Carrying the key lets the component render a message
+ * in the reader's language instead of putting English library prose on screen.
+ */
+export class RasterError extends Error {
+  /**
+   * @param key - locale key naming the failure.
+   */
+  constructor(readonly key: string) {
+    super(key);
+    this.name = "RasterError";
+  }
+}
+
+/**
  * Decide which decoder draws one file.
  *
  * TIFF has no browser decoder, so it is decoded here with utif; AVIF has one but
@@ -64,11 +81,11 @@ function bufferOf(bytes: Uint8Array): ArrayBuffer {
 function decodePage(api: UtifApi, buffer: ArrayBuffer, page: number): DecodedPage {
   const ifds = api.decode(buffer);
   const ifd = ifds[page];
-  if (ifd === undefined) throw new Error("dsh-preview-more: TIFF page " + String(page) + " does not exist");
+  if (ifd === undefined) throw new RasterError("raster.pageMissing");
   api.decodeImage(buffer, ifd);
   const width = ifd.width ?? 0;
   const height = ifd.height ?? 0;
-  if (width <= 0 || height <= 0) throw new Error("dsh-preview-more: TIFF page has no pixels");
+  if (width <= 0 || height <= 0) throw new RasterError("raster.emptyPage");
   return { width, height, rgba: api.toRGBA8(ifd) };
 }
 

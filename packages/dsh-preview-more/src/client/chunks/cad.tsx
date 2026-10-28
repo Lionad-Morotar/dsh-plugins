@@ -15,6 +15,7 @@ import { DxfViewer } from "dxf-viewer";
 import { parseSessionFileAddress } from "../address.ts";
 import { formatMessage } from "../locale.ts";
 import { mountDrawing, type DxfHandle } from "../cad.ts";
+import { canAttempt, failureMessage, prepareAttempt } from "../mount.ts";
 import type { ReadFile } from "../runtime.ts";
 
 /** What the native body receives from the host, narrowed to the fields used. */
@@ -67,8 +68,9 @@ function CadSurface(props: {
 
   useEffect(() => {
     const container = containerRef.current;
-    if (container === null) return;
+    if (!canAttempt(container)) return;
     let disposed = false;
+    prepareAttempt({ container, clear: () => container.replaceChildren() });
     setState({ kind: "loading" });
 
     void (async () => {
@@ -83,7 +85,7 @@ function CadSurface(props: {
         settledRef.current?.(true);
       } catch (error) {
         if (disposed) return;
-        setState({ kind: "failed", message: error instanceof Error ? error.message : String(error) });
+        setState({ kind: "failed", message: failureMessage(error) });
         settledRef.current?.(false);
       }
     })();
@@ -95,14 +97,20 @@ function CadSurface(props: {
     };
   }, [bytes, attempt]);
 
+  // The canvas host stays mounted even on failure: the retry effect resolves it
+  // through the ref, so unmounting it here would leave the button with nothing
+  // to mount into and make a failed drawing permanently unrecoverable.
   if (state.kind === "failed") {
     return (
-      <div className="preview-more-status" role="alert" data-testid="preview-more-cad-failed">
-        <p>{t("state.failed")}</p>
-        <p className="preview-more-detail">{state.message}</p>
-        <button type="button" className="preview-more-action" onClick={() => setAttempt((value) => value + 1)}>
-          {t("state.retry")}
-        </button>
+      <div className="preview-more-scene" data-testid="preview-more-cad">
+        <div ref={containerRef} className="preview-more-canvas" hidden />
+        <div className="preview-more-status" role="alert" data-testid="preview-more-cad-failed">
+          <p>{t("state.failed")}</p>
+          <p className="preview-more-detail">{state.message}</p>
+          <button type="button" className="preview-more-action" onClick={() => setAttempt((value) => value + 1)}>
+            {t("state.retry")}
+          </button>
+        </div>
       </div>
     );
   }

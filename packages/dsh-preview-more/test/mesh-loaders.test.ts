@@ -69,4 +69,23 @@ describe("mesh loaders", () => {
     expect(meshKindOf("/tmp/a.png")).toBeNull();
     await expect(loaderFor("/tmp/a.png", draco).load(bytesOf("x"))).rejects.toThrow();
   });
+
+  it("rejects a glTF whose external buffer was not supplied", async () => {
+    // A .gltf that names its buffer by URI cannot be parsed without that file.
+    // Serving the sibling is proven in a real browser, where blob URLs and fetch
+    // exist; stubbing them here would test the stub. What this pins is the
+    // failure mode: a rejection, never a silently empty scene that a reader would
+    // see as a blank pane.
+    const gltf = JSON.stringify({
+      asset: { version: "2.0" },
+      scenes: [{ nodes: [0] }],
+      scene: 0,
+      nodes: [{ mesh: 0 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+      buffers: [{ uri: "tri.bin", byteLength: 42 }],
+      bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 42 }],
+      accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [0, 0, 0], max: [1, 1, 0] }],
+    });
+    await expect(loaderFor("/tmp/model.gltf", draco).load(bytesOf(gltf))).rejects.toThrow();
+  });
 });
