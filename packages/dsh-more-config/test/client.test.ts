@@ -64,6 +64,25 @@ describe("client entry", () => {
     expect(resolveKit(broken)).toBeUndefined();
   });
 
+  it("accepts the platform's forwardRef primitives, which are objects not functions", () => {
+    // The live seed ships Button and Input as forwardRef exotic components:
+    // runtime objects with a $$typeof symbol marker. A typeof-function check
+    // silently refused them and the section never mounted — the regression
+    // this test locks.
+    const forwardRef = () => ({ $$typeof: Symbol("react.forward_ref"), render: () => null });
+    const seed = {
+      SettingsForm: () => null,
+      SettingsValueField: () => null,
+      Button: forwardRef(),
+      Input: forwardRef(),
+    };
+    const require = (specifier: string) => (specifier === "@deepseek-ai/dsh-client-ui-primitives" ? seed : undefined);
+    const kit = resolveKit(require);
+    expect(kit).toBeDefined();
+    expect(kit?.Button).toBe(seed.Button);
+    expect(kit?.Input).toBe(seed.Input);
+  });
+
   it("delivers the browser half in a ModuleLoader factory keyed by package name", () => {
     const bundle = readFileSync(join(packageRoot, "lib", "client.js"), "utf8");
     expect(bundle).toContain('window.__ModuleLoader__.load({');

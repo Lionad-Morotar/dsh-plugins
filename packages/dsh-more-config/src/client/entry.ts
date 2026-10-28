@@ -37,6 +37,19 @@ export interface ClientContextLike {
   readonly configForms?: { get(namespace: string): ScopeLike | undefined };
 }
 
+/** A function component, or a forwardRef exotic component object. */
+function isKitComponent(value: unknown): boolean {
+  if (typeof value === "function") return true;
+  return typeof value === "object" && value !== null && typeof (value as { $$typeof?: unknown }).$$typeof === "symbol";
+}
+
+/*
+ * The seed table ships Button and Input as forwardRef exotic components:
+ * runtime objects marked with $$typeof, callable as JSX element types but not
+ * typeof "function". The check above admits both; the casts below are the
+ * static seam where the object form meets the JSX-facing ComponentType.
+ */
+
 /**
  * Resolve the platform kit through the loader.
  *
@@ -49,15 +62,15 @@ export function resolveKit(require: ModuleRequire | null): SectionKit | undefine
   const SettingsValueField = primitives?.SettingsValueField;
   const Button = primitives?.Button;
   const Input = primitives?.Input;
-  if (typeof SettingsForm !== "function") return undefined;
-  if (typeof SettingsValueField !== "function") return undefined;
-  if (typeof Button !== "function") return undefined;
-  if (typeof Input !== "function") return undefined;
+  if (!isKitComponent(SettingsForm)) return undefined;
+  if (!isKitComponent(SettingsValueField)) return undefined;
+  if (!isKitComponent(Button)) return undefined;
+  if (!isKitComponent(Input)) return undefined;
   return {
     SettingsForm: SettingsForm as SectionKit["SettingsForm"],
     SettingsValueField: SettingsValueField as SectionKit["SettingsValueField"],
-    Button: Button as SectionKit["Button"],
-    Input: Input as SectionKit["Input"],
+    Button: Button as unknown as SectionKit["Button"],
+    Input: Input as unknown as SectionKit["Input"],
   };
 }
 
