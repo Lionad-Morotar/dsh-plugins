@@ -36,7 +36,7 @@ const CSS = `
   height: 100%;
   /* The drawing renders its own background, but the letterbox area around a
      raster page does not, and a white page on a white pane is invisible. */
-  background: var(--dsh-surface-sunken, rgba(127, 127, 127, 0.08));
+  background: var(--dsw-alias-bg-layer-2, rgba(127, 127, 127, 0.08));
 }
 
 .preview-more-canvas > canvas {
@@ -70,8 +70,8 @@ const CSS = `
   padding: 6px 8px;
   flex: 0 0 auto;
   font-size: 12px;
-  color: var(--dsh-text-secondary, currentColor);
-  border-top: 1px solid var(--dsh-border-subtle, transparent);
+  color: var(--dsw-alias-label-secondary, currentColor);
+  border-top: 1px solid var(--dsw-alias-border-l2, transparent);
 }
 
 .preview-more-facts {
@@ -84,7 +84,7 @@ const CSS = `
 .preview-more-action {
   flex: 0 0 auto;
   padding: 2px 8px;
-  border: 1px solid var(--dsh-border-strong, currentColor);
+  border: 1px solid var(--dsw-alias-border-l3, currentColor);
   border-radius: 4px;
   background: transparent;
   color: inherit;
@@ -93,7 +93,7 @@ const CSS = `
 }
 
 .preview-more-action:hover:not(:disabled) {
-  background: var(--dsh-surface-hover, rgba(127, 127, 127, 0.12));
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, 0.12));
 }
 
 .preview-more-action:disabled {
@@ -104,13 +104,13 @@ const CSS = `
 .preview-more-status {
   padding: 10px 12px;
   font-size: 12px;
-  color: var(--dsh-text-secondary, currentColor);
+  color: var(--dsw-alias-label-secondary, currentColor);
   flex: 0 0 auto;
 }
 
 .preview-more-detail {
   margin: 4px 0 8px;
-  font-family: var(--dsh-font-mono, monospace);
+  font-family: var(--dsw-font-mono, ui-monospace, monospace);
   font-size: 11px;
   opacity: 0.8;
   word-break: break-word;
@@ -131,9 +131,20 @@ export function insertStyles(doc: Document): () => void {
   const selector = `style[data-plugin-css="${STYLE_TAG}"]`;
   if (doc.querySelector(selector) !== null) return () => undefined;
   const tag = doc.createElement("style");
-  tag.dataset.plugin = STYLE_TAG;
+  // One attribute is the identity. A second one would be a second source of
+  // truth that the selector does not consult.
   tag.dataset.pluginCss = STYLE_TAG;
   tag.textContent = CSS;
   doc.head.append(tag);
-  return () => tag.remove();
+  // Check after appending, not only before: two hosts applying concurrently can
+  // both pass the check above, and the loser has to back out or one of them will
+  // later remove a stylesheet the other is still using.
+  const all = doc.querySelectorAll(selector);
+  const first = all[0] ?? null;
+  const duplicated = first !== tag && first !== null;
+  if (duplicated) tag.remove();
+  const inserted = !duplicated;
+  return () => {
+    if (inserted) tag.remove();
+  };
 }

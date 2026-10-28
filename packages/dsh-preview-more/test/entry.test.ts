@@ -39,8 +39,9 @@ interface Recorded {
  * `extensions`, a duplicate id) fails here the same way.
  * @returns the context plus the registration log.
  */
-function fakeContext(): { ctx: never; log: Recorded[]; run: () => void } {
+function fakeContext(): { ctx: never; log: Recorded[]; run: () => void; teardown: () => void } {
   const log: Recorded[] = [];
+  const effects: Array<() => void> = [];
   const track = (kind: Recorded["kind"], value: Record<string, unknown>): (() => void) => {
     const entry: Recorded = { kind, value, disposed: false };
     log.push(entry);
@@ -50,6 +51,12 @@ function fakeContext(): { ctx: never; log: Recorded[]; run: () => void } {
   };
 
   const ctx = {
+    // cordis collects what a plugin registers and disposes it when the plugin
+    // unloads; teardown() below plays that role so the tests exercise the same
+    // path a real host would.
+    effect: (run: () => () => void) => {
+      effects.push(run());
+    },
     locale: {
       bind: (namespace: string) => (key: string) => namespace + ":" + key,
       register: (namespace: string, dictionaries: Record<string, Record<string, string>>) => {
@@ -83,7 +90,14 @@ function fakeContext(): { ctx: never; log: Recorded[]; run: () => void } {
       return callback({ get: () => undefined });
     },
   };
-  return { ctx: ctx as never, log, run: () => {} };
+  return {
+    ctx: ctx as never,
+    log,
+    run: () => {},
+    teardown: () => {
+      for (const dispose of effects.splice(0)) dispose();
+    },
+  };
 }
 
 beforeEach(() => {
@@ -106,8 +120,8 @@ describe("client entry", () => {
   });
 
   it("registers one definition per catalogued family, at the extension band", () => {
-    const { ctx, log } = fakeContext();
-    const dispose = clientPlugin.apply(ctx);
+    const { ctx, log, teardown } = fakeContext();
+    clientPlugin.apply(ctx);
     const definitions = log.filter((entry) => entry.kind === "definition");
 
     // The count is the catalogue's, so adding a family here is a deliberate act.
@@ -119,12 +133,12 @@ describe("client entry", () => {
     expect(definitions[0]?.value.extensions).toEqual(["glb", "gltf", "obj", "stl", "3mf"]);
     expect(definitions[1]?.value.extensions).toEqual(["tif", "tiff", "avif"]);
     expect(definitions[2]?.value.extensions).toEqual(["dxf"]);
-    dispose();
+    teardown();
   });
 
   it("gives every definition a keyed body in the document slot", () => {
-    const { ctx, log } = fakeContext();
-    const dispose = clientPlugin.apply(ctx);
+    const { ctx, log, teardown } = fakeContext();
+    clientPlugin.apply(ctx);
     const bodies = log.filter((entry) => entry.kind === "body");
 
     expect(bodies.map((entry) => entry.value.key)).toEqual(["dsh-preview-more/scene3d", "dsh-preview-more/raster", "dsh-preview-more/cad"]);
@@ -134,34 +148,35 @@ describe("client entry", () => {
       const inject = body.value.inject as () => Record<string, unknown>;
       expect(typeof inject().readFile).toBe("function");
     }
-    dispose();
+    teardown();
   });
 
   it("registers the dictionaries before anything reads a title", () => {
-    const { ctx, log } = fakeContext();
-    const dispose = clientPlugin.apply(ctx);
+    const { ctx, log, teardown } = fakeContext();
+    clientPlugin.apply(ctx);
     expect(log[0]?.kind).toBe("locale");
     const definition = log.find((entry) => entry.kind === "definition");
     const title = (definition?.value as Record<string, unknown>).title as () => string;
     expect(title()).toBe("previewMore:scene3d.title");
-    dispose();
+    teardown();
   });
 
   it("disposes what it registered", () => {
-    const { ctx, log } = fakeContext();
-    clientPlugin.apply(ctx)();
+    const { ctx, log, teardown } = fakeContext();
+    clientPlugin.apply(ctx);
     // The optional-service injection is owned by the host's `ctx.inject`, so only
     // the entry's own registrations are the entry's to dispose.
+    teardown();
     const owned = log.filter((entry) => entry.kind !== "viewer" && (entry.value as { deps?: unknown }).deps === undefined);
     expect(owned.length).toBeGreaterThan(0);
     expect(owned.every((entry) => entry.disposed)).toBe(true);
   });
 
   it("does not require the better-sidebar service to be present", () => {
-    const { ctx } = fakeContext();
+    const { ctx, teardown } = fakeContext();
     expect(() => {
-      const dispose = clientPlugin.apply(ctx);
-      dispose();
+      clientPlugin.apply(ctx);
+      teardown();
     }).not.toThrow();
   });
 
@@ -170,13 +185,15 @@ describe("client entry", () => {
     const doc = {
       head: { append: (tag: { textContent: string }) => installed.push(tag.textContent) },
       querySelector: () => null,
+      querySelectorAll: () => [],
       createElement: () => ({ dataset: {}, textContent: "", remove: () => undefined }),
     } as unknown as Document;
 
     // Without this rule set an unstyled canvas has no box and paints nothing,
     // which reaches the reader as "the preview does not work".
-    const dispose = withDocument(doc, () => clientPlugin.apply(fakeContext().ctx));
+    const { ctx, teardown } = fakeContext();
+    withDocument(doc, () => clientPlugin.apply(ctx));
     expect(installed.some((css) => css.includes(".preview-more-scene"))).toBe(true);
-    dispose();
+    teardown();
   });
 });

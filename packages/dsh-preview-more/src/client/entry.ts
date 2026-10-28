@@ -72,6 +72,11 @@ export function loadChunk(family: PreviewFamily): Promise<ChunkModule> {
     }
     return chunk as ChunkModule;
   });
+  // Only a resolved chunk is worth keeping. Caching the rejected promise would
+  // make one transient failure (a load racing the loader's hand-over) permanent
+  // for the life of the page: every later attempt would replay that rejection
+  // instead of retrying the fetch.
+  pending.catch(() => chunkCache.delete(family));
   chunkCache.set(family, pending);
   return pending;
 }
@@ -152,14 +157,16 @@ export const clientPlugin = {
   name: "dsh-preview-more",
   inject: ["documentPreviews", "slots", "locale", "remote", "remote.workspaceFiles"],
 
-  apply(ctx: PreviewContext): () => void {
+  apply(ctx: PreviewContext): void {
     const React = resolveReact();
     const t = ctx.locale.bind(LOCALE_NAMESPACE);
     const readFile = createReader(ctx);
-    const disposers: Array<() => void> = [];
+    // ctx.effect is how a plugin half registers disposable work in cordis; it is
+    // present in every real context, and both host profiles run this through one.
+    // A fallback branch would be dead code that also claims teardown this
+    // function does not perform.
     const register = (run: () => () => void): void => {
-      if (typeof ctx.effect === "function") ctx.effect(run, "dsh-preview-more: registration");
-      else disposers.push(run());
+      ctx.effect(run, "dsh-preview-more: registration");
     };
 
     register(() => ctx.locale.register(LOCALE_NAMESPACE, dictionaries()));
@@ -203,9 +210,10 @@ export const clientPlugin = {
       registerBetterSidebarViewers(ctx, { React, t, readFile, family, loadChunk });
     }
 
-    return () => {
-      for (const dispose of disposers) dispose();
-    };
+    // Teardown is not this function's job: every registration went through
+    // ctx.effect or ctx.inject, and cordis owns both. A closure that walked a
+    // list here would always be empty in a real context and would suggest this
+    // plugin cleans up after itself when it is the host doing so.
   },
 };
 

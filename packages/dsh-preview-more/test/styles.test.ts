@@ -36,6 +36,9 @@ function fakeDocument(): Document {
       // attribute, so a second insert sees the first one.
       return selector.includes("dsh-preview-more") && children.length > 0 ? children[0] : null;
     },
+    querySelectorAll(selector: string) {
+      return selector.includes("dsh-preview-more") ? children.slice() : [];
+    },
     createElement(tag: string) {
       const element = {
         tagName: tag,
@@ -101,5 +104,51 @@ describe("insertStyles", () => {
     expect((doc.head as unknown as { children: unknown[] }).children).toHaveLength(1);
     dispose();
     expect((doc.head as unknown as { children: unknown[] }).children).toHaveLength(0);
+  });
+
+  it("backs out when a concurrent insert won the race", () => {
+    // Two hosts applying at once can both pass the pre-append check, because
+    // neither has appended yet when it looks. The loser must remove its own tag
+    // and hand back a disposer that touches nothing, or its teardown deletes the
+    // stylesheet the winner is still using.
+    const children = (doc.head as unknown as { children: unknown[] }).children;
+    let blindChecks = 1;
+    const racing = {
+      ...doc,
+      // The losing insert's pre-check runs before the winner appended.
+      querySelector(selector: string) {
+        if (blindChecks > 0) {
+          blindChecks -= 1;
+          return null;
+        }
+        return selector.includes("dsh-preview-more") && children.length > 0 ? children[0] : null;
+      },
+      querySelectorAll(selector: string) {
+        return selector.includes("dsh-preview-more") ? children.slice() : [];
+      },
+    } as unknown as Document;
+    const childrenOf = (racing.head as unknown as { children: unknown[] }).children;
+    // The winner is already in place by the time the loser appends.
+    const winner = doc.createElement("style") as unknown as { dataset: Record<string, string>; textContent: string };
+    winner.dataset.pluginCss = "dsh-preview-more";
+    childrenOf.push(winner);
+
+    const dispose = insertStyles(racing);
+    expect(childrenOf).toHaveLength(1);
+    dispose();
+    expect(childrenOf).toHaveLength(1);
+  });
+
+  it("only references custom properties the host actually defines", () => {
+    // A var() with a fallback still renders, which is exactly why an invented
+    // token name survives review: nothing breaks, the colour just stops
+    // following the theme. The host's tokens are the --dsw-* family; --dsh-* was
+    // an earlier invention that matched nothing in the app bundle.
+    insertStyles(doc);
+    const css = styleText(doc);
+    const referenced = [...css.matchAll(/var\((--[a-z0-9-]+)/gu)].map((match) => match[1]);
+
+    expect(referenced.length).toBeGreaterThan(0);
+    for (const name of referenced) expect(name).toMatch(/^--dsw-/u);
   });
 });
