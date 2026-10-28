@@ -94,6 +94,40 @@ export interface MeshLoader {
   load(buffer: ArrayBuffer): Promise<unknown>;
 }
 
+/**
+ * List the external files one glTF document references.
+ *
+ * Data URIs are excluded: they carry their own bytes and must be left for the
+ * loader to decode.
+ * @param json - parsed glTF document, or null when the bytes were binary.
+ * @returns relative URIs of sibling files, in document order.
+ */
+export function externalUris(json: unknown): string[] {
+  if (json === null || typeof json !== "object") return [];
+  const document = json as { buffers?: { uri?: unknown }[]; images?: { uri?: unknown }[] };
+  const collect = (entries: { uri?: unknown }[] | undefined): string[] =>
+    (entries ?? []).flatMap((entry) => {
+      const uri = entry.uri;
+      return typeof uri === "string" && uri.length > 0 && !uri.startsWith("data:") ? [uri] : [];
+    });
+  return [...collect(document.buffers), ...collect(document.images)];
+}
+
+/**
+ * Decode a `.gltf` document so its sibling references can be read.
+ * @param buffer - file bytes.
+ * @param binary - true for `.glb`, whose JSON chunk is not the whole file.
+ * @returns the parsed document, or null when it cannot be read.
+ */
+export function gltfDocument(buffer: ArrayBuffer, binary: boolean): unknown {
+  if (binary) return null;
+  try {
+    return JSON.parse(new TextDecoder().decode(buffer));
+  } catch {
+    return null;
+  }
+}
+
 /** The mesh containers this viewport can read. */
 export type MeshKind = "gltf" | "obj" | "stl" | "3mf";
 
@@ -127,15 +161,47 @@ export function meshKindOf(path: string): MeshKind | null {
  * @param draco - Draco loader shared with the glTF loader.
  * @returns a loader exposing `load` for the file kind.
  */
-export function loaderFor(path: string, draco: DRACOLoader): MeshLoader {
+export function loaderFor(path: string, draco: DRACOLoader, siblings?: ReadonlyMap<string, Uint8Array>): MeshLoader {
   const suffix = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
   if (suffix === "glb" || suffix === "gltf") {
     const loader = new GLTFLoader();
     loader.setDRACOLoader(draco);
+
+    // A .gltf names its buffers and textures by relative URI, and the loader's
+    // own resolution is a fetch against the document base, which in a plugin is
+    // the app root and therefore a 404. Answering those reads from bytes the
+    // caller already fetched keeps the whole load off the network.
+    //
+    // A blob URL is how three's file layer wants a resource, so each sibling
+    // becomes one; they are revoked once parsing settles, because a blob URL
+    // pins its bytes until then.
+    const created: string[] = [];
+    if (siblings !== undefined && siblings.size > 0) {
+      loader.manager.setURLModifier((url: string) => {
+        const key = url.replace(/^\.\//u, "");
+        const bytes = siblings.get(key) ?? siblings.get(key.slice(key.lastIndexOf("/") + 1));
+        if (bytes === undefined) return url;
+        const objectUrl = URL.createObjectURL(new Blob([bytes as unknown as BlobPart]));
+        created.push(objectUrl);
+        return objectUrl;
+      });
+    }
+    const revoke = (): void => {
+      for (const objectUrl of created.splice(0)) URL.revokeObjectURL(objectUrl);
+    };
+
     return {
       load: (buffer) =>
         new Promise((resolve, reject) => {
-          loader.parse(buffer, "", (gltf: unknown) => resolve(gltf), reject);
+          // Parsing finishes after every buffer and texture has been consumed,
+          // so the URLs can be released here rather than at viewport teardown.
+          loader.parse(buffer, "", (gltf: unknown) => {
+            revoke();
+            resolve(gltf);
+          }, (error: unknown) => {
+            revoke();
+            reject(error);
+          });
         }),
     };
   }
@@ -211,12 +277,46 @@ export function measure(root: Group): SceneFacts {
   return { meshes, triangles: Math.round(triangles) };
 }
 
+/** Suffix of a glTF that keeps its buffers and textures outside the file. */
+const SEPARATE_GLTF = "gltf";
+
+/**
+ * Fetch every file a .gltf names by relative URI.
+ *
+ * A .glb carries its buffers inline and answers with an empty map. A .gltf that
+ * names siblings needs them read before parsing, because the parser resolves
+ * those URIs itself through a fetch that cannot reach the workspace.
+ * @param path - decoded file path, used for the suffix and the directory.
+ * @param buffer - file bytes.
+ * @param readSibling - reads one sibling, or undefined when the host offers none.
+ * @returns the sibling bytes keyed by the URI as the document names it.
+ */
+async function readSiblings(
+  path: string,
+  buffer: ArrayBuffer,
+  readSibling: ((relative: string) => Promise<Uint8Array>) | undefined,
+): Promise<Map<string, Uint8Array>> {
+  const resolved = new Map<string, Uint8Array>();
+  if (readSibling === undefined) return resolved;
+  const suffix = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  if (suffix !== SEPARATE_GLTF) return resolved;
+  const document = gltfDocument(buffer, false);
+  const uris = externalUris(document);
+  await Promise.all(
+    uris.map(async (uri) => {
+      resolved.set(uri, await readSibling(uri));
+    }),
+  );
+  return resolved;
+}
+
 /**
  * Mount a WebGL viewport inside one element and draw a model into it.
  * @param container - the element the canvas fills.
  * @param bytes - complete file bytes.
  * @param path - decoded file path, used only to pick the loader.
  * @param sources - embedded Draco decoder payloads.
+ * @param readSibling - reads a file referenced by a .gltf, relative to the model.
  * @returns the live handle plus the measured facts.
  */
 export async function mountScene(
@@ -224,6 +324,7 @@ export async function mountScene(
   bytes: Uint8Array,
   path: string,
   sources: DecoderSources,
+  readSibling?: (relative: string) => Promise<Uint8Array>,
 ): Promise<{ handle: SceneHandle; facts: SceneFacts }> {
   const width = Math.max(container.clientWidth, 1);
   const height = Math.max(container.clientHeight, 1);
@@ -247,7 +348,8 @@ export async function mountScene(
   const draco = createDracoLoader(sources);
   const view = bytes.byteOffset;
   const buffer = bytes.buffer.slice(view, view + bytes.byteLength) as ArrayBuffer;
-  const parsed = await loaderFor(path, draco).load(buffer);
+  const siblings = await readSiblings(path, buffer, readSibling);
+  const parsed = await loaderFor(path, draco, siblings).load(buffer);
   const content = new Group();
   content.add(rootOf(parsed));
   scene.add(content);

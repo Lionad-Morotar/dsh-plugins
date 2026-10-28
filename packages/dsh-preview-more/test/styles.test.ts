@@ -9,6 +9,15 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { insertStyles } from "../src/client/styles.ts";
 
+/**
+ * The stylesheet text a document received.
+ * @param doc - document the entry installed into.
+ * @returns the CSS, or an empty string when nothing was installed.
+ */
+function styleText(doc: Document): string {
+  return (doc.head as unknown as { children: { textContent: string }[] }).children[0]?.textContent ?? "";
+}
+
 /** A minimal document: `head` is all this module touches. */
 function fakeDocument(): Document {
   const children: { tagName: string; dataset: Record<string, string>; textContent: string }[] = [];
@@ -64,6 +73,20 @@ describe("insertStyles", () => {
 
     expect(css).toContain(".preview-more-raster");
     expect(css).toContain(".preview-more-image");
+  });
+
+  it("letterboxes a raster page instead of distorting it", () => {
+    insertStyles(doc);
+    const css = styleText(doc);
+    const rule = /\.preview-more-canvas-image[^{]*\{([^}]*)\}/u.exec(css)?.[1] ?? "";
+
+    // object-fit applies to a canvas only when both dimensions are set: with
+    // max-width alone the computed value falls back to fill, which stretched a
+    // 59x52 scan across the whole sidebar. The invariant is "contain, with a
+    // full box", and it has to hold as a pair or neither part works.
+    expect(rule).toMatch(/object-fit:\s*contain/u);
+    expect(rule).toMatch(/(?<!max-)(?<!min-)width:\s*100%/u);
+    expect(rule).toMatch(/(?<!max-)(?<!min-)height:\s*100%/u);
   });
 
   it("inserts at most one tag, so a second host does not stack stylesheets", () => {

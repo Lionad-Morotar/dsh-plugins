@@ -27,15 +27,16 @@ const CSS = `
   overflow: hidden;
 }
 
-.preview-more-canvas,
-.preview-more-canvas-image,
-.preview-more-image {
+.preview-more-canvas {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
-  display: block;
+  display: flex;
   width: 100%;
   height: 100%;
+  /* The drawing renders its own background, but the letterbox area around a
+     raster page does not, and a white page on a white pane is invisible. */
+  background: var(--dsh-surface-sunken, rgba(127, 127, 127, 0.08));
 }
 
 .preview-more-canvas > canvas {
@@ -45,8 +46,20 @@ const CSS = `
   touch-action: none;
 }
 
+/* A raster page keeps its aspect ratio inside the panel.
+   object-fit does apply to a canvas, but only when both width and height are
+   set: with max-width alone the computed value falls back to fill and the
+   bitmap stretches. So the element is given the whole box and object-fit
+   letterboxes the page inside it, which keeps a tall scan readable and does not
+   distort a wide one. */
 .preview-more-canvas-image,
 .preview-more-image {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 

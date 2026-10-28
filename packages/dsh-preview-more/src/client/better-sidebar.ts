@@ -85,7 +85,9 @@ export function registerBetterSidebarViewers(ctx: PreviewContext, deps: AdapterD
     return React.createElement(
       React.Suspense,
       { fallback: null },
-      React.createElement(Lazy, { ...props, t }),
+      // The reader travels with the props because a .gltf names sibling files
+      // that only the host's workspace reader can reach.
+      React.createElement(Lazy, { ...props, t, readFile: deps.readFile }),
     );
   } as ComponentType<never>;
 

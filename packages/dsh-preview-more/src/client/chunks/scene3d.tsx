@@ -65,8 +65,9 @@ function SceneSurface(props: {
   readonly path: string;
   readonly t: (key: string, values?: Record<string, string | number>) => string;
   readonly onSettled?: (ok: boolean) => void;
+  readonly readSibling?: (relative: string) => Promise<Uint8Array>;
 }): React.ReactElement {
-  const { bytes, path, t, onSettled } = props;
+  const { bytes, path, t, onSettled, readSibling } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<SceneHandle | null>(null);
   const [state, setState] = useState<ViewState>({ kind: "loading" });
@@ -85,7 +86,7 @@ function SceneSurface(props: {
       try {
         const { mountScene } = await import("../scene3d.ts");
         if (disposed) return;
-        const { handle, facts } = await mountScene(container, bytes, path, { wasmWrapper, wasmBinary });
+        const { handle, facts } = await mountScene(container, bytes, path, { wasmWrapper, wasmBinary }, readSibling);
         if (disposed) {
           handle.dispose();
           return;
@@ -105,7 +106,7 @@ function SceneSurface(props: {
       handleRef.current?.dispose();
       handleRef.current = null;
     };
-  }, [bytes, path, attempt]);
+  }, [bytes, path, attempt, readSibling]);
 
   useEffect(() => {
     handleRef.current?.setWireframe(wireframe);
@@ -208,7 +209,51 @@ export function Body(props: BodyProps): React.ReactElement {
   if (bytes === null || absolutePath === undefined) {
     return <p className="preview-more-status">{t("state.loading")}</p>;
   }
-  return <SceneSurface bytes={bytes} path={absolutePath} t={t} onSettled={settle} />;
+  const readSibling = siblingReader(readFile, target?.sessionId, absolutePath, tab.signal);
+  return <SceneSurface bytes={bytes} path={absolutePath} t={t} onSettled={settle} readSibling={readSibling} />;
+}
+
+/**
+ * Build a reader for files sitting next to the model.
+ *
+ * A .gltf names its buffers and textures by URI relative to itself, and those
+ * files are only reachable through the host's workspace reader, never through a
+ * fetch. The reader resolves each URI against the model's own directory so the
+ * document's own relative semantics are preserved.
+ * @param readFile - the host byte reader.
+ * @param sessionId - session the file belongs to.
+ * @param modelPath - absolute path of the model.
+ * @param signal - aborts the read when the tab closes.
+ * @returns a reader over sibling URIs, or undefined when there is no session.
+ */
+function siblingReader(
+  readFile: ReadFile,
+  sessionId: string | undefined,
+  modelPath: string,
+  signal: AbortSignal,
+): ((relative: string) => Promise<Uint8Array>) | undefined {
+  if (sessionId === undefined) return undefined;
+  const directory = modelPath.slice(0, modelPath.lastIndexOf("/"));
+  return (relative) => readFile(sessionId, decodeUriPath(directory + "/" + relative), signal);
+}
+
+/**
+ * Turn a URI reference into a path.
+ *
+ * A glTF URI is percent-encoded and may be relative, so `My Texture.png` arrives
+ * as `My%20Texture.png`. It is decoded here because the workspace reader takes
+ * real paths. A remote or absolute URI is returned unchanged: the reader will
+ * fail on it, which surfaces the document's real problem rather than masking it.
+ * @param reference - URI reference as the document wrote it.
+ * @returns the path to hand to the reader.
+ */
+export function decodeUriPath(reference: string): string {
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/u.test(reference)) return reference;
+  try {
+    return decodeURIComponent(reference);
+  } catch {
+    return reference;
+  }
 }
 
 /**
@@ -217,11 +262,15 @@ export function Body(props: BodyProps): React.ReactElement {
  * @returns the viewport.
  */
 export function Viewer(props: ViewerProps): React.ReactElement {
-  const { t, customData, path } = props;
+  const { t, customData, path, readFile, scope } = props;
   const bytes = customData?.bytes;
   const filePath = customData?.path ?? path;
   if (bytes === undefined) {
     return <p className="preview-more-status">{t("state.loading")}</p>;
   }
-  return <SceneSurface bytes={bytes} path={filePath} t={t} />;
+  const readSibling =
+    readFile === undefined || scope === undefined
+      ? undefined
+      : siblingReader(readFile, scope.sessionId, filePath, new AbortController().signal);
+  return <SceneSurface bytes={bytes} path={filePath} t={t} readSibling={readSibling} />;
 }

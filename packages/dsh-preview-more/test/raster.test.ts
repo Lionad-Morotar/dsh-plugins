@@ -1,11 +1,11 @@
 /**
  * TIFF decode tests, driven by real files.
  *
- * The fixtures are real TIFFs, not synthesized strings: one written page by page
- * (two pages, the multi-page path) and one LZW-compressed file written by macOS
- * `sips` (the compression path a screenshot or scan actually takes). A decoder
- * that only handles uncompressed single-page files would pass a hand-built
- * fixture and fail a user's file.
+ * Every fixture is a real TIFF written by a real encoder, because the failure
+ * this guards against is a decoder that handles one easy flavour and not the
+ * one a user's scanner produced. The set covers, in order: uncompressed
+ * multi-page, LZW (what macOS Preview and most scanners emit), LZW with two
+ * pages, and Deflate.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -47,12 +47,38 @@ describe("decodeTiff", () => {
     expect(Array.from(first.rgba.subarray(0, 4))).toEqual([220, 40, 40, 255]);
   });
 
-  it("decodes a compressed file produced by another tool", () => {
-    const [page] = decodeTiff(fixture("compressed.tiff"), utif);
+  it("decodes an LZW-compressed scan", () => {
+    // LZW is the compression a scanner and macOS Preview both produce, so this
+    // is the flavour most users' files actually are.
+    const [page] = decodeTiff(fixture("lzw-single.tiff"), utif);
 
-    expect(page?.width).toBe(59);
-    expect(page?.height).toBe(52);
-    expect(page?.rgba.length).toBe(59 * 52 * 4);
+    expect(page?.width).toBe(1240);
+    expect(page?.height).toBe(1754);
+    expect(page?.rgba.length).toBe(1240 * 1754 * 4);
+    // Page one is near-white paper, so the top-left pixel is light and opaque.
+    const first = page?.rgba.subarray(0, 4) ?? new Uint8Array();
+    expect(first[3]).toBe(255);
+    expect(first[0]).toBeGreaterThan(230);
+  });
+
+  it("reads both pages of an LZW file, in order", () => {
+    const pages = decodeTiff(fixture("lzw-two-pages.tiff"), utif);
+
+    expect(pages).toHaveLength(2);
+    expect(pages.map((page) => [page.width, page.height])).toEqual([
+      [1240, 1754],
+      [1240, 1754],
+    ]);
+    // The second page is tinted blue, so its first pixel differs from the first
+    // page's. Comparing them is the check that page two was decoded, not reused.
+    const firstPixel = (page: (typeof pages)[number]): number => page.rgba[2] ?? 0;
+    expect(firstPixel(pages[1] as (typeof pages)[number])).toBeGreaterThan(firstPixel(pages[0] as (typeof pages)[number]));
+  });
+
+  it("decodes a Deflate-compressed file", () => {
+    const [page] = decodeTiff(fixture("deflate.tiff"), utif);
+    expect(page?.width).toBe(900);
+    expect(page?.height).toBe(1200);
   });
 
   it("refuses bytes that are not a TIFF", () => {
