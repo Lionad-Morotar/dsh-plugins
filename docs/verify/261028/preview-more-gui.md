@@ -155,3 +155,27 @@ loader.parse(buffer, "", (gltf: unknown) => resolve(gltf), reject);
 添加工作区这一步走不通，不是插件问题。点「添加工作区…」会拉起 macOS 原生 `NSOpenPanel`（经 `osascript -l JavaScript`），在这个无屏幕录制权限的会话里它直接挂住并返回 `directory picker failed`，页面显示「无法打开文件夹」。两次之后还残留了两个 osascript 进程，用 `kill -9` 清掉。因此素材只能放进已存在的工作区 `dsh-plugins` 的 `temp/preview-fixtures/`，不能临时挂一个 `/tmp` 工作区。
 
 另外 `screencapture` 在这个会话里只能得到全黑图（缺屏幕录制权限），所以所有取证都用页面级截图，不用系统截图。
+
+## 第二轮修复后的复验
+
+第二轮外部审查的四条 major 修完之后，mountScene 的结构有改动（整段包进 try、抽出释放函数），所以三条家族路径的渲染入口都重跑了一遍，确认正常路径没被这层改动带坏。
+
+跑法与前文一致：真实浏览器、better-sidebar 宿主、从文件树打开、等 16 秒后读取 DOM 标记。文件放在仓库内未被 gitignore 的目录，因为文件树不列被忽略的路径。
+
+| 文件 | 命中分支 | 结果 | 异常 |
+| --- | --- | --- | --- |
+| Box.glb | 单文件 glb | `1 meshes · 12 triangles`，一个 canvas | 0 |
+| draco-box/Box.gltf | 外部 buffer + Draco 压缩 | `1 meshes · 12 triangles`，一个 canvas | 0 |
+| floorplan.dxf | CAD | `4 layers`，一个 canvas | 0 |
+| lzw-two-pages.tiff | 多页光栅 | `Page 1 of 2` | 0 |
+
+draco-box 这条是最有价值的用例：它同时走外部 buffer 的预读改写与内联解码器两条路径，而这两条恰好是前两轮出过致命错误的地方（外部 buffer 曾 404，内联解码器曾因 import.meta 在 CJS 下求值而整块 chunk 抛错）。它通过，说明释放路径的包裹没有破坏加载链路。
+
+### 更正前文 D2 的根因
+
+前文把「极小位图被拉伸铺满」归因为 `object-fit` 对 canvas 无效。这个判断是错的，已用 A/B 实验推翻：`object-fit` 对 canvas 有效，但前提是同时设了 width 与 height；只设 max-width 时计算值退回 fill。现在的实现是 `width: 100%; height: 100%` 加 `object-fit: contain`，小图因此按比例留白而不是拉满，真机截图里 lzw-two-pages.tiff 的页面是完整且正确留边的。留这段记录是因为错误归因会直接导致错误修法：按当初的建议改成 max-width 加 auto，反而会让大图溢出容器。
+
+### 仍未覆盖
+
+前文列出的七项未覆盖范围在本轮没有变化。其中最值得补的是真正 LZW 压缩的 TIFF（现用的固件实为未压缩，LZW 分支没被触发）与引用外部贴图的 glTF。这两条属于固件缺口，不是实现缺口，补固件即可，不需要改产品代码。
+
