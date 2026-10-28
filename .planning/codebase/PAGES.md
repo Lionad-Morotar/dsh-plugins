@@ -1,17 +1,17 @@
 # 页面与入口清单
 
-<!-- refreshed: 261027 -->
+<!-- refreshed: 261028 -->
 
-数据来源：本仓没有前端路由体系（web 客户端半边以 ModuleLoader 工厂挂载，不是页面路由），页面族不适用；命令族取自根 `package.json` 的 scripts 与五个包各自的 scripts，静态提取。另附两张本仓真正对外的入口表：插件挂载入口（profile 里的 Loader row 由哪个 patch 文件提供、带哪份清单）与客户端半边入口（`src/client/entry.ts` 对应哪个产物、注册在哪个 slot）。市场分发产物（`market/`）单列一节，它是本仓对外承诺安装形态的那一面。
+数据来源：本仓没有前端路由体系（web 客户端半边以 ModuleLoader 工厂挂载，不是页面路由），页面族不适用；命令族取自根 `package.json` 的 scripts 与八个包各自的 scripts，静态提取。另附两张本仓真正对外的入口表：插件挂载入口（profile 里的 Loader row 由哪个 patch 文件提供、带哪份清单）与客户端半边入口（`src/client/entry.ts` 对应哪个产物、注册在哪个 slot）。市场分发产物（`market/`）单列一节，它是本仓对外承诺安装形态的那一面。
 
 ## 命令总览
 
 | 命令 | 实现文件 | 子命令数 | 说明 |
 | ---- | -------- | -------- | ---- |
-| `pnpm build` | `pnpm -r build` | 5 | 递归五个包：四个包出 `lib/`，`ascii-rest-scenes` 出 `src/catalog.generated.ts` |
-| `pnpm test` | `pnpm -r test` | 5 | 递归五个包的 `vitest run`，实测 40 文件 529 用例 |
-| `pnpm typecheck` | `pnpm -r typecheck` | 5 | 递归 `tsc -p tsconfig.json`，`noEmit` |
-| `pnpm check:market` | `scripts/check-market-manifest.mjs` | 1 | 断言三个可投稿包面向市场索引的暴露面（宿主真正读取的字段） |
+| `pnpm build` | `pnpm -r build` | 8 | 递归八个包：七个包出 `lib/`，`ascii-rest-scenes` 出 `src/catalog.generated.ts` |
+| `pnpm test` | `pnpm -r test` | 8 | 递归八个包的 `vitest run`，实测 61 文件 651 用例 |
+| `pnpm typecheck` | `pnpm -r typecheck` | 8 | 递归 `tsc -p tsconfig.json`，`noEmit` |
+| `pnpm check:market` | `scripts/check-market-manifest.mjs` | 1 | 断言可投稿包面向市场索引的暴露面（宿主真正读取的字段），并断言四个自用包保持 `private: true` |
 | `pnpm build:market` | `scripts/build-market-index.mjs` | 1 | 从包自身元数据派生 `market/index.json`（format 1，git source） |
 | `pnpm check:market-index` | `scripts/build-market-index.mjs --check` | 1 | 只校验不写盘，输出每个包的安装 spec |
 | `pnpm build:awesome` | `scripts/build-awesome-entry.mjs` | 1 | 产出 awesome 社区目录条目 YAML，须带 `assets/icon-180.png` 光栅图 |
@@ -32,9 +32,9 @@
 
 | 包 | 脚本 | 命令 | 说明 |
 | -- | ---- | ---- | ---- |
-| 五个包 | `build` | `node scripts/build.mjs`（`ascii-rest-scenes` 为 `node scripts/generate-catalog.mjs`） | 唯一的产物生成入口，`lib/` 只允许被它写 |
-| 五个包 | `test` | `vitest run` | 单包测试 |
-| 五个包 | `typecheck` | `tsc -p tsconfig.json` | 单包类型检查 |
+| 八个包 | `build` | `node scripts/build.mjs`（`ascii-rest-scenes` 为 `node scripts/generate-catalog.mjs`） | 唯一的产物生成入口，`lib/` 只允许被它写 |
+| 八个包 | `test` | `vitest run` | 单包测试 |
+| 八个包 | `typecheck` | `tsc -p tsconfig.json` | 单包类型检查 |
 | `ascii-rest-scenes` | `build:catalog` | `node scripts/generate-catalog.mjs` | 与 `build` 同一条命令，语义化别名：升级上游 ascii.rest commit 后重跑它 |
 
 ## 插件挂载入口
@@ -46,24 +46,30 @@
 | `dsh-client-ui-skin-ascii-rest` | `ui-skin-ascii-rest` | `@lionad/dsh-client-ui-skin-ascii-rest` | `packages/dsh-client-ui-skin-ascii-rest/cordis.patch.yml` | `skin.json`（皮肤管理器读，`id: ascii-rest`） |
 | `dsh-jump` | `jump` | `dsh-jump` | `packages/dsh-jump/cordis.patch.yml` | 无；市场文案走 `locale/{zh,en}.json` 的 `meta` |
 | `dsh-better-keybindings` | `better-keybindings` | `dsh-better-keybindings` | `packages/dsh-better-keybindings/cordis.patch.yml` | 无；同上 |
+| `dsh-preview-more` | `preview-more` | `dsh-preview-more` | `packages/dsh-preview-more/cordis.patch.yml` | `icon.svg` + `locale/{zh,en}.json` |
 | `dsh-slash-commands` | `dsh-slash-commands` | `dsh-slash-commands` | `packages/dsh-slash-commands/cordis.patch.yml` | `dsh-plugin.json`（Community Draft 0.15 准入清单，只声明宿主侧 `/copy` 与 `/rename`） |
+| `dsh-session-timing` | `session-timing` | `dsh-session-timing` | `packages/dsh-session-timing/cordis.patch.yml` | 无；宿主半注册 `sessionTiming` projection，市场文案走 `locale/{zh,en}.json` 的 `meta` |
+| `dsh-model-provider-label` | `model-provider-label` | `dsh-model-provider-label` | `packages/dsh-model-provider-label/cordis.patch.yml` | 无；同上 |
 
 ## 客户端半边入口
 
-四个包有客户端半边，产物一律由 `exports["./client"]` 指向 `lib/client.js`，顶层包进 `window.__ModuleLoader__.load({id, factory})`。注册位置是宿主派生的 slot，不是页面路由。
+六个包有客户端半边，产物一律由 `exports["./client"]` 指向 `lib/client.js`，顶层包进 `window.__ModuleLoader__.load({id, factory})`。注册位置是宿主派生的 slot，不是页面路由。
 
 | 包 | 源码入口 | 产物 | 注册位置 |
 | -- | -------- | ---- | -------- |
 | `dsh-client-ui-skin-ascii-rest` | `src/client/entry.ts` | `lib/client.js` + `lib/client.gui.js` + 34 个 `lib/client.<scene>.js` | `slots.register({ name: "settings.section", id: SETTINGS_ID, order: 116 })`；`inject = ["slots", "theme"]` |
 | `dsh-jump` | `src/client/entry.ts` → `createRuntime` | `lib/client.js` | `slots.register({ name: "settings.general.item", id: "jump", order: 18 })`；服务经 `ctx` 软探测而非 `inject`，缺设置面时导航仍然可用 |
 | `dsh-better-keybindings` | `src/client/entry.ts` | `lib/client.js` | 不注册 slot：只挂一个捕获阶段 `keydown` |
+| `dsh-preview-more` | `src/client/entry.ts` | `lib/client.js` + 按需 chunk | `slots.register({ name: "sidebar.right.tab.document", key, locale })`，`readFile` 经 `inject` 注入；3D / CAD / HDR 三类渲染器分块懒加载 |
 | `dsh-slash-commands` | `src/client/entry.ts` | `lib/client.js` | 不经命令注册表：用 `ctx.effect` 注册有界剪贴板与 `/resume` 贡献；`inject = ["commandUi", "sessions", "workspaces", "uiWorkspace"]` |
+| `dsh-session-timing` | `src/client/entry.ts` | `lib/client.js` | 以 `id: activity`、`priority: -1` 接管 `conversation.composer.dock` 的统计 pill；`inject = ["slots", "locale", "configForms"]`，模式偏好镜像 `ui-chat` 的 `performanceUsage` |
+| `dsh-model-provider-label` | `src/client/entry.ts` | `lib/client.js` | 以 `priority: -1` 接管 `conversation.input.model.label`（`single` slot，上游模型名与 1017 徽章插件不再挂载）；`inject = ["slots"]` |
 
 ## 市场分发产物
 
 | 产物 | 消费者 | 说明 |
 | ---- | ------ | ---- |
-| `market/index.json` | DSH 插件管理器（Discover 加索引 URL） | format 1 索引，三个条目，git source 钉 commit；icon 已内联为 data URI，索引自足 |
+| `market/index.json` | DSH 插件管理器（Discover 加索引 URL） | format 1 索引，一个条目（`dsh-jump`），git source 钉 commit；icon 已内联为 data URI，索引自足 |
 | `market/awesome/*.yml` | awesome-dsh-plugin 社区目录 | 每包一条，字段从 `package.json` 与 `locale` 派生，`icon` 指向 GitHub raw 上的 `assets/icon-180.png` |
 
 两份产物都是生成物，改包元数据后应重跑 `pnpm build:market` 与 `pnpm build:awesome <包名>`，而不是手改。
