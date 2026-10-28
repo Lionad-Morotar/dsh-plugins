@@ -41,3 +41,14 @@ probe profile 的 `cordis.patch.yml` 一次种下两行：`more-config` 行带 `
 - 命令行路径（`/mcp-timeout` 的设置与重置）与面板 GUI 属日常使用验收面，逻辑分支已由 52 个单测覆盖；
 - `settings/document-updated` 事件驱动的增量同步：事件发射与监听均已从宿主源码核实（settings/index.js 的 `write()` 尾部 emit + reconciler 的 global 监听），但本探针只验证了启动首跑路径；
 - 已知边界（v1 记录在案）：面板不内嵌 MCP 行清单，entryId 以命令报错清单为准；`configEditor.edit` 被组合覆盖拒绝时错误进日志、批次其余行不受影响。
+
+## 追记：GUI 全链路验收（同日第二轮）
+
+外部审查判定 B1（快照无缓存 + 裸用 useSyncExternalStore 在宿主 React 18.3.1 的一致性检查下无限重渲）为阻塞级并要求修后在真宿主开一次设置页。修复后以 Playwright Chromium 对一次性 profile（同法搭建）实测，这一轮又揪出两个只有真机才可见的缺陷：
+
+1. 包清单未声明 `dsh.client.platform: "web"`：宿主 client-modules 服务只把声明了该字段的包编入浏览器启动图，客户端半 404 于无形——插件管理页照常显示"运行中"（那是宿主半的纤维状态），设置页却永远不出现 MCP 栏，且零报错。
+2. 种子表里的 `Button`/`Input` 是 forwardRef 异组件：运行时是带 `$$typeof` 符号标记的对象，不是函数。原 kit 解析的 `typeof x === "function"` 判定把它们静默拒绝，apply 直接不注册。这正是外审点名"renderer-free 测试策略的系统性盲区"的第二例。
+
+修复后的实测结论（8/8）：MCP 导航出现并进入，种子行 `mcp-probe-server` 渲染出 660000 输入值，中文文案就位，点 kimi 预设暂存新行、entryId 输入框接受键入，全部交互在毫秒级响应（无重渲死循环），页面错误为零。截图存 `more-config-gui/section-final.png` 的本地复现路径见下。
+
+复现脚本要点：Playwright headless Chromium；`Meta+Alt+Comma` 打开设置（web 端快捷键）；首启需先点掉 Preview Notice 弹层；SPA 常驻连接不会 networkidle，等待策略用 domcontentloaded + 定窗。
