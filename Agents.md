@@ -1,8 +1,8 @@
 # Agents.md
 
-Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。九个包：DSH 客户端 UI 皮肤 `@lionad/dsh-client-ui-skin-ascii-rest`（把 ascii.rest 的 ASCII 场景渲染为工作区背景，随亮暗主题换配色）与其纯逻辑层 `ascii-rest-scenes`（场景目录、cover 取景、调色板、设置归一化，DOM-free）；右侧栏文件预览补全 `dsh-preview-more`（3D 模型、CAD 图纸与高位深图片）；web 端键盘跳跃导航 `dsh-jump`；web 与 desktop 共用的键盘修正 `dsh-better-keybindings`（输入框聚焦时 Home/End 移动光标而非滚动聊天区；PageUp/PageDown 改为半屏翻页）；三端 slash 命令 `dsh-slash-commands`（TUI 的 `/copy` 剪贴板、web 与 desktop 的 `/rename` 会话改名与 `/resume` 会话切换）；会话统计的计时口径修正 `dsh-session-timing`（模型用时只计最后成功的那次尝试，重试用时单独成行）与输入框模型名的 provider 前缀 `dsh-model-provider-label`；原生能力增强 `dsh-better`（`/model` 选择器支持按供应商搜索，模型名搜索语义不变）。
+Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。十个包：DSH 客户端 UI 皮肤 `@lionad/dsh-client-ui-skin-ascii-rest`（把 ascii.rest 的 ASCII 场景渲染为工作区背景，随亮暗主题换配色）与其纯逻辑层 `ascii-rest-scenes`（场景目录、cover 取景、调色板、设置归一化，DOM-free）；右侧栏文件预览补全 `dsh-preview-more`（3D 模型、CAD 图纸与高位深图片）；web 端键盘跳跃导航 `dsh-jump`；web 与 desktop 共用的键盘修正 `dsh-better-keybindings`（输入框聚焦时 Home/End 移动光标而非滚动聊天区；PageUp/PageDown 改为半屏翻页）；三端 slash 命令 `dsh-slash-commands`（TUI 的 `/copy` 剪贴板、web 与 desktop 的 `/rename` 会话改名与 `/resume` 会话切换）；会话统计的计时口径修正 `dsh-session-timing`（模型用时只计最后成功的那次尝试，重试用时单独成行）与输入框模型名的 provider 前缀 `dsh-model-provider-label`；原生能力增强 `dsh-better`（`/model` 选择器支持按供应商搜索，模型名搜索语义不变）；MCP 配置 `dsh-more-config`（设置页 MCP 栏与 `/mcp-timeout` 命令共用一个 volatile shadow 命名空间，由宿主半单向同步到 mcp-client 行的超时覆盖）。
 
-共同发行模型：Loader row 经 `cordis.patch.yml` 注入，`lib/` 构建产物提交入库，profile 安装态不跑构建。其中 `dsh-jump` 已发到 npm（`0.1.0`）并有市场投稿面：`scripts/` 下的三个脚本从包自身元数据派生 `market/index.json`（format 1 索引，钉 npm 版本）与 `market/awesome/*.yml`（社区目录条目），改包元数据后要重跑而不是手改产物。`dsh-better-keybindings`、`dsh-slash-commands`、`dsh-session-timing`、`dsh-model-provider-label` 与 `dsh-better` 仍在日常使用中验证，以 `private: true` 声明自用，不参与索引，清单检查器会断言它们保持 private。
+共同发行模型：Loader row 经 `cordis.patch.yml` 注入，`lib/` 构建产物提交入库，profile 安装态不跑构建。其中 `dsh-jump` 已发到 npm（`0.1.0`）并有市场投稿面：`scripts/` 下的三个脚本从包自身元数据派生 `market/index.json`（format 1 索引，钉 npm 版本）与 `market/awesome/*.yml`（社区目录条目），改包元数据后要重跑而不是手改产物。`dsh-better-keybindings`、`dsh-slash-commands`、`dsh-session-timing`、`dsh-model-provider-label`、`dsh-better` 与 `dsh-more-config` 仍在日常使用中验证，以 `private: true` 声明自用，不参与索引，清单检查器会断言它们保持 private。
 
 ## 项目上下文
 
@@ -33,6 +33,7 @@ Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。九个包：DSH 客�
 | `dsh-session-timing` | [README](./packages/dsh-session-timing/README.md)：重试重锚的计时口径、`sessionTiming` projection 与不接管 `sessionStats` 的理由 |
 | `dsh-model-provider-label` | [README](./packages/dsh-model-provider-label/README.md)：`single` slot 的三处渲染、只给 trigger 加前缀的理由、1017 徽章的复刻 |
 | `dsh-better` | [README](./packages/dsh-better/README.md)：`/model` 按供应商搜索、list slot 遮蔽与按对象结算的取舍 |
+| `dsh-more-config` | [README](./packages/dsh-more-config/README.md)：shadow 写漏斗、单向同步语义、真宿主探针实测与 link 安装 |
 
 ## 只读参考仓库
 
