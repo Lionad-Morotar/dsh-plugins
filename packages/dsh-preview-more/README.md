@@ -16,6 +16,7 @@ DeepSeek Harness 右侧栏的文件预览补全：把宿主内置预览管不了
 | `.obj` `.stl` `.3mf` | 无法预览 | 同一个 3D 视口 |
 | `.tif` `.tiff` | 列为不可预览的二进制，只有下载入口 | 位图渲染，多页文件可翻页 |
 | `.avif` | 未列入内置图片扩展名 | 位图渲染 |
+| `.dxf` | 列为不可预览的二进制，只有下载入口 | CAD 视口，图层配色、图层计数、适应窗口 |
 
 以下格式刻意不接管：docx、pdf、png、svg、xlsx 等宿主渲染得更好，重复注册只会遮住更好的实现。
 
@@ -44,10 +45,13 @@ Loader row 由包内 `cordis.patch.yml` 注入，不需要手工改 profile 配�
 
 ## 实现约定
 
-- 引擎按需加载：3D 引擎（three.js，约 1.2MB）在 `lib/client.scene3d.js` 里，只有真的打开模型才会下载；TIFF 解码器（utif）在 `lib/client.raster.js` 里，只有打开 tiff 或 avif 才下载。入口 `lib/client.js` 只带注册元数据与词条，约 5KB。
+- 引擎按需加载，一个渲染器一个 chunk：3D 引擎（three.js，约 1.2MB）在 `lib/client.scene3d.js`，TIFF 解码器（utif，约 90KB）在 `lib/client.raster.js`，CAD 渲染器（dxf-viewer 含自带的 three，约 1.3MB）在 `lib/client.cad.js`。三者都只在真的打开对应文件时下载。入口 `lib/client.js` 只带注册元数据与词条，约 8KB。
+- 格式目录是唯一的事实源：`src/client/formats.ts` 决定谁接管哪些后缀、归哪个渲染器、chunk 叫什么名，注册循环从它派生，新增格式只动这个文件。
 - 一个 chunk 只产出一个文件：chunk 由带版本号的路由整体下发，运行期再分裂出的子文件没有可访问的地址，所以 chunk 内部的 import 一律静态。
 - Draco 解码器内联进 chunk，不走网络。three 的 `DRACOLoader` 用 `new URL(..., import.meta.url)` 找解码器，而插件 chunk 由带版本号的路由提供，没有可解析的文件布局，所以构建期把 `draco_wasm_wrapper.js` 与 `draco_decoder.wasm` 嵌进虚拟模块，再通过 `_loadLibrary` 从内存回给加载器。
 - 字节一律经 `ctx.remote.workspaceFiles.readBytes` 读取，沿用会话授权，不绕开权限面。
+- 分离式 `.gltf`（buffer 与纹理是同级文件）的外部资源也走同一个读取器，按文档声明的相对 uri 预读后经 URL 修饰器从内存回给加载器。加载器自己解析相对 uri 会落到站点根，插件里那是个 404。
+- `dxf-viewer` 只接受 URL 并自己发起请求，所以字节被包成 blob URL 传入，解析落定即刻释放；整条链路仍然零外部网络。
 
 ## 开发
 

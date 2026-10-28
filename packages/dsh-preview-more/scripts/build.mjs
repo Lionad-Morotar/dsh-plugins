@@ -23,6 +23,7 @@
  */
 import { build } from "esbuild";
 import { createRequire } from "node:module";
+import { gzipSync } from "node:zlib";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +36,23 @@ const manifest = require(join(packageRoot, "package.json"));
 
 /** Renderer families, each one lazy chunk. Mirrors src/client/formats.ts. */
 const CHUNKS = ["scene3d", "raster", "cad"];
+
+/**
+ * Gzipped size ceilings per emitted file.
+ *
+ * The route transfers these gzipped, so that is the number a reader pays. The
+ * ceiling is what keeps "add one format" from quietly turning every model
+ * preview into a multi-megabyte download.
+ */
+const SIZE_BUDGETS = {
+  "client.js": 24 * 1024,
+  // three plus the inlined Draco decoder: the floor for a real mesh viewport.
+  "client.scene3d.js": 520 * 1024,
+  // utif is 83 KB of the raw 90 KB; the rest is this plugin's own code.
+  "client.raster.js": 40 * 1024,
+  // dxf-viewer carries its own three scene.
+  "client.cad.js": 560 * 1024,
+};
 
 /**
  * The ModuleLoader wrapper shared by the entry and every chunk.
@@ -217,6 +235,20 @@ async function main(checkOnly) {
     }),
   );
   process.stdout.write(`${written.length} files\n${sizes.join("\n")}\n`);
+
+  // The budgets are part of the product, not a wish: a chunk that grows past
+  // its ceiling means a reader who opens one model downloads something nobody
+  // asked for. Gzipped, because that is what the route actually transfers.
+  const over = [];
+  for (const [file, budget] of Object.entries(SIZE_BUDGETS)) {
+    const bytes = await readFile(join(libRoot, file));
+    const gzipped = gzipSync(bytes).length;
+    if (gzipped > budget) over.push(`${file}: ${String(gzipped)} B gzipped, budget ${String(budget)} B`);
+  }
+  if (over.length > 0) {
+    process.stderr.write(`over size budget:\n  ${over.join("\n  ")}\n`);
+    process.exitCode = 1;
+  }
 }
 
 await main(process.argv.includes("--check"));
