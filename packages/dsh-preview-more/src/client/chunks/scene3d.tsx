@@ -20,7 +20,8 @@ import { wasmBinary, wasmWrapper } from "virtual:draco-assets";
 import { parseSessionFileAddress } from "../address.ts";
 import { formatMessage } from "../locale.ts";
 import type { ReadFile } from "../runtime.ts";
-import { canAttempt, failureMessage, prepareAttempt } from "../mount.ts";
+import type { ReportMark } from "../mount.ts";
+import { UNREPORTED, canAttempt, failureMessage, prepareAttempt, shouldSettle } from "../mount.ts";
 import { decodeUriPath, mountScene, type SceneFacts, type SceneHandle } from "../scene3d.ts";
 
 export type { ReadFile } from "../runtime.ts";
@@ -65,7 +66,7 @@ function SceneSurface(props: {
   readonly bytes: Uint8Array;
   readonly path: string;
   readonly t: (key: string, values?: Record<string, string | number>) => string;
-  readonly onSettled?: (ok: boolean) => void;
+  readonly onSettled?: (ok: boolean, attempt: number) => void;
   readonly readSibling?: (relative: string) => Promise<Uint8Array>;
 }): React.ReactElement {
   const { bytes, path, t, onSettled, readSibling } = props;
@@ -93,11 +94,11 @@ function SceneSurface(props: {
         }
         handleRef.current = handle;
         setState({ kind: "ready", facts });
-        settledRef.current?.(true);
+        settledRef.current?.(true, attempt);
       } catch (error) {
         if (disposed) return;
         setState({ kind: "failed", message: failureMessage(error) });
-        settledRef.current?.(false);
+        settledRef.current?.(false, attempt);
       }
     })();
 
@@ -166,7 +167,7 @@ export function Body(props: BodyProps): React.ReactElement {
 
   const [bytes, setBytes] = useState<Uint8Array | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const settled = useRef<number>(-1);
+  const settled = useRef<ReportMark>(UNREPORTED);
   const target = useMemo(() => parseSessionFileAddress(resourceAddress), [resourceAddress]);
 
   useEffect(() => {
@@ -185,7 +186,7 @@ export function Body(props: BodyProps): React.ReactElement {
       } catch (error) {
         if (disposed || signal.aborted) return;
         setFailure(error instanceof Error ? error.message : String(error));
-        settle(false);
+        settle(false, 0);
       }
     })();
 
@@ -195,10 +196,16 @@ export function Body(props: BodyProps): React.ReactElement {
     };
   }, [absolutePath, target, revision, tab.signal, readFile]);
 
-  /** Settle one revision exactly once: the owner refuses a second report. */
-  function settle(ok: boolean): void {
-    if (settled.current === revision) return;
-    settled.current = revision;
+  /**
+   * Report this attempt to the owner once.
+   *
+   * Keyed by revision *and* attempt: a retry of a failed render is a new
+   * attempt under the same revision, and that is the report the host needs in
+   * order to record the version it displays.
+   */
+  function settle(ok: boolean, attempt: number): void {
+    if (!shouldSettle(settled.current, revision, attempt)) return;
+    settled.current = { revision, attempt };
     if (content.kind !== "renderer") return;
     if (ok) content.loaded?.(fileVersion);
     else content.failed?.();

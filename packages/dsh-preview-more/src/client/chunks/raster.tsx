@@ -17,7 +17,8 @@ import * as utif from "utif";
 
 import { parseSessionFileAddress } from "../address.ts";
 import { formatMessage } from "../locale.ts";
-import { failureMessage } from "../mount.ts";
+import type { ReportMark } from "../mount.ts";
+import { UNREPORTED, failureMessage, shouldSettle } from "../mount.ts";
 import { RasterError, decodeMode, decodeTiff } from "../raster.ts";
 import type { ReadFile } from "../runtime.ts";
 
@@ -67,7 +68,7 @@ function RasterSurface(props: {
   readonly bytes: Uint8Array;
   readonly path: string;
   readonly t: (key: string, values?: Record<string, string | number>) => string;
-  readonly onSettled?: (ok: boolean) => void;
+  readonly onSettled?: (ok: boolean, attempt: number) => void;
 }): React.ReactElement {
   const { bytes, path, t, onSettled } = props;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -102,13 +103,13 @@ function RasterSurface(props: {
       const pages = decodeTiff(bytes, utif);
       if (disposed) return;
       setState(pages.length === 0 ? { kind: "failed", message: t("raster.noPages") } : { kind: "pages", pages });
-      settledRef.current?.(pages.length > 0);
+      settledRef.current?.(pages.length > 0, attempt);
     } catch (error) {
       if (disposed) return;
       // A decode failure carries a locale key; anything else is prose from utif
       // or the platform, which is shown as-is because it names the real problem.
       setState({ kind: "failed", message: error instanceof RasterError ? t(error.key) : failureMessage(error) });
-      settledRef.current?.(false);
+      settledRef.current?.(false, attempt);
     }
 
     return () => {
@@ -147,10 +148,10 @@ function RasterSurface(props: {
           className="preview-more-image"
           src={blobUrl}
           alt={t("raster.title")}
-          onLoad={() => settledRef.current?.(true)}
+          onLoad={() => settledRef.current?.(true, attempt)}
           onError={() => {
             setState({ kind: "failed", message: t("state.unsupported") });
-            settledRef.current?.(false);
+            settledRef.current?.(false, attempt);
           }}
         />
       </div>
@@ -203,7 +204,7 @@ export function Body(props: BodyProps): React.ReactElement {
 
   const [bytes, setBytes] = useState<Uint8Array | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const settled = useRef<number>(-1);
+  const settled = useRef<ReportMark>(UNREPORTED);
   const target = useMemo(() => parseSessionFileAddress(resourceAddress), [resourceAddress]);
 
   useEffect(() => {
@@ -222,7 +223,7 @@ export function Body(props: BodyProps): React.ReactElement {
       } catch (error) {
         if (disposed || signal.aborted) return;
         setFailure(error instanceof Error ? error.message : String(error));
-        settle(false);
+        settle(false, 0);
       }
     })();
 
@@ -232,10 +233,16 @@ export function Body(props: BodyProps): React.ReactElement {
     };
   }, [absolutePath, target, revision, tab.signal, readFile]);
 
-  /** Settle one revision exactly once: the owner refuses a second report. */
-  function settle(ok: boolean): void {
-    if (settled.current === revision) return;
-    settled.current = revision;
+  /**
+   * Report this attempt to the owner once.
+   *
+   * Keyed by revision *and* attempt: a retry of a failed render is a new
+   * attempt under the same revision, and that is the report the host needs in
+   * order to record the version it displays.
+   */
+  function settle(ok: boolean, attempt: number): void {
+    if (!shouldSettle(settled.current, revision, attempt)) return;
+    settled.current = { revision, attempt };
     if (content.kind !== "renderer") return;
     if (ok) content.loaded?.(fileVersion);
     else content.failed?.();

@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 
-import { loaderFor, meshKindOf } from "../src/client/scene3d.ts";
+import { loaderFor, meshKindOf, releasePartialViewport } from "../src/client/scene3d.ts";
 
 /** The smallest Draco seam these tests need; nothing here decodes Draco. */
 const draco = new DRACOLoader();
@@ -87,5 +87,42 @@ describe("mesh loaders", () => {
       accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [0, 0, 0], max: [1, 1, 0] }],
     });
     await expect(loaderFor("/tmp/model.gltf", draco).load(bytesOf(gltf))).rejects.toThrow();
+  });
+});
+
+describe("partial viewport teardown", () => {
+  /**
+   * Stand-in recorder for the two objects a failed mount already owns.
+   * @returns the calls made, in order.
+   */
+  function parts(): { calls: string[]; value: Parameters<typeof releasePartialViewport>[0] } {
+    const calls: string[] = [];
+    return {
+      calls,
+      value: {
+        renderer: {
+          dispose: () => calls.push("renderer.dispose"),
+          forceContextLoss: () => calls.push("forceContextLoss"),
+          domElement: { remove: () => calls.push("detach") },
+        },
+        draco: { dispose: () => calls.push("draco.dispose") },
+      },
+    };
+  }
+
+  it("releases every resource a failed mount already created", () => {
+    // A mount that throws after creating its renderer must not leave the context
+    // behind. Browsers cap concurrent contexts and drop the oldest, so the
+    // symptom is not a leak in this preview but a blank canvas in another one.
+    const { calls, value } = parts();
+    releasePartialViewport(value);
+    expect(calls).toEqual(["draco.dispose", "renderer.dispose", "forceContextLoss", "detach"]);
+  });
+
+  it("drops the context before detaching the canvas", () => {
+    // Detaching first leaves the context alive with nothing to draw into.
+    const { calls, value } = parts();
+    releasePartialViewport(value);
+    expect(calls.indexOf("forceContextLoss")).toBeLessThan(calls.indexOf("detach"));
   });
 });

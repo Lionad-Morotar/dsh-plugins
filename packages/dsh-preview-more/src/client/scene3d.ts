@@ -81,10 +81,17 @@ export interface SceneHandle {
  */
 export function createDracoLoader(sources: DecoderSources): DRACOLoader {
   const loader = new DRACOLoader();
-  const loadLibrary = (url: string, responseType: "text" | "arraybuffer"): Promise<unknown> => {
-    if (responseType === "arraybuffer") return Promise.resolve(sources.wasmBinary.buffer);
-    if (url.endsWith("draco_wasm_wrapper.js")) return Promise.resolve(sources.wasmWrapper);
-    return Promise.reject(new Error("dsh-preview-more: unexpected Draco library " + url));
+  const loadLibrary = (
+    url: string,
+    responseType: "text" | "arraybuffer",
+  ): Promise<unknown> => {
+    if (responseType === "arraybuffer")
+      return Promise.resolve(sources.wasmBinary.buffer);
+    if (url.endsWith("draco_wasm_wrapper.js"))
+      return Promise.resolve(sources.wasmWrapper);
+    return Promise.reject(
+      new Error("dsh-preview-more: unexpected Draco library " + url),
+    );
   };
   // three keeps this seam private, so overwriting it is a bet on a name that a
   // future three could rename. Asserting the shape here makes that bet explicit:
@@ -92,10 +99,39 @@ export function createDracoLoader(sources: DecoderSources): DRACOLoader {
   // fabricated host that nobody can diagnose from the console.
   const seam = loader as unknown as { _loadLibrary?: unknown };
   if (typeof seam._loadLibrary !== "function") {
-    throw new Error("dsh-preview-more: this three version has no DRACOLoader._loadLibrary, so the embedded decoder cannot be installed");
+    throw new Error(
+      "dsh-preview-more: this three version has no DRACOLoader._loadLibrary, so the embedded decoder cannot be installed",
+    );
   }
   seam._loadLibrary = loadLibrary;
   return loader;
+}
+
+/** Everything a partially built viewport owns, in teardown order. */
+export interface ViewportParts {
+  readonly renderer: {
+    dispose: () => void;
+    forceContextLoss: () => void;
+    domElement: { remove: () => void };
+  };
+  readonly draco: { dispose: () => void };
+}
+
+/**
+ * Release a viewport that never finished building.
+ *
+ * A WebGL context is a scarce resource: browsers cap how many exist and drop the
+ * oldest when the cap is reached, so a mount that throws after creating its
+ * renderer would eventually blank out a different surface on the page. This runs
+ * on the failure path only; a viewport that reached its handle is torn down by
+ * that handle instead.
+ * @param parts - the renderer and decoder that were already constructed.
+ */
+export function releasePartialViewport(parts: ViewportParts): void {
+  parts.draco.dispose();
+  parts.renderer.dispose();
+  parts.renderer.forceContextLoss();
+  parts.renderer.domElement.remove();
 }
 
 /** A loader reduced to the one call this module makes. */
@@ -113,11 +149,18 @@ export interface MeshLoader {
  */
 export function externalUris(json: unknown): string[] {
   if (json === null || typeof json !== "object") return [];
-  const document = json as { buffers?: { uri?: unknown }[]; images?: { uri?: unknown }[] };
+  const document = json as {
+    buffers?: { uri?: unknown }[];
+    images?: { uri?: unknown }[];
+  };
   const collect = (entries: { uri?: unknown }[] | undefined): string[] =>
     (entries ?? []).flatMap((entry) => {
       const uri = entry.uri;
-      return typeof uri === "string" && uri.length > 0 && !uri.startsWith("data:") ? [uri] : [];
+      return typeof uri === "string" &&
+        uri.length > 0 &&
+        !uri.startsWith("data:")
+        ? [uri]
+        : [];
     });
   return [...collect(document.buffers), ...collect(document.images)];
 }
@@ -193,7 +236,11 @@ export function meshKindOf(path: string): MeshKind | null {
  * @param draco - Draco loader shared with the glTF loader.
  * @returns a loader exposing `load` for the file kind.
  */
-export function loaderFor(path: string, draco: DRACOLoader, siblings?: ReadonlyMap<string, Uint8Array>): MeshLoader {
+export function loaderFor(
+  path: string,
+  draco: DRACOLoader,
+  siblings?: ReadonlyMap<string, Uint8Array>,
+): MeshLoader {
   const suffix = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
   if (suffix === "glb" || suffix === "gltf") {
     // Its own manager, not three's module-level default. A URL modifier set on
@@ -214,9 +261,13 @@ export function loaderFor(path: string, draco: DRACOLoader, siblings?: ReadonlyM
     if (siblings !== undefined && siblings.size > 0) {
       loader.manager.setURLModifier((url: string) => {
         const key = url.replace(/^\.\//u, "");
-        const bytes = siblings.get(key) ?? siblings.get(key.slice(key.lastIndexOf("/") + 1));
+        const bytes =
+          siblings.get(key) ??
+          siblings.get(key.slice(key.lastIndexOf("/") + 1));
         if (bytes === undefined) return url;
-        const objectUrl = URL.createObjectURL(new Blob([bytes as unknown as BlobPart]));
+        const objectUrl = URL.createObjectURL(
+          new Blob([bytes as unknown as BlobPart]),
+        );
         created.push(objectUrl);
         return objectUrl;
       });
@@ -233,19 +284,26 @@ export function loaderFor(path: string, draco: DRACOLoader, siblings?: ReadonlyM
         new Promise((resolve, reject) => {
           // Parsing finishes after every buffer and texture has been consumed,
           // so the URLs can be released here rather than at viewport teardown.
-          loader.parse(buffer, "", (gltf: unknown) => {
-            revoke();
-            resolve(gltf);
-          }, (error: unknown) => {
-            revoke();
-            reject(error);
-          });
+          loader.parse(
+            buffer,
+            "",
+            (gltf: unknown) => {
+              revoke();
+              resolve(gltf);
+            },
+            (error: unknown) => {
+              revoke();
+              reject(error);
+            },
+          );
         }),
     };
   }
   if (suffix === "obj") {
     const loader = new OBJLoader();
-    return { load: async (buffer) => loader.parse(new TextDecoder().decode(buffer)) };
+    return {
+      load: async (buffer) => loader.parse(new TextDecoder().decode(buffer)),
+    };
   }
   if (suffix === "stl") {
     const loader = new STLLoader();
@@ -288,7 +346,16 @@ export function rootOf(parsed: unknown): Group {
     const geometry = parsed as { getAttribute?: unknown };
     if (typeof geometry.getAttribute === "function") {
       const holder = new Group();
-      holder.add(new Mesh(parsed as never, new MeshStandardMaterial({ color: 0xcfcfd6, metalness: 0.1, roughness: 0.6 })));
+      holder.add(
+        new Mesh(
+          parsed as never,
+          new MeshStandardMaterial({
+            color: 0xcfcfd6,
+            metalness: 0.1,
+            roughness: 0.6,
+          }),
+        ),
+      );
       return holder;
     }
   }
@@ -371,92 +438,107 @@ export async function mountScene(
   scene.background = new Color(0x101014);
 
   const camera = new PerspectiveCamera(45, width / height, 0.1, 1000);
-  const renderer = new WebGLRenderer({ antialias: true, alpha: false });
-  renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio ?? 1, 2));
-  renderer.setSize(width, height, false);
-  container.append(renderer.domElement);
-
-  scene.add(new AmbientLight(0xffffff, 1.4));
-  const key = new DirectionalLight(0xffffff, 1.6);
-  key.position.set(3, 6, 4);
-  scene.add(key);
-  const ruler = new GridHelper(10, 10, 0x2a2a33, 0x1d1d24);
-  scene.add(ruler);
-
+  // Created before the renderer: this one throws when the three version has no
+  // decoder seam, and a throw here must not leave a renderer behind.
   const draco = createDracoLoader(sources);
-  const view = bytes.byteOffset;
-  const buffer = bytes.buffer.slice(view, view + bytes.byteLength) as ArrayBuffer;
-  const siblings = await readSiblings(path, buffer, readSibling);
-  const parsed = await loaderFor(path, draco, siblings).load(buffer);
-  const content = new Group();
-  content.add(rootOf(parsed));
-  scene.add(content);
 
-  const facts = measure(content);
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
+  const renderer = new WebGLRenderer({ antialias: true, alpha: false });
+  try {
+    renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio ?? 1, 2));
+    renderer.setSize(width, height, false);
+    container.append(renderer.domElement);
 
-  /** Frame the content so the whole model is visible at any aspect ratio. */
-  const resetView = (): void => {
-    const box = new Box3().setFromObject(content);
-    if (box.isEmpty()) return;
-    const sphere = box.getBoundingSphere(new Sphere());
-    const radius = Math.max(sphere.radius, 0.001);
-    const distance = radius / Math.sin((camera.fov * Math.PI) / 360);
-    camera.position.copy(sphere.center).add(new Vector3(distance, distance * 0.55, distance));
-    camera.near = Math.max(distance / 100, 0.0001);
-    camera.far = distance * 100;
-    camera.updateProjectionMatrix();
-    controls.target.copy(sphere.center);
-    controls.update();
-    ruler.position.y = box.min.y;
-  };
-  resetView();
+    scene.add(new AmbientLight(0xffffff, 1.4));
+    const key = new DirectionalLight(0xffffff, 1.6);
+    key.position.set(3, 6, 4);
+    scene.add(key);
+    const ruler = new GridHelper(10, 10, 0x2a2a33, 0x1d1d24);
+    scene.add(ruler);
 
-  let frame = 0;
-  const renderFrame = (): void => {
-    frame = requestAnimationFrame(renderFrame);
-    controls.update();
-    renderer.render(scene, camera);
-  };
-  renderFrame();
+    const view = bytes.byteOffset;
+    const buffer = bytes.buffer.slice(
+      view,
+      view + bytes.byteLength,
+    ) as ArrayBuffer;
+    const siblings = await readSiblings(path, buffer, readSibling);
+    const parsed = await loaderFor(path, draco, siblings).load(buffer);
+    const content = new Group();
+    content.add(rootOf(parsed));
+    scene.add(content);
 
-  const observer = new ResizeObserver(() => {
-    const nextWidth = Math.max(container.clientWidth, 1);
-    const nextHeight = Math.max(container.clientHeight, 1);
-    camera.aspect = nextWidth / nextHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(nextWidth, nextHeight, false);
-  });
-  observer.observe(container);
+    const facts = measure(content);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
 
-  const handle: SceneHandle = {
-    resetView,
-    setWireframe(on: boolean): void {
-      content.traverse((object) => {
-        if (!(object instanceof Mesh)) return;
-        const material = object.material;
-        if (material instanceof MeshStandardMaterial) material.wireframe = on;
-      });
-    },
-    dispose(): void {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      controls.dispose();
-      draco.dispose();
-      content.traverse((object) => {
-        if (!(object instanceof Mesh)) return;
-        object.geometry.dispose();
-        const material = object.material;
-        if (Array.isArray(material)) for (const one of material) one.dispose();
-        else material.dispose();
-      });
-      renderer.dispose();
-      renderer.forceContextLoss();
-      renderer.domElement.remove();
-    },
-  };
+    /** Frame the content so the whole model is visible at any aspect ratio. */
+    const resetView = (): void => {
+      const box = new Box3().setFromObject(content);
+      if (box.isEmpty()) return;
+      const sphere = box.getBoundingSphere(new Sphere());
+      const radius = Math.max(sphere.radius, 0.001);
+      const distance = radius / Math.sin((camera.fov * Math.PI) / 360);
+      camera.position
+        .copy(sphere.center)
+        .add(new Vector3(distance, distance * 0.55, distance));
+      camera.near = Math.max(distance / 100, 0.0001);
+      camera.far = distance * 100;
+      camera.updateProjectionMatrix();
+      controls.target.copy(sphere.center);
+      controls.update();
+      ruler.position.y = box.min.y;
+    };
+    resetView();
 
-  return { handle, facts };
+    let frame = 0;
+    const renderFrame = (): void => {
+      frame = requestAnimationFrame(renderFrame);
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    renderFrame();
+
+    const observer = new ResizeObserver(() => {
+      const nextWidth = Math.max(container.clientWidth, 1);
+      const nextHeight = Math.max(container.clientHeight, 1);
+      camera.aspect = nextWidth / nextHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(nextWidth, nextHeight, false);
+    });
+    observer.observe(container);
+
+    const handle: SceneHandle = {
+      resetView,
+      setWireframe(on: boolean): void {
+        content.traverse((object) => {
+          if (!(object instanceof Mesh)) return;
+          const material = object.material;
+          if (material instanceof MeshStandardMaterial) material.wireframe = on;
+        });
+      },
+      dispose(): void {
+        cancelAnimationFrame(frame);
+        observer.disconnect();
+        controls.dispose();
+        draco.dispose();
+        content.traverse((object) => {
+          if (!(object instanceof Mesh)) return;
+          object.geometry.dispose();
+          const material = object.material;
+          if (Array.isArray(material))
+            for (const one of material) one.dispose();
+          else material.dispose();
+        });
+        renderer.dispose();
+        renderer.forceContextLoss();
+        renderer.domElement.remove();
+      },
+    };
+
+    return { handle, facts };
+  } catch (error) {
+    // Nothing else owns the renderer yet, so releasing it is this frame's job.
+    releasePartialViewport({ renderer, draco });
+    throw error;
+  }
 }

@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { canAttempt, failureMessage, prepareAttempt, shouldSettle } from "../src/client/mount.ts";
+import { UNREPORTED, canAttempt, failureMessage, prepareAttempt, shouldSettle } from "../src/client/mount.ts";
 
 describe("mount lifecycle", () => {
   it("refuses to attempt without a container", () => {
@@ -51,11 +51,25 @@ describe("mount lifecycle", () => {
     expect(failureMessage({ code: 1 })).toBe("the preview failed without a message");
   });
 
-  it("reports a revision once, so a retry cannot settle the old one again", () => {
-    // The host accepts exactly one loaded/failed per revision. A retry that
-    // re-reported would settle a revision it no longer belongs to.
-    expect(shouldSettle(-1, 7)).toBe(true);
-    expect(shouldSettle(7, 7)).toBe(false);
-    expect(shouldSettle(7, 8)).toBe(true);
+  it("reports each attempt once and every retry again", () => {
+    // The host keys its displayed version on the revision it handed out and only
+    // advances that bookkeeping after a successful report, so a retry within the
+    // same revision must report. Guarding on the revision alone swallowed it and
+    // left the host with no version for a preview that was on screen.
+    const fresh = UNREPORTED;
+    expect(shouldSettle(fresh, 7, 0)).toBe(true);
+
+    const afterFirstFailure = { revision: 7, attempt: 0 };
+    expect(shouldSettle(afterFirstFailure, 7, 0)).toBe(false);
+    expect(shouldSettle(afterFirstFailure, 7, 1)).toBe(true);
+    expect(shouldSettle(afterFirstFailure, 8, 0)).toBe(true);
+  });
+
+  it("does not report the same retry twice", () => {
+    // A surface that settles both on load and on error must not double-report:
+    // the second report would land after the host already recorded the first.
+    const settled = { revision: 3, attempt: 2 };
+    expect(shouldSettle(settled, 3, 2)).toBe(false);
+    expect(shouldSettle(settled, 3, 3)).toBe(true);
   });
 });

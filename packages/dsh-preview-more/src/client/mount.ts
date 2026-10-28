@@ -65,16 +65,29 @@ export function failureMessage(error: unknown): string {
   return "the preview failed without a message";
 }
 
+/** The last report the host accepted, keyed by revision and attempt. */
+export interface ReportMark {
+  readonly revision: number;
+  readonly attempt: number;
+}
+
+/** A mark that has not reported anything yet. */
+export const UNREPORTED: ReportMark = { revision: -1, attempt: -1 };
+
 /**
  * Settle guard for the host's renderer handshake.
  *
- * The host accepts exactly one `loaded` or `failed` per revision, so the report
- * has to be idempotent: retrying a failed render must not report the old
- * revision twice.
- * @param reported - the revision already reported, or -1 for none.
+ * A report is useful once per attempt, not once per revision. Guarding on the
+ * revision alone swallows the second attempt of a failed render, and that retry
+ * is the one the user asked for: the host keys "this content is ready" on the
+ * revision it handed out and only advances its own bookkeeping after a
+ * successful report, so a retry inside the same revision is exactly what it
+ * waits for.
+ * @param reported - the mark already reported.
  * @param revision - the revision this attempt belongs to.
+ * @param attempt - the retry counter, which changes on every retry.
  * @returns true when this attempt should report.
  */
-export function shouldSettle(reported: number, revision: number): boolean {
-  return reported !== revision;
+export function shouldSettle(reported: ReportMark, revision: number, attempt: number): boolean {
+  return reported.revision !== revision || reported.attempt !== attempt;
 }
