@@ -1,0 +1,5 @@
+# Loader row for the browser half. The host half is a no-op row that exists so
+# this package loads on both surfaces; the feature lives in `dsh.client`.
+- insert:
+    - id: better
+      name: 'dsh-better'
