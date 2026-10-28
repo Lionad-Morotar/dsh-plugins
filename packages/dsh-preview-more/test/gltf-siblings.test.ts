@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { externalUris, gltfDocument } from "../src/client/scene3d.ts";
+import { decodeUriPath, externalUris, gltfDocument } from "../src/client/scene3d.ts";
 
 /**
  * Build the bytes of a glTF document.
@@ -52,5 +52,34 @@ describe("glTF sibling references", () => {
   it("reports a malformed document as unreadable instead of throwing", () => {
     const garbage = new TextEncoder().encode("{ not json").buffer as ArrayBuffer;
     expect(gltfDocument(garbage, false)).toBeNull();
+  });
+});
+
+describe("decodeUriPath", () => {
+  it("decodes the percent escapes a URI reference carries", () => {
+    // A glTF names its files as URIs, so a sibling with a space arrives encoded
+    // and the workspace reader would not find the literal escaped name.
+    expect(decodeUriPath("textures/My%20Texture.png")).toBe("textures/My Texture.png");
+    expect(decodeUriPath("%E6%A8%A1%E5%9E%8B.bin")).toBe("模型.bin");
+  });
+
+  it("leaves a plain relative path alone", () => {
+    expect(decodeUriPath("Box.bin")).toBe("Box.bin");
+    expect(decodeUriPath("textures/base.png")).toBe("textures/base.png");
+  });
+
+  it("passes an absolute or remote URI through so the reader can report it", () => {
+    // Rewriting these would hide the document's real problem behind a path that
+    // looks local and then mysteriously fails.
+    expect(decodeUriPath("https://example.com/model.bin")).toBe("https://example.com/model.bin");
+    expect(decodeUriPath("file:///tmp/Box.bin")).toBe("file:///tmp/Box.bin");
+    expect(decodeUriPath("data:application/octet-stream;base64,AA")).toBe("data:application/octet-stream;base64,AA");
+  });
+
+  it("does not throw on malformed encoding", () => {
+    // A stray % is a broken document, and a URIError here would blame the
+    // decoder instead of the file.
+    expect(decodeUriPath("broken%")).toBe("broken%");
+    expect(decodeUriPath("half%2")).toBe("half%2");
   });
 });

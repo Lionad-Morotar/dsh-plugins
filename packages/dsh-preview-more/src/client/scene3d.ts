@@ -114,6 +114,29 @@ export function externalUris(json: unknown): string[] {
 }
 
 /**
+ * Turn a URI reference into a path the workspace reader accepts.
+ *
+ * A glTF URI is percent-encoded, so `My Texture.png` arrives as
+ * `My%20Texture.png`; the reader takes real paths, not URIs. An absolute or
+ * remote URI is passed through untouched, because the reader will fail on it and
+ * that failure names the document's actual problem instead of hiding it behind a
+ * rewritten path.
+ * @param reference - URI reference as the document wrote it.
+ * @returns the path to hand to the reader.
+ */
+export function decodeUriPath(reference: string): string {
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/u.test(reference)) return reference;
+  try {
+    return decodeURIComponent(reference);
+  } catch {
+    // A lone % or a truncated escape is not valid encoding. Passing it through
+    // lets the reader report a missing file, which is the truth, rather than
+    // this function throwing an unrelated URIError.
+    return reference;
+  }
+}
+
+/**
  * Decode a `.gltf` document so its sibling references can be read.
  * @param buffer - file bytes.
  * @param binary - true for `.glb`, whose JSON chunk is not the whole file.

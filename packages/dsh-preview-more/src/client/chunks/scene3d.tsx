@@ -20,7 +20,7 @@ import { wasmBinary, wasmWrapper } from "virtual:draco-assets";
 import { parseSessionFileAddress } from "../address.ts";
 import { formatMessage } from "../locale.ts";
 import type { ReadFile } from "../runtime.ts";
-import type { SceneFacts, SceneHandle } from "../scene3d.ts";
+import { decodeUriPath, mountScene, type SceneFacts, type SceneHandle } from "../scene3d.ts";
 
 export type { ReadFile } from "../runtime.ts";
 
@@ -84,8 +84,6 @@ function SceneSurface(props: {
 
     void (async () => {
       try {
-        const { mountScene } = await import("../scene3d.ts");
-        if (disposed) return;
         const { handle, facts } = await mountScene(container, bytes, path, { wasmWrapper, wasmBinary }, readSibling);
         if (disposed) {
           handle.dispose();
@@ -235,25 +233,6 @@ function siblingReader(
   if (sessionId === undefined) return undefined;
   const directory = modelPath.slice(0, modelPath.lastIndexOf("/"));
   return (relative) => readFile(sessionId, decodeUriPath(directory + "/" + relative), signal);
-}
-
-/**
- * Turn a URI reference into a path.
- *
- * A glTF URI is percent-encoded and may be relative, so `My Texture.png` arrives
- * as `My%20Texture.png`. It is decoded here because the workspace reader takes
- * real paths. A remote or absolute URI is returned unchanged: the reader will
- * fail on it, which surfaces the document's real problem rather than masking it.
- * @param reference - URI reference as the document wrote it.
- * @returns the path to hand to the reader.
- */
-export function decodeUriPath(reference: string): string {
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/u.test(reference)) return reference;
-  try {
-    return decodeURIComponent(reference);
-  } catch {
-    return reference;
-  }
 }
 
 /**
