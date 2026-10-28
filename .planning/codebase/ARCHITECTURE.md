@@ -86,7 +86,7 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 | 激活语义分派 | 纯函数判定目标要 click 还是 focus：contenteditable > 标签（textarea/带光标的 input）> role；按钮类即使 `role=combobox` 也归 click | `packages/dsh-jump/src/client/target.ts` |
 | 设置行文案 | 中英两份字典，三种拒绝理由与 keycap 可访问名随语言成对切换 | `packages/dsh-jump/src/client/copy.ts` |
 | 投稿清单校验 | 逐条断言宿主真正读取的字段：`engines.dsh` 兼容门、经 `exports` 解析 icon、`dsh.bundle.patch` 可挂载、pack 产物不含 src/test、禁 install 生命周期脚本、locale/en.json 存在 | `scripts/check-market-manifest.mjs` |
-| 市场索引生成 | 从包自身派生 format-1 索引（icon 内联 base64、source 钉 commit 或 npm 精确版本），写前用宿主校验器再解析一遍 | `scripts/build-market-index.mjs` |
+| 市场索引生成 | 从包自身派生 format-1 索引（icon 内联 base64、source 默认钉 npm 精确版本、`publishTimestamp` 取自 registry），写前用宿主校验器再解析一遍；`--check` 读落盘文件并与新构建逐字节比对 | `scripts/build-market-index.mjs` |
 | 社区目录条目 | 产出 awesome 目录 YAML（要求 180px 光栅 icon），有外部 checkout 时交给它的校验器 | `scripts/build-awesome-entry.mjs` |
 | 键盘修正接线 | 捕获阶段 keydown：分类目标、取消默认动作、执行光标移动、补齐光标可见性、对称 teardown | `packages/dsh-better-keybindings/src/client/app.ts` |
 | 键位映射 | Home/End -> 方向 + 粒度 + 是否扩选；目标三分类，纯数据无 DOM | `packages/dsh-better-keybindings/src/client/keys.ts` |
@@ -241,7 +241,7 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 - **弹层重开要用宿主给的替换路径：** 范围切换只能走 `ctx.commandUi.popupFor(actx).open(...)`，不能自己造弹层；`popupFor` 在 Session generation 已释放时抛错，调用点必须 catch 后降级（放弃这次切档），不能把异常抛给命令通道
 - **注册上下文不可伪造：** 宿主中介路径校验 Cordis 激活标记，必须原样传 `apply` 收到的 `ctx`；effects 另开参数，不与身份上下文混用
 - **循环依赖：** 未发现；依赖单向（client → scenes 包 → 上游 meta）；`dsh-jump`、`dsh-better-keybindings`、`dsh-slash-commands` 互不依赖，也不依赖另外两个包
-- **市场产物只能派生，不能手改：** `market/index.json` 与 `market/awesome/*.yml` 由 `scripts/` 从包元数据生成；手写会在版本号一动的瞬间过期。索引当前是 git source 并钉 commit——实测钉在 `6b3e04d` 而 HEAD 是 `2aea6ad`，即索引天然落后 HEAD 一位，发版前必须重跑 `build:market` / `build:awesome`（`check:market-index` 只验结构，不验是否最新）
+- **市场产物只能派生，不能手改：** `market/index.json` 与 `market/awesome/*.yml` 由 `scripts/` 从包元数据生成；手写会在版本号一动的瞬间过期。索引现为 npm source 并钉精确版本，`publishTimestamp` 取自 registry 的真实发布时刻，因此不再有「索引落后 HEAD 一位」的自指问题。发版后仍须重跑 `build:market` / `build:awesome`；`check:market-index` 会读落盘文件并与全新构建逐字节比对，忘记重跑即红灯
 - **`refs/` 只读：** submodule 设 `ignore = all`，不参与构建与测试、不进任何依赖图；只用于查阅上游实现细节，改动一律不进本仓
 
 ## 反模式（本仓库明令规避的）

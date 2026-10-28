@@ -4,12 +4,13 @@
 
 ## 技术债
 
-**市场索引把安装钉在一个旧提交上，而那个提交还没推到远端：**
+**~~市场索引把安装钉在一个旧提交上，而那个提交还没推到远端~~（已修复，pin 形态已废弃）：**
 - 现状：`market/index.json` 三个 plugin 的 `source` 全是 `{"type":"git","commit":"6b3e04d88a…","path":"packages/<name>"}`，而仓库 HEAD 是 `2aea6ad`（实测 `git rev-parse HEAD`）。`git diff 6b3e04d..HEAD` 只动了 `market/`、`.planning/`、根 `README.md` 与 `packages/dsh-jump/README.md`，所以按旧 pin 装到的代码与 HEAD 功能等价，但索引的承诺已经落后一位
 - 更硬的一条：`6b3e04d` 根本不在远端。`git merge-base --is-ancestor 6b3e04d origin/main` 为假，`origin/main` 停在 `e4598a1`（2026-10-20），本地领先 55 个提交；索引一旦被托管，陌生人拿到的是一个拉不到的 commit。`market/awesome/*.yml` 同病：三条条目的 `icon` 指向 `raw.githubusercontent.com/.../main/packages/*/assets/icon-180.png`，而 `git cat-file -e origin/main:packages/dsh-jump/assets/icon-180.png` 失败——这些 URL 今天返回 404
 - 文件：`market/index.json`（三处 `commit`）、`market/awesome/*.yml`（三处 `icon`）、`scripts/build-market-index.mjs:49-51`（pin 直接取 `HEAD`）、`scripts/build-awesome-entry.mjs`
 - 影响：高——这是对外发布承诺，不是内部整洁；失败发生在订阅方的机器上，且没有任何脚本在提交后自动重算（`build:market` 必须手动跑）
-- 修复路径：投稿前先 push，或把 pin 换成已推送的 tag；再把「产物里的 commit 与 raw URL 必须能从 origin 取到」变成一条断言
+- 现态：索引已改为 npm source 并钉精确版本，`source` 里不再有 `commit` 字段，指向一个远端拉不到的提交这类失效形态从根上消失；仓库已转 public 且 `dsh-jump@0.1.0` 已发布，`icon` 的 raw URL 实测 200
+- 残留：产物与远端的一致性仍靠人工跑 `build:market`，无 CI 兜底
 
 **`check:market-index` 曾不读已提交的索引（已修复）：**
 - 原状：`--check` 把索引在内存里重算一遍、用宿主 `parseMarketIndex` 复解、打印安装 spec，全程不读磁盘、无字节比较。同一条命令可以同时报「通过」与「产物是旧的」
@@ -24,12 +25,13 @@
 - 影响：低——不会让安装失败，只会让设置页显示一句无法被程序验证的适配声明，并与真实 peer 区间各自漂移
 - 修复路径：要么改成 `0.2.1-rc.2` 这种可解析形态（仍需人维护），要么从 `engines.dsh` 派生展示文案，去掉独立字段
 
-**三个包已摘掉 private，但仓库没有发布链路：**
-- 现状：`dsh-jump`、`dsh-better-keybindings`、`dsh-slash-commands` 的 `package.json` 已无 `private` 字段（`check-market-manifest.mjs:36` 的 `if (pkg.private !== undefined)` 正是断言这一点），根 `package.json` 仍是 `"private": true` 的 monorepo；全仓没有 `.changeset/`、没有 `release` script、没有 `publishConfig`，`npm view dsh-jump version` 实测 404
-- 后果链：`scripts/build-market-index.mjs:74-76` 默认 `sourceMode = "git"`，只有显式 `--source npm` 才写 `{type:"npm"}`；而 npm 上根本没有这些包，所以索引能且只能用 git source。也就是说「可投稿」已经有产物，「可发布」还是空的：没有一条命令能把 `packages/*/package.json` 推上 registry
+**~~三个包已摘掉 private，但仓库没有发布链路~~（已修复，范围收敛为单包）：**
+- 原状：`dsh-jump`、`dsh-better-keybindings`、`dsh-slash-commands` 的 `package.json` 都无 `private` 字段，根 `package.json` 是 `"private": true` 的 monorepo；全仓没有 `.changeset/`、没有 `release` script、没有 `publishConfig`，`npm view dsh-jump version` 实测 404
+- 原后果链：`scripts/build-market-index.mjs` 默认 `sourceMode = "git"`，只有显式 `--source npm` 才写 `{type:"npm"}`；而 npm 上根本没有这些包，所以索引能且只能用 git source。也就是说「可投稿」已经有产物，「可发布」还是空的：没有一条命令能把 `packages/*/package.json` 推上 registry
 - 文件：`package.json`（根 scripts）、`packages/*/package.json`、`scripts/build-market-index.mjs:42-47`
 - 影响：中——市场条目现在只能钉 commit，版本号 `0.1.0` 在索引里也只是个字符串而不是可解析的发布事实；一旦上游市场只接受 npm source，三个包就装不动
-- 修复路径：加一个最小发布脚本（`pnpm -r publish --access public --tag next`）并在 README 写清发布顺序：先 build → 再 check:market → 再 publish → 最后 `build:market --source npm`；不引入 changesets 也能接受，前提是版本号手动规则写明
+- 现态：范围收敛为单包。`dsh-jump` 已有 `publishConfig`（钉官方 registry）、根与包内两级 `release` 脚本，并已发布 `0.1.0`；索引默认 `--source npm`，`publishTimestamp` 取自 registry。另两个包补了 `private: true`，由 `check-market-manifest.mjs` 的反向断言守住
+- 残留：无 `.changeset/`，版本号仍手动规定；发布顺序写进了根 `README.md` 而非可执行脚本
 
 **README 测试数字靠手维护，无防漂移机制：**
 - 问题：`README.md:57` 的测试计数靠手维护。基线 `5295e0c` 写的是「25 文件 259 用例」，HEAD 是「40 文件 529 用例」——这 23 个提交里这一行被改过 5 次（`b1ceab6` 28/324 → `d35e955` 29/348 → `91b591f` 33/426 → `3cda464` 40/513 → `2aea6ad` 40/515 → `842bb1f` 40/529），每次都是人发现后手改，没有一次是被测试或脚本逼出来的；数字与代码无联动，下一个测试文件就会让它再次过期。同类漂移在更早的历史里也出现过：根 README 曾写「23 个测试」，皮肤包 README 曾写「38 个用例」
