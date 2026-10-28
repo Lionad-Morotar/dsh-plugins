@@ -52,6 +52,8 @@ entryId 是 profile 里的行 id（如 `mcp-kimi-tools`），不是 serverName�
 
 `dsh plugin --profile web install` 后重启 DSH。注意 pnpm 的 `link:` 相对 profile 根解析，装完确认 `node_modules/dsh-more-config` 符号链接不悬空（悬空时宿主报 `ERR_MODULE_NOT_FOUND`，见上文实测）。
 
+面板能否出现由包清单的 `dsh.client.platform: "web"` 声明决定：宿主的 client-modules 只把声明了该字段的包编入浏览器启动图，缺声明时宿主半照常运行、设置页却静默无栏（真机踩过，见验收记录）。
+
 ## 开发
 
 `pnpm build` 产 `lib/index.js`（宿主半，ESM，schemastery 已打包）与 `lib/client.js`（浏览器半，ModuleLoader 工厂）。`pnpm test` 52 用例覆盖：inventory 分层解析、planSync 计划、命令全分支、reconciler 串行与失败隔离、schema volatile 标注、staging store、客户端交付形态。
