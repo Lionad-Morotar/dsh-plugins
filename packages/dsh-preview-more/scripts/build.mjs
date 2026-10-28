@@ -67,6 +67,24 @@ async function assertChunksCoverCatalogue() {
  * ceiling is what keeps "add one format" from quietly turning every model
  * preview into a multi-megabyte download.
  */
+/**
+ * Attribution appended to every emitted bundle.
+ *
+ * esbuild's legalComments only carries comments that the library itself marked
+ * and placed in the code it ships. Several dependencies here keep their license
+ * in a sibling file instead, which leaves the distributed artifact silent about
+ * them. This banner names every third-party component that can end up inside a
+ * chunk, with a pointer to the full texts, so no artifact is redistributed
+ * without its notices.
+ */
+const LICENSE_BANNER = [
+  "/*! dsh-preview-more | MIT",
+  " * Bundles third-party code: three.js and utif (MIT),",
+  " * dxf-viewer (MPL-2.0), Google Draco (Apache-2.0).",
+  " * Full license texts: see THIRD-PARTY-NOTICES.md in this package.",
+  " */",
+].join("\n");
+
 const SIZE_BUDGETS = {
   "client.js": 24 * 1024,
   // three plus the inlined Draco decoder: the floor for a real mesh viewport.
@@ -124,9 +142,11 @@ async function bundle(entry, format, { external = [], loader = {}, plugins = [] 
     // end of the file. Stripping them would redistribute MIT, Apache-2.0 and
     // MPL-2.0 code with the notices removed, which is not ours to do. The full
     // texts also live in THIRD-PARTY-NOTICES.md; this keeps them beside the code
-    // they cover. A library without a marked comment still gets its attribution
-    // there.
+    // they cover. "eof" alone is not enough: a library whose license lives in a
+    // separate LICENSE file rather than a marked comment inside the source
+    // contributes nothing, so each bundle also gets the banner below.
     legalComments: "eof",
+    banner: { js: LICENSE_BANNER },
     external,
     loader,
     plugins,
