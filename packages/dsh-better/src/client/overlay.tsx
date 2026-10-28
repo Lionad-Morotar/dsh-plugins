@@ -28,7 +28,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExt
 import type { ReactNode, Ref } from "react";
 
 import { readPopupClasses } from "./classes.ts";
-import { badgeLevels, effortLevelsOf, initialEffort, type CatalogGroupLike, type EffortLevel } from "./effort.ts";
+import { effortLevelsOf, initialEffort, type CatalogGroupLike } from "./effort.ts";
+import { ModelRow, modelRefOf } from "./row.tsx";
 import { groupOptions } from "./groups.ts";
 import type { PopupControllerLike, PopupOptionLike, PopupStateLike } from "./popup.ts";
 import { resolvePrimitives, type KeyboardEventLike, type Primitives } from "./primitives.ts";
@@ -357,60 +358,27 @@ function ModelPicker({ popup, state, t, primitives, doc, catalog, selectModel }:
         ? state.searchLabels.empty
         : state.searchLabels.noResults;
 
-  const renderRow = (option: PopupOptionLike, index: number): ReactNode => {
-    const ref = modelRefOf(option);
-    const levels = badgeLevels(ref === undefined ? [] : effortLevelsOf(catalog ?? [], ref));
-    const pointed = efforts[option.id];
-    return (
-      <div
-        role="option"
-        aria-selected={index === active}
-        aria-label={option.badge === undefined ? undefined : `${option.label} ${option.badge}`}
-        className={index === active ? `${classes.row} ${classes.rowActive}` : classes.row}
-        key={option.id}
-        onClick={() => {
-          choose(option);
-        }}
-        onMouseEnter={() => {
-          setCursor(index);
-        }}
-      >
-        <span className={classes.label}>
-          <span className={classes.labelText}>{option.label}</span>
-          {option.badge !== undefined && <sup className={classes.badge}>{option.badge}</sup>}
-        </span>
-        {option.detail !== undefined && <span className={classes.detail}>{option.detail}</span>}
-        {levels.length > 0 && (
-          // Badges are buttons, not decoration: the row click takes the pointed
-          // level, and a badge click takes that specific one. stopPropagation
-          // keeps the badge's choice from also firing the row's own submit.
-          <span className={classes.badges} role="group" aria-label={t?.("listbox.aria") ?? ""}>
-            {levels.map((level: EffortLevel) => (
-              <button
-                type="button"
-                key={level.id}
-                className={
-                  level.id === pointed ? `${classes.badgeChip} ${classes.badgeChipOn}` : classes.badgeChip
-                }
-                title={level.description ?? level.name}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  pickEffort(option, level.id);
-                }}
-              >
-                {level.name}
-              </button>
-            ))}
-          </span>
-        )}
-        {option.active === true && levels.length === 0 && (
-          <span className={classes.check}>
-            {primitives.IconCheckOutlineRegular === undefined ? null : <primitives.IconCheckOutlineRegular />}
-          </span>
-        )}
-      </div>
-    );
-  };
+  const renderRow = (option: PopupOptionLike, index: number): ReactNode => (
+    <ModelRow
+      key={option.id}
+      option={option}
+      active={index === active}
+      catalog={catalog}
+      pointed={efforts[option.id]}
+      classes={classes}
+      primitives={primitives}
+      onChoose={() => {
+        choose(option);
+      }}
+      onPickEffort={(level) => {
+        pickEffort(option, level);
+      }}
+      onHover={() => {
+        setCursor(index);
+      }}
+      t={t}
+    />
+  );
 
   // The card is drawn group by group so headings stay native; the cursor counts
   // across the whole list, which is why it is threaded through the mapping.
@@ -467,23 +435,6 @@ function ModelPicker({ popup, state, t, primitives, doc, catalog, selectModel }:
       {content}
     </primitives.MenuSurface>
   );
-}
-
-/**
- * The provider/model pair a row names.
- *
- * Row ids are `${provider}/${model}` by the shell's convention, but the provider
- * is authoritative on `group`, and a model id may itself contain a slash, so the
- * split keeps everything after the first separator.
- * @param option - the row.
- * @returns the pair, or undefined for a row with no provider (a failure notice).
- */
-function modelRefOf(option: PopupOptionLike): { provider: string; model: string } | undefined {
-  const provider = option.group?.name;
-  if (provider === undefined) return undefined;
-  const prefix = `${provider}/`;
-  const model = option.id.startsWith(prefix) ? option.id.slice(prefix.length) : option.id;
-  return { provider, model };
 }
 
 /**
