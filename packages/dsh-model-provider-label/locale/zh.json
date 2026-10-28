@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "模型名带 provider",
+    "description": "输入框的模型名左侧加上 provider 名，菜单与列表保持纯模型名。"
+  }
+}

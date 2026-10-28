@@ -1,0 +1,5 @@
+# Mount dsh-model-provider-label: this package owns the composer's inline model
+# label and prefixes it with the provider's display name.
+- insert:
+    - id: model-provider-label
+      name: 'dsh-model-provider-label'

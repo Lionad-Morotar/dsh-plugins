@@ -1,8 +1,8 @@
 # Agents.md
 
-Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。五个包、四形态：DSH 客户端 UI 皮肤 `@lionad/dsh-client-ui-skin-ascii-rest`（把 ascii.rest 的 ASCII 场景渲染为工作区背景，随亮暗主题换配色）与其纯逻辑层 `ascii-rest-scenes`（场景目录、cover 取景、调色板、设置归一化，DOM-free）；web 端键盘跳跃导航 `dsh-jump`；web 与 desktop 共用的键盘修正 `dsh-better-keybindings`（输入框聚焦时 Home/End 移动光标而非滚动聊天区；PageUp/PageDown 改为半屏翻页）；三端 slash 命令 `dsh-slash-commands`（TUI 的 `/copy` 剪贴板、web 与 desktop 的 `/rename` 会话改名与 `/resume` 会话切换）。
+Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。八个包：DSH 客户端 UI 皮肤 `@lionad/dsh-client-ui-skin-ascii-rest`（把 ascii.rest 的 ASCII 场景渲染为工作区背景，随亮暗主题换配色）与其纯逻辑层 `ascii-rest-scenes`（场景目录、cover 取景、调色板、设置归一化，DOM-free）；右侧栏文件预览补全 `dsh-preview-more`（3D 模型、CAD 图纸与高位深图片）；web 端键盘跳跃导航 `dsh-jump`；web 与 desktop 共用的键盘修正 `dsh-better-keybindings`（输入框聚焦时 Home/End 移动光标而非滚动聊天区；PageUp/PageDown 改为半屏翻页）；三端 slash 命令 `dsh-slash-commands`（TUI 的 `/copy` 剪贴板、web 与 desktop 的 `/rename` 会话改名与 `/resume` 会话切换）；会话统计的计时口径修正 `dsh-session-timing`（模型用时只计最后成功的那次尝试，重试用时单独成行）与输入框模型名的 provider 前缀 `dsh-model-provider-label`。
 
-共同发行模型：Loader row 经 `cordis.patch.yml` 注入，`lib/` 构建产物提交入库，profile 安装态不跑构建。其中 `dsh-jump` 已发到 npm（`0.1.0`）并有市场投稿面：`scripts/` 下的三个脚本从包自身元数据派生 `market/index.json`（format 1 索引，钉 npm 版本）与 `market/awesome/*.yml`（社区目录条目），改包元数据后要重跑而不是手改产物。`dsh-better-keybindings` 与 `dsh-slash-commands` 仍在日常使用中验证，以 `private: true` 声明自用，不参与索引，清单检查器会断言它们保持 private。
+共同发行模型：Loader row 经 `cordis.patch.yml` 注入，`lib/` 构建产物提交入库，profile 安装态不跑构建。其中 `dsh-jump` 已发到 npm（`0.1.0`）并有市场投稿面：`scripts/` 下的三个脚本从包自身元数据派生 `market/index.json`（format 1 索引，钉 npm 版本）与 `market/awesome/*.yml`（社区目录条目），改包元数据后要重跑而不是手改产物。`dsh-better-keybindings`、`dsh-slash-commands`、`dsh-session-timing` 与 `dsh-model-provider-label` 仍在日常使用中验证，以 `private: true` 声明自用，不参与索引，清单检查器会断言它们保持 private。
 
 ## 项目上下文
 
@@ -29,6 +29,9 @@ Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。五个包、四形�
 | `dsh-jump` | [README](./packages/dsh-jump/README.md)：跳跃导航用法、v1 边界、web profile 安装 |
 | `dsh-better-keybindings` | [README](./packages/dsh-better-keybindings/README.md)：Home/End 光标语义、三端覆盖边界、web 与 desktop profile 安装 |
 | `dsh-slash-commands` | [README](./packages/dsh-slash-commands/README.md)：`/copy`、`/rename`、`/resume` 的端别归属、剪贴板三路路径与客户端半、三端安装 |
+| `dsh-preview-more` | [README](./packages/dsh-preview-more/README.md)：3D / CAD / HDR 三类预览的接入面与分块懒加载 |
+| `dsh-session-timing` | [README](./packages/dsh-session-timing/README.md)：重试重锚的计时口径、`sessionTiming` projection 与不接管 `sessionStats` 的理由 |
+| `dsh-model-provider-label` | [README](./packages/dsh-model-provider-label/README.md)：`single` slot 的三处渲染、只给 trigger 加前缀的理由、1017 徽章的复刻 |
 
 ## 只读参考仓库
 

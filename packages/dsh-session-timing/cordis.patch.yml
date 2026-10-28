@@ -1,0 +1,5 @@
+# Mount dsh-session-timing: this package owns the retry-aware timing fold and
+# the composer statistics pill that renders it.
+- insert:
+    - id: session-timing
+      name: 'dsh-session-timing'

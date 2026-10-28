@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session timing",
+    "description": "Model time excludes retry waits; the wait is reported on its own row."
+  }
+}
