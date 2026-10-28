@@ -14,6 +14,8 @@
 import z from "@deepseek-ai/schemastery";
 import type { ShadowTimeouts } from "./plan.ts";
 
+export type { ShadowTimeouts };
+
 /** This package's Loader row id, and its settings namespace. */
 export const NS = "more-config";
 
