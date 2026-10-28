@@ -56,6 +56,22 @@ node ~/.agents/skills/flow-web/scripts/record/dsh-better-verify.mjs "http://127.
 
 截图见 `docs/debug/261028/dsh-better-model/`（该目录全局 ignore，不入库）：`01-picker-open.png`、`02-provider-search.png`、`03-after-select.png`。
 
+## web profile 上的实测（多供应商场景）
+
+`desktop` 与 `web` 两个 profile 均已安装（依赖软链 + `bundles` 登记），web 侧建议在改动后复查：该 profile 有 11 个以上 `dsh-*` 供应商，是这个功能真正吃上劲的场景。
+
+实测（同一脚本，端口 3267）：
+
+| 查询 | 期望 | 实测 |
+| --- | --- | --- |
+| `dk` | 只出 id 含 `dk` 的供应商分组 | `dsh-dk`、`dsh-dkh`、`dsh-dkz`、`dsh-dkzh`… 各分组其下模型 ✓ |
+| `glm-5.3` | 各供应商的 glm-5.3 系列 | 11 个供应商分组共 11 行 ✓ |
+| `Flash`（模型名回归） | 全供应商同名模型 | 25 行 ✓ |
+
+分组标题就是供应商 id，正是"同名模型散落在多个供应商"时读者需要的定位信息。全程零 `pageerror`。
+
+`desktop` profile 由 Electron 应用独占管理，`dsh --profile desktop` 与 `dsh plugin --profile desktop install` 都会被拒绝；依赖需在应用内或直接 `cd ~/.dsh/profiles/desktop && pnpm install` 完成，且改动后要重启应用才会载入新的客户端 bundle。
+
 ## 交接时必须交代的三个坑
 
 1. **原生组件必须作为元素渲染**，不能当函数调用。`native(props)` 会把原生组件的 hooks 挤进本组件的 hook 槽，下次渲染直接报 React #300（hooks 数量变化）。必须 `<Native {...props} />`。
