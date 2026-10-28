@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Model name with provider",
+    "description": "Prefixes the composer model name with its provider; the menu and list keep the bare name."
+  }
+}
