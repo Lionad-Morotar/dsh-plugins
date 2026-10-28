@@ -29,12 +29,6 @@
           "en": "Keyboard",
           "zh": "键盘"
         }
-      },
-      "official": {
-        "title": {
-          "en": "First-party",
-          "zh": "一方"
-        }
       }
     },
     "sortKeys": {}
@@ -66,8 +60,7 @@
           "vimium"
         ],
         "labels": [
-          "keyboard",
-          "official"
+          "keyboard"
         ],
         "sortKeys": {}
       },

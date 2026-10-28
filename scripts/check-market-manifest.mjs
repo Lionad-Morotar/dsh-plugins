@@ -66,6 +66,51 @@ function checkRepository(pkg, root) {
   else if (!pkg.keywords.includes("dsh-plugin")) fail(root, "keywords must include \"dsh-plugin\"");
 }
 
+/**
+ * SemVer 2.0.0 precedence, including prereleases.
+ *
+ * Dropping the `-rc.N` suffix before comparing makes 0.2.0-rc.1 look equal to
+ * 0.2.0, so a runtime older than the declared floor passes. Every version this
+ * repo declares is a prerelease, which is exactly the case that bug hides in.
+ */
+function compareSemver(a, b) {
+  const split = (v) => {
+    const [release, prerelease = ""] = v.split("-", 2);
+    return { parts: release.split(".").map(Number), prerelease };
+  };
+  const left = split(a);
+  const right = split(b);
+  for (let i = 0; i < 3; i += 1) {
+    const pa = left.parts[i] ?? 0;
+    const pb = right.parts[i] ?? 0;
+    if (pa !== pb) return pa - pb;
+  }
+  // A version without a prerelease outranks one that has it.
+  if (left.prerelease === right.prerelease) return 0;
+  if (left.prerelease === "") return 1;
+  if (right.prerelease === "") return -1;
+  const la = left.prerelease.split(".");
+  const lb = right.prerelease.split(".");
+  for (let i = 0; i < Math.max(la.length, lb.length); i += 1) {
+    const ia = la[i];
+    const ib = lb[i];
+    if (ia === undefined) return -1;
+    if (ib === undefined) return 1;
+    const na = /^\d+$/u.test(ia);
+    const nb = /^\d+$/u.test(ib);
+    if (na && nb) {
+      const diff = Number(ia) - Number(ib);
+      if (diff !== 0) return diff;
+    } else if (na !== nb) {
+      // Numeric identifiers rank below alphanumeric ones.
+      return na ? -1 : 1;
+    } else if (ia !== ib) {
+      return ia < ib ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
 function checkCompatibility(pkg, root, runtimeVersion) {
   const range = pkg.engines && pkg.engines.dsh;
   if (typeof range !== "string" || range.trim() === "") {
@@ -75,12 +120,7 @@ function checkCompatibility(pkg, root, runtimeVersion) {
   const parsed = /^>=(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\s+<(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/u.exec(range.trim());
   if (parsed === null) return fail(root, "engines.dsh must be an explicit >=floor <ceiling pair so the upper bound stays visible, saw " + range);
   if (runtimeVersion === undefined) return;
-  const core = (v) => v.split("-")[0].split(".").map(Number);
-  const cmp = (a, b) => {
-    const pa = core(a), pb = core(b);
-    for (let i = 0; i < 3; i += 1) if (pa[i] !== pb[i]) return pa[i] - pb[i];
-    return 0;
-  };
+  const cmp = compareSemver;
   if (!(cmp(runtimeVersion, parsed[1]) >= 0 && cmp(runtimeVersion, parsed[2]) < 0)) {
     fail(root, "engines.dsh " + range + " excludes the installed runtime " + runtimeVersion);
   }
@@ -166,8 +206,12 @@ function checkPackedSurface(pkg, root) {
   let out;
   try {
     out = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], { cwd: root, stdio: "pipe" }).toString();
-  } catch {
-    return;
+  } catch (error) {
+    // This is the only place the `files` whitelist is checked against the tarball
+    // that would actually ship. Returning silently here meant an npm that could
+    // not pack produced a green run with none of those checks executed.
+    const detail = error && error.stderr ? String(error.stderr).trim().split("\n").slice(-3).join(" ") : String(error);
+    return fail(root, "npm pack --dry-run failed, so the packed surface is unverified: " + detail);
   }
   let entries;
   try {
@@ -194,6 +238,45 @@ function installedRuntimeVersion() {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Precedence cases the gate depends on.
+ *
+ * There is no test harness around these scripts, and this comparator decides
+ * whether a package may ship to a given runtime, so the cases that matter are
+ * asserted here rather than trusted to inspection. `--selftest` runs them.
+ */
+const SEMVER_CASES = [
+  ["0.2.0-rc.1", "0.2.0-rc.2", -1, "rc.1 ranks below rc.2"],
+  ["0.2.0-rc.2", "0.2.0-rc.2", 0, "identical prereleases"],
+  ["0.2.1-rc.2", "0.2.0-rc.2", 1, "patch bump with prerelease"],
+  ["0.2.0-rc.2", "0.2.0", -1, "prerelease ranks below its release"],
+  ["0.2.0-rc.10", "0.2.0-rc.2", 1, "numeric identifiers compare as numbers"],
+  ["0.2.0-rc", "0.2.0-rc.1", -1, "fewer identifiers ranks lower"],
+  ["0.2.0-alpha", "0.2.0-rc", -1, "alphanumeric identifiers compare lexically"],
+  ["0.2.0-1", "0.2.0-alpha", -1, "numeric ranks below alphanumeric"],
+];
+
+function selftest() {
+  let failures = 0;
+  for (const [a, b, expected, note] of SEMVER_CASES) {
+    const actual = Math.sign(compareSemver(a, b));
+    if (actual !== expected) {
+      failures += 1;
+      console.error("FAIL " + a + " vs " + b + ": got " + actual + ", want " + expected + " (" + note + ")");
+    }
+  }
+  if (failures > 0) {
+    console.error("selftest failed (" + failures + " of " + SEMVER_CASES.length + ")");
+    process.exit(1);
+  }
+  console.log("selftest passed (" + SEMVER_CASES.length + " precedence cases)");
+}
+
+if (process.argv.includes("--selftest")) {
+  selftest();
+  process.exit(0);
 }
 
 const requested = process.argv.slice(2).filter((argument) => !argument.startsWith("-"));

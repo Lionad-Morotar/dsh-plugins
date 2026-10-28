@@ -10,7 +10,7 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "check:market": "node scripts/check-market-manifest.mjs",
+    "check:market": "node scripts/check-market-manifest.mjs --selftest && node scripts/check-market-manifest.mjs",
     "build:market": "node scripts/build-market-index.mjs",
     "check:market-index": "node scripts/build-market-index.mjs --check",
     "build:awesome": "node scripts/build-awesome-entry.mjs",

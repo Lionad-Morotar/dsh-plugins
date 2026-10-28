@@ -7,13 +7,18 @@
  * bumps. The output is then re-parsed with the host's own validator, so a
  * successful run is a positive test, not a formatted file.
  *
- *   node scripts/build-market-index.mjs                 # git sources at HEAD
- *   node scripts/build-market-index.mjs --source npm    # npm sources, exact versions
- *   node scripts/build-market-index.mjs --check         # validate only, write nothing
+ *   node scripts/build-market-index.mjs                 # npm sources, exact versions
+ *   node scripts/build-market-index.mjs --source git    # git sources pinned at HEAD
+ *   node scripts/build-market-index.mjs --check         # validate the committed file, write nothing
+ *
+ * `--check` validates market/index.json as it sits on disk, not the object this
+ * run happened to build. A check that only ever inspects its own output says
+ * nothing about the file that is actually served, so it also fails when the
+ * committed file and a fresh build disagree.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -28,16 +33,22 @@ const REPO_URL = "https://github.com/Lionad-Morotar/dsh-plugins";
  * still being validated in daily use and stay out until they are not.
  */
 const PUBLISHABLE = [
-  { directory: "dsh-jump", category: "ui", keywords: ["keyboard", "navigation", "accessibility", "vimium"] },
+  { directory: "dsh-jump", category: "ui", keywords: ["keyboard", "navigation", "accessibility", "vimium"], labels: ["keyboard"] },
 ];
 
 const CATEGORIES = {
   ui: { title: { en: "Interface", zh: "界面" } },
   tools: { title: { en: "Tools", zh: "工具" } },
 };
+/**
+ * Labels an entry can carry. Every one of these is a claim a reader acts on, so
+ * none of them may be assigned to every package by default. `official` in
+ * particular means DeepSeek shipped it; a third-party plugin wearing it would be
+ * misattributed, and the format-1 parser only checks the shape of this field, so
+ * nothing downstream would catch it.
+ */
 const LABELS = {
   keyboard: { title: { en: "Keyboard", zh: "键盘" } },
-  official: { title: { en: "First-party", zh: "一方" } },
 };
 
 const args = process.argv.slice(2);
@@ -87,7 +98,7 @@ function npmPublishTimestamp(name, version) {
   return seconds;
 }
 
-function entryFor({ directory, category, keywords }) {
+function entryFor({ directory, category, keywords, labels }) {
   const packageRoot = join(repoRoot, "packages", directory);
   const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
   const en = JSON.parse(readFileSync(join(packageRoot, "locale", "en.json"), "utf8"));
@@ -96,6 +107,12 @@ function entryFor({ directory, category, keywords }) {
   if (pkg.engines?.dsh === undefined) throw new Error(directory + " has no engines.dsh");
   const iconRelative = (pkg.icon ?? pkg.exports?.["./icon"] ?? "").replace(/^\.\//u, "");
   if (iconRelative === "" || !existsSync(join(packageRoot, iconRelative))) throw new Error(directory + " declares no readable icon");
+  // The declared set is the whole set: a label nobody listed in LABELS would be
+  // dropped by a strict reader, and a label outside this list is a claim the
+  // index did not decide to make.
+  for (const label of labels ?? []) {
+    if (LABELS[label] === undefined) throw new Error(directory + " asks for label \"" + label + "\" which LABELS does not declare");
+  }
   const source = sourceMode === "npm"
     ? { type: "npm" }
     : { type: "git", url: REPO_URL, commit: headCommit, path: "packages/" + directory };
@@ -111,7 +128,7 @@ function entryFor({ directory, category, keywords }) {
     author: pkg.author,
     homepage: pkg.homepage,
     repository: { url: REPO_URL, directory: "packages/" + directory },
-    metadata: { category, keywords, labels: keywords.includes("keyboard") ? ["keyboard", "official"] : ["official"], sortKeys: {} },
+    metadata: { category, keywords, labels: labels ?? [], sortKeys: {} },
     versions: [
       {
         version: pkg.version,
@@ -134,20 +151,68 @@ const index = {
   plugins: PUBLISHABLE.map(entryFor),
 };
 
-const validator = await import("@deepseek-ai/dsh-plugin-market-index").catch(() => undefined);
-if (validator === undefined) {
-  console.warn("warning: @deepseek-ai/dsh-plugin-market-index is not installed, skipping validation");
-} else {
-  const parsed = validator.parseMarketIndex(index, INDEX_URL);
-  for (const plugin of parsed.plugins) {
-    const target = validator.marketInstallTarget(plugin.name, plugin.versions[0]);
-    console.log("  " + plugin.name + " -> " + target.spec);
-  }
+/**
+ * The host's own parser, as a hard requirement.
+ *
+ * This used to degrade to a warning, which made a green run mean "the index was
+ * written" rather than "the index parses". A validator that silently steps
+ * aside turns the whole positive-test premise of this script into decoration,
+ * so a missing validator is a failure now.
+ */
+let validator;
+try {
+  validator = await import("@deepseek-ai/dsh-plugin-market-index");
+} catch (error) {
+  console.error("error: cannot load @deepseek-ai/dsh-plugin-market-index, so the index cannot be validated");
+  console.error("  install dependencies first: pnpm install");
+  console.error("  cause: " + (error instanceof Error ? error.message : String(error)));
+  process.exit(1);
 }
 
-if (!checkOnly) {
-  writeFileSync(OUTPUT, JSON.stringify(index, null, 2) + "\n");
-  console.log("wrote " + OUTPUT);
-} else {
+/** Parse an index with the host validator and print the install spec of each entry. */
+function validate(candidate, label) {
+  let parsed;
+  try {
+    parsed = validator.parseMarketIndex(candidate, INDEX_URL);
+  } catch (error) {
+    console.error("error: " + label + " is not a valid format-1 index");
+    console.error("  " + (error instanceof Error ? error.message : String(error)));
+    process.exit(1);
+  }
+  const specs = parsed.plugins.map((plugin) => {
+    const target = validator.marketInstallTarget(plugin.name, plugin.versions[0]);
+    return plugin.name + " -> " + target.spec;
+  });
+  return specs;
+}
+
+if (checkOnly) {
+  // Validate what is on disk. The object built above is only a reference to
+  // diff against, so a stale or hand-edited file cannot ride on a green build.
+  if (!existsSync(OUTPUT)) {
+    console.error("error: " + relative(repoRoot, OUTPUT) + " does not exist; run without --check to create it");
+    process.exit(1);
+  }
+  let committed;
+  try {
+    committed = JSON.parse(readFileSync(OUTPUT, "utf8"));
+  } catch (error) {
+    console.error("error: " + relative(repoRoot, OUTPUT) + " is not valid JSON");
+    console.error("  " + (error instanceof Error ? error.message : String(error)));
+    process.exit(1);
+  }
+  for (const spec of validate(committed, relative(repoRoot, OUTPUT))) console.log("  " + spec);
+
+  const fresh = JSON.stringify(index, null, 2) + "\n";
+  const onDisk = JSON.stringify(committed, null, 2) + "\n";
+  if (fresh !== onDisk) {
+    console.error("error: " + relative(repoRoot, OUTPUT) + " is out of date with the packages");
+    console.error("  run: node scripts/build-market-index.mjs");
+    process.exit(1);
+  }
   console.log("check only, nothing written");
+} else {
+  for (const spec of validate(index, "the index about to be written")) console.log("  " + spec);
+  writeFileSync(OUTPUT, JSON.stringify(index, null, 2) + "\n");
+  console.log("wrote " + relative(repoRoot, OUTPUT));
 }
