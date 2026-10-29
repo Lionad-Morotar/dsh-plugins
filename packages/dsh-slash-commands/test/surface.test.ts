@@ -46,11 +46,18 @@ describe("surface gating", () => {
   it("declares every service it reads, because Cordis refuses undeclared reads", () => {
     // Observed as a real failure: reading ctx.sessionTitle without this threw a
     // gateway error, and the swallowed exception surfaced in the GUI as an
-    // unexplained command failure. `workspaceRegistry` is the archive pair's
-    // write path, declared under the name the host's own gate injects it by.
+    // unexplained command failure.
     expect(inject).toContain("commands");
     expect(inject).toContain("sessionTitle");
-    expect(inject).toContain("workspaceRegistry");
+  });
+
+  it("does not gate the whole row on the workspace registry", () => {
+    // Observed on a real headless boot: declaring `workspaceRegistry` left the
+    // whole plugin pending on compositions without the workspace domain, which
+    // would have taken /rename and /copy down with it. The archive pair
+    // resolves the registry softly per invocation instead, so a missing
+    // service is one command's error message, not the row's silence.
+    expect(inject).not.toContain("workspaceRegistry");
   });
 
   it("registers /rename on a non-terminal surface", async () => {

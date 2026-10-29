@@ -2,7 +2,7 @@
 
 <img src="./assets/icon.svg" width="72" height="72" alt="dsh-slash-commands icon" align="right" />
 
-DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回复放进系统剪贴板，web 与 desktop 用 `/rename` 改当前会话标题、用 `/resume` 切换到另一个会话。
+DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回复放进系统剪贴板，web 与 desktop 用 `/rename` 改当前会话标题、用 `/resume` 切换到另一个会话，三端都用 `/archive` 归档当前会话、用 `/unarchive` 把归档的当前会话放回来。
 
 [命令归属](#命令归属) · [安装](#安装) · [实现要点](#实现要点) · [开发](#开发)
 
@@ -15,6 +15,8 @@ DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回�
 | `/copy` | 有 | 无 | 无 | 写的是本机剪贴板，装到 web/desktop 上会是复制进用户永远粘不到的地方的死命令，因此只在终端组合注册 |
 | `/rename` | TUI 自带同名命令 | 有 | 有 | 走 harness 全局的命令注册表，一处注册三端可见。TUI 的本地命令表会遮蔽同名注册项，所以 TUI 侧始终用自带的那个 |
 | `/resume` | 无 | 有 | 有 | 只在客户端半注册：切换会话是客户端 UI 导航（`ctx.uiWorkspace`），宿主没有这个能力 |
+| `/archive` | 有 | 有 | 有 | 归档是宿主持久层的状态写入（`workspaceRegistry`），没有端别错配，全局注册表一处注册三端可见 |
+| `/unarchive` | 有 | 有 | 有 | 同上，归档的逆操作 |
 
 ## `/resume`
 
@@ -33,6 +35,22 @@ DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回�
 宿主没有 tab 控件，范围切换靠的是重新打开同一个弹层：`PopupSelectController.open()` 的契约写着「A reopen supersedes the previous shell」，重开时旧绑定的回收结算发现自己已失效便退出，既不消费 token 也不关闭新弹层。重开是全新状态，所以搜索词会显式读出来再设回去，切档不会丢掉已输入的过滤条件。
 
 选中的会话若就是当前会话，直接 no-op：重开当前会话会重挂对话，丢掉滚动位置和草稿。
+
+## `/archive`
+
+```
+/archive          # 归档当前会话
+/archive --stop   # 先请求停止会话的运行中工作，再归档
+/unarchive        # 把归档的当前会话放回会话列表
+```
+
+归档不是删除：会话与它的历史原样保留，只是从侧边栏的默认视图收起，在会话列表的「归档」过滤器里可以找回并恢复。命令写的是宿主 `workspaceRegistry` 的注册表级归档集合，与侧边栏行菜单「归档会话」是同一个权威口，两个客户端看到的归档集合由宿主推送自动收敛，插件不做第二份数据。
+
+活动会话默认被宿主拒绝（会话还在跑 turn、子代理、后台任务或定时任务时写入会失败），拒绝文案会点名还在运行的东西。`--stop` 是侧边栏确认对话框的命令行翻译：宿主先落归档再请求停止各 provider 的工作，停止不被等待，所以成功文案只说「已归档、停止已请求」，不承诺「已停止」。
+
+`/unarchive` 只收当前会话。给一个跨会话的选择器需要展示归档会话的标题，而客户端本来就不加载归档会话，`/resume` 因此也搜不到它们；归档集的浏览与恢复是侧边栏「归档」过滤器已有的面，命令不重做一遍。两条命令都幂等：重复归档、重复取消都是静默成功，宿主对已归档 id 与未归档 id 的重复写入本来就不落笔。
+
+端别行为有一处天然差异：web 与 desktop 归档当前会话后，主视图会被宿主自己的 reconcile 清掉并自动导航到别处（与侧边栏归档行为同一条链）；TUI 没有主视图概念，会话保持打开，归档事实只发生在持久层。另外 TUI 自带的 `/bg` 会话管理器里有个文案叫「归档」的删除动作，那个是真删会话日志，与本命令同名不同义。
 
 ## `/rename`
 
@@ -92,9 +110,9 @@ web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `packa
 
 ## 安装
 
-包根带 `dsh-plugin.json`（Community Draft 0.15），把 `/copy` 与 `/rename` 作为声明式命令贡献出去，并各自申请 `commands.invoke` 权限。`/resume` 不在这个清单里：它是纯客户端贡献，靠 `package.json#dsh.client` 被发现，写进 manifest 的 `contributes` 反而会和它对不上。
+包根带 `dsh-plugin.json`（Community Draft 0.15），把 `/copy`、`/rename`、`/archive` 与 `/unarchive` 作为声明式命令贡献出去，并各自申请 `commands.invoke` 权限。`/resume` 不在这个清单里：它是纯客户端贡献，靠 `package.json#dsh.client` 被发现，写进 manifest 的 `contributes` 反而会和它对不上。
 
-装到哪个 profile 取决于要哪些命令：只有 tui profile 能拿到 `/copy`，`/rename` 三端都有，`/resume` 在 web 与 desktop。
+装到哪个 profile 取决于要哪些命令：只有 tui profile 能拿到 `/copy`，`/rename`、`/archive` 与 `/unarchive` 三端都有，`/resume` 在 web 与 desktop。
 
 ### 从索引源安装
 
@@ -137,10 +155,12 @@ web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `packa
 - `src/clipboard.ts` 是剪贴板三档路径，effects 全注入，每个分支都能在无终端环境下测。
 - `src/command.ts` 组装命令；优先走宿主中介的 `tuiPluginHost.registerCommand`（命令会带插件身份，宿主能按 `commands.invoke` 逐插件管控），未准入时回落到 `commands.register`，让命令仍然可用。本机 dsh-tui 组合实测未向第三方激活授予 Component 身份（`componentIdentityOf` 返回 undefined），因此实际走的是回落路径，命令可用但不带归属。
 - `src/rename.ts` 是 `/rename` 的文法（纯函数），`src/rename-command.ts` 组装命令并把标题交给 `sessionTitle`。
+- `src/archive.ts` 是 `/archive` 与 `/unarchive` 的文法（纯函数）：`--stop` 精确匹配不做大小写宽容（破坏性 flag 不 forgiving），`/unarchive` 拒绝任何参数。
+- `src/archive-command.ts` 组装两条归档命令并按错误类名分类宿主失败（`WorkspaceActiveSessionError` 带活动列表、`WorkspaceUnknownSessionError`）。registry 的读取刻意不走 `inject`：声明会让整行等待服务，headless 这类不带 workspace 域的最小组合会把 `/rename`、`/copy` 一起拖成 pending（真机 boot 实测）；改为逐次调用的软探针 `ctx.get(name)`（宿主沙箱里唯一不要求声明的服务读，属性访问未声明且服务已挂载会被 guard 拒绝，所以顺序是 get 在前、属性直读只留给测试夹具）。
 - `src/client/resume.ts` 是 `/resume` 的全部判定（行集、范围过滤、切换派发），DOM-free、协作者全用结构化类型接收，因此切换语义不需要浏览器就能测。
 - `src/client/resume-command.ts` 只做接线：读 `ctx.sessions.list` 与 `ctx.workspaces.list` 的快照，把范围重开交给 `ctx.commandUi.popupFor(actx).open()`。快照必须在 `options` 里读而不是注册时读——插件常驻期间会话会新建、结束、归档，注册时抓一次到第二次调用就过期了。
 - `src/client/clipboard-shim.ts` 是有界的剪贴板写入：预算、兜底、以及「包装只装一次」的实现（`writeText` 通常挂在原型上，还原时要删掉自己加的影子属性而不是把原型方法拷成自有属性）。
-- `src/index.ts` 是宿主半，`inject = ['commands', 'sessionTitle']`，两者都必须声明：漏了 `sessionTitle` 时 Cordis 抛 gateway 契约错误，被 catch 吞掉后表现为「命令执行失败」却给不出原因；`commands` 则是插件行激活早于命令服务挂载，不声明会出现 `apply` 先跑、注册不到、装完即失效（首次真机启动即如此）。它还决定端别分派：探到终端服务才注册 `/copy`，`/rename` 无条件注册。注册再延后一个宏任务，因为 `tuiPluginHost` 由另一行挂载，`apply` 时它还不存在（实测 apply 时缺失、约 250ms 后出现）。
+- `src/index.ts` 是宿主半，`inject = ['commands', 'sessionTitle']`，两者都必须声明：漏了 `sessionTitle` 时 Cordis 抛 gateway 契约错误，被 catch 吞掉后表现为「命令执行失败」却给不出原因；`commands` 则是插件行激活早于命令服务挂载，不声明会出现 `apply` 先跑、注册不到、装完即失效（首次真机启动即如此）。它还决定端别分派：探到终端服务才注册 `/copy`，`/rename` 与归档两条无条件注册。注册再延后一个宏任务，因为 `tuiPluginHost` 由另一行挂载，`apply` 时它还不存在（实测 apply 时缺失、约 250ms 后出现）。
 
 `lib/` 是构建产物且要提交：harness 从安装包直接读它，不会替你跑构建。改了 `src/` 就 `pnpm build` 再提交。
 

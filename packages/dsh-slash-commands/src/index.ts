@@ -38,15 +38,20 @@ import { registerRenameCommand } from "./rename-command.ts";
 export const name = "dsh-slash-commands";
 
 /**
- * Cordis refuses a service read from a plugin that did not declare it, so
- * every service this package touches is listed here. `sessionTitle` is what
+ * Cordis refuses a service read from a plugin that did not declare it, so the
+ * services this package reads are declared here. `sessionTitle` is what
  * `/rename` writes through; without the declaration the read throws a
  * gateway-level contract error and the command reports itself unavailable.
- * `workspaceRegistry` is what `/archive` and `/unarchive` write through —
- * the same service the host's own archive gate declares, so the inject name
- * is the documented spelling rather than an inferred one.
+ *
+ * `workspaceRegistry` is deliberately NOT declared: a declaration makes the
+ * whole plugin row wait for the service, and a minimal composition (headless
+ * boots without the workspace domain) would then lose /rename and /copy too —
+ * observed pending on the real headless boot. The archive pair instead
+ * resolves the registry softly per invocation and reports a missing service
+ * as a per-command error, so each command's availability stays independent,
+ * the same way /copy's is gated by the terminal rather than the row.
  */
-export const inject = ["commands", "sessionTitle", "workspaceRegistry"];
+export const inject = ["commands", "sessionTitle"];
 
 /** The Cordis surface this plugin uses; spelled structurally so the package
  *  keeps no runtime dependency on the harness' internal type packages. */

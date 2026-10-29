@@ -94,10 +94,10 @@ var UNARCHIVE_DONE = "\u4F1A\u8BDD\u5DF2\u53D6\u6D88\u5F52\u6863\uFF0C\u56DE\u52
 var UNARCHIVE_SESSION_MISSING = "/unarchive \u5F53\u524D\u4F1A\u8BDD\u4E0D\u53EF\u7528";
 var UNARCHIVE_SERVICE_MISSING = "/unarchive \u9700\u8981 workspace \u670D\u52A1\uFF0C\u5F53\u524D\u7EC4\u5408\u6CA1\u6709\u6302\u8F7D\u5B83";
 function workspaceRegistryOf(ctx) {
+  const viaGet = ctx.get?.("workspaceRegistry");
+  if (typeof viaGet === "object" && viaGet !== null) return viaGet;
   const direct = ctx.workspaceRegistry;
-  if (direct !== void 0) return direct;
-  const viaGet = ctx.get?.("workspaceRegistry", false);
-  return typeof viaGet === "object" && viaGet !== null ? viaGet : void 0;
+  return typeof direct === "object" && direct !== null ? direct : void 0;
 }
 function archiveRejectionOf(error) {
   const name2 = typeof error === "object" && error !== null ? error.name : void 0;
@@ -410,7 +410,7 @@ function registerRenameCommand(ctx) {
 
 // src/index.ts
 var name = "dsh-slash-commands";
-var inject = ["commands", "sessionTitle", "workspaceRegistry"];
+var inject = ["commands", "sessionTitle"];
 var HELPER_TIMEOUT_MS = 2e3;
 async function runHelper(command, args, text) {
   const { spawn } = await import("node:child_process");

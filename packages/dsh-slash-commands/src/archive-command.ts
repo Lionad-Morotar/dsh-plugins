@@ -83,15 +83,28 @@ const UNARCHIVE_SESSION_MISSING = "/unarchive 当前会话不可用";
 const UNARCHIVE_SERVICE_MISSING = "/unarchive 需要 workspace 服务，当前组合没有挂载它";
 
 /**
- * Read the workspace registry the way `/rename` reads its title service:
- * the declared inject first, a soft `get` as the fallback for test contexts
- * and compositions that expose services only through the accessor.
+ * Read the workspace registry softly, per invocation.
+ *
+ * The service is deliberately absent from the plugin's inject list: a
+ * declaration gates the whole row on the service, and a minimal composition
+ * without the workspace domain (headless boots are observed to lack it)
+ * would then lose /rename and /copy too. A per-invocation soft read keeps
+ * each command's availability independent — a missing registry is one
+ * command's error message.
+ *
+ * The accessor is tried first because the host's sandbox context is where
+ * order is load-bearing: `ctx.get(name)` is the one service read that does
+ * not require a declaration (its second argument is dropped there, so an
+ * unmounted service resolves to undefined rather than throwing), while a
+ * property access to a mounted-but-undeclared service is a guard rejection.
+ * The direct property stays second only for test contexts that hand the
+ * service over as a plain field.
  */
 function workspaceRegistryOf(ctx: ArchiveContextLike): WorkspaceRegistryLike | undefined {
+  const viaGet = ctx.get?.("workspaceRegistry");
+  if (typeof viaGet === "object" && viaGet !== null) return viaGet as WorkspaceRegistryLike;
   const direct = ctx.workspaceRegistry;
-  if (direct !== undefined) return direct;
-  const viaGet = ctx.get?.("workspaceRegistry", false);
-  return typeof viaGet === "object" && viaGet !== null ? (viaGet as WorkspaceRegistryLike) : undefined;
+  return typeof direct === "object" && direct !== null ? direct : undefined;
 }
 
 /**
