@@ -28,6 +28,14 @@ const manifest = require(join(packageRoot, "package.json"));
 const CLIENT_EXTERNALS = ["react", "react/jsx-runtime", "react-dom", "@deepseek-ai/dsh-client-ui-primitives"];
 
 /**
+ * Host-half platform packages: the Harness install provides its own copy of
+ * every `@deepseek-ai/*` module. Bundling one would ship a second Typert
+ * protocol or Cordis `Service` class, and class identity is what the gateway
+ * uses to find the service.
+ */
+const HOST_EXTERNALS = ["@deepseek-ai/*"];
+
+/**
  * The ModuleLoader wrapper for the client half. `window.__ModuleLoader__.load`
  * accepts only `{id, factory}` and the id must equal the package name, because
  * the loader keys its module table on it. The factory must return the plugin
@@ -88,7 +96,7 @@ async function bundle(entry, format, external = [], minify = false) {
 await rm(libRoot, { recursive: true, force: true });
 await mkdir(libRoot, { recursive: true });
 
-await writeFile(join(libRoot, "index.js"), await bundle(join(packageRoot, "src", "index.ts"), "esm"), "utf8");
+await writeFile(join(libRoot, "index.js"), await bundle(join(packageRoot, "src", "index.ts"), "esm", HOST_EXTERNALS), "utf8");
 
 const client = await bundle(join(packageRoot, "src", "client", "entry.ts"), "cjs", CLIENT_EXTERNALS, true);
 await writeFile(join(libRoot, "client.js"), wrap(manifest.name, client), "utf8");
