@@ -79,7 +79,7 @@ function sameServers(a: readonly ServerEntry[], b: readonly ServerEntry[]): bool
   });
 }
 
-/** The legacy single-shot writer kept for one release of tests. */
+/** Project the live server list into settings; skipped when the guard refuses (seeded profiles). */
 async function projectServerList(deps: ReconcilerDeps, inventory: ReturnType<typeof readMcpInventory>, trigger: string): Promise<void> {
   const projected = projectServers(inventory);
   try {
