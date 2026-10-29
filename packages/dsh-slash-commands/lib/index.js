@@ -63,6 +63,142 @@ async function runSafely(run) {
   }
 }
 
+// src/archive.ts
+var ARCHIVE_COMMAND_NAME = "archive";
+var ARCHIVE_COMMAND_DESCRIPTION = "Archive the current session (--stop also stops its running work)";
+var UNARCHIVE_COMMAND_NAME = "unarchive";
+var UNARCHIVE_COMMAND_DESCRIPTION = "Bring the current session back from the archive";
+var ARCHIVE_USAGE = "\u7528\u6CD5\uFF1A/archive [--stop]";
+var UNARCHIVE_USAGE = "\u7528\u6CD5\uFF1A/unarchive";
+var STOP_FLAG = "--stop";
+function parseArchiveInput(rawInput) {
+  const tokens = rawInput.trim().split(/\s+/u).filter((token) => token !== "");
+  let stopActivity = false;
+  for (const token of tokens) {
+    if (token !== STOP_FLAG) return { ok: false, message: ARCHIVE_USAGE };
+    if (stopActivity) return { ok: false, message: ARCHIVE_USAGE };
+    stopActivity = true;
+  }
+  return { ok: true, stopActivity };
+}
+function parseUnarchiveInput(rawInput) {
+  if (rawInput.trim().length !== 0) return { ok: false, message: UNARCHIVE_USAGE };
+  return { ok: true };
+}
+
+// src/archive-command.ts
+var ARCHIVE_DONE = "\u4F1A\u8BDD\u5DF2\u5F52\u6863\u3002\u5F52\u6863\u7684\u4F1A\u8BDD\u53EF\u5728\u4F1A\u8BDD\u5217\u8868\u7684\u300C\u5F52\u6863\u300D\u89C6\u56FE\u4E2D\u627E\u56DE\u3002";
+var ARCHIVE_SESSION_MISSING = "/archive \u5F53\u524D\u4F1A\u8BDD\u4E0D\u53EF\u7528\uFF0C\u65E0\u6CD5\u5F52\u6863";
+var ARCHIVE_SERVICE_MISSING = "/archive \u9700\u8981 workspace \u670D\u52A1\uFF0C\u5F53\u524D\u7EC4\u5408\u6CA1\u6709\u6302\u8F7D\u5B83";
+var UNARCHIVE_DONE = "\u4F1A\u8BDD\u5DF2\u53D6\u6D88\u5F52\u6863\uFF0C\u56DE\u5230\u4F1A\u8BDD\u5217\u8868\u3002";
+var UNARCHIVE_SESSION_MISSING = "/unarchive \u5F53\u524D\u4F1A\u8BDD\u4E0D\u53EF\u7528";
+var UNARCHIVE_SERVICE_MISSING = "/unarchive \u9700\u8981 workspace \u670D\u52A1\uFF0C\u5F53\u524D\u7EC4\u5408\u6CA1\u6709\u6302\u8F7D\u5B83";
+function workspaceRegistryOf(ctx) {
+  const direct = ctx.workspaceRegistry;
+  if (direct !== void 0) return direct;
+  const viaGet = ctx.get?.("workspaceRegistry", false);
+  return typeof viaGet === "object" && viaGet !== null ? viaGet : void 0;
+}
+function archiveRejectionOf(error) {
+  const name2 = typeof error === "object" && error !== null ? error.name : void 0;
+  if (name2 === "WorkspaceActiveSessionError") {
+    const activity = error.activity;
+    return {
+      kind: "active",
+      ...Array.isArray(activity) ? { activity } : {}
+    };
+  }
+  if (name2 === "WorkspaceUnknownSessionError") return { kind: "unknown" };
+  return { kind: "unavailable" };
+}
+var FAMILY_LABELS = {
+  turn: "\u4E00\u8F6E\u5BF9\u8BDD\u8FDB\u884C\u4E2D",
+  subagent: "\u5B50\u4EE3\u7406",
+  job: "\u540E\u53F0\u4EFB\u52A1",
+  schedule: "\u5B9A\u65F6\u4EFB\u52A1"
+};
+var MAX_LISTED_LABELS = 3;
+function activityPhrase(entry) {
+  const family = FAMILY_LABELS[entry.kind] ?? entry.kind;
+  if (entry.kind === "turn") return family;
+  const items = entry.items ?? [];
+  const labels = items.map((item) => item.label ?? item.id).filter((label) => label !== "");
+  if (labels.length === 0) return items.length > 0 ? `${family} \xD7${items.length}` : family;
+  const shown = labels.slice(0, MAX_LISTED_LABELS);
+  const rest = labels.length - shown.length;
+  const listed = rest > 0 ? `${shown.join("\u3001")} \u7B49 ${labels.length} \u4E2A` : shown.join("\u3001");
+  return `${family}\uFF08${listed}\uFF09`;
+}
+function activitySentence(activity) {
+  if (activity.length === 0) return "\u4F1A\u8BDD\u4ECD\u5728\u8FD0\u884C";
+  return activity.map(activityPhrase).join("\u3001");
+}
+function archiveRejectionMessage(rejection) {
+  switch (rejection.kind) {
+    case "active":
+      return `\u4F1A\u8BDD\u4ECD\u5728\u8FD0\u884C\uFF08${activitySentence(rejection.activity ?? [])}\uFF09\u3002\u7528 /archive --stop \u505C\u6B62\u5B83\u4EEC\u5E76\u5F52\u6863\u3002`;
+    case "unknown":
+      return "\u4F1A\u8BDD\u4E0D\u5B58\u5728\u6216\u5DF2\u7ED3\u675F\uFF0C\u65E0\u6CD5\u5F52\u6863\u3002";
+    case "unavailable":
+      return "\u5F52\u6863\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002";
+  }
+}
+function createArchiveCommand(ctx) {
+  return {
+    name: ARCHIVE_COMMAND_NAME,
+    description: ARCHIVE_COMMAND_DESCRIPTION,
+    async handler(invocation) {
+      const parsed = parseArchiveInput(invocation.rawInput);
+      if (!parsed.ok) return { kind: "error", text: parsed.message };
+      const registry = workspaceRegistryOf(ctx);
+      const archive = registry?.archiveSession;
+      if (typeof archive !== "function") return { kind: "error", text: ARCHIVE_SERVICE_MISSING };
+      const sessionId = invocation.agent.session?.id;
+      if (sessionId === void 0) return { kind: "error", text: ARCHIVE_SESSION_MISSING };
+      try {
+        await archive.call(registry, sessionId, parsed.stopActivity ? { stopActivity: true } : void 0);
+        return { kind: "success", text: ARCHIVE_DONE };
+      } catch (error) {
+        return { kind: "error", text: archiveRejectionMessage(archiveRejectionOf(error)) };
+      }
+    }
+  };
+}
+function createUnarchiveCommand(ctx) {
+  return {
+    name: UNARCHIVE_COMMAND_NAME,
+    description: UNARCHIVE_COMMAND_DESCRIPTION,
+    async handler(invocation) {
+      const parsed = parseUnarchiveInput(invocation.rawInput);
+      if (!parsed.ok) return { kind: "error", text: parsed.message };
+      const registry = workspaceRegistryOf(ctx);
+      const unarchive = registry?.unarchiveSession;
+      if (typeof unarchive !== "function") return { kind: "error", text: UNARCHIVE_SERVICE_MISSING };
+      const sessionId = invocation.agent.session?.id;
+      if (sessionId === void 0) return { kind: "error", text: UNARCHIVE_SESSION_MISSING };
+      try {
+        await unarchive.call(registry, sessionId);
+        return { kind: "success", text: UNARCHIVE_DONE };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        return { kind: "error", text: `/unarchive \u53D6\u6D88\u5F52\u6863\u5931\u8D25\uFF1A${detail}` };
+      }
+    }
+  };
+}
+function registerArchiveCommands(ctx) {
+  const commands = ctx.get?.("commands", false) ?? ctx.commands;
+  if (typeof commands?.register !== "function") {
+    throw new Error("archive commands cannot register: the commands service is not mounted on this context");
+  }
+  const disposeArchive = commands.register(createArchiveCommand(ctx));
+  const disposeUnarchive = commands.register(createUnarchiveCommand(ctx));
+  return () => {
+    disposeUnarchive();
+    disposeArchive();
+  };
+}
+
 // src/arguments.ts
 var MAX_COUNT = 50;
 var USAGE = "Usage: /copy [<number=1>] [--all]";
@@ -274,7 +410,7 @@ function registerRenameCommand(ctx) {
 
 // src/index.ts
 var name = "dsh-slash-commands";
-var inject = ["commands", "sessionTitle"];
+var inject = ["commands", "sessionTitle", "workspaceRegistry"];
 var HELPER_TIMEOUT_MS = 2e3;
 async function runHelper(command, args, text) {
   const { spawn } = await import("node:child_process");
@@ -326,6 +462,13 @@ function apply(ctx) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     ctx.logger?.info?.("dsh-slash-commands: /rename is unavailable on this composition: " + detail);
+  }
+  try {
+    registerArchiveCommands(ctx);
+    ctx.logger?.info?.("/archive and /unarchive are ready: /archive [--stop], /unarchive");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    ctx.logger?.info?.("dsh-slash-commands: /archive and /unarchive are unavailable on this composition: " + detail);
   }
   setTimeout(() => {
     if (!isTerminalSurface(ctx)) {

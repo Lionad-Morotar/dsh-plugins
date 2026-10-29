@@ -46,9 +46,11 @@ describe("surface gating", () => {
   it("declares every service it reads, because Cordis refuses undeclared reads", () => {
     // Observed as a real failure: reading ctx.sessionTitle without this threw a
     // gateway error, and the swallowed exception surfaced in the GUI as an
-    // unexplained command failure.
+    // unexplained command failure. `workspaceRegistry` is the archive pair's
+    // write path, declared under the name the host's own gate injects it by.
     expect(inject).toContain("commands");
     expect(inject).toContain("sessionTitle");
+    expect(inject).toContain("workspaceRegistry");
   });
 
   it("registers /rename on a non-terminal surface", async () => {
@@ -56,7 +58,19 @@ describe("surface gating", () => {
 
     await settle(() => apply(ctx as never));
 
-    expect(registered.map(entry => entry.name)).toEqual(["rename"]);
+    expect(registered.map(entry => entry.name)).toContain("rename");
+  });
+
+  it("registers the archive pair on a non-terminal surface", async () => {
+    // Archiving writes the host's durable archive set, so it is meaningful on
+    // every surface — the opposite of /copy, whose clipboard belongs to one
+    // machine. No terminal gate applies.
+    const { registered, ctx } = context({ terminal: false, withCommands: true });
+
+    await settle(() => apply(ctx as never));
+
+    expect(registered.map(entry => entry.name)).toContain("archive");
+    expect(registered.map(entry => entry.name)).toContain("unarchive");
   });
 
   it("does not offer /copy without a terminal", async () => {
@@ -69,17 +83,18 @@ describe("surface gating", () => {
     expect(registered.some(entry => entry.name === "copy")).toBe(false);
   });
 
-  it("registers both commands on a terminal surface", async () => {
+  it("registers every command on a terminal surface", async () => {
     const { registered, ctx } = context({ terminal: true, withCommands: true });
 
     await settle(() => apply(ctx as never));
 
-    expect(registered.map(entry => entry.name).sort()).toEqual(["copy", "rename"]);
+    expect(registered.map(entry => entry.name).sort()).toEqual(["archive", "copy", "rename", "unarchive"]);
   });
 
-  it("still registers /rename when no commands service is mounted", async () => {
-    // /rename failing loudly is caught and logged: a composition can compose
-    // its surfaces differently, and that must not stop the plugin from trying.
+  it("still registers nothing when no commands service is mounted", async () => {
+    // /rename and the archive pair fail loudly but are caught and logged: a
+    // composition can compose its surfaces differently, and that must not
+    // stop the plugin from trying its other half.
     const { registered, ctx } = context({ terminal: false, withCommands: false });
 
     await settle(() => apply(ctx as never));
