@@ -58,7 +58,7 @@ export function DetailPane({ sessionId, hash, remote, t, onSelect }: DetailPaneP
     let alive = true;
     setState({ kind: "loading" });
     Promise.resolve()
-      .then(() => remote.commit(sessionId, { hash }))
+      .then(() => remote.commit({ sessionId, hash }))
       .then(transport => {
         if (!alive) return;
         const unwrapped = unwrapTransport<GitCommitResult>(transport);

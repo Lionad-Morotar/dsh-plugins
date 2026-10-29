@@ -228,7 +228,7 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       const controller = new AbortController();
       setStatuses(undefined);
       Promise.resolve()
-        .then(() => statusFace.snapshot(sessionId, { maxCommits: 1 }, controller.signal))
+        .then(() => statusFace.snapshot({ sessionId, maxCommits: 1 }, controller.signal))
         .then(response => {
           if (!alive) return;
           const normalized = normalizeStatusSnapshot(response);

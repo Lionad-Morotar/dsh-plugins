@@ -143,7 +143,7 @@ export function createGitExplorerView(wiring: ViewWiring) {
       setLoad({ kind: "loading" });
       setLoadError(undefined);
       Promise.resolve()
-        .then(() => remote.snapshot(sessionId, {}))
+        .then(() => remote.snapshot({ sessionId }))
         .then(transport => {
           if (!alive) return;
           const unwrapped = unwrapTransport<GitSnapshotResult>(transport);
@@ -199,7 +199,7 @@ export function createGitExplorerView(wiring: ViewWiring) {
       setLoadingMore(true);
       setLoadError(undefined);
       Promise.resolve()
-        .then(() => remote.query(requested, { skip: commits.length, limit: HISTORY_PAGE_SIZE }))
+        .then(() => remote.query({ sessionId, skip: commits.length, limit: HISTORY_PAGE_SIZE }))
         .then(transport => {
           // The user may have switched conversations while this page was in
           // flight; appending it would mix two repositories in one list.

@@ -38,7 +38,7 @@ function cleanFilter(value: string | undefined): string | undefined {
 /** Run one paged history query against a repository root. */
 export async function collectQuery(
   options: QueryOptions,
-  request: GitQueryRequest = {},
+  request: Omit<GitQueryRequest, "sessionId"> = {},
   signal?: AbortSignal,
 ): Promise<GitQueryResult> {
   const cwd = request.cwd ?? options.cwd;

@@ -131,6 +131,8 @@ export type GitSnapshotResult =
   | { readonly ok: false; readonly error: GitFailure };
 
 export interface GitSnapshotRequest {
+  /** Session whose working directory backs this call; resolved server-side. */
+  readonly sessionId: string;
   /** Absolute directory override; when absent the session's cwd is used. */
   readonly cwd?: string;
   /** Newest commits to include; clamped by the service config. */
@@ -138,6 +140,8 @@ export interface GitSnapshotRequest {
 }
 
 export interface GitQueryRequest {
+  /** Session whose working directory backs this call; resolved server-side. */
+  readonly sessionId: string;
   /** Branch, tag or commit to walk; `--all` when absent. */
   readonly ref?: string;
   readonly search?: string;
@@ -177,6 +181,8 @@ export interface GitCommitDetail extends GitCommit {
 }
 
 export interface GitCommitRequest {
+  /** Session whose working directory backs this call; resolved server-side. */
+  readonly sessionId: string;
   /** Full or abbreviated object id. */
   readonly hash: string;
   /** Absolute directory override; when absent the session's cwd is used. */
