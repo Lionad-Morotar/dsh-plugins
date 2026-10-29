@@ -68,7 +68,7 @@
 | `dsh-jump` | `src/client/entry.ts` → `createRuntime` | `lib/client.js` | `slots.register({ name: "settings.general.item", id: "jump", order: 18 })`；服务经 `ctx` 软探测而非 `inject`，缺设置面时导航仍然可用 |
 | `dsh-better-keybindings` | `src/client/entry.ts` | `lib/client.js` | 不注册 slot：只挂一个捕获阶段 `keydown` |
 | `dsh-preview-more` | `src/client/entry.ts` | `lib/client.js` + 按需 chunk | `slots.register({ name: "sidebar.right.tab.document", key, locale })`，`readFile` 经 `inject` 注入；3D / CAD / HDR 三类渲染器分块懒加载 |
-| `dsh-slash-commands` | `src/client/entry.ts` | `lib/client.js` | 不经命令注册表：用 `ctx.effect` 注册有界剪贴板与 `/resume` 贡献；`inject = ["commandUi", "sessions", "workspaces", "uiWorkspace"]` |
+| `dsh-slash-commands` | `src/client/entry.ts` | `lib/client.js` | 不经命令注册表：用 `ctx.effect` 注册有界剪贴板、`/resume` 贡献与行首顿号折叠监听（capture 阶段 `beforeinput`，`execCommand` 写回）；`inject = ["commandUi", "sessions", "workspaces", "uiWorkspace"]` |
 | `dsh-session-timing` | `src/client/entry.ts` | `lib/client.js` | 以 `id: activity`、`priority: -1` 接管 `conversation.composer.dock` 的统计 pill；`inject = ["slots", "locale", "configForms"]`，模式偏好镜像 `ui-chat` 的 `performanceUsage` |
 | `dsh-model-provider-label` | `src/client/entry.ts` | `lib/client.js` | 以 `priority: -1` 接管 `conversation.input.model.label`（`single` slot，1017 徽章插件不再挂载，无注册者时回落 `renderSlot` 的 `fallback`）；`inject = ["slots"]` |
 | `dsh-better` | `src/client/entry.ts` | `lib/client.js` | 以 `id: command-popup`、`priority: -100` 遮蔽 `conversation.input.overlay` 接管 `/model` 弹窗；`inject = ["slots"]` |
