@@ -43,9 +43,9 @@
 
 | 动作 | 键 | 作用域 | web |
 | --- | --- | --- | --- |
-| 打开文件面板 | `⌘⇧E` | 全局命令 | 不绑定，点标签栏「文件」 |
-| 打开 Git 面板 | `⌘⇧G` | 全局命令 | 不绑定，点标签栏「Git」 |
-| 展开 / 收起终端 dock | `⌘⇧M` | 全局命令 | 不绑定，用 dock 的展开按钮 |
+| 打开文件面板 | `⌘⇧E` | 全局命令 | 可用（插件本地路由兜底，宿主不注册该组合） |
+| 打开 Git 面板 | `⌘⇧G` | 全局命令 | 可用（插件本地路由兜底，宿主不注册该组合） |
+| 展开 / 收起终端 dock | `⌘⇧M` | 全局命令 | 可用（插件本地路由兜底，宿主不注册该组合） |
 | 下一个 / 上一个面板 | `⌘⌥↓` / `⌘⌥↑` | 文件面板内 | 可用（面板自己的 keydown） |
 | 关闭当前面板 | `Ctrl+W` | 文件面板内 | 浏览器先接管，用标签上的关闭按钮 |
 
@@ -53,7 +53,7 @@
 
 ## 已知边界
 
-- web 上 `⌘⇧E` / `⌘⇧G` / `⌘⇧M` 可能被浏览器先消费，包里不把它们写成宿主默认值；web 的入口是标签栏与 dock 按钮。`Ctrl+W` 同理，只有 desktop 承诺。
+- web 上 `⌘⇧E` / `⌘⇧G` / `⌘⇧M` 会被宿主快捷键服务判为 `unsupported-browser`，因此不作为宿主默认值注册；客户端在 window 捕获阶段装一个本地路由，命中后走与宿主命令同一套 `commands.ts` 实现。desktop 不装这个监听，避免与原生加速键双触发。`Ctrl+W` 仍只有 desktop 承诺。
 - `⌘O` 归宿主 `workspace.add`、`⌘P` 归 `workspace.files`，工作台不抢；`Cmd+Insert` 在 Mac 键盘上不存在，任何端都不注册。设置页把这几条"刻意不绑"的组合单列一节并给替代键。
 - 设置页只显示已挂载的 `workbench.*` 命令；组里没有行时是"未安装"，不是故障。
 - 核心包没有独立可视面：设置分区之外，它只提供服务和命令注册。没有功能包时 `shell.bottom`、`conversation.view` 都不会出现。
@@ -69,8 +69,8 @@ node .nsl/chain/accept-s1b-view-seam.mjs  # views seam 真的调到宿主 openVi
 node .nsl/chain/accept-s8-settings.mjs    # 三组矩阵、跟随目录、不可用组合带原因与替代键
 ```
 
-单包：`pnpm --filter dsh-workbench-core test`（33 用例）、`typecheck`、`build`。
+单包：`pnpm --filter dsh-workbench-core test`（44 用例）、`typecheck`、`build`。
 
 ## 结构
 
-`src/client/keymap.ts` 是命令与键位的单一来源，设置矩阵与宿主注册都读它；`src/client/settings.ts` 是纯决策（分组、跨端可用性、冲突检查），不碰 React；`src/client/service.ts` 只做装配；`section.tsx` 把快照投影成 DOM。宿主半 `src/index.ts` 是空挂行，让 Loader 在两侧都能解析这个包名。
+`src/client/keymap.ts` 是命令与键位的单一来源，设置矩阵与宿主注册都读它；`src/client/shortcut-router.ts` 是 web 端的捕获阶段本地路由，命中后调 `commands.ts` 的同一套解析器；`src/client/settings.ts` 是纯决策（分组、跨端可用性、冲突检查），不碰 React；`src/client/service.ts` 只做装配；`section.tsx` 把快照投影成 DOM。宿主半 `src/index.ts` 是空挂行，让 Loader 在两侧都能解析这个包名。

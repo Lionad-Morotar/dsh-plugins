@@ -74,6 +74,24 @@ function resolverFor(spec: WorkbenchCommandSpec, service: WorkbenchService): () 
 }
 
 /**
+ * Run one global command through the same resolver the host registry uses.
+ *
+ * The web local router calls this instead of re-implementing the command
+ * bodies: a chord and a host menu selection must never diverge.
+ * @param id - global command id.
+ * @param service - the workbench service the command drives.
+ * @returns true when the command ran; false when unknown or currently blocked.
+ */
+export function runWorkbenchCommand(id: string, service: WorkbenchService): boolean {
+  const spec = GLOBAL_COMMANDS.find(command => command.id === id);
+  if (spec === undefined) return false;
+  const resolution = resolverFor(spec, service)();
+  if (resolution.status !== "handled") return false;
+  resolution.run();
+  return true;
+}
+
+/**
  * Register every global workbench command.
  * @param shortcuts - host shortcut service, or undefined outside a capable host.
  * @param service - the workbench service the commands drive.

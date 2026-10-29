@@ -262,12 +262,14 @@ export function createWorkbenchSection({ service, t, shortcuts }: SectionWiring)
             {" · "}
             {t("row.web")} {row.webAvailable ? t("state.available") : t("state.unavailable")}
           </span>
-          {!row.webAvailable && row.note !== undefined ? (
+          {row.note === undefined ? null : (
             <span style={detailStyle}>
               {row.note}
-              {row.alternative === undefined ? "" : ` · ${t("row.alternative")}：${row.alternative}`}
+              {!row.webAvailable && row.alternative !== undefined
+                ? ` · ${t("row.alternative")}：${row.alternative}`
+                : ""}
             </span>
-          ) : null}
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
           <Keycaps keys={row.keys} />

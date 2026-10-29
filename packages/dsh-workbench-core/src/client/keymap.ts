@@ -8,10 +8,11 @@
  *
  * - Desktop: the native menu accelerator owns the combination, so the command
  *   is registered through `ctx.shortcuts`.
- * - Web: `Ctrl+Shift+E/G/M` may be swallowed by the browser before the page
- *   sees it (blueprint F4). Until that is measured on the real shell, `web` is
- *   null and the row carries the fallback the panel-local keydown listener
- *   implements. Null means "no editable host binding", not "no action".
+ * - Web: the host shortcut service refuses `Ctrl+Shift+E/G/M` as
+ *   `unsupported-browser`, so `web` stays null and the host catalog never
+ *   claims a binding it cannot carry. The browser still dispatches the keydown;
+ *   the bundle's own capture-phase router (`shortcut-router.ts`) delivers the
+ *   chord locally. Null means "no host binding", not "no action".
  *
  * Panel chords are marked `scope: "panel"`: the file panel's local listener
  * owns them, so settings shows them read-only. Registering them as host
@@ -50,11 +51,11 @@ export interface WorkbenchCommandSpec {
   readonly scope: WorkbenchScope;
   /** Desktop default binding. */
   readonly desktop: KeyBinding;
-  /** Web default binding, or null when the page cannot rely on delivery. */
+  /** Web default binding, or null when the host cannot carry the chord on web. */
   readonly web: KeyBinding | null;
-  /** Human-readable fallback shown when `web` is null. */
+  /** Why the host carries no web binding, or who delivers the chord instead. */
   readonly webNote: string;
-  /** What the user can do instead when the web binding is unavailable. */
+  /** Fallback chord offered when the host carries no web binding. */
   readonly webAlternative: string;
 }
 
@@ -67,8 +68,8 @@ export const WORKBENCH_COMMANDS: readonly WorkbenchCommandSpec[] = [
     scope: "global",
     desktop: { code: "KeyE", modifiers: ["primary", "shift"] },
     web: null,
-    webNote: "浏览器可能保留 Ctrl+Shift+E；面板内由本地 keydown 监听接管",
-    webAlternative: "点击标签栏的「文件」标签",
+    webNote: "web 由插件本地路由兜底（宿主快捷键服务不注册该组合）",
+    webAlternative: "⌘⇧E",
   },
   {
     id: "workbench.git.toggle",
@@ -77,8 +78,8 @@ export const WORKBENCH_COMMANDS: readonly WorkbenchCommandSpec[] = [
     scope: "global",
     desktop: { code: "KeyG", modifiers: ["primary", "shift"] },
     web: null,
-    webNote: "浏览器可能保留 Ctrl+Shift+G；面板内由本地 keydown 监听接管",
-    webAlternative: "点击标签栏的「Git」标签",
+    webNote: "web 由插件本地路由兜底（宿主快捷键服务不注册该组合）",
+    webAlternative: "⌘⇧G",
   },
   {
     id: "workbench.term.toggle",
@@ -87,8 +88,8 @@ export const WORKBENCH_COMMANDS: readonly WorkbenchCommandSpec[] = [
     scope: "global",
     desktop: { code: "KeyM", modifiers: ["primary", "shift"] },
     web: null,
-    webNote: "浏览器可能保留 Ctrl+Shift+M；终端 dock 内的按钮仍可用",
-    webAlternative: "点击终端 dock 的展开或收起按钮",
+    webNote: "web 由插件本地路由兜底（宿主快捷键服务不注册该组合）",
+    webAlternative: "⌘⇧M",
   },
   {
     id: "workbench.panel.next",

@@ -11,7 +11,7 @@
  * the adapter snapshot, and a section that renders before the service exists
  * would report every adapter as missing.
  */
-import { registerWorkbenchCommands, type ShortcutRegistryLike } from "./commands.ts";
+import { registerWorkbenchCommands, runWorkbenchCommand, type ShortcutRegistryLike } from "./commands.ts";
 import { EN, ZH } from "./copy.ts";
 import {
   LOCALE_NAMESPACE,
@@ -25,7 +25,8 @@ import {
 import { createWorkbenchSection, type ShortcutsLike } from "./section.tsx";
 import { buildSettingsGroups, checkBindings } from "./settings.ts";
 import { createSessionSelection } from "./session.ts";
-import { createWorkbenchService } from "./service.ts";
+import { createWorkbenchService, type WorkbenchService } from "./service.ts";
+import { createGlobalKeyRouter, installGlobalKeyRouter } from "./shortcut-router.ts";
 import { createReturnToChatRow, resolveMenuItemButton, type LoaderRequire } from "./view-actions.tsx";
 import { createViewSeam } from "./views.ts";
 import { WORKBENCH_SERVICE } from "../shared.ts";
@@ -83,6 +84,26 @@ export function readShortcutService(ctx: ClientContextLike): (ShortcutRegistryLi
 /** Services this plugin waits for before applying. */
 export const inject = ["slots", "locale", "shortcuts"];
 
+/**
+ * Install the web-only fallback router for the host-refused chords.
+ *
+ * Desktop keeps the native menu accelerator; a second listener there would run
+ * every command twice. Outside a browser (Node tests, SSR) there is no target,
+ * so the installer degrades to a no-op.
+ */
+function installWebShortcutRouter(
+  service: WorkbenchService,
+  shortcuts: (ShortcutRegistryLike & ShortcutsLike) | undefined,
+): () => void {
+  return installGlobalKeyRouter({
+    runtime: shortcuts?.runtime,
+    run: commandId => {
+      runWorkbenchCommand(commandId, service);
+    },
+    ...(typeof window === "undefined" ? {} : { target: window }),
+  });
+}
+
 /** Mount the workbench service and its settings section. */
 export function apply(ctx: ClientContextLike): () => void {
   const service = createWorkbenchService(ctx);
@@ -103,6 +124,10 @@ export function apply(ctx: ClientContextLike): () => void {
   const offCommands = registerWorkbenchCommands(shortcuts, service, t, message =>
     ctx.logger?.warn?.(`${LOCALE_NAMESPACE}: ${message}`),
   );
+  // Web only: the host refuses these three chords, so the bundle listens for
+  // them itself in the capture phase. Registering the host defaults stays
+  // desktop-only either way.
+  const offKeyRouter = installWebShortcutRouter(service, shortcuts);
   const Section = createWorkbenchSection({ service, t, shortcuts });
 
   ctx.slots.inject(SECTION_SLOT, () =>
@@ -141,6 +166,7 @@ export function apply(ctx: ClientContextLike): () => void {
 
   return () => {
     if (typeof offViewActions === "function") offViewActions();
+    offKeyRouter();
     offCommands();
     offLocale();
     offService?.();
@@ -153,7 +179,7 @@ export function apply(ctx: ClientContextLike): () => void {
  * The seam has to be drivable in Node with no browser, no host tree and no
  * React, so it is exported rather than hidden behind the service instance.
  */
-export const __test = { createViewSeam, buildSettingsGroups, checkBindings };
+export const __test = { createViewSeam, buildSettingsGroups, checkBindings, createGlobalKeyRouter };
 
 /** The plugin object the loader mounts. */
 export const clientPlugin = { name: "dsh-workbench-core", inject, apply, __test };

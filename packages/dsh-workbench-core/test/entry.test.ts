@@ -117,4 +117,49 @@ describe("core client entry", () => {
     );
     expect(row).toMatchObject({ id: VIEW_ACTIONS_ID, hasComponent: true });
   });
+
+  it("installs the local key router on web and removes the listener on unmount", () => {
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    vi.stubGlobal("window", { addEventListener, removeEventListener });
+    try {
+      const { ctx } = createContext();
+      ctx.shortcuts = shortcutService("web");
+
+      const dispose = apply(ctx as never);
+
+      expect(addEventListener).toHaveBeenCalledTimes(1);
+      expect(addEventListener).toHaveBeenCalledWith("keydown", expect.any(Function), true);
+      const listener = addEventListener.mock.calls[0]?.[1];
+      dispose();
+      expect(removeEventListener).toHaveBeenCalledWith("keydown", listener, true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not install the local key router on desktop", () => {
+    const addEventListener = vi.fn();
+    vi.stubGlobal("window", { addEventListener, removeEventListener: vi.fn() });
+    try {
+      const { ctx } = createContext();
+      ctx.shortcuts = shortcutService("desktop");
+
+      apply(ctx as never);
+
+      expect(addEventListener).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
+
+/** The minimum shortcut face `apply` reads during mount. */
+function shortcutService(runtime: "desktop" | "web") {
+  return {
+    runtime,
+    register: () => () => {},
+    catalog: { getSnapshot: () => [], subscribe: () => () => {} },
+    describeBinding: () => null,
+  };
+}

@@ -9,11 +9,16 @@
  *
  * Availability is a cross-runtime answer, not the current runtime's one:
  * `webAvailable` says whether a web shell can promise the chord at all. A null
- * web default in `keymap.ts` is a measured decision (browser delivery), not an
- * omission, so it must be visible in the matrix with a reason and an
- * alternative.
+ * web default in `keymap.ts` is a measured decision (the host refuses the
+ * combination), not an omission: the three global chords are delivered by the
+ * bundle's own router, so the matrix keeps the row available while the note
+ * names the local fallback. Panel-only nulls stay unavailable with a reason.
  */
 import { bindingCaps, WORKBENCH_COMMANDS, type WorkbenchCommandSpec, type WorkbenchGroup } from "./keymap.ts";
+import { GLOBAL_KEY_ROUTES } from "./shortcut-router.ts";
+
+/** Commands the browser shell receives from the local capture-phase router. */
+const LOCAL_WEB_COMMANDS: ReadonlySet<string> = new Set(GLOBAL_KEY_ROUTES.map(route => route.commandId));
 
 /** Binding failure reasons the host catalog uses. */
 export type BindingIssueName = "reserved" | "unsupported-browser" | "modifier-required" | "unsupported-key";
@@ -156,8 +161,14 @@ function toSettingsRow(entry: ShortcutCatalogEntryLike, runtime: "desktop" | "we
   const desktopCaps = spec === undefined ? [] : bindingCaps(spec.desktop);
   const customWebBinding =
     runtime === "web" && bound && (entry.keys.length !== desktopCaps.length || entry.keys.some((key, i) => key !== desktopCaps[i]));
-  const webAvailable = issue === null && (webBySpec === true || (webBySpec === false ? customWebBinding : bound));
-  const note = (webBySpec === false && !customWebBinding ? spec?.webNote : undefined) ?? issueNote;
+  // The three global chords have no host web binding but do have a local route.
+  const localWebRoute = spec !== undefined && LOCAL_WEB_COMMANDS.has(spec.id);
+  const webAvailable =
+    issue === null && (webBySpec === true || (webBySpec === false ? customWebBinding || localWebRoute : bound));
+  const note =
+    localWebRoute || (webBySpec === false && !customWebBinding)
+      ? (spec?.webNote ?? issueNote)
+      : issueNote;
   const alternative =
     spec?.webAlternative ?? (issue !== null ? ISSUE_ALTERNATIVE[settingsGroupOf(entry.id)] : undefined);
 

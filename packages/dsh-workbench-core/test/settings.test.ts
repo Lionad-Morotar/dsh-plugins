@@ -67,6 +67,17 @@ describe("buildSettingsGroups", () => {
     expect(files?.webAvailable).toBe(true);
   });
 
+  it("keeps a host-refused global chord available through the local router", () => {
+    const groups = buildSettingsGroups(
+      [{ id: "workbench.files.toggle", label: "打开文件面板", keys: ["⌘", "⇧", "E"], bound: false, issue: null, conflicts: [] }],
+      { runtime: "web" },
+    );
+    const files = groups.flatMap(group => group.rows).find(row => row.id === "workbench.files.toggle");
+    expect(files?.webAvailable).toBe(true);
+    expect(files?.note).toMatch(/本地路由/u);
+    expect(files?.alternative).toBe("⌘⇧E");
+  });
+
   it("keeps panel commands in the files group", () => {
     const groups = buildSettingsGroups(CATALOG);
     const files = groups.find(group => group.id === "files");
