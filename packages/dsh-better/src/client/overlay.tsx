@@ -28,7 +28,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExt
 import type { ReactNode, Ref } from "react";
 
 import { readPopupClasses } from "./classes.ts";
-import { effortLevelsOf, initialEffort, type CatalogGroupLike } from "./effort.ts";
+import { reasoningMetaOf, rowPointedEffort, type CatalogGroupLike } from "./effort.ts";
 import { ModelRow, modelRefOf } from "./row.tsx";
 import { groupOptions } from "./groups.ts";
 import type { PopupControllerLike, PopupOptionLike, PopupStateLike } from "./popup.ts";
@@ -49,6 +49,8 @@ export interface OverlayProps {
   readonly t?: ((key: string) => string) | undefined;
   /** The session's catalog groups, which carry each model's effort ladder. */
   readonly catalog?: readonly CatalogGroupLike[] | undefined;
+  /** The session's current selection, which keeps the active effort on its row. */
+  readonly current?: { provider: string; model: string; reasoningEffort?: string } | undefined;
   /**
    * Submit a complete selection, including the effort level.
    *
@@ -154,6 +156,7 @@ export function createOverlay(deps: OverlayDeps): (props: OverlayProps) => React
         primitives={primitives}
         doc={deps.document}
         catalog={props.catalog}
+        current={props.current}
         selectModel={props.selectModel}
       />
     );
@@ -177,6 +180,8 @@ interface ModelPickerProps {
    * here means reading the same source rather than extending the rows.
    */
   readonly catalog: readonly CatalogGroupLike[] | undefined;
+  /** The session's current selection, or undefined when the session has none. */
+  readonly current: { provider: string; model: string; reasoningEffort?: string } | undefined;
   readonly selectModel:
     | ((selection: { provider: string; model: string; reasoningEffort?: string }) => Promise<unknown> | undefined)
     | undefined;
@@ -185,7 +190,7 @@ interface ModelPickerProps {
 /**
  * The `/model` picker: the shell's surface with a provider-aware row list.
  */
-function ModelPicker({ popup, state, t, primitives, doc, catalog, selectModel }: ModelPickerProps): ReactNode {
+function ModelPicker({ popup, state, t, primitives, doc, catalog, current, selectModel }: ModelPickerProps): ReactNode {
   const cardRef = useRef<HTMLElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -277,16 +282,33 @@ function ModelPicker({ popup, state, t, primitives, doc, catalog, selectModel }:
     [popup, selectModel],
   );
 
+  /**
+   * The level a row points at, one function for both faces of the gesture: the
+   * chip the active row highlights and the effort a plain click submits. Points
+   * where the shell's own settlement would land — the effort in effect on the
+   * current model's row, the adapter's default elsewhere — so the highlighted
+   * level is the one that takes effect.
+   */
+  const pointedFor = useCallback(
+    (option: PopupOptionLike): string | undefined => {
+      const ref = modelRefOf(option);
+      if (ref === undefined) return undefined;
+      const reasoning = reasoningMetaOf(catalog ?? [], ref);
+      return rowPointedEffort(reasoning?.efforts ?? [], {
+        remembered: efforts[option.id],
+        isCurrent: current?.provider === ref.provider && current?.model === ref.model,
+        currentEffort: current?.reasoningEffort,
+        defaultEffort: reasoning?.defaultEffort,
+      });
+    },
+    [catalog, current, efforts],
+  );
+
   const choose = useCallback(
     (option: PopupOptionLike): void => {
-      const ref = modelRefOf(option);
-      const levels = ref === undefined ? [] : effortLevelsOf(catalog ?? [], ref);
-      // The level the row is pointing at, defaulting to the one the adapter
-      // itself would use, so a plain row click is still a complete choice.
-      const pointed = levels.length === 0 ? undefined : (efforts[option.id] ?? initialEffort(levels, undefined, undefined));
-      settleRow(option, pointed);
+      settleRow(option, pointedFor(option));
     },
-    [catalog, efforts, settleRow],
+    [pointedFor, settleRow],
   );
 
   /**
@@ -364,7 +386,10 @@ function ModelPicker({ popup, state, t, primitives, doc, catalog, selectModel }:
       option={option}
       active={index === active}
       catalog={catalog}
-      pointed={efforts[option.id]}
+      // Only the row the cursor is on (keyboard movement and hover both drive
+      // it) names its pointed level; the rest of the list stays quiet so a
+      // highlighted chip always means "this is where a click would land".
+      pointed={index === active ? pointedFor(option) : undefined}
       classes={classes}
       primitives={primitives}
       onChoose={() => {
