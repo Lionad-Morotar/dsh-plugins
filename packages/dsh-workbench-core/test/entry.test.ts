@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { apply, clientPlugin, inject } from "../src/client/entry.ts";
-import { SECTION_ID, SECTION_ORDER, SECTION_SLOT } from "../src/client/registration.ts";
+import {
+  SECTION_ID,
+  SECTION_ORDER,
+  SECTION_SLOT,
+  VIEW_ACTIONS_ID,
+  VIEW_ACTIONS_SLOT,
+} from "../src/client/registration.ts";
 import type { WorkbenchService } from "../src/client/service.ts";
 
 interface SlotCall {
@@ -99,5 +105,16 @@ describe("core client entry", () => {
       hasComponent: true,
     });
     expect(calls.some(call => call.type === "locale.register" && call.name === "workbench")).toBe(true);
+  });
+
+  it("registers the View More row that carries the session opener", () => {
+    const { ctx, calls } = createContext();
+
+    apply(ctx as never);
+
+    const row = calls.find(
+      (call): call is SlotCall => call.type === "slots.register" && call.name === VIEW_ACTIONS_SLOT,
+    );
+    expect(row).toMatchObject({ id: VIEW_ACTIONS_ID, hasComponent: true });
   });
 });

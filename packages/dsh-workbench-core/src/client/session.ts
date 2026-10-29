@@ -17,6 +17,7 @@ import { readHostService } from "./adapters.ts";
 
 interface ObservableLike<T> {
   getSnapshot?(): T | undefined;
+  subscribe?(listener: () => void): () => void;
 }
 
 interface UiSessionFace {
@@ -25,6 +26,12 @@ interface UiSessionFace {
 
 interface SessionsFace {
   list?: ObservableLike<{ readonly current?: string | undefined }>;
+}
+
+/** Read/subscribe face over the session the user is looking at. */
+export interface SessionSelection {
+  getSnapshot(): string | undefined;
+  subscribe(listener: () => void): () => void;
 }
 
 const nonEmpty = (value: unknown): string | undefined =>
@@ -41,4 +48,35 @@ export function readCurrentSessionId(ctx: unknown): string | undefined {
   if (selection !== undefined) return nonEmpty(selection.key);
   const sessions = readHostService(ctx, "sessions") as SessionsFace | undefined;
   return nonEmpty(sessions?.list?.getSnapshot?.()?.current);
+}
+
+/**
+ * Build the observable session selection used by root-scoped React surfaces.
+ *
+ * The terminal dock reads the id only when the user acts; a menu row binds an
+ * opener and must re-bind when the header switches sessions. Subscribing to the
+ * same `uiSession.adapter.current` source keeps that row correct without
+ * reaching into the shell or the DOM.
+ * @param ctx - the client context.
+ * @returns a store; it never throws and answers undefined when no host face exists.
+ */
+export function createSessionSelection(ctx: unknown): SessionSelection {
+  const read = (): string | undefined => readCurrentSessionId(ctx);
+  const uiSession = readHostService(ctx, "uiSession") as UiSessionFace | undefined;
+  const current = uiSession?.adapter?.current;
+  if (typeof current?.subscribe === "function") {
+    return {
+      getSnapshot: read,
+      subscribe: listener => current.subscribe?.(listener) ?? (() => {}),
+    };
+  }
+  const sessions = readHostService(ctx, "sessions") as SessionsFace | undefined;
+  const list = sessions?.list;
+  if (typeof list?.subscribe === "function") {
+    return {
+      getSnapshot: read,
+      subscribe: listener => list.subscribe?.(listener) ?? (() => {}),
+    };
+  }
+  return { getSnapshot: read, subscribe: () => () => {} };
 }

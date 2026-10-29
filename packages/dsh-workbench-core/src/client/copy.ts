@@ -17,6 +17,7 @@ export const ZH: Record<string, string> = {
   "keymap.openGit": "打开 Git 工作台",
   "keymap.toggleTerminal": "显示或隐藏终端",
   "keymap.empty": "尚未登记命令",
+  "view.backToChat": "返回对话",
 };
 
 export const EN: Record<string, string> = {
@@ -37,4 +38,5 @@ export const EN: Record<string, string> = {
   "keymap.openGit": "Open Git workbench",
   "keymap.toggleTerminal": "Show or hide terminal",
   "keymap.empty": "No commands registered",
+  "view.backToChat": "Back to chat",
 };

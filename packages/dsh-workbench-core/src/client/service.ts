@@ -16,25 +16,11 @@ import { createHostAdapters, type WorkbenchAdapters } from "./adapters.ts";
 import { WORKBENCH_COMMANDS, type WorkbenchCommandSpec } from "./keymap.ts";
 import { createPanelLedger, type PanelDescriptor, type PanelStore } from "./panels.ts";
 import { readCurrentSessionId } from "./session.ts";
+import { createViewSeam, type ViewSwitchSeam } from "./views.ts";
 import { WORKBENCH_VERSION } from "../shared.ts";
 
-/** The host's id for the resident chat view. */
-export const CHAT_VIEW_ID = "chat";
-
-/** The `openView(view, focus)` capability a conversation view receives. */
-export interface ViewOpener {
-  (id: string, focus: string): void;
-}
-
-/** Per-session view switching, bound from owner props by whoever has them. */
-export interface ViewSwitchSeam {
-  /** Bind one session's opener; the latest binding wins. */
-  bind(sessionId: string, open: ViewOpener): () => void;
-  /** Open a view for one session; false when nothing is bound. */
-  open(sessionId: string, id: string, focus?: string): boolean;
-  /** Return one session to the resident chat view. */
-  showChat(sessionId: string): boolean;
-}
+export { CHAT_VIEW_ID } from "./views.ts";
+export type { ViewOpener, ViewSwitchSeam } from "./views.ts";
 
 /** A dock surface the workbench owns (the terminal dock for now). */
 export interface DockDescriptor {
@@ -92,28 +78,11 @@ export function createWorkbenchService(ctx: unknown): WorkbenchService {
   const panels = createPanelLedger();
   const adapters = createHostAdapters(ctx, typeof document === "undefined" ? undefined : document);
   const dockRows: DockDescriptor[] = [];
-  const openers = new Map<string, ViewOpener>();
   // The dock is on by default: a fresh install should show the surface the user
   // installed, and hiding it is the explicit choice.
   let dockVisible = true;
 
-  const openSessionView = (sessionId: string, id: string, focus = ""): boolean => {
-    const opener = openers.get(sessionId);
-    if (opener === undefined) return false;
-    opener(id, focus);
-    return true;
-  };
-
-  const views: ViewSwitchSeam = {
-    bind(sessionId, open) {
-      openers.set(sessionId, open);
-      return () => {
-        if (openers.get(sessionId) === open) openers.delete(sessionId);
-      };
-    },
-    open: openSessionView,
-    showChat: sessionId => openSessionView(sessionId, CHAT_VIEW_ID),
-  };
+  const views = createViewSeam();
 
   const service: WorkbenchService = {
     version: WORKBENCH_VERSION,
@@ -136,12 +105,12 @@ export function createWorkbenchService(ctx: unknown): WorkbenchService {
     openView(id, focus) {
       const sessionId = readCurrentSessionId(ctx);
       if (sessionId === undefined) return false;
-      return openSessionView(sessionId, id, focus);
+      return views.open(sessionId, id, focus);
     },
     closeView() {
       const sessionId = readCurrentSessionId(ctx);
       if (sessionId === undefined) return false;
-      return openSessionView(sessionId, CHAT_VIEW_ID);
+      return views.showChat(sessionId);
     },
     currentSessionId: () => readCurrentSessionId(ctx),
     dockVisible: () => dockVisible,
