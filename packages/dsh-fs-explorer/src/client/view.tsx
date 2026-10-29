@@ -8,19 +8,21 @@
  * the file service renders an explicit empty state instead of throwing inside
  * the conversation shell.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import type { Translate } from "./copy.ts";
+import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap } from "./keyboard.ts";
 import {
   buildTree,
   describeListing,
   flattenTree,
   joinPath,
   listingPath,
-  parseFocus,
   type FocusTarget,
   type TreeLevel,
 } from "./model.ts";
+import { PanelEmpty, PanelTabs } from "./panel-tabs.tsx";
+import { consumeViewRequest, createPanelStackRegistry } from "./panels.ts";
 import { parseStatusZ, type StatusMap } from "./status.ts";
 import { PreviewPane } from "./preview-pane.tsx";
 import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody } from "./tree.tsx";
@@ -111,6 +113,10 @@ function StateBlock({
  * @returns the component registered into `conversation.view`.
  */
 export function createFsExplorerView({ workbench, version, t, files: resolveFiles, status: resolveStatus }: ViewWiring) {
+  // One registry per registered view: the host mounts and unmounts this
+  // component on every view switch, while the factory itself lives on.
+  const stacks = createPanelStackRegistry();
+
   function FsExplorerView(props: ConversationViewProps) {
     const sessionId = props.sessionId ?? workbench.currentSessionId();
     const sessionRef = useRef(sessionId);
@@ -126,7 +132,9 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     const levelsRef = useRef(levels);
     levelsRef.current = levels;
     const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
-    const [selected, setSelected] = useState<string | undefined>(undefined);
+    const stack = useMemo(() => stacks.forSession(sessionId), [stacks, sessionId]);
+    const panels = useSyncExternalStore(stack.subscribe, stack.snapshot, stack.snapshot);
+    const activePath = panels.active ?? undefined;
     const [reloadToken, setReloadToken] = useState(0);
     const [reveal, setReveal] = useState<FocusTarget | undefined>(undefined);
     const controllers = useRef<Map<string, AbortController>>(new Map());
@@ -197,7 +205,6 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       controllers.current.clear();
       setLevels(new Map());
       setExpanded(new Set());
-      setSelected(undefined);
       setReveal(undefined);
       handledRequest.current = undefined;
       if (sessionId !== undefined && files !== undefined) void loadLevel("", sessionId, files);
@@ -237,17 +244,23 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     }, [sessionId, statusFace, reloadToken]);
 
     // The Git panel jumps with `path:<workspace path>:<line>`; consume that
-    // request once and remember the target until the root level can honor it.
+    // request once, open the panel, and remember the target until the root
+    // level can expand its ancestors. The host clears its request only after
+    // this callback, so a failed parse still completes the hand-over.
     useEffect(() => {
       const request = props.viewRequest;
       if (request === null || request === undefined || request.view !== VIEW_ID) return;
       const key = `${request.view}:${request.focus}`;
       if (handledRequest.current === key) return;
       handledRequest.current = key;
-      const target = parseFocus(request.focus);
-      if (target !== undefined) setReveal(target);
+      consumeViewRequest(request.focus, {
+        open: (path, line) => {
+          stack.open(path, line);
+          setReveal({ path, line });
+        },
+      });
       props.completeViewRequest?.();
-    }, [props.viewRequest, props.completeViewRequest]);
+    }, [props.viewRequest, props.completeViewRequest, stack]);
 
     const rootLevel = levels.get("");
     const rootReady = rootLevel?.status === "ready";
@@ -274,14 +287,60 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
           if (!alive || !ok) return;
         }
         if (!alive) return;
-        setSelected(reveal.path);
+        stack.open(reveal.path, reveal.line);
         setReveal(undefined);
       };
       void run();
       return () => {
         alive = false;
       };
-    }, [reveal, sessionId, files, rootReady, loadLevel]);
+    }, [reveal, sessionId, files, rootReady, loadLevel, stack]);
+
+    /** Focus the host's conversation composer, the Esc destination. */
+    const focusComposer = useCallback((): boolean => {
+      if (typeof document === "undefined") return false;
+      const input = document.querySelector<HTMLElement>("[data-composer-input]");
+      if (input === null) return false;
+      input.focus();
+      return true;
+    }, []);
+
+    // Panel chords are captured before the conversation's own handlers: ⌘⌥↓
+    // turns the editor column, not the transcript, and Ctrl+W must win over
+    // the browser tab when a panel is open. Ctrl+W is still only a best-effort
+    // on the web; the desktop shell owns the promised accelerator.
+    useEffect(() => {
+      if (typeof document === "undefined") return;
+      const onKeyDown = (event: KeyboardEvent): void => {
+        if (event.isComposing || isEditableTarget(event.target)) return;
+        for (const entry of KEYMAP) {
+          if (!matchesKeymap(event, entry)) continue;
+          if (entry.action === "closePanel" && stack.snapshot().active === null) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (entry.action === "nextPanel") stack.next();
+          else if (entry.action === "previousPanel") stack.previous();
+          else stack.close();
+          return;
+        }
+      };
+      document.addEventListener("keydown", onKeyDown, true);
+      return () => document.removeEventListener("keydown", onKeyDown, true);
+    }, [stack]);
+
+    // Escape returns the caret to the composer unless a dialog is open. The
+    // DOM probe is broader than a class check because the shell, the command
+    // palette and the settings sheet all use different dialog markers.
+    useEffect(() => {
+      if (typeof document === "undefined") return;
+      const handler = createEscapeHandler({
+        focusComposer,
+        hasModal: () => hasOpenModal(document),
+      });
+      const listener = (event: KeyboardEvent): void => handler(event);
+      document.addEventListener("keydown", listener, true);
+      return () => document.removeEventListener("keydown", listener, true);
+    }, [focusComposer]);
 
     const rows = useMemo(() => flattenTree(levels, expanded, statuses), [levels, expanded, statuses]);
     const changeCount = statuses === undefined ? undefined : Object.keys(statuses).length;
@@ -418,14 +477,43 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
               <div className="fx-tree-pane">
                 <TreeBody
                   rows={rows}
-                  selectedPath={selected}
+                  selectedPath={activePath}
                   t={t}
                   onToggle={toggleDirectory}
-                  onSelect={setSelected}
+                  onSelect={path => stack.open(path)}
                   onRetry={retryDirectory}
                 />
               </div>
-              <PreviewPane sessionId={sessionId} files={files} path={selected} t={t} />
+              <div className="fx-editor">
+                <PanelTabs
+                  panels={panels.panels}
+                  active={panels.active}
+                  t={t}
+                  onActivate={path => stack.activate(path)}
+                  onClose={path => stack.close(path)}
+                  onStep={delta => (delta === 1 ? stack.next() : stack.previous())}
+                />
+                <div className="fx-editor-body">
+                  {panels.panels.length === 0 ? (
+                    <PanelEmpty t={t} />
+                  ) : (
+                    panels.panels.map((panel, index) => (
+                      <div
+                        key={panel.path}
+                        className="fx-panel"
+                        id={`fx-panel-${index}`}
+                        role="tabpanel"
+                        aria-labelledby={`fx-tab-${index}`}
+                        hidden={panel.path !== panels.active}
+                        data-line={panel.line}
+                        data-testid="fs-panel"
+                      >
+                        <PreviewPane sessionId={sessionId} files={files} path={panel.path} t={t} />
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </>
           )}
         </div>

@@ -24,6 +24,14 @@ export const ZH: Record<string, string> = {
   "action.retry": "重试",
   "foot.order": "目录优先",
   "foot.truncated": "列表已截断",
+  "panel.tabs": "打开的文件",
+  "panel.close": "关闭 {name}",
+  "panel.empty.title": "打开文件开始",
+  "panel.empty.description": "从左侧文件树选择文件，每个文件会在这里打开一个标签页。",
+  "panel.empty.keys": "切换面板，关闭当前面板",
+  "key.nextPanel": "下一个面板",
+  "key.previousPanel": "上一个面板",
+  "key.closePanel": "关闭当前面板",
   "row.open": "展开目录",
   "row.close": "折叠目录",
   "row.file": "文件",
@@ -91,6 +99,14 @@ export const EN: Record<string, string> = {
   "action.retry": "Retry",
   "foot.order": "Folders first",
   "foot.truncated": "Listing truncated",
+  "panel.tabs": "Open files",
+  "panel.close": "Close {name}",
+  "panel.empty.title": "Open a file to start",
+  "panel.empty.description": "Pick a file in the tree; each one opens as a tab here.",
+  "panel.empty.keys": "switch panels, close the current panel",
+  "key.nextPanel": "Next panel",
+  "key.previousPanel": "Previous panel",
+  "key.closePanel": "Close panel",
   "row.open": "Expand directory",
   "row.close": "Collapse directory",
   "row.file": "File",
@@ -135,3 +151,18 @@ export const EN: Record<string, string> = {
 
 /** A translate seat over this package's dictionary. */
 export type Translate = (key: string) => string;
+
+/**
+ * The tab caption for one host locale.
+ *
+ * The host refreshes slot labels through its locale subscription, so the slot
+ * registers a thunk over this function rather than a string captured at boot.
+ * Region tags such as `zh-CN` share the Chinese dictionary; anything the
+ * package does not ship reads English, the host's fallback locale.
+ * @param locale - the host's active locale id.
+ * @returns 「文件」 for Chinese hosts, `Files` elsewhere.
+ */
+export function tabLabel(locale: string | undefined): string {
+  const dictionary = typeof locale === "string" && locale.toLowerCase().startsWith("zh") ? ZH : EN;
+  return dictionary["tab.label"] ?? "Files";
+}

@@ -83,6 +83,11 @@ describe("fs explorer client entry", () => {
     expect(typeof clientPlugin.__test.parseStatusZ).toBe("function");
     expect(typeof clientPlugin.__test.statusTone).toBe("function");
     expect(typeof clientPlugin.__test.statusBadge).toBe("function");
+    expect(typeof clientPlugin.__test.createPanelStack).toBe("function");
+    expect(typeof clientPlugin.__test.createEscapeHandler).toBe("function");
+    expect(typeof clientPlugin.__test.consumeViewRequest).toBe("function");
+    expect(typeof clientPlugin.__test.tabLabel).toBe("function");
+    expect(Array.isArray(clientPlugin.__test.KEYMAP)).toBe(true);
   });
 
   it("picks the no-session state before the service probe", () => {

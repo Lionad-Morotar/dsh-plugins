@@ -131,6 +131,99 @@ export const FS_STYLES = `
   min-height: 0;
   border-right: 1px solid var(--fx-border-soft);
 }
+.fx-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+.fx-tabs {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  height: 32px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--fx-border-soft);
+  scrollbar-width: none;
+}
+.fx-tabs::-webkit-scrollbar { display: none; }
+.fx-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+  max-width: 220px;
+  border-right: 1px solid var(--fx-border-soft);
+  color: var(--fx-caption);
+}
+.fx-tab:hover { background: var(--fx-hover); }
+.fx-tab[data-active="true"] { background: var(--fx-panel-2); color: var(--fx-text); }
+.fx-tab[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: var(--fx-accent);
+}
+.fx-tab-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 2px 0 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.fx-tab-main:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -2px; }
+.fx-tab-badge { width: 16px; height: 14px; }
+.fx-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fx-caption);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+.fx-tab:hover .fx-tab-close,
+.fx-tab[data-active="true"] .fx-tab-close,
+.fx-tab-close:focus-visible { opacity: 1; }
+.fx-tab-close:hover { background: var(--fx-active); color: var(--fx-text); }
+.fx-tab-close:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -1px; }
+.fx-editor-body {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+.fx-panel {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+.fx-panel[hidden] { display: none; }
 .fx-scroll {
   flex: 1;
   min-height: 0;
@@ -354,6 +447,41 @@ export const FS_STYLES = `
 .fx-empty strong { color: var(--fx-text); font-size: 13px; font-weight: 600; }
 .fx-empty span { color: var(--fx-caption); font-size: 11px; max-width: 46ch; }
 .fx-empty .fx-btn { margin-top: 4px; width: auto; padding: 0 10px; border-color: var(--fx-border); }
+.fx-editor-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex: 1;
+  margin: 12px;
+  padding: 24px;
+  border: 1px dashed var(--fx-border);
+  border-radius: 10px;
+  color: var(--fx-text-2);
+  text-align: center;
+}
+.fx-editor-glyph { color: var(--fx-folder); opacity: .7; }
+.fx-editor-empty strong { color: var(--fx-text); font-size: 13px; font-weight: 600; }
+.fx-editor-empty > span { color: var(--fx-caption); font-size: 11px; max-width: 48ch; }
+.fx-empty-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 4px;
+}
+.fx-kbd {
+  font-family: var(--fx-mono);
+  font-size: 9.5px;
+  line-height: 1.4;
+  padding: 1px 5px;
+  border: 1px solid var(--fx-border);
+  border-radius: 4px;
+  background: var(--fx-panel-2);
+  color: var(--fx-text-2);
+}
 .fx-loading {
   display: flex;
   align-items: center;

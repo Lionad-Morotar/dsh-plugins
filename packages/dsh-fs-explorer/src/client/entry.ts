@@ -6,8 +6,9 @@
  * (direct service first, Remote carrier second) because waiting for it would
  * hide the tab exactly when the panel needs its "service unavailable" state.
  */
-import { EN, ZH } from "./copy.ts";
+import { EN, ZH, tabLabel } from "./copy.ts";
 import { LOCALE_NAMESPACE, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
+import { KEYMAP, createEscapeHandler } from "./keyboard.ts";
 import {
   badgeFor,
   buildTree,
@@ -20,6 +21,7 @@ import {
   listingPath,
   parseFocus,
 } from "./model.ts";
+import { consumeViewRequest, createPanelStack } from "./panels.ts";
 import { renderMarkdown } from "./markdown.ts";
 import {
   classifyPreviewFailure,
@@ -50,6 +52,8 @@ export interface ClientContextLike extends FilesContextLike {
   readonly locale: {
     register(namespace: string, dictionaries: Record<string, Record<string, string>>): () => void;
     bind(namespace: string): (key: string) => string;
+    /** Locale snapshot; absent on hosts that only expose the binder. */
+    getSnapshot?(): { readonly active?: string };
   };
   readonly workbench: WorkbenchFace;
 }
@@ -57,13 +61,28 @@ export interface ClientContextLike extends FilesContextLike {
 /** Services this plugin waits for before applying. */
 export const inject = ["slots", "locale", "workbench", "remote"];
 
+/**
+ * The host's active locale id.
+ *
+ * The slot label is re-resolved by the shell on every locale revision, so the
+ * thunk reads this at call time instead of freezing the boot language.
+ * @param ctx - the client context carrying the locale service.
+ * @returns the active id, or `en` when the host exposes no snapshot.
+ */
+function activeLocale(ctx: ClientContextLike): string {
+  const snapshot = ctx.locale.getSnapshot?.();
+  return typeof snapshot?.active === "string" ? snapshot.active : "en";
+}
+
 /** Mount the file workbench view. */
 export function apply(ctx: ClientContextLike): () => void {
   const workbench = ctx.workbench;
   if (workbench === undefined || workbench === null) return () => {};
 
-  const t = ctx.locale.bind(LOCALE_NAMESPACE);
+  // Register before binding: the label thunk may run during slot registration,
+  // and a dictionary that arrives afterwards would paint the English fallback.
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
+  const t = ctx.locale.bind(LOCALE_NAMESPACE);
   const offStyles = insertStyles(typeof document === "undefined" ? undefined : document);
   const View = createFsExplorerView({
     workbench,
@@ -79,7 +98,7 @@ export function apply(ctx: ClientContextLike): () => void {
         name: VIEW_SLOT,
         id: VIEW_ID,
         order: VIEW_ORDER,
-        label: () => t("tab.label"),
+        label: () => tabLabel(activeLocale(ctx)),
         locale: LOCALE_NAMESPACE,
       },
       View,
@@ -109,6 +128,11 @@ export const __test = {
   joinPath,
   listingPath,
   parseFocus,
+  consumeViewRequest,
+  createPanelStack,
+  createEscapeHandler,
+  KEYMAP,
+  tabLabel,
   normalizeListing,
   normalizeStatusSnapshot,
   parseStatusZ,
