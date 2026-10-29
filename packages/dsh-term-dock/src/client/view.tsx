@@ -64,9 +64,9 @@ function useDockVisible(visibility: DockVisibilitySource): boolean {
 const rootStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  // The gap to the host composer above: the dock is the lowest surface in the
-  // shell and must not sit flush against the input box.
-  marginTop: "1.5em",
+  // The dock sits above the composer card inside the conversation column, and
+  // the spec keeps it 1.5em clear of that input box.
+  marginBottom: "1.5em",
   borderTop: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
   background: "color-mix(in srgb, currentColor 3%, transparent)",
   boxSizing: "border-box",
@@ -155,7 +155,7 @@ function IconButton({
 /**
  * Build the dock component for one mount.
  * @param wiring - dock state, view rack, host seams and the translate seat.
- * @returns the component registered into `shell.bottom`.
+ * @returns the component registered into the conversation dock slot.
  */
 export function createTermDockView({ dock, rack, host, t, visibility }: DockWiring): ComponentType {
   const TerminalPanel = createTerminalPanel({ t });
