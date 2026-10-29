@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Command Panel",
+    "description": "⌘P file navigation, ⌘⇧P registered commands, and ⌘O workspace/session switching over one search and keyboard model."
+  }
+}

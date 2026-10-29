@@ -1,0 +1,4 @@
+# Enable dsh-command-panel by inserting its Loader row.
+- insert:
+    - id: command-panel
+      name: 'dsh-command-panel'

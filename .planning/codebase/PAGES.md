@@ -52,10 +52,11 @@
 | `dsh-model-provider-label` | `model-provider-label` | `dsh-model-provider-label` | `packages/dsh-model-provider-label/cordis.patch.yml` | 无；同上 |
 | `dsh-better` | `better` | `dsh-better` | `packages/dsh-better/cordis.patch.yml` | 无；宿主半为空挂行，功能全在客户端半边 |
 | `dsh-more-config` | `more-config` | `dsh-more-config` | `packages/dsh-more-config/cordis.patch.yml` | 无；`id` 同时是其设置命名空间 |
+| `dsh-command-panel` | `command-panel` | `dsh-command-panel` | `packages/dsh-command-panel/cordis.patch.yml` | `icon.svg` + `locale/{zh,en}.json`；Loader 行可带 `config.takeoverSwitch` |
 
 ## 客户端半边入口
 
-六个包有客户端半边，产物一律由 `exports["./client"]` 指向 `lib/client.js`，顶层包进 `window.__ModuleLoader__.load({id, factory})`。注册位置是宿主派生的 slot，不是页面路由。
+多数包有客户端半边，产物一律由 `exports["./client"]` 指向 `lib/client.js`，顶层包进 `window.__ModuleLoader__.load({id, factory})`。注册位置是宿主派生的 slot，不是页面路由。
 
 | 包 | 源码入口 | 产物 | 注册位置 |
 | -- | -------- | ---- | -------- |
@@ -68,6 +69,7 @@
 | `dsh-model-provider-label` | `src/client/entry.ts` | `lib/client.js` | 以 `priority: -1` 接管 `conversation.input.model.label`（`single` slot，1017 徽章插件不再挂载，无注册者时回落 `renderSlot` 的 `fallback`）；`inject = ["slots"]` |
 | `dsh-better` | `src/client/entry.ts` | `lib/client.js` | 以 `id: command-popup`、`priority: -100` 遮蔽 `conversation.input.overlay` 接管 `/model` 弹窗；`inject = ["slots"]` |
 | `dsh-more-config` | `src/client/entry.ts` | `lib/client.js` | `slots.register({ name: "settings.section", id: "mcp", order: 10 })` 注册 MCP 配置栏；`inject = ["slots", "locale", "configForms"]`，读写走 `more-config` 命名空间的 volatile 数组字段 |
+| `dsh-command-panel` | `src/client/entry.ts` → `createRuntime` | `lib/client.js` | `slots.register({ name: "shell.overlay", id: "command-panel.palette", order: 50 })` 承载面板（组件内 portal 到 body），另在 `conversation.input.overlay` 挂 `id: command-panel.bridge` 的隐形会话桥以取当前会话与 `inputActions`；`inject = ["slots", "shortcuts", "sessions", "workspaces", "uiWorkspace", "conversation", "remote", "remote.fileReferences", "remote.commands", "locale"]`（Remote 命名空间是独立的点号服务） |
 
 ## 市场分发产物
 
