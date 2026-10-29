@@ -5,6 +5,11 @@
  * loader rejects a wrong shape at mount with the whole client failing closed
  * (one throwing factory takes the page down). These assertions read the
  * committed file, so a stale `lib/` cannot drift from `src/` silently.
+ *
+ * Known limit: string-presence checks cannot catch a semantic `src/`→`lib/`
+ * drift, and the bare-window load only proves runnability. Semantic coverage
+ * comes from the suites that target `src/` plus the rebuild-and-commit rule
+ * for `lib/`.
  */
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";

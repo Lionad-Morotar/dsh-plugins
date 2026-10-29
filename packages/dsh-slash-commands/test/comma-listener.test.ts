@@ -158,7 +158,7 @@ describe("installCommaFold", () => {
     expect(write).not.toHaveBeenCalled();
   });
 
-  it("survives a throwing writer and keeps the fold decision", () => {
+  it("survives a throwing writer; the cancelled insertion stays cancelled", () => {
     const { doc } = surface();
     const doc2 = doc as Document & { execCommand: unknown };
     doc2.execCommand = vi.fn(() => {
@@ -169,7 +169,11 @@ describe("installCommaFold", () => {
     el.focus();
     caretAtEnd(doc, el);
 
-    expect(() => typeComma(el)).not.toThrow();
+    // preventDefault precedes the write, so a throwing writer swallows this
+    // keystroke instead of double-inserting. execCommand's contract is to
+    // return false rather than throw, so this branch is a theoretical net.
+    const event = typeComma(el);
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it("installs once per document and disposes with the returned function", () => {

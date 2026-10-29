@@ -48,6 +48,9 @@ describe("shouldFoldComma", () => {
     expect(shouldFoldComma(input({ data: "、a" }))).toBe(false);
   });
 
+  // A node/jsdom suite cannot fabricate a real composition sequence; the flag
+  // here is a declared input. Whether a given IME sets it on real devices is
+  // covered by the manual IME matrix, not by this suite.
   it("ignores IME composition", () => {
     expect(shouldFoldComma(input({ isComposing: true, inputType: "insertCompositionText" }))).toBe(false);
   });

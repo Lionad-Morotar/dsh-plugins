@@ -28,7 +28,7 @@ Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。十五个包：DSH �
 | `dsh-client-ui-skin-ascii-rest` | [README](./packages/dsh-client-ui-skin-ascii-rest/README.md)：皮肤配置面、分区透出与摆放 |
 | `dsh-jump` | [README](./packages/dsh-jump/README.md)：跳跃导航用法、v1 边界、web profile 安装 |
 | `dsh-better-keybindings` | [README](./packages/dsh-better-keybindings/README.md)：Home/End 光标语义、三端覆盖边界、web 与 desktop profile 安装 |
-| `dsh-slash-commands` | [README](./packages/dsh-slash-commands/README.md)：`/copy`、`/rename`、`/resume` 的端别归属、剪贴板三路路径与客户端半、顿号折叠的三条边界、三端安装 |
+| `dsh-slash-commands` | [README](./packages/dsh-slash-commands/README.md)：`/copy`、`/rename`、`/resume` 的端别归属、剪贴板三路路径与客户端半、顿号折叠的四条边界、三端安装 |
 | `dsh-preview-more` | [README](./packages/dsh-preview-more/README.md)：3D / CAD / HDR 三类预览的接入面与分块懒加载 |
 | `dsh-session-timing` | [README](./packages/dsh-session-timing/README.md)：重试重锚的计时口径、`sessionTiming` projection 与不接管 `sessionStats` 的理由 |
 | `dsh-model-provider-label` | [README](./packages/dsh-model-provider-label/README.md)：`single` slot 的三处渲染、只给 trigger 加前缀的理由、1017 徽章的复刻 |
