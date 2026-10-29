@@ -15,6 +15,7 @@ import { createTimeoutsStore, type ScopeLike } from "../src/client/store.ts";
 
 interface FakeOptions {
   value?: Array<{ id: string; timeoutMs: number }>;
+  servers?: Array<{ id: string; serverName: string; timeoutMs: number }>;
   base?: Array<{ id: string; timeoutMs: number }>;
   user?: unknown;
   writable?: boolean;
@@ -29,7 +30,7 @@ function fakeScope(options: FakeOptions = {}): ScopeLike & { mutateCalls: Array<
   const snapshot = () => ({
     status: options.status ?? "ready",
     writable: options.writable ?? true,
-    value: { mcpTimeouts: state.value },
+    value: { mcpTimeouts: state.value, mcpServers: options.servers ?? [] },
     base: { mcpTimeouts: options.base ?? [] },
     user: options.user as Record<string, unknown> | undefined,
     revision: state.revision,
@@ -57,11 +58,24 @@ function fakeScope(options: FakeOptions = {}): ScopeLike & { mutateCalls: Array<
 }
 
 describe("createTimeoutsStore", () => {
+  it("skeletons rows from the projected server list and marks shadow-only keys as ghosts", () => {
+    const store = createTimeoutsStore(fakeScope({
+      value: [{ id: "mcp-kimi-tools", timeoutMs: 660000 }],
+      servers: [{ id: "mcp-glm-search", serverName: "glm-search", timeoutMs: 60000 }],
+    }));
+    const snapshot = store.getSnapshot();
+    expect(snapshot.rows.map(row => [row.id, row.serverName, row.ghost, row.text])).toEqual([
+      ["mcp-glm-search", "glm-search", false, ""],
+      ["mcp-kimi-tools", "", true, "660000"],
+    ]);
+    expect(snapshot.rows[0]?.serverTimeoutMs).toBe(60000);
+  });
+
   it("derives rows from the live value with no staging", () => {
     const store = createTimeoutsStore(fakeScope({ value: [{ id: "mcp-kimi-tools", timeoutMs: 660000 }] }));
     const snapshot = store.getSnapshot();
     expect(snapshot.status).toBe("ready");
-    expect(snapshot.rows).toEqual([{ id: "mcp-kimi-tools", text: "660000", invalid: false, overridden: false, inBase: false }]);
+    expect(snapshot.rows).toEqual([{ id: "mcp-kimi-tools", serverName: "", serverTimeoutMs: undefined, ghost: true, text: "660000", invalid: false, overridden: false, inBase: false }]);
     expect(snapshot.dirty).toBe(false);
     expect(snapshot.writable).toBe(true);
   });

@@ -33,9 +33,44 @@ export const mcpTimeoutsField = z
   .array(z.object({ id: z.string(), timeoutMs: z.number().min(MIN_TIMEOUT_MS) }))
   .default([]);
 
-/** The live-editable shadow. */
+/** One live MCP server row, projected by the host half for the panel. */
+export interface ServerEntry {
+  readonly id: string;
+  readonly serverName: string;
+  readonly timeoutMs: number;
+}
+
+/** The projected server list field: same fixed-path volatile constraint, same record-array shape. */
+export const mcpServersField = z
+  .array(z.object({ id: z.string(), serverName: z.string(), timeoutMs: z.number() }))
+  .default([]);
+
+/**
+ * Read the projected server list out of a raw config value. Hostile input
+ * degrades entry-by-entry, exactly like the shadow map: the panel must render
+ * from whatever is there, never fail the section.
+ */
+export function toServerList(value: unknown): ServerEntry[] {
+  if (!Array.isArray(value)) return [];
+  const list: ServerEntry[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { id, serverName, timeoutMs } = entry as { id?: unknown; serverName?: unknown; timeoutMs?: unknown };
+    if (typeof id !== "string" || id.length === 0) continue;
+    if (typeof serverName !== "string") continue;
+    if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs)) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    list.push({ id, serverName, timeoutMs });
+  }
+  return list;
+}
+
+/** The live-editable shadow plus the host-projected server list. */
 export const Config = z.object({
   mcpTimeouts: mcpTimeoutsField.volatile(),
+  mcpServers: mcpServersField.volatile(),
 });
 
 /**
@@ -61,3 +96,4 @@ export function toTimeoutMap(value: unknown): ShadowTimeouts {
 export function toShadowEntries(map: ShadowTimeouts): ShadowEntry[] {
   return Object.entries(map).map(([id, timeoutMs]) => ({ id, timeoutMs }));
 }
+

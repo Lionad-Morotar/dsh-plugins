@@ -101,20 +101,20 @@ export function createSection(wiring: SectionWiring): ComponentType {
     return (
       <kit.SettingsForm labels={formLabels(t)} state={frameState(snapshot)} onSave={() => void store.save()} onDiscard={() => store.discard()}>
         <p style={{ margin: "0 0 4px", color: "var(--dsw-alias-label-secondary)" }}>{t("description")}</p>
-        {snapshot.rows.length === 0 ? <p style={{ margin: "0 0 8px" }}>{t("empty")}</p> : undefined}
-        {snapshot.rows.map((row, index) => (
+        {snapshot.rows.length === 0 ? <p style={{ margin: "0 0 8px" }}>{t("empty.servers")}</p> : undefined}
+        {snapshot.rows.map(row => (
           <kit.SettingsValueField
             key={row.id}
             id={`more-config-timeout-${row.id}`}
-            label={row.id}
-            hint={index === 0 ? t("row.hint") : undefined}
+            label={row.ghost ? `${row.id}${t("row.ghostSuffix")}` : row.serverName === "" ? row.id : row.serverName}
+            hint={row.ghost ? t("row.ghost") : row.serverName === "" ? undefined : row.id}
             overriddenLabel={t("row.overridden")}
             resetLabel={t("row.reset")}
             invalidLabel={t("row.invalid")}
             numeric
             disabled={disabled}
             text={row.text}
-            overridden={row.overridden}
+            overridden={row.overridden && !row.ghost}
             invalid={row.invalid}
             onEdit={text => store.editRow(row.id, text)}
             onReset={() => store.resetRow(row.id)}
@@ -133,8 +133,7 @@ export function createSection(wiring: SectionWiring): ComponentType {
             </kit.Button>
           ))}
         </div>
-        <p style={{ margin: "8px 0 0", color: "var(--dsw-alias-label-tertiary)" }}>{t("preset.hint")}</p>
-        <p style={{ margin: "4px 0 0", color: "var(--dsw-alias-label-tertiary)" }}>{t("race.hint")}</p>
+        <p style={{ margin: "8px 0 0", color: "var(--dsw-alias-label-tertiary)" }}>{t("race.hint")}</p>
       </kit.SettingsForm>
     );
   }

@@ -897,8 +897,26 @@ defineMethod("transform", [
 var NS = "more-config";
 var MIN_TIMEOUT_MS = 1e3;
 var mcpTimeoutsField = Schema.array(Schema.object({ id: Schema.string(), timeoutMs: Schema.number().min(MIN_TIMEOUT_MS) })).default([]);
+var mcpServersField = Schema.array(Schema.object({ id: Schema.string(), serverName: Schema.string(), timeoutMs: Schema.number() })).default([]);
+function toServerList(value) {
+  if (!Array.isArray(value)) return [];
+  const list = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { id, serverName, timeoutMs } = entry;
+    if (typeof id !== "string" || id.length === 0) continue;
+    if (typeof serverName !== "string") continue;
+    if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs)) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    list.push({ id, serverName, timeoutMs });
+  }
+  return list;
+}
 var Config = Schema.object({
-  mcpTimeouts: mcpTimeoutsField.volatile()
+  mcpTimeouts: mcpTimeoutsField.volatile(),
+  mcpServers: mcpServersField.volatile()
 });
 function toTimeoutMap(value) {
   if (!Array.isArray(value)) return {};
@@ -1025,6 +1043,30 @@ async function readShadow(deps) {
   const own = Array.isArray(descriptors) ? descriptors.find((descriptor) => descriptor.ns === deps.ns) : void 0;
   return toTimeoutMap(own?.value?.mcpTimeouts);
 }
+async function readServerList(deps) {
+  const descriptors = await deps.settings.describe();
+  const own = Array.isArray(descriptors) ? descriptors.find((descriptor) => descriptor.ns === deps.ns) : void 0;
+  return toServerList(own?.value?.mcpServers);
+}
+function projectServers(inventory) {
+  return inventory.map((row) => ({ id: row.id, serverName: row.serverName, timeoutMs: row.effectiveTimeoutMs }));
+}
+function sameServers(a, b) {
+  return a.length === b.length && a.every((row, index) => {
+    const other = b[index];
+    return other !== void 0 && row.id === other.id && row.serverName === other.serverName && row.timeoutMs === other.timeoutMs;
+  });
+}
+async function projectServerList(deps, inventory, trigger) {
+  const projected = projectServers(inventory);
+  try {
+    const stored = await readServerList(deps);
+    if (sameServers(projected, stored)) return;
+    await deps.settings.update(deps.ns, { mcpServers: projected });
+  } catch (error) {
+    deps.logger?.info?.(`more-config: server list projection skipped (${trigger}): ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 function createReconciler(deps) {
   let queue = Promise.resolve();
   let off;
@@ -1047,6 +1089,7 @@ function createReconciler(deps) {
       deps.logger?.info?.(`more-config: overrides not owned by the shadow (left untouched): ${plan.unmanaged.map((item) => `${item.id}=${item.timeoutMs}ms`).join(", ")}`);
     }
     for (const failure of failures) deps.logger?.error?.(`more-config: sync failed for ${failure.id} (trigger: ${trigger}): ${failure.error}`);
+    await projectServerList(deps, inventory, trigger);
     return { ...plan, failures };
   };
   const sync = (trigger) => {
