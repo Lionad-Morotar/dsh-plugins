@@ -6,15 +6,17 @@
  * keeps the component independent of how the settings page passes props — the
  * section slot's prop plumbing is the host's to evolve, the closure is ours.
  *
- * Rows reuse the shipped value field (numeric, per-row reset and invalid copy)
- * inside the shipped form frame, so the save bar, the read-only and
- * unavailable banners, and the failure copy all behave exactly like the
- * settings pages the host ships. Presets fill the add row rather than writing
- * directly: no value lands anywhere until the user saves.
+ * Rows are our own markup (see row.tsx and styles.ts) inside the shipped form
+ * frame, so the save bar, the read-only and unavailable banners, and the
+ * failure copy all behave exactly like the settings pages the host ships.
+ * Presets fill the add row rather than writing directly: no value lands
+ * anywhere until the user saves.
  */
 import { useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import type { TimeoutsSnapshot, TimeoutsStore } from "./store.ts";
 import { PRESETS } from "./registration.ts";
+import { insertStyles } from "./styles.ts";
+import { TimeoutRow } from "./row.tsx";
 
 /** A translate seat over this plugin's dictionary. */
 export type Translate = (key: string, params?: Record<string, string | number>) => string;
@@ -27,21 +29,6 @@ export interface SectionKit {
     onSave: () => void;
     onDiscard: () => void;
     children: ReactNode;
-  }>;
-  readonly SettingsValueField: ComponentType<{
-    id: string;
-    label: string;
-    hint?: string;
-    overriddenLabel: string;
-    resetLabel: string;
-    invalidLabel: string;
-    numeric?: boolean;
-    disabled?: boolean;
-    text: string;
-    overridden: boolean;
-    invalid: boolean;
-    onEdit: (text: string) => void;
-    onReset: () => void;
   }>;
   readonly Button: ComponentType<{ children: ReactNode; onClick?: () => void; disabled?: boolean }>;
   readonly Input: ComponentType<{ value: string; onChange: (event: { readonly target: { readonly value: string } }) => void; placeholder?: string; disabled?: boolean }>;
@@ -98,26 +85,20 @@ export function createSection(wiring: SectionWiring): ComponentType {
       setAddId("");
       setAddMs("");
     };
+    insertStyles(document);
     return (
       <kit.SettingsForm labels={formLabels(t)} state={frameState(snapshot)} onSave={() => void store.save()} onDiscard={() => store.discard()}>
         <p style={{ margin: "0 0 4px", color: "var(--dsw-alias-label-secondary)" }}>{t("description")}</p>
         {snapshot.rows.length === 0 ? <p style={{ margin: "0 0 8px" }}>{t("empty.servers")}</p> : undefined}
         {snapshot.rows.map(row => (
-          <kit.SettingsValueField
+          <TimeoutRow
             key={row.id}
-            id={`more-config-timeout-${row.id}`}
-            label={row.ghost ? `${row.id}${t("row.ghostSuffix")}` : row.serverName === "" ? row.id : row.serverName}
-            hint={row.ghost ? t("row.ghost") : row.serverName === "" ? undefined : row.id}
-            overriddenLabel={t("row.overridden")}
-            resetLabel={t("row.reset")}
-            invalidLabel={t("row.invalid")}
-            numeric
+            row={row}
             disabled={disabled}
-            text={row.text}
-            overridden={row.overridden && !row.ghost}
-            invalid={row.invalid}
+            t={t}
+            kit={kit}
             onEdit={text => store.editRow(row.id, text)}
-            onReset={() => store.resetRow(row.id)}
+            onClear={() => store.resetRow(row.id)}
           />
         ))}
         <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "8px 0", flexWrap: "wrap" }}>

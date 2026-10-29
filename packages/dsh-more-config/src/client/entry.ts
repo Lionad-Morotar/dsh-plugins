@@ -59,16 +59,13 @@ export function resolveKit(require: ModuleRequire | null): SectionKit | undefine
   if (require === null) return undefined;
   const primitives = require("@deepseek-ai/dsh-client-ui-primitives") as Record<string, unknown> | undefined;
   const SettingsForm = primitives?.SettingsForm;
-  const SettingsValueField = primitives?.SettingsValueField;
   const Button = primitives?.Button;
   const Input = primitives?.Input;
   if (!isKitComponent(SettingsForm)) return undefined;
-  if (!isKitComponent(SettingsValueField)) return undefined;
   if (!isKitComponent(Button)) return undefined;
   if (!isKitComponent(Input)) return undefined;
   return {
     SettingsForm: SettingsForm as SectionKit["SettingsForm"],
-    SettingsValueField: SettingsValueField as SectionKit["SettingsValueField"],
     Button: Button as unknown as SectionKit["Button"],
     Input: Input as unknown as SectionKit["Input"],
   };
