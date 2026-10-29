@@ -1,0 +1,5 @@
+# Mount dsh-session-interruption: this package owns the durable interruption
+# fold that powers the sidebar's red resume marker.
+- insert:
+    - id: session-interruption
+      name: 'dsh-session-interruption'
