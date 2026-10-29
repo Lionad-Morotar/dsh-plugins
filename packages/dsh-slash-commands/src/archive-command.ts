@@ -71,11 +71,15 @@ export interface ArchiveResultLike {
 export interface ArchiveDefinitionLike {
   readonly name: string;
   readonly description: string;
+  /** Declared for /archive: the web/desktop slash input drops argument-bearing invocations of commands without one. */
+  readonly input?: { readonly hint: string };
   handler(invocation: ArchiveInvocationLike): ArchiveResultLike | Promise<ArchiveResultLike>;
 }
 
 /** Human sentences for the service-backed failures. */
 const ARCHIVE_DONE = "会话已归档。归档的会话可在会话列表的「归档」视图中找回。";
+const ARCHIVE_DONE_WITH_STOP =
+  "会话已归档，其运行中工作的停止已请求。归档的会话可在会话列表的「归档」视图中找回。";
 const ARCHIVE_SESSION_MISSING = "/archive 当前会话不可用，无法归档";
 const ARCHIVE_SERVICE_MISSING = "/archive 需要 workspace 服务，当前组合没有挂载它";
 const UNARCHIVE_DONE = "会话已取消归档，回到会话列表。";
@@ -189,6 +193,12 @@ export function createArchiveCommand(ctx: ArchiveContextLike): ArchiveDefinition
   return {
     name: ARCHIVE_COMMAND_NAME,
     description: ARCHIVE_COMMAND_DESCRIPTION,
+    // The descriptor is load-bearing beyond its hint: the web/desktop slash
+    // input only hands argument-bearing invocations to commands that declare
+    // an input, so without it `/archive --stop` would never reach this
+    // handler at all — the whole line would go to the model as a prompt
+    // (found by the closing review against the host's matchEnter).
+    input: { hint: "[--stop]" },
     async handler(invocation) {
       const parsed = parseArchiveInput(invocation.rawInput);
       if (!parsed.ok) return { kind: "error", text: parsed.message };
@@ -204,9 +214,21 @@ export function createArchiveCommand(ctx: ArchiveContextLike): ArchiveDefinition
         // host to run its activity check, and forwarding a synthetic `{}` for
         // it would read as a stop request that was never made.
         await archive.call(registry, sessionId, parsed.stopActivity ? { stopActivity: true } : undefined);
-        return { kind: "success", text: ARCHIVE_DONE };
+        // The stop is requested after the durable write and never awaited, so
+        // the --stop answer promises a request, not a stopped session.
+        return { kind: "success", text: parsed.stopActivity ? ARCHIVE_DONE_WITH_STOP : ARCHIVE_DONE };
       } catch (error) {
-        return { kind: "error", text: archiveRejectionMessage(archiveRejectionOf(error)) };
+        const rejection = archiveRejectionOf(error);
+        if (rejection.kind === "unavailable") {
+          // Unknown failures carry no class the user can act on, but they do
+          // distinguish a transient carrier fault from a permanent one — the
+          // detail goes to the log, and the reply quotes it the way
+          // /unarchive does, instead of swallowing it behind a retry hint.
+          const detail = error instanceof Error ? error.message : String(error);
+          ctx.logger?.warn?.(`/archive failed: ${detail}`);
+          return { kind: "error", text: `归档失败：${detail}` };
+        }
+        return { kind: "error", text: archiveRejectionMessage(rejection) };
       }
     },
   };

@@ -40,7 +40,7 @@ DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回�
 
 ```
 /archive          # 归档当前会话
-/archive --stop   # 先请求停止会话的运行中工作，再归档
+/archive --stop   # 归档当前会话，并请求停止其运行中的工作
 /unarchive        # 把归档的当前会话放回会话列表
 ```
 

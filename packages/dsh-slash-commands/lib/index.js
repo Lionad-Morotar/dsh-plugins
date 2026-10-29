@@ -88,6 +88,7 @@ function parseUnarchiveInput(rawInput) {
 
 // src/archive-command.ts
 var ARCHIVE_DONE = "\u4F1A\u8BDD\u5DF2\u5F52\u6863\u3002\u5F52\u6863\u7684\u4F1A\u8BDD\u53EF\u5728\u4F1A\u8BDD\u5217\u8868\u7684\u300C\u5F52\u6863\u300D\u89C6\u56FE\u4E2D\u627E\u56DE\u3002";
+var ARCHIVE_DONE_WITH_STOP = "\u4F1A\u8BDD\u5DF2\u5F52\u6863\uFF0C\u5176\u8FD0\u884C\u4E2D\u5DE5\u4F5C\u7684\u505C\u6B62\u5DF2\u8BF7\u6C42\u3002\u5F52\u6863\u7684\u4F1A\u8BDD\u53EF\u5728\u4F1A\u8BDD\u5217\u8868\u7684\u300C\u5F52\u6863\u300D\u89C6\u56FE\u4E2D\u627E\u56DE\u3002";
 var ARCHIVE_SESSION_MISSING = "/archive \u5F53\u524D\u4F1A\u8BDD\u4E0D\u53EF\u7528\uFF0C\u65E0\u6CD5\u5F52\u6863";
 var ARCHIVE_SERVICE_MISSING = "/archive \u9700\u8981 workspace \u670D\u52A1\uFF0C\u5F53\u524D\u7EC4\u5408\u6CA1\u6709\u6302\u8F7D\u5B83";
 var UNARCHIVE_DONE = "\u4F1A\u8BDD\u5DF2\u53D6\u6D88\u5F52\u6863\uFF0C\u56DE\u5230\u4F1A\u8BDD\u5217\u8868\u3002";
@@ -147,6 +148,12 @@ function createArchiveCommand(ctx) {
   return {
     name: ARCHIVE_COMMAND_NAME,
     description: ARCHIVE_COMMAND_DESCRIPTION,
+    // The descriptor is load-bearing beyond its hint: the web/desktop slash
+    // input only hands argument-bearing invocations to commands that declare
+    // an input, so without it `/archive --stop` would never reach this
+    // handler at all — the whole line would go to the model as a prompt
+    // (found by the closing review against the host's matchEnter).
+    input: { hint: "[--stop]" },
     async handler(invocation) {
       const parsed = parseArchiveInput(invocation.rawInput);
       if (!parsed.ok) return { kind: "error", text: parsed.message };
@@ -157,9 +164,15 @@ function createArchiveCommand(ctx) {
       if (sessionId === void 0) return { kind: "error", text: ARCHIVE_SESSION_MISSING };
       try {
         await archive.call(registry, sessionId, parsed.stopActivity ? { stopActivity: true } : void 0);
-        return { kind: "success", text: ARCHIVE_DONE };
+        return { kind: "success", text: parsed.stopActivity ? ARCHIVE_DONE_WITH_STOP : ARCHIVE_DONE };
       } catch (error) {
-        return { kind: "error", text: archiveRejectionMessage(archiveRejectionOf(error)) };
+        const rejection = archiveRejectionOf(error);
+        if (rejection.kind === "unavailable") {
+          const detail = error instanceof Error ? error.message : String(error);
+          ctx.logger?.warn?.(`/archive failed: ${detail}`);
+          return { kind: "error", text: `\u5F52\u6863\u5931\u8D25\uFF1A${detail}` };
+        }
+        return { kind: "error", text: archiveRejectionMessage(rejection) };
       }
     }
   };

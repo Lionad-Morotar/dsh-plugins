@@ -102,12 +102,28 @@ describe("rejection classification", () => {
 });
 
 describe("/archive command", () => {
+  it("declares an input descriptor, because the web/desktop slash input drops argument-bearing lines otherwise", () => {
+    // Found by the closing review: without `input`, the host's matchEnter
+    // treats `/archive --stop` as a plain prompt and sends it to the model —
+    // the stop path would be unreachable exactly where stopping matters.
+    expect(createArchiveCommand(context(registry())).input?.hint).toContain("--stop");
+  });
+
   it("archives the current session without options when plain", async () => {
     const reg = registry();
     const result = await createArchiveCommand(context(reg)).handler(invocation(""));
 
     expect(result.kind).toBe("success");
     expect(reg.archiveCalls).toEqual([{ sessionId: "session-1", options: undefined }]);
+  });
+
+  it("answers --stop with the stop-requested sentence, not the plain one", async () => {
+    const reg = registry();
+    const plain = await createArchiveCommand(context(reg)).handler(invocation(""));
+    const stopped = await createArchiveCommand(context(reg)).handler(invocation("--stop"));
+
+    expect(plain.kind === "success" && plain.text).not.toContain("停止");
+    expect(stopped.kind === "success" && stopped.text).toContain("停止已请求");
   });
 
   it("passes stopActivity through when --stop is given", async () => {
@@ -177,6 +193,23 @@ describe("/archive command", () => {
     const result = await createArchiveCommand(context(reg)).handler(invocation(""));
 
     expect(result.kind).toBe("error");
+  });
+
+  it("quotes an unknown failure's detail and logs it, like /unarchive does", async () => {
+    // The closing review: a permanent storage fault and a transient carrier
+    // fault both used to collapse into a retry hint, with nothing in the log
+    // to tell them apart.
+    const warnings: string[] = [];
+    const reg = registry({ archiveSession: async () => { throw new Error("storage read-only"); } });
+    const ctx: ArchiveContextLike = {
+      workspaceRegistry: reg,
+      get: (name: string) => (name === "workspaceRegistry" ? reg : undefined),
+      logger: { info: () => {}, warn: message => void warnings.push(message) },
+    };
+    const result = await createArchiveCommand(ctx).handler(invocation(""));
+
+    expect(result.kind === "error" && result.text).toContain("storage read-only");
+    expect(warnings.join("\n")).toContain("storage read-only");
   });
 });
 
