@@ -12,3 +12,7 @@ zRefs/
 
 # LikeC4 build output
 .planning/c4/dist/
+
+# Polaris orchestration state and slice worktrees
+.nsl/
+.claude/worktrees/
