@@ -20,6 +20,16 @@ import {
   listingPath,
   parseFocus,
 } from "./model.ts";
+import { renderMarkdown } from "./markdown.ts";
+import {
+  classifyPreviewFailure,
+  createPreviewLoader,
+  describePage,
+  isMarkdownFile,
+  languageFor,
+  normalizePreviewPage,
+} from "./preview.ts";
+import { boot, previewChunkRoute } from "./preview-chunk.ts";
 import { insertStyles } from "./styles.ts";
 import { parseStatusZ, statusBadge, statusTone } from "./status.ts";
 import { createFsExplorerView, type WorkbenchFace } from "./view.tsx";
@@ -104,9 +114,24 @@ export const __test = {
   parseStatusZ,
   statusTone,
   statusBadge,
+  createPreviewLoader,
+  renderMarkdown,
+  languageFor,
+  isMarkdownFile,
+  describePage,
+  classifyPreviewFailure,
+  normalizePreviewPage,
+  previewChunkRoute,
 };
 
 /** The plugin object the loader mounts. */
 export const clientPlugin = { name: "dsh-fs-explorer", inject, apply, __test };
+
+/**
+ * The loader hands its `require` to this export after the module body runs.
+ * It is the only reachable handle on `require.async`, which is how the preview
+ * chunk is fetched.
+ */
+export { boot };
 
 export default clientPlugin;

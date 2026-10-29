@@ -21,3 +21,13 @@ export const LOCALE_NAMESPACE = "fs-explorer";
  * endpoint cannot honor.
  */
 export const LISTING_TRUNCATED_LABEL = "目录过大，仅显示前";
+
+/**
+ * The one package-local chunk the preview's heavy half lives in.
+ *
+ * Three places name this file and none can import the others: this route table
+ * (the entry fetches through it), the chunk script's own `chunk:` field (the
+ * loader keys a chunk as `<package>/<file>`), and `scripts/build.mjs`, which
+ * fails the build when the entry no longer names the file it emitted.
+ */
+export const PREVIEW_CHUNK = { chunk: "client.preview.js" } as const;

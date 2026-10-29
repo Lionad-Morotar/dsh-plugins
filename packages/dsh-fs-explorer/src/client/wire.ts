@@ -13,6 +13,7 @@
  * reuses that endpoint instead of spawning a second git reader.
  */
 import type { FsEntryLike } from "./model.ts";
+import type { PreviewFiles } from "./preview.ts";
 
 /** One directory listing as the host wire carries it. */
 export interface WorkspaceDirectoryListingLike {
@@ -26,9 +27,21 @@ export type RemoteResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: { readonly code?: string; readonly message?: string } };
 
-/** What one mounted `workspaceFiles` face must expose for the tree to work. */
+/**
+ * What one mounted `workspaceFiles` face must expose.
+ *
+ * `list` drives the tree and is required; `read` drives the preview and is
+ * optional because a host build that only lists directories may still be a
+ * legal deployment. The preview paints its "read unavailable" state then.
+ */
 export interface WorkspaceFilesFace {
   list(sessionId: string, path: string, signal?: AbortSignal): Promise<unknown> | unknown;
+  read?(
+    sessionId: string,
+    path: string,
+    range: { readonly offset?: number; readonly limit?: number },
+    signal?: AbortSignal,
+  ): Promise<unknown> | unknown;
 }
 
 /** Read the optional service on every call so a late mount starts working. */
@@ -79,6 +92,30 @@ export function createFilesResolver(ctx: FilesContextLike): FilesResolver {
     if (isWorkspaceFilesFace(viaRemote)) return viaRemote;
 
     return undefined;
+  };
+}
+
+/**
+ * Bind the preview's page reader to one session.
+ *
+ * The host's `read` takes the session first because the path may be relative to
+ * that session's workspace root; the loader only speaks `(path, range, signal)`,
+ * so this adapter is where the two vocabularies meet.
+ * @param files - the resolved file face, if any.
+ * @param sessionId - the session the view is bound to.
+ * @returns a reader, or undefined when the face cannot read pages.
+ */
+export function createPreviewReader(
+  files: WorkspaceFilesFace | undefined,
+  sessionId: string | undefined,
+): PreviewFiles | undefined {
+  if (files === undefined || sessionId === undefined) return undefined;
+  const read = files.read;
+  if (typeof read !== "function") return undefined;
+  return {
+    read(path, range, signal) {
+      return read.call(files, sessionId, path, range, signal);
+    },
   };
 }
 

@@ -22,6 +22,7 @@ import {
   type TreeLevel,
 } from "./model.ts";
 import { parseStatusZ, type StatusMap } from "./status.ts";
+import { PreviewPane } from "./preview-pane.tsx";
 import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody } from "./tree.tsx";
 import {
   describeFailure,
@@ -413,14 +414,19 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
               testId="fs-empty"
             />
           ) : (
-            <TreeBody
-              rows={rows}
-              selectedPath={selected}
-              t={t}
-              onToggle={toggleDirectory}
-              onSelect={setSelected}
-              onRetry={retryDirectory}
-            />
+            <>
+              <div className="fx-tree-pane">
+                <TreeBody
+                  rows={rows}
+                  selectedPath={selected}
+                  t={t}
+                  onToggle={toggleDirectory}
+                  onSelect={setSelected}
+                  onRetry={retryDirectory}
+                />
+              </div>
+              <PreviewPane sessionId={sessionId} files={files} path={selected} t={t} />
+            </>
           )}
         </div>
 
