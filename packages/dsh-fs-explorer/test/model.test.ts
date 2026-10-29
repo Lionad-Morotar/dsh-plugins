@@ -87,12 +87,13 @@ describe("badgeFor", () => {
 describe("describeListing", () => {
   const entries = Array.from({ length: 2000 }, (_, index) => ({ name: `f${String(index)}.ts` }));
 
-  it("labels a truncated listing with the shown count", () => {
+  it("labels a truncated listing with the shown cap and no fake action", () => {
     const summary = describeListing({ entries, truncated: true, total: 5000 });
     expect(summary.truncated).toBe(true);
     expect(summary.total).toBe(5000);
     expect(summary.label).toContain("2000");
-    expect(summary.label).toContain("继续加载");
+    expect(summary.label).toContain("仅显示前");
+    expect(summary.label).not.toContain("继续加载");
   });
 
   it("does not mark a complete listing as truncated", () => {
@@ -158,6 +159,33 @@ describe("flattenTree", () => {
     expect(shape).toContain("2:loading");
     expect(shape).toContain("2:empty");
     expect(shape).toContain("2:failed");
+  });
+
+  it("paints file badges and directory aggregates from the status map", () => {
+    const levels = new Map<string, TreeLevel>([
+      ["", root],
+      [
+        "src",
+        level([
+          { name: "client", kind: "directory" },
+          { name: "main.ts", kind: "file" },
+        ]),
+      ],
+    ]);
+    const statuses = {
+      "README.md": { status: "untracked" as const },
+      "src/main.ts": { status: "modified" as const },
+      "src/client/view.tsx": { status: "deleted" as const },
+      "src/client/tree.tsx": { status: "renamed" as const },
+    };
+    const rows = flattenTree(levels, new Set(["src"]), statuses);
+    const readme = rows.find(row => row.type === "entry" && row.name === "README.md");
+    const main = rows.find(row => row.type === "entry" && row.name === "main.ts");
+    const client = rows.find(row => row.type === "entry" && row.name === "client");
+    expect(readme?.type === "entry" ? readme.status : undefined).toBe("untracked");
+    expect(main?.type === "entry" ? main.status : undefined).toBe("modified");
+    expect(client?.type === "entry" ? client.statusCount : undefined).toBe(2);
+    expect(client?.type === "entry" ? client.statusTone : undefined).toBe("danger");
   });
 
   it("adds a truncation row after a cut child listing", () => {

@@ -21,8 +21,15 @@ import {
   parseFocus,
 } from "./model.ts";
 import { insertStyles } from "./styles.ts";
+import { parseStatusZ, statusBadge, statusTone } from "./status.ts";
 import { createFsExplorerView, type WorkbenchFace } from "./view.tsx";
-import { createFilesResolver, normalizeListing, type FilesContextLike } from "./wire.ts";
+import {
+  createFilesResolver,
+  createGitStatusResolver,
+  normalizeListing,
+  normalizeStatusSnapshot,
+  type FilesContextLike,
+} from "./wire.ts";
 
 /** The slice of the client context this entry uses. */
 export interface ClientContextLike extends FilesContextLike {
@@ -53,6 +60,7 @@ export function apply(ctx: ClientContextLike): () => void {
     version: workbench.version,
     t,
     files: createFilesResolver(ctx),
+    status: createGitStatusResolver(ctx),
   });
 
   ctx.slots.inject(VIEW_SLOT, () =>
@@ -92,6 +100,10 @@ export const __test = {
   listingPath,
   parseFocus,
   normalizeListing,
+  normalizeStatusSnapshot,
+  parseStatusZ,
+  statusTone,
+  statusBadge,
 };
 
 /** The plugin object the loader mounts. */

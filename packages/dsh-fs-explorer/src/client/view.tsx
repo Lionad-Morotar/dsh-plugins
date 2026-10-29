@@ -21,8 +21,16 @@ import {
   type FocusTarget,
   type TreeLevel,
 } from "./model.ts";
+import { parseStatusZ, type StatusMap } from "./status.ts";
 import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody } from "./tree.tsx";
-import { describeFailure, normalizeListing, type FilesResolver, type WorkspaceFilesFace } from "./wire.ts";
+import {
+  describeFailure,
+  normalizeListing,
+  normalizeStatusSnapshot,
+  type FilesResolver,
+  type StatusResolver,
+  type WorkspaceFilesFace,
+} from "./wire.ts";
 import { VIEW_ID } from "../shared.ts";
 
 /** The slice of the workbench core service this view reads. */
@@ -50,6 +58,8 @@ export interface ViewWiring {
   readonly version: number;
   readonly t: Translate;
   readonly files: FilesResolver;
+  /** Resolves the Git namespace whose snapshot carries the raw status text. */
+  readonly status: StatusResolver;
 }
 
 /** The first-paint state without waiting for an effect. */
@@ -99,7 +109,7 @@ function StateBlock({
  * @param wiring - the core service, contract version, copy and file resolver.
  * @returns the component registered into `conversation.view`.
  */
-export function createFsExplorerView({ workbench, version, t, files: resolveFiles }: ViewWiring) {
+export function createFsExplorerView({ workbench, version, t, files: resolveFiles, status: resolveStatus }: ViewWiring) {
   function FsExplorerView(props: ConversationViewProps) {
     const sessionId = props.sessionId ?? workbench.currentSessionId();
     const sessionRef = useRef(sessionId);
@@ -108,8 +118,10 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     // Resolve once per mount: the host service is stable, and a fresh face
     // identity on every render would restart the root listing.
     const files = useMemo<WorkspaceFilesFace | undefined>(() => resolveFiles(), [resolveFiles]);
+    const statusFace = useMemo(() => resolveStatus(), [resolveStatus]);
 
     const [levels, setLevels] = useState<ReadonlyMap<string, TreeLevel>>(() => new Map());
+    const [statuses, setStatuses] = useState<StatusMap | undefined>(undefined);
     const levelsRef = useRef(levels);
     levelsRef.current = levels;
     const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
@@ -194,6 +206,35 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       };
     }, [sessionId, files, reloadToken, loadLevel]);
 
+    // Working-tree colours are an enhancement, never a failure: a missing Git
+    // namespace, a plain directory or a broken snapshot all read as "no status"
+    // and leave the tree fully usable. Only status text is requested, so the
+    // snapshot is capped at one commit to keep the history read off the mount
+    // path.
+    useEffect(() => {
+      if (sessionId === undefined || statusFace === undefined) {
+        setStatuses(undefined);
+        return;
+      }
+      let alive = true;
+      const controller = new AbortController();
+      setStatuses(undefined);
+      Promise.resolve()
+        .then(() => statusFace.snapshot(sessionId, { maxCommits: 1 }, controller.signal))
+        .then(response => {
+          if (!alive) return;
+          const normalized = normalizeStatusSnapshot(response);
+          setStatuses(normalized.ok ? parseStatusZ(normalized.status) : undefined);
+        })
+        .catch(() => {
+          if (alive) setStatuses(undefined);
+        });
+      return () => {
+        alive = false;
+        controller.abort();
+      };
+    }, [sessionId, statusFace, reloadToken]);
+
     // The Git panel jumps with `path:<workspace path>:<line>`; consume that
     // request once and remember the target until the root level can honor it.
     useEffect(() => {
@@ -241,7 +282,16 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       };
     }, [reveal, sessionId, files, rootReady, loadLevel]);
 
-    const rows = useMemo(() => flattenTree(levels, expanded), [levels, expanded]);
+    const rows = useMemo(() => flattenTree(levels, expanded, statuses), [levels, expanded, statuses]);
+    const changeCount = statuses === undefined ? undefined : Object.keys(statuses).length;
+    const summaryTone =
+      statuses === undefined
+        ? "neutral"
+        : Object.values(statuses).some(marker => marker.status === "conflicted")
+          ? "conflict"
+          : changeCount === 0
+            ? "success"
+            : "warning";
 
     const toggleDirectory = useCallback(
       (path: string): void => {
@@ -384,6 +434,14 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                 {describeListing({ entries: rootLevel.nodes, truncated: true, total: rootLevel.total }).label}
               </span>
             ) : null}
+            <span className="fx-foot-git" data-state={changeCount === undefined ? "none" : "ready"} data-testid="fs-git-status">
+              <span className="fx-foot-dot fx-tone" data-tone={summaryTone} aria-hidden="true" />
+              {changeCount === undefined
+                ? t("status.unavailable")
+                : changeCount === 0
+                  ? t("status.clean")
+                  : t("status.summary").replace("{count}", String(changeCount))}
+            </span>
             <span className="fx-spacer" />
             <span>{t("foot.order")}</span>
           </footer>

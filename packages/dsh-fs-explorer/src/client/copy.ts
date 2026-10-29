@@ -28,6 +28,16 @@ export const ZH: Record<string, string> = {
   "row.close": "折叠目录",
   "row.file": "文件",
   "row.directory": "目录",
+  "status.modified": "已修改",
+  "status.added": "已新增",
+  "status.deleted": "已删除",
+  "status.renamed": "已重命名",
+  "status.untracked": "未跟踪",
+  "status.conflicted": "有冲突",
+  "status.directoryChanges": "{count} 个变更",
+  "status.summary": "{count} 个变更",
+  "status.clean": "无变更",
+  "status.unavailable": "无状态",
 };
 
 export const EN: Record<string, string> = {
@@ -59,6 +69,16 @@ export const EN: Record<string, string> = {
   "row.close": "Collapse directory",
   "row.file": "File",
   "row.directory": "Directory",
+  "status.modified": "Modified",
+  "status.added": "Added",
+  "status.deleted": "Deleted",
+  "status.renamed": "Renamed",
+  "status.untracked": "Untracked",
+  "status.conflicted": "Conflicted",
+  "status.directoryChanges": "{count} changes",
+  "status.summary": "{count} changes",
+  "status.clean": "No changes",
+  "status.unavailable": "No status",
 };
 
 /** A translate seat over this package's dictionary. */

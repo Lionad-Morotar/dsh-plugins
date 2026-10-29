@@ -13,11 +13,11 @@ import type { Translate } from "./copy.ts";
 import {
   badgeFor,
   computeTreeWindow,
-  describeListing,
   formatSize,
   iconFor,
   type TreeRow,
 } from "./model.ts";
+import { statusBadge, statusLabelKey, statusTone } from "./status.ts";
 
 /** Row height shared by the virtual window, the CSS and the scroll math. */
 export const TREE_ROW_HEIGHT = 22;
@@ -123,6 +123,7 @@ export function TreeRowView({ row, selected, top, t, onToggle, onSelect }: TreeR
       data-kind={row.kind}
       data-selected={selected ? "true" : "false"}
       data-expanded={directory ? (row.expanded ? "true" : "false") : undefined}
+      data-status={row.status}
       data-testid="fx-row"
       title={row.path}
       style={style}
@@ -147,6 +148,27 @@ export function TreeRowView({ row, selected, top, t, onToggle, onSelect }: TreeR
         <FileBadge name={row.name} />
       )}
       <span className="fx-name">{row.name}</span>
+      {row.status === undefined ? null : (
+        <span
+          className="fx-status-badge fx-tone"
+          data-tone={statusTone(row.status)}
+          data-testid="fx-file-status"
+          title={t(statusLabelKey(row.status))}
+          aria-label={t(statusLabelKey(row.status))}
+        >
+          {statusBadge(row.status)}
+        </span>
+      )}
+      {row.statusCount === undefined ? null : (
+        <span
+          className="fx-dir-status fx-tone"
+          data-tone={row.statusTone ?? "neutral"}
+          data-testid="fx-dir-status"
+        >
+          {t("status.directoryChanges").replace("{count}", String(row.statusCount))}
+        </span>
+      )}
+      <span className="fx-row-fill" />
       {row.size === undefined ? null : <span className="fx-size">{formatSize(row.size)}</span>}
     </button>
   );
@@ -173,7 +195,7 @@ export function StatusRowView({ row, top, t, onRetry }: StatusRowViewProps) {
         ? t("state.emptyDirectory")
         : row.state === "failed"
           ? row.message ?? t("state.failedDirectory")
-          : row.label ?? describeListing({ entries: [], truncated: true }).label;
+          : row.label ?? t("state.truncated");
   return (
     <div
       className="fx-status"

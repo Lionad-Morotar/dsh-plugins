@@ -7,6 +7,8 @@
  * lets the acceptance probe drive the built bundle in plain Node and compare
  * `buildTree` against the real directory listing.
  */
+import { LISTING_TRUNCATED_LABEL } from "../shared.ts";
+import { indexDirectoryChanges, statusOf, type FsChangeStatus, type StatusMap, type StatusTone } from "./status.ts";
 
 /** A directory child as the host listing describes it. */
 export interface FsEntryLike {
@@ -222,7 +224,8 @@ export interface ListingSummary {
  * Describe how much of one directory listing reached the tree.
  *
  * The host caps a listing at `maxEntries` and reports the cut; the tree cannot
- * page the endpoint, so the honest UI is a hint that more children exist.
+ * page the endpoint, so the only honest copy states the cap. It must not offer
+ * an action the host has no parameter for.
  * @param input - the returned entries, the host's truncation flag and its total.
  * @returns the flag plus the label the footer or status row paints.
  */
@@ -238,7 +241,7 @@ export function describeListing(input: {
       ? Math.trunc(input.total)
       : shown;
   return truncated
-    ? { truncated: true, label: `已显示 ${String(shown)} 项，继续加载`, total }
+    ? { truncated: true, label: `${LISTING_TRUNCATED_LABEL} ${String(shown)} 项`, total }
     : { truncated: false, label: `${String(shown)} 项`, total };
 }
 
@@ -342,6 +345,10 @@ export type TreeRow =
       readonly depth: number;
       readonly expanded: boolean;
       readonly size?: number;
+      /** File rows carry their own status; directory rows carry an aggregate. */
+      readonly status?: FsChangeStatus;
+      readonly statusCount?: number;
+      readonly statusTone?: StatusTone;
     }
   | {
       readonly type: "status";
@@ -358,16 +365,21 @@ export type TreeRow =
  *
  * A directory contributes its children only while expanded. Its own loading,
  * failure, empty and truncation states become status rows directly below it,
- * so the tree has one row vocabulary and one scroll height.
+ * so the tree has one row vocabulary and one scroll height. Working-tree
+ * statuses come from the Git snapshot and do not depend on a level being
+ * loaded, so a collapsed directory can still advertise its change count.
  * @param levels - loaded directory levels keyed by workspace path (`""` is the root).
  * @param expanded - workspace paths currently open.
+ * @param statuses - parsed `git status` map, or undefined when Git is unavailable.
  * @returns visible rows in display order.
  */
 export function flattenTree(
   levels: ReadonlyMap<string, TreeLevel>,
   expanded: ReadonlySet<string>,
+  statuses?: StatusMap,
 ): TreeRow[] {
   const rows: TreeRow[] = [];
+  const statusIndex = indexDirectoryChanges(statuses);
 
   const visit = (path: string, depth: number): void => {
     const level = levels.get(path);
@@ -376,6 +388,8 @@ export function flattenTree(
       const child = joinPath(path, node.name);
       const isDirectory = node.kind === "directory";
       const open = isDirectory && expanded.has(child);
+      const fileStatus = isDirectory ? undefined : statusOf(child, statuses);
+      const aggregate = isDirectory ? statusIndex.get(child) : undefined;
       rows.push({
         type: "entry",
         path: child,
@@ -384,6 +398,8 @@ export function flattenTree(
         depth,
         expanded: open,
         ...(node.size === undefined ? {} : { size: node.size }),
+        ...(fileStatus === undefined ? {} : { status: fileStatus }),
+        ...(aggregate === undefined ? {} : { statusCount: aggregate.count, statusTone: aggregate.tone }),
       });
       if (!open) continue;
       const childLevel = levels.get(child);

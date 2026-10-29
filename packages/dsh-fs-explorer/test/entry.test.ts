@@ -75,11 +75,14 @@ describe("fs explorer client entry", () => {
     expect(calls.some(call => call.type === "locale.register" && call.name === "fs-explorer")).toBe(true);
   });
 
-  it("exposes the four pure surfaces on the default export", () => {
+  it("exposes the pure surfaces on the default export", () => {
     expect(typeof clientPlugin.__test.buildTree).toBe("function");
     expect(typeof clientPlugin.__test.describeListing).toBe("function");
     expect(typeof clientPlugin.__test.iconFor).toBe("function");
     expect(typeof clientPlugin.__test.computeTreeWindow).toBe("function");
+    expect(typeof clientPlugin.__test.parseStatusZ).toBe("function");
+    expect(typeof clientPlugin.__test.statusTone).toBe("function");
+    expect(typeof clientPlugin.__test.statusBadge).toBe("function");
   });
 
   it("picks the no-session state before the service probe", () => {
@@ -96,6 +99,7 @@ describe("fs explorer client entry", () => {
       version: 1,
       t,
       files: () => undefined,
+      status: () => undefined,
     });
     expect(typeof view).toBe("function");
   });

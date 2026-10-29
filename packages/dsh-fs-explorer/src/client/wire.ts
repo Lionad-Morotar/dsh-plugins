@@ -1,14 +1,16 @@
 /**
- * The file service seam.
+ * The file service and Git status seams.
  *
- * The tree's only data source is the host's `workspaceFiles` namespace. A
+ * The tree's directory data comes from the host's `workspaceFiles` namespace. A
  * deployment can mount it either as a client service (`ctx.workspaceFiles`, the
  * contract this package was specified against) or through the generated Remote
  * carrier (`ctx.remote.workspaceFiles`, the shape the official sidebar uses);
  * both answer `list(sessionId, path, signal)` with a `RemoteResult`-wrapped
  * directory listing. Every probe is non-throwing, because a deployment without
  * the service must render the panel's "service unavailable" state rather than
- * take the conversation row down.
+ * take the conversation row down. The same file also folds the Git panel's
+ * snapshot response down to its raw `git status` text, because status colouring
+ * reuses that endpoint instead of spawning a second git reader.
  */
 import type { FsEntryLike } from "./model.ts";
 
@@ -148,4 +150,97 @@ export function normalizeListing(response: unknown): NormalizedListing {
 export function describeFailure(error: unknown): string {
   if (error instanceof Error) return error.message;
   return messageOf(error);
+}
+
+/**
+ * The slice of the Git panel's Remote namespace this package reads.
+ *
+ * The file tree only needs the snapshot's raw status text, so the face is
+ * narrowed to `snapshot` even though the Git namespace exposes more methods.
+ */
+export interface GitStatusFace {
+  snapshot(
+    sessionId: string,
+    request?: { readonly maxCommits?: number },
+    signal?: AbortSignal,
+  ): Promise<unknown> | unknown;
+}
+
+/** Read the optional Git namespace on every call so a late host mount works. */
+export type StatusResolver = () => GitStatusFace | undefined;
+
+/** The client context slice the status resolver probes. */
+export interface StatusContextLike {
+  readonly remote?: unknown;
+  get?(name: string): unknown;
+}
+
+/** Whether a value is the generated Git namespace rather than a Cordis stub. */
+export function isGitStatusFace(value: unknown): value is GitStatusFace {
+  if (value === null || typeof value !== "object") return false;
+  return typeof (value as { snapshot?: unknown }).snapshot === "function";
+}
+
+/**
+ * Resolve `remote.gitExplorer` without assuming the namespace is mounted.
+ *
+ * The Git panel's host half is optional in this deployment: a profile without
+ * it must paint uncoloured rows, not an error. The documented path is tried
+ * first; Cordis's non-throwing resolver is the fallback for hosts that enforce
+ * the inject whitelist on nested services.
+ * @param ctx - the client context this row was applied to.
+ * @returns a resolver that answers undefined while the Git face is absent.
+ */
+export function createGitStatusResolver(ctx: StatusContextLike): StatusResolver {
+  return () => {
+    const direct = safeRead(() => (ctx.remote as { readonly gitExplorer?: unknown } | undefined)?.gitExplorer);
+    if (isGitStatusFace(direct)) return direct;
+    const viaGet = safeRead(() => (typeof ctx.get === "function" ? ctx.get("remote.gitExplorer") : undefined));
+    if (isGitStatusFace(viaGet)) return viaGet;
+    return undefined;
+  };
+}
+
+/** A Git snapshot after both transport and business envelopes were folded. */
+export type NormalizedStatus =
+  | { readonly ok: true; readonly status: string }
+  | { readonly ok: false; readonly message: string };
+
+function readSnapshot(value: unknown): NormalizedStatus {
+  if (value === null || typeof value !== "object") {
+    return { ok: false, message: "Git 服务返回了无效响应" };
+  }
+  const record = value as { readonly isRepository?: unknown; readonly status?: unknown };
+  if (typeof record.status !== "string") {
+    return { ok: false, message: "Git 快照缺少 status" };
+  }
+  // A plain directory is a valid answer with no repository, hence no status.
+  return { ok: true, status: record.isRepository === false ? "" : record.status };
+}
+
+/**
+ * Fold the Git snapshot response down to its raw status text.
+ *
+ * The generated Remote wraps the Host method in `RemoteResult<T>`, and the
+ * Host method answers a business `{ ok, snapshot }` union of its own. Both
+ * layers are checked by shape, so a host build that flattens one still works.
+ * @param response - whatever `gitExplorer.snapshot` resolved to.
+ * @returns the raw porcelain text, or a one-line failure description.
+ */
+export function normalizeStatusSnapshot(response: unknown): NormalizedStatus {
+  if (response === null || typeof response !== "object") {
+    return { ok: false, message: "Git 服务返回了无效响应" };
+  }
+  const record = response as { readonly ok?: unknown; readonly value?: unknown; readonly error?: unknown };
+  if (record.ok === false) return { ok: false, message: messageOf(record.error) };
+  if (record.ok !== true) return { ok: false, message: "Git 服务返回了无效响应" };
+  const inner = record.value;
+  if (inner !== null && typeof inner === "object" && typeof (inner as { ok?: unknown }).ok === "boolean") {
+    const nested = inner as { readonly ok: boolean; readonly snapshot?: unknown; readonly error?: unknown };
+    if (!nested.ok) return { ok: false, message: messageOf(nested.error) };
+    return readSnapshot(nested.snapshot);
+  }
+  const flattened = response as { readonly snapshot?: unknown };
+  if (flattened.snapshot !== undefined) return readSnapshot(flattened.snapshot);
+  return readSnapshot(inner);
 }

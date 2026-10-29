@@ -64,6 +64,7 @@ const rootEntries = [
   ["docs", "directory"],
   ["scripts", "directory"],
   ["refs", "directory"],
+  ["temp", "directory"],
   [".gitignore", "file", 412],
   ["README.md", "file", 8412],
   ["package.json", "file", 1180],
@@ -106,9 +107,20 @@ levels.set(
     ["model.ts", "file", 14820],
     ["view.tsx", "file", 13840],
     ["tree.tsx", "file", 11240],
+    ["status.ts", "file", 9210],
     ["styles.ts", "file", 9860],
     ["copy.ts", "file", 3120],
     ["wire.ts", "file", 7210],
+  ]),
+);
+levels.set(
+  "docs",
+  ready([
+    ["old-notes.md", "file", 5120],
+    ["guide.md", "file", 8120],
+    ["new-notes.md", "file", 2380],
+    ["未命名 草稿.md", "file", 940],
+    ["conflict.md", "file", 1740],
   ]),
 );
 levels.set(
@@ -126,14 +138,14 @@ levels.set(
       ["client.ts", "file", 8210],
       ["host.ts", "file", 6420],
       ["index.ts", "file", 1180],
+      ["parse.ts", "file", 13620],
     ],
     true,
     214,
   ),
 );
-levels.set("docs", { status: "loading", nodes: [], truncated: false, total: 0 });
+levels.set("scripts", { status: "loading", nodes: [], truncated: false, total: 0 });
 levels.set("refs", { status: "failed", nodes: [], truncated: false, total: 0, message: "权限不足，无法读取该目录" });
-levels.set("scripts", { status: "ready", nodes: [], truncated: false, total: 0 });
 
 const expanded = new Set([
   "packages",
@@ -146,7 +158,23 @@ const expanded = new Set([
   "refs",
   "scripts",
 ]);
-const rows = api.flattenTree(levels, expanded);
+const statuses = api.parseStatusZ(
+  [
+    "1 .M N... 100644 100644 100644 aaaa bbbb packages/dsh-fs-explorer/src/client/view.tsx",
+    "1 M. N... 100644 100644 100644 aaaa bbbb packages/dsh-fs-explorer/src/client/model.ts",
+    "1 A. N... 100644 100644 100644 aaaa bbbb packages/dsh-fs-explorer/src/client/status.ts",
+    "2 R. N... 100644 100644 100644 eeee ffff R100 packages/dsh-fs-explorer/src/client/tree.tsx",
+    "packages/dsh-fs-explorer/src/client/tree old.tsx",
+    "1 D. N... 100644 000000 000000 cccc dddd docs/old-notes.md",
+    "1 M. N... 100644 100644 100644 aaaa bbbb docs/guide.md",
+    "1 A. N... 100644 100644 100644 aaaa bbbb docs/new-notes.md",
+    "? docs/未命名 草稿.md",
+    "u UU N... 100644 100644 100644 100644 gggg hhhh iiii docs/conflict.md",
+    "u UU N... 100644 100644 100644 100644 gggg hhhh iiii packages/dsh-git-explorer/src/host/parse.ts",
+    "? temp/",
+  ].join("\0") + "\0",
+);
+const rows = api.flattenTree(levels, expanded, statuses);
 const selected = "packages/dsh-fs-explorer/src/client/view.tsx";
 const hovered = "packages/dsh-fs-explorer/package.json";
 
@@ -182,10 +210,19 @@ function rowHtml(row, index) {
   const selectedAttr = row.path === selected ? ` data-selected="true"` : ` data-selected="false"`;
   const hoverAttr = row.path === hovered ? ` data-demo="hover"` : "";
   const size = row.size === undefined ? "" : `<span class="fx-size">${escape(formatSize(row.size))}</span>`;
-  return `<button type="button" class="fx-row" data-kind="${row.kind}"${selectedAttr} data-expanded="${directory ? String(row.expanded) : "false"}"${hoverAttr} style="top:${index * 22}px;padding-left:${8 + row.depth * 12}px">
+  const status = row.status === undefined
+    ? ""
+    : `<span class="fx-status-badge fx-tone" data-tone="${api.statusTone(row.status)}" title="${escape(api.statusTone(row.status))}">${escape(api.statusBadge(row.status))}</span>`;
+  const aggregate = row.statusCount === undefined
+    ? ""
+    : `<span class="fx-dir-status fx-tone" data-tone="${row.statusTone}">${row.statusCount} 个变更</span>`;
+  return `<button type="button" class="fx-row" data-kind="${row.kind}"${selectedAttr} data-expanded="${directory ? String(row.expanded) : "false"}" data-status="${row.status ?? ""}"${hoverAttr} style="top:${index * 22}px;padding-left:${8 + row.depth * 12}px">
     <span class="fx-chevron" data-open="${directory && row.expanded ? "true" : "false"}" data-visible="${directory ? "true" : "false"}" aria-hidden="true">${CHEVRON}</span>
     ${folder}
     <span class="fx-name">${escape(row.name)}</span>
+    ${status}
+    ${aggregate}
+    <span class="fx-row-fill"></span>
     ${size}
   </button>`;
 }
@@ -239,7 +276,7 @@ function html(theme) {
 <html lang="zh-CN" data-theme="${theme}">
 <head>
 <meta charset="utf-8">
-<title>s4 fs tree ${theme}</title>
+<title>s5 fs status ${theme}</title>
 <style>
 ${dark ? `:root {${THEME_DARK}}` : `:root {${THEME_LIGHT}}`}
 * { box-sizing: border-box; }
@@ -287,6 +324,7 @@ ${rowsHtml}
     </div>
     <footer class="fx-foot">
       <span>工作区 <b>${levels.get("").nodes.length}</b> 项</span>
+      <span class="fx-foot-git" data-state="ready"><span class="fx-foot-dot fx-tone" data-tone="warning" aria-hidden="true"></span>${Object.keys(statuses).length} 个变更</span>
       <span class="fx-spacer"></span>
       <span>目录优先</span>
     </footer>
@@ -299,7 +337,7 @@ ${rowsHtml}
 mkdirSync(outDir, { recursive: true });
 const files = [];
 for (const theme of ["dark", "light"]) {
-  const target = join(outDir, `s4-fs-tree-${theme}.html`);
+  const target = join(outDir, `s5-fs-status-${theme}.html`);
   writeFileSync(target, html(theme), "utf8");
   files.push(target);
 }
@@ -307,7 +345,7 @@ process.stdout.write(`${files.join("\n")}\n${String(rows.length)} rows\n`);
 
 const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 for (const theme of ["dark", "light"]) {
-  const png = join(outDir, `s4-fs-tree-${theme}.png`);
+  const png = join(outDir, `s5-fs-status-${theme}.png`);
   execFileSync(
     chrome,
     [
@@ -317,7 +355,7 @@ for (const theme of ["dark", "light"]) {
       "--force-device-scale-factor=2",
       "--window-size=620,1000",
       `--screenshot=${png}`,
-      `file://${join(outDir, `s4-fs-tree-${theme}.html`)}`,
+      `file://${join(outDir, `s5-fs-status-${theme}.html`)}`,
     ],
     { stdio: "pipe", timeout: 120_000 },
   );
