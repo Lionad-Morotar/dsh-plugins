@@ -64,9 +64,9 @@ function useDockVisible(visibility: DockVisibilitySource): boolean {
 const rootStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  // The dock sits above the composer card inside the conversation column, and
+  // The dock hangs below the composer card inside the conversation column, and
   // the spec keeps it 1.5em clear of that input box.
-  marginBottom: "1.5em",
+  marginTop: "1.5em",
   borderTop: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
   background: "color-mix(in srgb, currentColor 3%, transparent)",
   boxSizing: "border-box",
@@ -84,12 +84,14 @@ const titleRowStyle: CSSProperties = { display: "flex", alignItems: "baseline", 
 const titleStyle: CSSProperties = { fontSize: 12, fontWeight: 600, letterSpacing: 0.2 };
 const hintStyle: CSSProperties = { fontSize: 11, opacity: 0.5, whiteSpace: "nowrap" };
 const actionsStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 2 };
+// Mid-section of the single-row header: session tabs with inline close, then
+// the new-terminal button. No own border, the header's bottom rule is enough.
 const tabStripStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 4,
-  padding: "4px 10px",
-  borderBottom: "1px solid color-mix(in srgb, currentColor 8%, transparent)",
+  minWidth: 0,
+  overflow: "hidden",
 };
 const bodyStyle: CSSProperties = {
   display: "grid",
@@ -241,6 +243,36 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
             <span style={titleStyle}>{t("dock.title")}</span>
             <span style={hintStyle}>{t("dock.hint")}</span>
           </div>
+          <div style={tabStripStyle}>
+            {panels.map((panel: DockPanel, index: number) => (
+              <button
+                key={panel.id}
+                type="button"
+                aria-pressed={panel.id === activeId}
+                data-panel-tab={panel.id}
+                data-active={panel.id === activeId ? "true" : "false"}
+                onClick={() => dock.activate(panel.id)}
+                style={panel.id === activeId ? tabActiveStyle : tabStyle}
+              >
+                {`${t("dock.panel")} ${String(index + 1)}`}
+                <span
+                  role="button"
+                  aria-label={t("dock.closePanel")}
+                  data-testid={`dock-tab-close-${panel.id}`}
+                  onClick={event => {
+                    event.stopPropagation();
+                    closePanel(panel.id);
+                  }}
+                  style={{ marginLeft: 4, opacity: 0.55 }}
+                >
+                  ×
+                </span>
+              </button>
+            ))}
+            <IconButton label={t("dock.new")} onClick={() => dock.open(nextPanelId(), sessionId === undefined ? {} : { sessionId })}>
+              +
+            </IconButton>
+          </div>
           <div style={actionsStyle}>
             <IconButton label={minimized ? t("dock.restore") : t("dock.minimize")} onClick={() => (minimized ? dock.restore() : dock.minimize())}>
               {minimized ? "▢" : "—"}
@@ -254,9 +286,6 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
             <IconButton label={t("dock.split")} onClick={() => dock.split()}>
               ◫
             </IconButton>
-            <IconButton label={t("dock.new")} onClick={() => dock.open(nextPanelId(), sessionId === undefined ? {} : { sessionId })}>
-              +
-            </IconButton>
             <IconButton
               label={t("dock.closePanel")}
               onClick={() => {
@@ -268,22 +297,6 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
             </IconButton>
           </div>
         </header>
-
-        <div style={tabStripStyle}>
-          {panels.map((panel: DockPanel, index: number) => (
-            <button
-              key={panel.id}
-              type="button"
-              aria-pressed={panel.id === activeId}
-              data-panel-tab={panel.id}
-              data-active={panel.id === activeId ? "true" : "false"}
-              onClick={() => dock.activate(panel.id)}
-              style={panel.id === activeId ? tabActiveStyle : tabStyle}
-            >
-              {`${t("dock.panel")} ${String(index + 1)}`}
-            </button>
-          ))}
-        </div>
 
         {sessionId === undefined ? (
           <div style={emptyStyle} role="note">

@@ -1,6 +1,6 @@
 // src/shared.ts
 var PACKAGE_NAME = "dsh-term-dock";
-var DOCK_SLOT = "conversation.input.dock";
+var DOCK_SLOT = "conversation.composer.dock";
 var DOCK_ID = "term-dock";
 
 // src/index.ts

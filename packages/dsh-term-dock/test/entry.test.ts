@@ -105,8 +105,8 @@ describe("term dock client entry", () => {
 
     apply(ctx as never);
 
-    expect(calls).toContainEqual({ type: "slots.inject", name: "conversation.input.dock" });
-    expect(calls).toContainEqual({ type: "slots.register", name: "conversation.input.dock", id: "term-dock" });
+    expect(calls).toContainEqual({ type: "slots.inject", name: "conversation.composer.dock" });
+    expect(calls).toContainEqual({ type: "slots.register", name: "conversation.composer.dock", id: "term-dock" });
     expect(calls).toContainEqual({ type: "locale.register", name: "term-dock" });
     expect(calls).toContainEqual({ type: "dock.register", id: "term-dock" });
   });
@@ -128,8 +128,8 @@ describe("term dock client entry", () => {
     expect(calls.filter(call => call.type === "slots.register")).toEqual([]);
 
     publish(true);
-    expect(calls).toContainEqual({ type: "slots.inject", name: "conversation.input.dock" });
-    expect(calls).toContainEqual({ type: "slots.register", name: "conversation.input.dock", id: "term-dock" });
+    expect(calls).toContainEqual({ type: "slots.inject", name: "conversation.composer.dock" });
+    expect(calls).toContainEqual({ type: "slots.register", name: "conversation.composer.dock", id: "term-dock" });
   });
 
   it("disposes its slot, locale and dock row", () => {
