@@ -1,39 +1,55 @@
 /**
  * The terminal dock's bottom surface.
  *
- * The slot is root-scoped and gives no session id; the component keeps only its
- * own collapsed state and leaves process lifetime to the host's `webTerminals`
- * service (blueprint D7). The minimize button is the one interaction s0 ships,
- * so the dock's height and visibility stay client-owned from the start.
+ * The slot is root-scoped and carries no session id, so the dock asks the core
+ * service which conversation is on screen and renders only that session's
+ * panels. Process lifetime stays with the host's `webTerminals` service: this file
+ * decides layout, focus and which panel the keyboard acts on, nothing else.
+ *
+ * Keyboard discipline (blueprint D5): the dock binds exactly two keys locally and
+ * both are scoped to the dock element. `Ctrl+W` closes the current terminal and
+ * `Esc` returns to chat through the core's view seam. Everything else — including
+ * the workbench's `Cmd/Ctrl+Shift+*` family — belongs to the core's shortcut
+ * registration and is deliberately not read here.
  */
-import { useState, type ComponentType, type CSSProperties } from "react";
+import { useEffect, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 
-/** A translate seat over this package's dictionary. */
-export type Translate = (key: string) => string;
+import { createTerminalPanel } from "./terminal-panel.tsx";
+import type { DockHost } from "./host.ts";
+import type { DockPanel, DockState } from "./dock-state.ts";
+import type { TerminalRack } from "./rack.ts";
+import type { Translate } from "./copy.ts";
+
+/** Popup surfaces that own Escape while they are open. */
+const POPUP_SELECTOR = '[role="menu"],[role="listbox"],[aria-modal="true"],[data-popup-open="true"]';
+
+/**
+ * Whether an open popup inside the dock should keep Escape.
+ * @param root - the dock element.
+ * @returns true when a menu, listbox or modal is open inside.
+ */
+export function hasOpenPopup(root: Element): boolean {
+  return root.querySelector(POPUP_SELECTOR) !== null;
+}
 
 /** What one dock mount closes over. */
 export interface DockWiring {
-  /** Core contract version, rendered for real-host probes. */
-  readonly version: number;
+  readonly dock: DockState;
+  readonly rack: TerminalRack;
+  readonly host: DockHost;
   readonly t: Translate;
 }
 
-const dockStyle: CSSProperties = {
+const rootStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  height: 220,
+  // The gap to the host composer above: the dock is the lowest surface in the
+  // shell and must not sit flush against the input box.
+  marginTop: "1.5em",
   borderTop: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
   background: "color-mix(in srgb, currentColor 3%, transparent)",
   boxSizing: "border-box",
-};
-const barStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: 8,
-  padding: "6px 12px",
-  borderTop: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
-  background: "color-mix(in srgb, currentColor 3%, transparent)",
+  overflow: "hidden",
 };
 const headerStyle: CSSProperties = {
   display: "flex",
@@ -43,7 +59,36 @@ const headerStyle: CSSProperties = {
   padding: "6px 12px",
   borderBottom: "1px solid color-mix(in srgb, currentColor 10%, transparent)",
 };
+const titleRowStyle: CSSProperties = { display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 };
 const titleStyle: CSSProperties = { fontSize: 12, fontWeight: 600, letterSpacing: 0.2 };
+const hintStyle: CSSProperties = { fontSize: 11, opacity: 0.5, whiteSpace: "nowrap" };
+const actionsStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 2 };
+const tabStripStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 4,
+  padding: "4px 10px",
+  borderBottom: "1px solid color-mix(in srgb, currentColor 8%, transparent)",
+};
+const bodyStyle: CSSProperties = {
+  display: "grid",
+  gap: 8,
+  flex: 1,
+  minHeight: 0,
+  padding: 8,
+  boxSizing: "border-box",
+};
+const emptyStyle: CSSProperties = {
+  flex: 1,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  padding: 24,
+  textAlign: "center",
+  fontSize: 12,
+};
 const buttonStyle: CSSProperties = {
   border: "none",
   background: "transparent",
@@ -54,47 +99,197 @@ const buttonStyle: CSSProperties = {
   padding: "2px 6px",
   borderRadius: 6,
 };
-const bodyStyle: CSSProperties = {
-  display: "grid",
-  placeContent: "center",
-  justifyItems: "center",
-  gap: 6,
-  flex: 1,
-  textAlign: "center",
+const tabStyle: CSSProperties = {
+  ...buttonStyle,
+  fontSize: 11,
+  padding: "2px 8px",
+  border: "1px solid transparent",
 };
+const tabActiveStyle: CSSProperties = {
+  ...tabStyle,
+  opacity: 1,
+  border: "1px solid color-mix(in srgb, currentColor 18%, transparent)",
+  background: "color-mix(in srgb, currentColor 8%, transparent)",
+};
+
+/** One header control. */
+function IconButton({
+  label,
+  onClick,
+  title,
+  children,
+}: {
+  readonly label: string;
+  readonly onClick: () => void;
+  readonly title?: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <button type="button" aria-label={label} title={title ?? label} onClick={onClick} style={buttonStyle}>
+      {children}
+    </button>
+  );
+}
 
 /**
  * Build the dock component for one mount.
- * @param wiring - contract version and translate seat.
+ * @param wiring - dock state, view rack, host seams and the translate seat.
  * @returns the component registered into `shell.bottom`.
  */
-export function createTermDockView({ version, t }: DockWiring): ComponentType {
-  function TermDock() {
-    const [collapsed, setCollapsed] = useState(false);
+export function createTermDockView({ dock, rack, host, t }: DockWiring): ComponentType {
+  const TerminalPanel = createTerminalPanel({ t });
+  let panelSeq = 0;
+  const nextPanelId = (): string => `terminal-${(panelSeq += 1)}`;
 
-    if (collapsed) {
+  /** One panel body; owns the first `rack.open` for its panel. */
+  function DockBody({ sessionId, panelId, label }: { sessionId: string; panelId: string; label: string }) {
+    const [binding] = useState(() => rack.open(sessionId, panelId));
+    if (binding === undefined) {
       return (
-        <div data-workbench-dock="term-dock" data-collapsed="true" data-core-version={version} style={barStyle}>
-          <span style={titleStyle}>{t("dock.title")}</span>
-          <button type="button" aria-label={t("dock.expandLabel")} onClick={() => setCollapsed(false)} style={buttonStyle}>
-            {t("dock.expand")}
-          </button>
+        <div style={emptyStyle}>
+          <strong>{t("dock.serviceMissing")}</strong>
+          <span style={{ opacity: 0.7 }}>{t("dock.serviceMissingHint")}</span>
         </div>
       );
     }
+    return <TerminalPanel binding={binding} label={label} />;
+  }
+
+  function TermDock() {
+    const snapshot = useSyncExternalStore(dock.subscribe, dock.snapshot);
+    const sessionId = host.currentSessionId();
+    const terminals = host.terminals();
+    const panels = snapshot.panels.filter(panel => panel.sessionId === undefined || panel.sessionId === sessionId);
+
+    // A dock with no panel has nothing to show; opening one for the session the
+    // user just switched to is the dock's own responsibility (there is no session
+    // props to carry it).
+    useEffect(() => {
+      if (sessionId === undefined) return;
+      if (dock.snapshot().panels.some(panel => panel.sessionId === sessionId)) return;
+      dock.open(nextPanelId(), { sessionId });
+    }, [dock, sessionId]);
+
+    const closePanel = (id: string): void => {
+      const panel = dock.snapshot().panels.find(entry => entry.id === id);
+      const owner = panel?.sessionId ?? host.currentSessionId();
+      if (owner !== undefined) rack.release(owner, id);
+      dock.close(id);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
+      if (event.key === "Escape") {
+        if (hasOpenPopup(event.currentTarget)) return;
+        const current = host.currentSessionId();
+        if (current === undefined) return;
+        if (host.showChat(current)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "w") {
+        const target = snapshot.activeId ?? panels[0]?.id;
+        if (target === undefined) return;
+        event.preventDefault();
+        event.stopPropagation();
+        closePanel(target);
+      }
+    };
+
+    const height = snapshot.mode === "minimized" ? "auto" : snapshot.mode === "fullscreen" ? "min(72vh, 900px)" : 260;
+    const activeId = snapshot.activeId;
+    const minimized = snapshot.mode === "minimized";
 
     return (
-      <section data-workbench-dock="term-dock" data-collapsed="false" data-core-version={version} style={dockStyle}>
+      <section
+        data-workbench-dock="term-dock"
+        data-dock-mode={snapshot.mode}
+        data-panel-count={panels.length}
+        data-dock-session={sessionId ?? ""}
+        style={{ ...rootStyle, height }}
+        onKeyDownCapture={handleKeyDown}
+      >
         <header style={headerStyle}>
-          <span style={titleStyle}>{t("dock.title")}</span>
-          <button type="button" aria-label={t("dock.minimize")} onClick={() => setCollapsed(true)} style={buttonStyle}>
-            —
-          </button>
+          <div style={titleRowStyle}>
+            <span style={titleStyle}>{t("dock.title")}</span>
+            <span style={hintStyle}>{t("dock.hint")}</span>
+          </div>
+          <div style={actionsStyle}>
+            <IconButton label={minimized ? t("dock.restore") : t("dock.minimize")} onClick={() => (minimized ? dock.restore() : dock.minimize())}>
+              {minimized ? "▢" : "—"}
+            </IconButton>
+            <IconButton
+              label={snapshot.mode === "fullscreen" ? t("dock.exitFullscreen") : t("dock.fullscreen")}
+              onClick={() => dock.toggleFullscreen()}
+            >
+              {snapshot.mode === "fullscreen" ? "⤡" : "⤢"}
+            </IconButton>
+            <IconButton label={t("dock.split")} onClick={() => dock.split()}>
+              ◫
+            </IconButton>
+            <IconButton label={t("dock.new")} onClick={() => dock.open(nextPanelId(), sessionId === undefined ? {} : { sessionId })}>
+              +
+            </IconButton>
+            <IconButton
+              label={t("dock.closePanel")}
+              onClick={() => {
+                const target = activeId ?? panels[0]?.id;
+                if (target !== undefined) closePanel(target);
+              }}
+            >
+              ×
+            </IconButton>
+          </div>
         </header>
-        <div style={bodyStyle}>
-          <strong>{t("placeholder.title")}</strong>
-          <span style={{ fontSize: 12, opacity: 0.7 }}>{t("placeholder.description")}</span>
+
+        <div style={tabStripStyle}>
+          {panels.map((panel: DockPanel, index: number) => (
+            <button
+              key={panel.id}
+              type="button"
+              aria-pressed={panel.id === activeId}
+              data-panel-tab={panel.id}
+              data-active={panel.id === activeId ? "true" : "false"}
+              onClick={() => dock.activate(panel.id)}
+              style={panel.id === activeId ? tabActiveStyle : tabStyle}
+            >
+              {`${t("dock.panel")} ${String(index + 1)}`}
+            </button>
+          ))}
         </div>
+
+        {sessionId === undefined ? (
+          <div style={emptyStyle} role="note">
+            <strong>{t("dock.sessionRequired")}</strong>
+            <span style={{ opacity: 0.7 }}>{t("dock.sessionRequiredHint")}</span>
+          </div>
+        ) : terminals === undefined ? (
+          <div style={emptyStyle} role="note">
+            <strong>{t("dock.serviceMissing")}</strong>
+            <span style={{ opacity: 0.7 }}>{t("dock.serviceMissingHint")}</span>
+          </div>
+        ) : (
+          // Minimizing hides the body but keeps it mounted: unmounting would
+          // detach every emulator and replay the session on restore, which costs
+          // the scrollback the user is looking at.
+          <div
+            style={{
+              ...bodyStyle,
+              display: minimized ? "none" : "grid",
+              gridTemplateColumns: panels.length > 1 ? "1fr 1fr" : "1fr",
+            }}
+          >
+            {panels.map((panel: DockPanel, index: number) => (
+              <DockBody
+                key={`${sessionId}:${panel.id}`}
+                sessionId={sessionId}
+                panelId={panel.id}
+                label={`${t("dock.panel")} ${String(index + 1)}`}
+              />
+            ))}
+          </div>
+        )}
       </section>
     );
   }

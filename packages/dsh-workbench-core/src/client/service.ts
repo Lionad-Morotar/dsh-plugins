@@ -71,6 +71,16 @@ export interface WorkbenchService {
   closeView(): boolean;
   /** The session the user is looking at, or undefined. */
   currentSessionId(): string | undefined;
+  /**
+   * Whether the terminal dock should occupy its host slot.
+   *
+   * `shell.bottom` is single and first-registrant-wins, so the decision has one
+   * owner (blueprint D2): the dock reads this before registering and registers
+   * nothing while it answers false.
+   */
+  dockVisible(): boolean;
+  /** Flip the dock switch; the settings section exposes it in a later slice. */
+  setDockVisible(visible: boolean): void;
 }
 
 /**
@@ -83,6 +93,9 @@ export function createWorkbenchService(ctx: unknown): WorkbenchService {
   const adapters = createHostAdapters(ctx, typeof document === "undefined" ? undefined : document);
   const dockRows: DockDescriptor[] = [];
   const openers = new Map<string, ViewOpener>();
+  // The dock is on by default: a fresh install should show the surface the user
+  // installed, and hiding it is the explicit choice.
+  let dockVisible = true;
 
   const openSessionView = (sessionId: string, id: string, focus = ""): boolean => {
     const opener = openers.get(sessionId);
@@ -131,6 +144,10 @@ export function createWorkbenchService(ctx: unknown): WorkbenchService {
       return openSessionView(sessionId, CHAT_VIEW_ID);
     },
     currentSessionId: () => readCurrentSessionId(ctx),
+    dockVisible: () => dockVisible,
+    setDockVisible: visible => {
+      dockVisible = visible;
+    },
   };
 
   return service;

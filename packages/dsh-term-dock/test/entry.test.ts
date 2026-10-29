@@ -1,24 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { apply, clientPlugin, inject } from "../src/client/entry.ts";
-import { createTermDockView } from "../src/client/view.tsx";
+import { __test, apply, clientPlugin, inject } from "../src/client/entry.ts";
 
-interface Registration {
+interface Call {
   readonly type: string;
   readonly name?: string;
   readonly id?: string;
-  readonly hasComponent?: boolean;
 }
 
-function createContext() {
-  const calls: Registration[] = [];
-  let versionReads = 0;
-  const workbench = {
-    get version() {
-      versionReads += 1;
-      return 1;
-    },
-  };
+function createContext({ dockVisible = true }: { dockVisible?: boolean } = {}) {
+  const calls: Call[] = [];
   const ctx = {
     slots: {
       inject(name: string, factory: () => () => void) {
@@ -27,12 +18,8 @@ function createContext() {
         return () => {};
       },
       register(spec: Record<string, unknown>, component: unknown) {
-        calls.push({
-          type: "slots.register",
-          name: spec.name as string,
-          id: spec.id as string | undefined,
-          hasComponent: typeof component === "function",
-        });
+        calls.push({ type: "slots.register", name: spec.name as string, id: spec.id as string | undefined });
+        expect(typeof component).toBe("function");
         return () => {};
       },
     },
@@ -43,34 +30,73 @@ function createContext() {
       },
       bind: (namespace: string) => (key: string) => `${namespace}.${key}`,
     },
-    workbench,
+    workbench: {
+      version: 1,
+      dockVisible: () => dockVisible,
+      currentSessionId: () => "s1",
+      registerDock: (dock: { id: string }) => {
+        calls.push({ type: "dock.register", id: dock.id });
+        return () => {};
+      },
+      views: { showChat: () => true },
+    },
+    get: () => undefined,
   };
-  return { ctx, calls, versionReads: () => versionReads };
+  return { ctx, calls };
 }
 
 describe("term dock client entry", () => {
-  it("declares the workbench service dependency", () => {
+  it("declares the workbench service dependency and exposes the test surface", () => {
     expect(clientPlugin.name).toBe("dsh-term-dock");
     expect(inject).toEqual(["slots", "locale", "workbench"]);
+    expect(typeof __test.createDockState).toBe("function");
+    expect(typeof __test.createTerminalBinding).toBe("function");
+    expect(typeof __test.describeTerminal).toBe("function");
   });
 
-  it("registers shell.bottom with a component", () => {
-    const { ctx, calls, versionReads } = createContext();
+  it("registers shell.bottom, its locale and its dock row when the dock is visible", () => {
+    const { ctx, calls } = createContext();
 
     apply(ctx as never);
 
-    expect(versionReads()).toBeGreaterThan(0);
-    expect(calls).toContainEqual({
-      type: "slots.register",
-      name: "shell.bottom",
-      id: undefined,
-      hasComponent: true,
-    });
-    expect(calls.some(call => call.type === "locale.register" && call.name === "term-dock")).toBe(true);
+    expect(calls).toContainEqual({ type: "slots.inject", name: "shell.bottom" });
+    expect(calls).toContainEqual({ type: "slots.register", name: "shell.bottom", id: "term-dock" });
+    expect(calls).toContainEqual({ type: "locale.register", name: "term-dock" });
+    expect(calls).toContainEqual({ type: "dock.register", id: "term-dock" });
   });
 
-  it("builds a dock component", () => {
-    const dock = createTermDockView({ version: 1, t: (key: string) => key });
-    expect(typeof dock).toBe("function");
+  it("registers nothing at all while the core hides the dock", () => {
+    const { ctx, calls } = createContext({ dockVisible: false });
+
+    const dispose = apply(ctx as never);
+
+    expect(calls).toEqual([]);
+    expect(typeof dispose).toBe("function");
+  });
+
+  it("disposes its slot, locale and dock row", () => {
+    const disposed: string[] = [];
+    const ctx = {
+      slots: {
+        inject: (_name: string, factory: () => () => void) => {
+          factory();
+          return () => disposed.push("slot");
+        },
+        register: () => () => {},
+      },
+      locale: {
+        register: () => () => disposed.push("locale"),
+        bind: () => (key: string) => key,
+      },
+      workbench: {
+        dockVisible: () => true,
+        registerDock: () => () => disposed.push("dock"),
+      },
+      get: () => undefined,
+    };
+
+    apply(ctx as never)();
+
+    expect(disposed).toEqual(["slot", "dock", "locale"]);
   });
 });
