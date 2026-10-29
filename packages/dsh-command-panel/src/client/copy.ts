@@ -15,6 +15,10 @@ export interface FooterHint {
   readonly accept: string;
   readonly back: string;
   readonly close: string;
+  /** Only shown where the arrows move through directories (navigate mode). */
+  readonly tree?: string;
+  /** Only shown where a file can be handed to the file workbench. */
+  readonly reveal?: string;
 }
 
 export interface Copy {
@@ -39,6 +43,7 @@ export interface Copy {
   readonly modeNames: Record<PanelMode, string>;
   readonly modeDescriptions: Record<PanelMode, string>;
   readonly footer: FooterHint;
+  readonly noticeRevealUnavailable: string;
   readonly noticeNoSession: string;
   readonly noticeInsertFailed: string;
   readonly noticeExecuted: (name: string, text: string | undefined) => string;
@@ -96,7 +101,15 @@ const ZH: Copy = {
     command: "搜索并执行已注册的指令",
     switch: "先选工作区，再选会话",
   },
-  footer: { move: "↑↓ 移动", accept: "↵ 确认", back: "esc 返回", close: "esc 关闭" },
+  footer: {
+    move: "↑↓ 移动",
+    accept: "↵ 确认",
+    back: "esc 返回",
+    close: "esc 关闭",
+    tree: "←→ 上下层",
+    reveal: "⌘↵ 文件面板",
+  },
+  noticeRevealUnavailable: "文件面板不可用，宿主里没有注册 fs-explorer 视图",
   noticeNoSession: "当前没有打开的会话，无法写入输入框",
   noticeInsertFailed: "输入框正忙，稍后重试",
   noticeExecuted: (name, text) => (text === undefined || text === "" ? `已执行 /${name}` : `/${name}：${text}`),
@@ -176,7 +189,15 @@ const EN: Copy = {
     command: "Search and run a registered command",
     switch: "Pick a workspace, then a session",
   },
-  footer: { move: "↑↓ move", accept: "↵ select", back: "esc back", close: "esc close" },
+  footer: {
+    move: "↑↓ move",
+    accept: "↵ select",
+    back: "esc back",
+    close: "esc close",
+    tree: "←→ up/down a level",
+    reveal: "⌘↵ file panel",
+  },
+  noticeRevealUnavailable: "No file panel is available; the host has no fs-explorer view",
   noticeNoSession: "No open session, so there is no composer to write to",
   noticeInsertFailed: "The composer is busy; try again",
   noticeExecuted: (name, text) => (text === undefined || text === "" ? `Ran /${name}` : `/${name}: ${text}`),

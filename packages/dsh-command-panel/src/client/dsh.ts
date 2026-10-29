@@ -378,6 +378,16 @@ export interface ThemeService {
   setTheme(id: string): void;
 }
 
+/**
+ * The workbench's view seam, from `dsh-workbench-core`.
+ *
+ * `openView` is how one plugin hands another a place to land: the id names a
+ * registered view and the focus string is that view's own protocol.
+ */
+export interface WorkbenchService {
+  openView(id: string, focus?: string): boolean;
+}
+
 /** Cross-plugin navigation to the Plugins main panel. */
 export interface PluginNavigationService {
   openList(): void;

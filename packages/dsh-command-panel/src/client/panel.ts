@@ -36,6 +36,14 @@ export interface PanelViewDeps {
   readonly highlight: (index: number) => void;
   readonly setQuery: (query: string) => void;
   readonly acceptActive: () => void;
+  /** Move the tree cursor up one level; no-op outside navigate mode. */
+  readonly treeUp: () => void;
+  /** Enter the highlighted directory; no-op when the row is not one. */
+  readonly treeInto: () => void;
+  /** Hand the highlighted file to the file workbench. */
+  readonly revealActive: () => void;
+  /** Whether the arrows currently belong to the tree rather than to the caret. */
+  readonly treeActive: () => boolean;
   readonly accept: (row: PanelRow) => void;
   readonly dismiss: () => void;
   readonly back: () => void;
@@ -56,6 +64,8 @@ const INPUT_PROPS = {
 const OWNED_KEYS = new Set([
   "ArrowDown",
   "ArrowUp",
+  "ArrowLeft",
+  "ArrowRight",
   "PageDown",
   "PageUp",
   "Enter",
@@ -120,6 +130,9 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
         // gate covers `composing`, `isComposing`, keyCode 229 and the one-shot
         // `ended` flag that makes Chinese input commit without selecting a row.
         if (composition.guards(event)) return;
+        // Outside the tree the horizontal arrows belong to the text field: the
+        // reader is moving a caret, not a directory cursor.
+        if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !deps.treeActive()) return;
         event.preventDefault();
         event.stopPropagation();
         switch (event.key) {
@@ -135,8 +148,20 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
           case "PageUp":
             deps.move(-8);
             return;
+          case "ArrowLeft":
+            deps.treeUp();
+            return;
+          case "ArrowRight":
+            deps.treeInto();
+            return;
           case "Enter":
           case "Tab":
+            // The accelerator hands the file to the file workbench instead of
+            // writing its path: same row, different destination.
+            if (event.metaKey || event.ctrlKey) {
+              deps.revealActive();
+              return;
+            }
             deps.acceptActive();
             return;
           case "Escape":
@@ -157,6 +182,7 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
 
     const { model, rows } = snapshot;
     const active = highlightOf(model, rows.length);
+    const tree = deps.treeActive();
 
     const list: unknown[] = [];
     let group: string | undefined;
@@ -250,7 +276,9 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
         "div",
         { "data-dcp-foot": "" },
         h("span", null, copy.footer.move),
+        tree ? h("span", null, copy.footer.tree) : null,
         h("span", null, copy.footer.accept),
+        tree ? h("span", null, copy.footer.reveal) : null,
         h("span", null, crumb === null ? copy.footer.close : copy.footer.back),
       ),
     );

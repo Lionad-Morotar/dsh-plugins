@@ -30,6 +30,7 @@ import type {
   SessionsService,
   ShortcutsService,
   SidebarRightService,
+  WorkbenchService,
   SlotService,
   ThemeService,
   UiWorkspaceService,
@@ -50,6 +51,7 @@ import { createPanelView, PANEL_MODAL } from "./panel.ts";
 import {
   PANEL_MODES,
   back as backModel,
+  clampHighlight,
   drill,
   highlightAt,
   modelFor,
@@ -64,6 +66,7 @@ import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
 import { catalogRows, type PanelRow } from "./rows.ts";
 import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from "./sources.ts";
 import { createPanelStore } from "./store.ts";
+import { directoryQuery, focusPath, parentQuery } from "./tree.ts";
 import { insertPanelStyles } from "./styles.ts";
 
 /** The three command ids; also the settings rows the reader can rebind. */
@@ -182,6 +185,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     pluginNavigation?: PluginNavigationService;
     sidebarRight?: SidebarRightService;
     slots?: SlotService;
+    workbench?: WorkbenchService;
   } = {};
 
   const copy = (): Copy => copyFor(refs.locale?.getSnapshot().active ?? "zh");
@@ -664,6 +668,62 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     }
   }
 
+  /**
+   * Whether the horizontal arrows and the reveal accelerator belong to the tree.
+   *
+   * Only navigate mode has directories; in the other modes the arrows must keep
+   * moving the caret inside the query field.
+   */
+  function treeActive(): boolean {
+    return store.getSnapshot().model.mode === "navigate";
+  }
+
+  /** Rewrite the query through the same path typing takes. */
+  function applyQuery(query: string): void {
+    const snapshot = store.getSnapshot();
+    store.set({ model: withQuery(snapshot.model, query), notice: null, noticeTone: undefined });
+    rankLocal();
+    scheduleLoad(90);
+  }
+
+  /** Climb one level: drop the directory named by the text, else drop the fragment. */
+  function treeUp(): void {
+    if (!treeActive()) return;
+    const next = parentQuery(store.getSnapshot().model.query);
+    if (next === undefined) return;
+    applyQuery(next);
+  }
+
+  /** Enter the highlighted directory by making its path the query. */
+  function treeInto(): void {
+    if (!treeActive()) return;
+    const snapshot = store.getSnapshot();
+    const row = snapshot.rows[clampHighlight(snapshot.model.highlight, snapshot.rows.length)];
+    const next = directoryQuery(row);
+    if (next === undefined) return;
+    applyQuery(next);
+  }
+
+  /**
+   * Hand the highlighted file to the file workbench.
+   *
+   * The workbench's `openView` both switches the view and consumes the focus, so
+   * an already-open tab for that path is activated rather than duplicated, which
+   * is why this is one call and not a "find then open" pair.
+   */
+  function revealActive(): void {
+    if (!treeActive()) return;
+    const snapshot = store.getSnapshot();
+    const row = snapshot.rows[clampHighlight(snapshot.model.highlight, snapshot.rows.length)];
+    const path = focusPath(row);
+    if (path === undefined) return;
+    if (refs.workbench?.openView("fs-explorer", `path:${path}`) === true) {
+      close();
+      return;
+    }
+    notice(copy().noticeRevealUnavailable, "error");
+  }
+
   function acceptActive(): void {
     const snapshot = store.getSnapshot();
     const row = snapshot.rows[snapshot.model.highlight];
@@ -795,13 +855,12 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         const snapshot = store.getSnapshot();
         store.set({ model: highlightAt(snapshot.model, index, snapshot.rows.length) });
       },
-      setQuery: query => {
-        const snapshot = store.getSnapshot();
-        store.set({ model: withQuery(snapshot.model, query), notice: null, noticeTone: undefined });
-        rankLocal();
-        scheduleLoad(90);
-      },
+      setQuery: applyQuery,
       acceptActive,
+      treeUp,
+      treeInto,
+      revealActive,
+      treeActive,
       accept,
       dismiss: close,
       back: goBack,
@@ -949,6 +1008,16 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   );
   // The plugins page is a separate package; a profile without it simply loses
   // that one row instead of the whole panel.
+  // The file workbench is another package: without it the reveal accelerator
+  // reports that no panel is available instead of the row disappearing.
+  disposers.push(
+    deps.ctx.inject(["workbench"], scope => {
+      refs.workbench = scope.get<WorkbenchService>("workbench");
+      return () => {
+        refs.workbench = undefined;
+      };
+    }),
+  );
   disposers.push(
     deps.ctx.inject(["pluginNavigation"], scope => {
       refs.pluginNavigation = scope.get<PluginNavigationService>("pluginNavigation");

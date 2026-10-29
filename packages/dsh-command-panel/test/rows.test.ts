@@ -58,6 +58,29 @@ describe("fileRows", () => {
   });
 });
 
+describe("fileRows", () => {
+  const cwd = "/Users/lionad/Github/Lionad-Morotar/dsh-plugins";
+
+  it("records what each row names, so navigation need not read a label", () => {
+    const rows = fileRows(
+      {
+        cwd,
+        candidates: [
+          { path: "src/client/", kind: "directory" },
+          { path: "src/client/panel.ts", kind: "file" },
+        ],
+      },
+      copy,
+    );
+    expect(rows.map(row => row.kind)).toEqual(["directory", "file"]);
+    expect(rows.map(row => row.label)).toEqual(["src/client/", "src/client/panel.ts"]);
+    expect(rows[1]?.action).toEqual({
+      kind: "insert-path",
+      absolutePath: `${cwd}/src/client/panel.ts`,
+    });
+  });
+});
+
 describe("commandRows", () => {
   it("renders the slash form and advertises the input hint", () => {
     const rows = commandRows(

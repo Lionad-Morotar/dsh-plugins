@@ -53,6 +53,11 @@ export interface PanelRow {
   readonly detail?: string;
   readonly hint?: string;
   readonly group?: string;
+  /**
+   * What the row names. Tree navigation and the file-workbench jump both need
+   * this as a fact rather than as a localized label comparison.
+   */
+  readonly kind?: "file" | "directory";
   readonly action: RowAction;
 }
 
@@ -79,6 +84,7 @@ export function fileRows(input: FileRowInput, copy: Copy): PanelRow[] {
       label,
       alias: slash >= 0 ? label.slice(slash + 1) : label,
       detail: candidate.kind === "directory" ? copy.directory : undefined,
+      kind: candidate.kind,
       action: { kind: "insert-path", absolutePath },
     };
   });
