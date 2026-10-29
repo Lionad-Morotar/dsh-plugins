@@ -158,7 +158,7 @@ describe("installCommaFold", () => {
     expect(write).not.toHaveBeenCalled();
   });
 
-  it("survives a throwing writer; the cancelled insertion stays cancelled", () => {
+  it("survives a throwing writer by letting the 顿号 pass through", () => {
     const { doc } = surface();
     const doc2 = doc as Document & { execCommand: unknown };
     doc2.execCommand = vi.fn(() => {
@@ -169,11 +169,47 @@ describe("installCommaFold", () => {
     el.focus();
     caretAtEnd(doc, el);
 
-    // preventDefault precedes the write, so a throwing writer swallows this
-    // keystroke instead of double-inserting. execCommand's contract is to
-    // return false rather than throw, so this branch is a theoretical net.
+    // Cancel happens only after a successful write, so a throwing writer
+    // degrades to "type the 顿号 normally" instead of swallowing the keystroke.
     const event = typeComma(el);
-    expect(event.defaultPrevented).toBe(true);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("lets the 顿号 through when the writer reports failure", () => {
+    const { doc, write } = surface();
+    write.mockReturnValue(false);
+    installCommaFold(doc);
+    const el = composer(doc);
+    el.focus();
+    caretAtEnd(doc, el);
+
+    const event = typeComma(el);
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("ignores a composing keystroke declared through the event constructor", () => {
+    // jsdom accepts isComposing as a constructor option; whether a real IME
+    // sets it on beforeinput stays a manual-matrix item, not a suite claim.
+    const { doc, write } = surface();
+    installCommaFold(doc);
+    const el = composer(doc);
+    el.focus();
+    caretAtEnd(doc, el);
+    const win = el.ownerDocument.defaultView;
+    if (win === null) throw new Error("jsdom without a window");
+    const event = new win.InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      data: "、",
+      inputType: "insertText",
+      isComposing: true,
+    });
+    el.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(write).not.toHaveBeenCalled();
   });
 
   it("installs once per document and disposes with the returned function", () => {

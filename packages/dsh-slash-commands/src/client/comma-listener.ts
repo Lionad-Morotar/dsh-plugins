@@ -48,7 +48,7 @@ export function installCommaFold(doc: Document): () => void {
 }
 
 /**
- * 一次 beforeinput 的处置：命中折叠条件就取消原插入并写入斜杠。
+ * 一次 beforeinput 的处置：命中折叠条件就写入斜杠，写入成功才取消原插入。
  * @param doc - 事件所属 document。
  * @param event - capture 阶段的 beforeinput。
  */
@@ -75,9 +75,15 @@ function foldLeadingComma(doc: Document, event: Event): void {
   // 写入能力缺失时不要白吃这个字符。
   if (typeof doc.execCommand !== "function") return;
 
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  doc.execCommand("insertText", false, SLASH);
+  // 先写入后取消：execCommand 自身触发的嵌套 beforeinput 带的是 "/"，判定函数
+  // 天然放行；写入抛错或返回 false 时保持原事件未取消，顿号原样通过，绝不吞字。
+  let folded = false;
+  try {
+    folded = doc.execCommand("insertText", false, SLASH) === true;
+  } catch {
+    folded = false;
+  }
+  if (folded) event.preventDefault();
 }
 
 /**
