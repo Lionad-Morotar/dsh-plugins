@@ -2,16 +2,30 @@
  * Browser-half entry.
  *
  * Registers one conversation view tab. The workbench service is declared in
- * `inject` so the row waits for the core; the service is read from the context
- * rather than imported, which is what keeps this bundle independent of the
- * core package's module graph (blueprint F1's chosen path).
+ * `inject` so the row waits for the core; the file service is probed lazily
+ * (direct service first, Remote carrier second) because waiting for it would
+ * hide the tab exactly when the panel needs its "service unavailable" state.
  */
 import { EN, ZH } from "./copy.ts";
 import { LOCALE_NAMESPACE, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
+import {
+  badgeFor,
+  buildTree,
+  computeTreeWindow,
+  describeListing,
+  flattenTree,
+  formatSize,
+  iconFor,
+  joinPath,
+  listingPath,
+  parseFocus,
+} from "./model.ts";
+import { insertStyles } from "./styles.ts";
 import { createFsExplorerView, type WorkbenchFace } from "./view.tsx";
+import { createFilesResolver, normalizeListing, type FilesContextLike } from "./wire.ts";
 
 /** The slice of the client context this entry uses. */
-export interface ClientContextLike {
+export interface ClientContextLike extends FilesContextLike {
   readonly slots: {
     inject(slot: string, factory: () => () => void): unknown;
     register(options: Record<string, unknown>, component: unknown): () => void;
@@ -24,7 +38,7 @@ export interface ClientContextLike {
 }
 
 /** Services this plugin waits for before applying. */
-export const inject = ["slots", "locale", "workbench"];
+export const inject = ["slots", "locale", "workbench", "remote"];
 
 /** Mount the file workbench view. */
 export function apply(ctx: ClientContextLike): () => void {
@@ -33,7 +47,13 @@ export function apply(ctx: ClientContextLike): () => void {
 
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
-  const View = createFsExplorerView({ workbench, version: workbench.version, t });
+  const offStyles = insertStyles(typeof document === "undefined" ? undefined : document);
+  const View = createFsExplorerView({
+    workbench,
+    version: workbench.version,
+    t,
+    files: createFilesResolver(ctx),
+  });
 
   ctx.slots.inject(VIEW_SLOT, () =>
     ctx.slots.register(
@@ -48,10 +68,33 @@ export function apply(ctx: ClientContextLike): () => void {
     ),
   );
 
-  return offLocale;
+  return () => {
+    offStyles();
+    offLocale();
+  };
 }
 
+/**
+ * Pure surfaces for the acceptance probe and the unit tests.
+ *
+ * They are attached to the default export because the loader hands the browser
+ * bundle's default export to the host; there is no other module handle.
+ */
+export const __test = {
+  buildTree,
+  describeListing,
+  iconFor,
+  computeTreeWindow,
+  flattenTree,
+  badgeFor,
+  formatSize,
+  joinPath,
+  listingPath,
+  parseFocus,
+  normalizeListing,
+};
+
 /** The plugin object the loader mounts. */
-export const clientPlugin = { name: "dsh-fs-explorer", inject, apply };
+export const clientPlugin = { name: "dsh-fs-explorer", inject, apply, __test };
 
 export default clientPlugin;

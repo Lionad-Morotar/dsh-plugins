@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { apply, clientPlugin, inject } from "../src/client/entry.ts";
-import { createFsExplorerView, viewState } from "../src/client/view.tsx";
+import { createFsExplorerView, initialViewState } from "../src/client/view.tsx";
 
 interface Registration {
   readonly type: string;
@@ -19,8 +19,9 @@ function createContext() {
       versionReads += 1;
       return 1;
     },
-    currentSessionId: () => undefined as string | undefined,
+    currentSessionId: () => "test-session" as string | undefined,
   };
+  const workspaceFiles = { list: async () => ({ ok: true, value: { entries: [], truncated: false } }) };
   const ctx = {
     slots: {
       inject(name: string, factory: () => () => void) {
@@ -34,7 +35,7 @@ function createContext() {
           name: spec.name as string,
           id: spec.id as string,
           order: spec.order as number,
-          hasComponent: typeof component === "function",
+          hasComponent: typeof component === "function" || (component !== null && typeof component === "object"),
         });
         return () => {};
       },
@@ -47,14 +48,15 @@ function createContext() {
       bind: (namespace: string) => (key: string) => `${namespace}.${key}`,
     },
     workbench,
+    workspaceFiles,
   };
   return { ctx, calls, versionReads: () => versionReads };
 }
 
 describe("fs explorer client entry", () => {
-  it("declares the workbench service dependency", () => {
+  it("declares the workbench and Remote dependencies", () => {
     expect(clientPlugin.name).toBe("dsh-fs-explorer");
-    expect(inject).toEqual(["slots", "locale", "workbench"]);
+    expect(inject).toEqual(["slots", "locale", "workbench", "remote"]);
   });
 
   it("registers conversation.view#fs-explorer with a component", () => {
@@ -73,11 +75,28 @@ describe("fs explorer client entry", () => {
     expect(calls.some(call => call.type === "locale.register" && call.name === "fs-explorer")).toBe(true);
   });
 
-  it("picks the empty state without a session and the placeholder with one", () => {
-    expect(viewState(undefined)).toBe("empty");
-    expect(viewState("s1")).toBe("placeholder");
+  it("exposes the four pure surfaces on the default export", () => {
+    expect(typeof clientPlugin.__test.buildTree).toBe("function");
+    expect(typeof clientPlugin.__test.describeListing).toBe("function");
+    expect(typeof clientPlugin.__test.iconFor).toBe("function");
+    expect(typeof clientPlugin.__test.computeTreeWindow).toBe("function");
+  });
+
+  it("picks the no-session state before the service probe", () => {
+    expect(initialViewState(undefined, true)).toBe("idle");
+    expect(initialViewState(undefined, false)).toBe("idle");
+    expect(initialViewState("s1", false)).toBe("no-service");
+    expect(initialViewState("s1", true)).toBe("loading");
+  });
+
+  it("builds a component for one mount", () => {
     const t = (key: string) => key;
-    const view = createFsExplorerView({ workbench: { version: 1, currentSessionId: () => undefined }, version: 1, t });
+    const view = createFsExplorerView({
+      workbench: { version: 1, currentSessionId: () => undefined },
+      version: 1,
+      t,
+      files: () => undefined,
+    });
     expect(typeof view).toBe("function");
   });
 });
