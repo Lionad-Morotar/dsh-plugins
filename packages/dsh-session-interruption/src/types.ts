@@ -29,6 +29,8 @@ export interface InterruptionView {
   readonly turn: number | null;
   /** When the open turn started (epoch ms); null when nothing is interrupted. */
   readonly since: number | null;
+  /** Seq of the open turn's start; the client's dismissal anchor. */
+  readonly turnStartSeq: number | null;
   /** Tool calls still awaiting a result inside the open turn. */
   readonly pendingToolCount: number;
 }

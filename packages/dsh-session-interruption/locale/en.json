@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session interruption marker",
+    "description": "Marks interrupted sessions with a red dot in the sidebar so they are easy to resume after a restart."
+  }
+}

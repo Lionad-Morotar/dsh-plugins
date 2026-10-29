@@ -37,13 +37,15 @@ describe("session interruption fold", () => {
   });
 
   it("reads a turn cut by a forced stop as interrupted since its start", () => {
+    const start = event(1_000, "turn/start", { turn: 1 });
     const value = view([
-      event(1_000, "turn/start", { turn: 1 }),
+      start,
       event(1_100, "step/start", { turn: 1, step: 1 }),
     ]);
     expect(value.interrupted).toBe(true);
     expect(value.turn).toBe(1);
     expect(value.since).toBe(1_000);
+    expect(value.turnStartSeq).toBe(start.seq);
   });
 
   it("reads a user-cancelled turn as not interrupted, because the loop still lands turn/end", () => {
