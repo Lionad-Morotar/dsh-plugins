@@ -299,3 +299,114 @@ export function parseStatusBranch(text: string): GitBranchState {
     ...(behind === undefined ? {} : { behind }),
   };
 }
+
+/** One record of `git diff --numstat -z`. */
+export interface GitNumStat {
+  readonly path: string;
+  /** Present on a rename or copy. */
+  readonly origPath?: string;
+  /** Null for a binary file, which git reports as `-`. */
+  readonly additions: number | null;
+  readonly deletions: number | null;
+}
+
+/**
+ * Parse `git diff --numstat -z` and `git diff --cached --numstat -z`.
+ *
+ * A plain record is `add<TAB>del<TAB>path<NUL>`. A rename or copy record keeps
+ * its counts but moves both paths after an empty third field:
+ * `add<TAB>del<TAB><NUL>old<NUL>new<NUL>`.
+ */
+export function parseNumStatZ(text: string): GitNumStat[] {
+  const parts = text.split("\0");
+  const stats: GitNumStat[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const record = parts[index];
+    if (record === undefined || record === "") continue;
+    const firstTab = record.indexOf("\t");
+    const secondTab = record.indexOf("\t", firstTab + 1);
+    if (firstTab < 0 || secondTab < 0) continue;
+    const addRaw = record.slice(0, firstTab);
+    const delRaw = record.slice(firstTab + 1, secondTab);
+    const path = record.slice(secondTab + 1);
+    const additions = addRaw === "-" ? null : Number.parseInt(addRaw, 10);
+    const deletions = delRaw === "-" ? null : Number.parseInt(delRaw, 10);
+    if (additions !== null && !Number.isFinite(additions)) continue;
+    if (deletions !== null && !Number.isFinite(deletions)) continue;
+    if (path === "") {
+      const origPath = parts[index + 1];
+      const nextPath = parts[index + 2];
+      if (origPath === undefined || nextPath === undefined || nextPath === "") continue;
+      index += 2;
+      stats.push({ path: nextPath, origPath, additions, deletions });
+    } else {
+      stats.push({ path, additions, deletions });
+    }
+  }
+  return stats;
+}
+
+/** One record of `git diff-tree --name-status -z`. */
+export interface GitNameStatus {
+  readonly path: string;
+  /** Present on a rename or copy. */
+  readonly origPath?: string;
+  readonly status: GitChangeStatus;
+}
+
+/**
+ * Parse `git diff-tree --name-status -z` output.
+ *
+ * Status and path are NUL separated. A rename or copy consumes three records:
+ * `R100<NUL>old<NUL>new<NUL>`.
+ */
+export function parseNameStatusZ(text: string): GitNameStatus[] {
+  const parts = text.split("\0");
+  const files: GitNameStatus[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const code = parts[index];
+    if (code === undefined || code === "") continue;
+    const letter = code.slice(0, 1);
+    const status = statusFromCode(letter);
+    if (status === null) continue;
+    if (letter === "R" || letter === "C") {
+      const origPath = parts[index + 1];
+      const path = parts[index + 2];
+      if (origPath === undefined || path === undefined || path === "") continue;
+      index += 2;
+      files.push({ path, origPath, status });
+    } else {
+      const path = parts[index + 1];
+      if (path === undefined || path === "") continue;
+      index += 1;
+      files.push({ path, status });
+    }
+  }
+  return files;
+}
+
+/**
+ * Parse one `git show -s --format=%H%x00%P%x00%an%x00%at%x00%s%x00%b` record.
+ * The body is the final field, so any newline or pipe inside it is preserved.
+ */
+export function parseCommitMeta(text: string): (GitCommit & { readonly body: string }) | null {
+  const fields = text.split("\0");
+  if (fields.length < 5) return null;
+  const hash = fields[0] ?? "";
+  if (hash === "") return null;
+  const parentsRaw = fields[1] ?? "";
+  const author = fields[2] ?? "";
+  const timeRaw = fields[3] ?? "";
+  const subject = fields[4] ?? "";
+  const body = fields.slice(5).join("\0").replace(/\n$/u, "");
+  const time = Number.parseInt(timeRaw, 10);
+  if (!Number.isFinite(time)) return null;
+  return {
+    hash,
+    parents: parentsRaw === "" ? [] : parentsRaw.split(" ").filter(Boolean),
+    author,
+    time,
+    subject,
+    body,
+  };
+}

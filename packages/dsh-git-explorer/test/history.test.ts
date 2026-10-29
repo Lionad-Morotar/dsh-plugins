@@ -23,9 +23,11 @@ function fakeRunner(options: { log?: string } = {}): GitRunner {
       const argv = ["git", ...args];
       switch (args[0]) {
         case "rev-parse":
-          return ok(argv, "/repo\n");
+          return args[1] === "--quiet" ? ok(argv, "aaa\n") : ok(argv, "/repo\n");
         case "status":
           return ok(argv, STATUS);
+        case "diff":
+          return ok(argv, args.includes("--cached") ? "" : "2\t1\tkeep.txt\0");
         case "for-each-ref":
           return ok(argv, ["refs/heads/main\0aaa\0*\0", "refs/remotes/origin/main\0aaa\0\0"].join("\n"));
         case "log":
@@ -55,6 +57,32 @@ describe("collectSnapshot", () => {
       { kind: "remote", name: "origin/main", head: false },
     ]);
     expect(result.snapshot.lanes.map(row => row.hash)).toEqual(["aaa", "bbb", "ccc"]);
+    expect(result.snapshot.status).toContain("# branch.oid aaa");
+    expect(result.snapshot.stats).toEqual([{ path: "keep.txt", additions: 2, deletions: 1 }]);
+  });
+
+  it("treats an unborn HEAD as an empty repository", async () => {
+    const runner: GitRunner = {
+      async run(args) {
+        const argv = ["git", ...args];
+        if (args[0] === "rev-parse") {
+          return args[1] === "--quiet"
+            ? { argv, exitCode: 1, stdout: "", stderr: "fatal: Needed a single revision", timedOut: false, cancelled: false, stdoutLossy: false }
+            : ok(argv, "/repo\n");
+        }
+        if (args[0] === "status") return ok(argv, "# branch.oid (initial)\0# branch.head main\0? a.txt\0");
+        if (args[0] === "for-each-ref" || args[0] === "diff") return ok(argv, "");
+        throw new Error(`unexpected command ${args[0]}`);
+      },
+    };
+    const result = await collectSnapshot({ runner, cwd: "/repo", maxCommits: 10 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.snapshot.isRepository).toBe(true);
+    expect(result.snapshot.commits).toEqual([]);
+    expect(result.snapshot.counts).toEqual({ commits: 0, branches: 0, changes: 1 });
+    expect(result.snapshot.head?.branch).toBe("main");
+    expect(result.snapshot.status).toContain("? a.txt");
   });
 
   it("treats a non-repository directory as an empty snapshot", async () => {
@@ -75,6 +103,8 @@ describe("collectSnapshot", () => {
         commits: [],
         lanes: [],
         counts: { commits: 0, branches: 0, changes: 0 },
+        status: "",
+        stats: [],
       },
     });
   });

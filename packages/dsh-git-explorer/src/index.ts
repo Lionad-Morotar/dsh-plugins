@@ -1,10 +1,10 @@
 /**
  * Host half: the Git data service behind the workbench panel.
  *
- * `GitExplorerService` owns three Remote endpoints. `snapshot` and `query` are
- * real; `run` is a typed placeholder until the action slice lands. The heavy
- * lifting lives in `host/`: parsers and the lane layout are pure, the runner is
- * the only place that touches the host subprocess service.
+ * `GitExplorerService` owns four Remote endpoints. `snapshot`, `query` and
+ * `commit` are real; `run` is a typed placeholder until the action slice lands.
+ * The heavy lifting lives in `host/`: parsers and the lane layout are pure, the
+ * runner is the only place that touches the host subprocess service.
  */
 import { isAbsolute } from "node:path";
 
@@ -12,6 +12,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import Schema from "@deepseek-ai/schemastery";
 
+import { collectCommit } from "./host/detail.ts";
 import { fail } from "./host/failure.ts";
 import { createGitRunner, type GitRunner, type SubprocessLike } from "./host/git.ts";
 import { assignLanes } from "./host/lanes.ts";
@@ -19,6 +20,8 @@ import { parseLog, parseRefs, parseStatusZ } from "./host/parse.ts";
 import { collectQuery } from "./host/query.ts";
 import { collectSnapshot } from "./host/snapshot.ts";
 import type {
+  GitCommitRequest,
+  GitCommitResult,
   GitQueryRequest,
   GitQueryResult,
   GitRunRequest,
@@ -31,11 +34,21 @@ import { GIT_SERVICE, PACKAGE_NAME } from "./shared.ts";
 export { PACKAGE_NAME, GIT_SERVICE };
 export type {
   GitChange,
+  GitChangeStat,
   GitCommit,
+  GitCommitDetail,
+  GitCommitFile,
+  GitCommitRequest,
+  GitCommitResult,
   GitFailure,
   GitRef,
   GitRefEntry,
+  GitQueryPage,
+  GitQueryRequest,
+  GitRunRequest,
+  GitRunResult,
   GitSnapshot,
+  GitSnapshotRequest,
   GitSnapshotResult,
 } from "./host/types.ts";
 export type { LaneEdge, LaneRow } from "./host/lanes.ts";
@@ -170,6 +183,16 @@ export class GitExplorerService extends TypertRemoteService {
     const cwd = this.baseDirectory(session, request.cwd);
     try {
       return await collectQuery({ runner: this.runnerFor(cwd), cwd, defaultLimit: this.config.maxCommits }, request, signal);
+    } catch (error) {
+      return fail("internal", messageOf(error));
+    }
+  }
+
+  @Remote("commit")
+  async commit(session: SessionHandle, request: GitCommitRequest = { hash: "" }, signal?: AbortSignal): Promise<GitCommitResult> {
+    const cwd = this.baseDirectory(session, request.cwd);
+    try {
+      return await collectCommit({ runner: this.runnerFor(cwd), cwd }, request, signal);
     } catch (error) {
       return fail("internal", messageOf(error));
     }

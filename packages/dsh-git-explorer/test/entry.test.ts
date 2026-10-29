@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-
-import { apply, clientPlugin, inject } from "../src/client/entry.ts";
-import { createGitExplorerView, viewState } from "../src/client/view.tsx";
+import { apply, clientPlugin, createRemoteResolver, inject, __test } from "../src/client/entry.ts";
+import { ZH } from "../src/client/copy.ts";
+import { initialViewState } from "../src/client/view.tsx";
 
 interface Registration {
   readonly type: string;
@@ -20,6 +20,7 @@ function createContext() {
       return 1;
     },
     currentSessionId: () => undefined as string | undefined,
+    views: { bind: () => () => {}, open: () => true },
   };
   const ctx = {
     slots: {
@@ -52,9 +53,9 @@ function createContext() {
 }
 
 describe("git explorer client entry", () => {
-  it("declares the workbench service dependency", () => {
+  it("declares exactly the services it reads", () => {
     expect(clientPlugin.name).toBe("dsh-git-explorer");
-    expect(inject).toEqual(["slots", "locale", "workbench"]);
+    expect(inject).toEqual(["slots", "locale", "workbench", "remote"]);
   });
 
   it("registers conversation.view#git-explorer with a component", () => {
@@ -73,11 +74,25 @@ describe("git explorer client entry", () => {
     expect(calls.some(call => call.type === "locale.register" && call.name === "git-explorer")).toBe(true);
   });
 
-  it("picks the empty state without a session and the placeholder with one", () => {
-    expect(viewState(undefined)).toBe("empty");
-    expect(viewState("s1")).toBe("placeholder");
-    const t = (key: string) => key;
-    const view = createGitExplorerView({ workbench: { version: 1, currentSessionId: () => undefined }, version: 1, t });
-    expect(typeof view).toBe("function");
+  it("exposes the four acceptance surfaces on the default export", () => {
+    expect(Object.keys(__test).sort()).toEqual(["computeWindow", "createJump", "formatCommitDetail", "groupChanges"]);
+    expect(clientPlugin.__test).toBe(__test);
+  });
+
+  it("falls back to the non-throwing resolver when the property access is not injected", () => {
+    const face = { snapshot: () => Promise.resolve({ ok: false as const, error: { code: "x", message: "x" } }), query: () => Promise.reject(new Error("unused")), commit: () => Promise.reject(new Error("unused")) };
+    const ctx = {
+      remote: new Proxy({}, { get: () => { throw new Error("cannot get property gitExplorer without inject"); } }),
+      get: (name: string) => (name === "remote.gitExplorer" ? face : undefined),
+    };
+    const resolver = createRemoteResolver(ctx as never);
+    expect(resolver()).toBe(face);
+  });
+
+  it("paints the service-unavailable state without a Remote face", () => {
+    expect(initialViewState(undefined, false)).toBe("idle");
+    expect(initialViewState("s1", false)).toBe("no-service");
+    expect(initialViewState("s1", true)).toBe("loading");
+    expect(ZH["state.noService.title"]).toBe("Git 服务不可用");
   });
 });

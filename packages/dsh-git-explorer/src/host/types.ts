@@ -78,6 +78,14 @@ export interface GitCommitNode extends GitCommit {
   readonly refs: readonly GitRef[];
 }
 
+/** Line counts for one changed path, as `git diff --numstat` reports them. */
+export interface GitChangeStat {
+  readonly path: string;
+  /** Null for a binary file, which git reports as `-`. */
+  readonly additions: number | null;
+  readonly deletions: number | null;
+}
+
 /** Snapshot counts, cheap enough to compute on first paint. */
 export interface GitCounts {
   readonly commits: number;
@@ -99,6 +107,10 @@ export interface GitSnapshot {
   readonly commits: readonly GitCommitNode[];
   readonly lanes: readonly import("./lanes.ts").LaneRow[];
   readonly counts: GitCounts;
+  /** Raw `git status --porcelain=v2 -z` bytes; the panel groups them itself. */
+  readonly status: string;
+  /** Per-path line counts for tracked changes; untracked paths are absent. */
+  readonly stats: readonly GitChangeStat[];
 }
 
 export type GitFailureCode =
@@ -144,6 +156,35 @@ export interface GitQueryPage {
 
 export type GitQueryResult =
   | { readonly ok: true; readonly page: GitQueryPage }
+  | { readonly ok: false; readonly error: GitFailure };
+
+/** One file changed by a commit, with its line counts. */
+export interface GitCommitFile {
+  readonly path: string;
+  /** Present on a rename or copy: the path the entry came from. */
+  readonly origPath?: string;
+  readonly status: GitChangeStatus;
+  readonly additions: number | null;
+  readonly deletions: number | null;
+}
+
+/** Everything the commit detail panel shows for one commit. */
+export interface GitCommitDetail extends GitCommit {
+  /** Full commit message body, without the subject line. */
+  readonly body: string;
+  /** Files changed against the first parent; empty for a merge with no diff. */
+  readonly files: readonly GitCommitFile[];
+}
+
+export interface GitCommitRequest {
+  /** Full or abbreviated object id. */
+  readonly hash: string;
+  /** Absolute directory override; when absent the session's cwd is used. */
+  readonly cwd?: string;
+}
+
+export type GitCommitResult =
+  | { readonly ok: true; readonly detail: GitCommitDetail }
   | { readonly ok: false; readonly error: GitFailure };
 
 /** Actions are a later slice; the data layer only acknowledges the shape. */

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import type { GitRunner, GitRunResult } from "../src/host/git.ts";
+import { collectCommit } from "../src/host/detail.ts";
 import { collectQuery } from "../src/host/query.ts";
 import { collectSnapshot } from "../src/host/snapshot.ts";
 
@@ -52,6 +53,31 @@ describe.runIf(hasGit)("real repository smoke", () => {
       expect(row.edges).toHaveLength(parents.get(row.hash)?.length ?? 0);
       for (const edge of row.edges) expect(parents.get(edge.from)).toContain(edge.to);
     }
+  });
+
+  it("carries the raw status and per-path line counts for the view", async () => {
+    const result = await collectSnapshot({ runner: localRunner, cwd: repoRoot, maxCommits: 10 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.snapshot.status).toContain("# branch.oid ");
+    const changed = new Set(result.snapshot.changes.map(change => change.path));
+    for (const stat of result.snapshot.stats) expect(changed.has(stat.path)).toBe(true);
+  });
+
+  it("reads the HEAD commit detail against its first parent", async () => {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
+    const subject = execFileSync("git", ["log", "-1", "--pretty=format:%s", head], { cwd: repoRoot, encoding: "utf8" });
+    const changed = execFileSync("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "-m", "--first-parent", head], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean);
+    const result = await collectCommit({ runner: localRunner, cwd: repoRoot }, { hash: head });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.detail.subject).toBe(subject);
+    expect(result.detail.files.map(file => file.path)).toEqual(changed);
   });
 
   it("pages history and reports hasMore from a limit-plus-one fetch", async () => {

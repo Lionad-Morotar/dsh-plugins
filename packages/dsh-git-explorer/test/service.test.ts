@@ -15,7 +15,7 @@ describe("GitExplorerService", () => {
     ctx.provide("workingDirectory", { get: () => "/tmp", defaultDirectory: "/tmp" });
     const service = new GitExplorerService(ctx, {});
     const markers = remoteMethods(service);
-    expect(markers.map(marker => marker.exportName ?? marker.method)).toEqual(["snapshot", "query", "run"]);
+    expect(markers.map(marker => marker.exportName ?? marker.method)).toEqual(["snapshot", "query", "commit", "run"]);
   });
 
   it("normalizes hostile config values into the allowed ranges", () => {
@@ -24,6 +24,17 @@ describe("GitExplorerService", () => {
       timeoutMs: 1_000,
       maxBytes: 64 * 1024,
       maxCommits: 5_000,
+    });
+  });
+
+  it("keeps business failures in the result union the client unwraps", async () => {
+    const ctx = new Context();
+    ctx.provide("subprocess", { spawn: () => { throw new Error("unused in this test"); } });
+    ctx.provide("workingDirectory", { get: () => "/tmp", defaultDirectory: "/tmp" });
+    const service = new GitExplorerService(ctx, {});
+    await expect(service.commit({ id: "s1" }, { hash: "--all" })).resolves.toEqual({
+      ok: false,
+      error: { code: "invalid-request", message: "hash must be a hexadecimal object id" },
     });
   });
 

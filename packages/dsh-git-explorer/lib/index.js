@@ -68,218 +68,6 @@ function runFailure(result) {
   return null;
 }
 
-// src/host/git.ts
-import { readFile } from "node:fs/promises";
-var DEFAULT_TIMEOUT_MS = 2e4;
-var DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
-var SPILL_FACTOR = 16;
-function assertArgv(args) {
-  for (const arg of args) {
-    if (typeof arg !== "string" || arg.includes("\0")) {
-      throw new TypeError("git runner: every argv entry must be a NUL-free string");
-    }
-  }
-}
-async function readStream(reader) {
-  if (reader === void 0) return { text: "", lossy: false };
-  const read = reader.readFrom(0);
-  if (!read.lossy || read.spillPath === void 0) return { text: read.text, lossy: read.lossy };
-  try {
-    return { text: await readFile(read.spillPath, "utf8"), lossy: false };
-  } catch {
-    return { text: read.text, lossy: true };
-  }
-}
-function createGitRunner(options) {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-  const spillMaxBytes = maxBytes * SPILL_FACTOR;
-  return {
-    async run(args, runOptions = {}) {
-      assertArgv(args);
-      const argv = ["git", ...args];
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      const callerSignal = runOptions.signal;
-      const signal = callerSignal === void 0 ? controller.signal : AbortSignal.any([controller.signal, callerSignal]);
-      try {
-        const handle = options.subprocess.spawn({
-          argv,
-          cwd: runOptions.cwd ?? options.cwd,
-          // A network command in a repository without credentials must fail
-          // fast instead of waiting for a prompt that has no stdin to read.
-          env: { GIT_TERMINAL_PROMPT: "0" },
-          stdio: {
-            stdin: runOptions.stdinData === void 0 ? "ignore" : { data: runOptions.stdinData },
-            stdout: { collect: { maxBytes, spill: { maxBytes: spillMaxBytes } } },
-            stderr: { collect: { maxBytes, spill: { maxBytes: spillMaxBytes } } }
-          },
-          graceMs: 200,
-          signal
-        });
-        let outcome;
-        try {
-          outcome = await handle.done;
-        } catch (error) {
-          if (controller.signal.aborted || callerSignal?.aborted === true) {
-            return {
-              argv,
-              exitCode: null,
-              stdout: "",
-              stderr: "",
-              timedOut: controller.signal.aborted,
-              cancelled: callerSignal?.aborted === true && !controller.signal.aborted,
-              stdoutLossy: false
-            };
-          }
-          throw error;
-        }
-        const [stdout, stderr] = await Promise.all([
-          readStream(handle.collected.stdout),
-          readStream(handle.collected.stderr)
-        ]);
-        return {
-          argv,
-          exitCode: outcome.exitCode,
-          stdout: stdout.text,
-          stderr: stderr.text,
-          timedOut: controller.signal.aborted,
-          cancelled: callerSignal?.aborted === true && !controller.signal.aborted,
-          stdoutLossy: stdout.lossy
-        };
-      } finally {
-        clearTimeout(timer);
-      }
-    }
-  };
-}
-
-// src/host/lanes.ts
-var LaneHeap = class {
-  items = [];
-  push(value) {
-    const items = this.items;
-    items.push(value);
-    let index = items.length - 1;
-    while (index > 0) {
-      const parent = index - 1 >> 1;
-      const parentValue = items[parent];
-      if (parentValue === void 0 || parentValue <= value) break;
-      items[index] = parentValue;
-      index = parent;
-    }
-    items[index] = value;
-  }
-  pop() {
-    const items = this.items;
-    const top = items[0];
-    const last = items.pop();
-    if (items.length === 0 || last === void 0) return top;
-    let index = 0;
-    for (; ; ) {
-      const left = index * 2 + 1;
-      const right = left + 1;
-      let smallest = index;
-      let smallestValue = last;
-      const leftValue = items[left];
-      if (leftValue !== void 0 && leftValue < smallestValue) {
-        smallest = left;
-        smallestValue = leftValue;
-      }
-      const rightValue = items[right];
-      if (rightValue !== void 0 && rightValue < smallestValue) {
-        smallest = right;
-        smallestValue = rightValue;
-      }
-      if (smallest === index) break;
-      items[index] = smallestValue;
-      index = smallest;
-    }
-    items[index] = last;
-    return top;
-  }
-};
-function assignLanes(commits) {
-  const present = /* @__PURE__ */ new Set();
-  for (const commit of commits) present.add(commit.hash);
-  const occupants = [];
-  const waiting = /* @__PURE__ */ new Map();
-  const free = new LaneHeap();
-  const removeWaiter = (hash, lane) => {
-    const lanes = waiting.get(hash);
-    if (lanes === void 0) return;
-    const at = lanes.indexOf(lane);
-    if (at >= 0) lanes.splice(at, 1);
-    if (lanes.length === 0) waiting.delete(hash);
-  };
-  const occupy = (lane, hash) => {
-    occupants[lane] = hash;
-    const lanes = waiting.get(hash);
-    if (lanes === void 0) waiting.set(hash, [lane]);
-    else lanes.push(lane);
-  };
-  const release = (lane) => {
-    const hash = occupants[lane] ?? null;
-    if (hash !== null) {
-      occupants[lane] = null;
-      removeWaiter(hash, lane);
-    }
-    free.push(lane);
-  };
-  const acquire = () => {
-    const reused = free.pop();
-    if (reused !== void 0) return reused;
-    occupants.push(null);
-    return occupants.length - 1;
-  };
-  const rows = [];
-  for (let row = 0; row < commits.length; row += 1) {
-    const commit = commits[row];
-    if (commit === void 0) continue;
-    const incoming = waiting.get(commit.hash);
-    let lane;
-    let held;
-    if (incoming !== void 0 && incoming.length > 0) {
-      lane = incoming[0] ?? 0;
-      for (let index = 1; index < incoming.length; index += 1) {
-        const candidate = incoming[index];
-        if (candidate !== void 0 && candidate < lane) lane = candidate;
-      }
-      for (let index = incoming.length - 1; index >= 0; index -= 1) {
-        const candidate = incoming[index];
-        if (candidate !== void 0 && candidate !== lane) release(candidate);
-      }
-      occupants[lane] = null;
-      removeWaiter(commit.hash, lane);
-      held = lane;
-    } else {
-      lane = acquire();
-      held = lane;
-    }
-    const edges = [];
-    let releaseHeld = false;
-    for (let index = 0; index < commit.parents.length; index += 1) {
-      const parent = commit.parents[index];
-      if (parent === void 0) continue;
-      edges.push({ from: commit.hash, to: parent });
-      if (!present.has(parent)) continue;
-      const parentWaiters = waiting.get(parent);
-      const parentHasLane = parentWaiters !== void 0 && parentWaiters.length > 0;
-      if (held !== null && index === 0) {
-        if (parentHasLane) releaseHeld = true;
-        else occupy(held, parent);
-        held = null;
-        continue;
-      }
-      if (!parentHasLane) occupy(acquire(), parent);
-    }
-    if (held !== null) release(held);
-    else if (releaseHeld) release(lane);
-    rows.push({ hash: commit.hash, row, lane, edges });
-  }
-  return rows;
-}
-
 // src/host/parse.ts
 var LOG_FIELDS = 5;
 var MAX_REF_NAME = 512;
@@ -516,6 +304,330 @@ function parseStatusBranch(text) {
     ...behind === void 0 ? {} : { behind }
   };
 }
+function parseNumStatZ(text) {
+  const parts = text.split("\0");
+  const stats = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const record = parts[index];
+    if (record === void 0 || record === "") continue;
+    const firstTab = record.indexOf("	");
+    const secondTab = record.indexOf("	", firstTab + 1);
+    if (firstTab < 0 || secondTab < 0) continue;
+    const addRaw = record.slice(0, firstTab);
+    const delRaw = record.slice(firstTab + 1, secondTab);
+    const path = record.slice(secondTab + 1);
+    const additions = addRaw === "-" ? null : Number.parseInt(addRaw, 10);
+    const deletions = delRaw === "-" ? null : Number.parseInt(delRaw, 10);
+    if (additions !== null && !Number.isFinite(additions)) continue;
+    if (deletions !== null && !Number.isFinite(deletions)) continue;
+    if (path === "") {
+      const origPath = parts[index + 1];
+      const nextPath = parts[index + 2];
+      if (origPath === void 0 || nextPath === void 0 || nextPath === "") continue;
+      index += 2;
+      stats.push({ path: nextPath, origPath, additions, deletions });
+    } else {
+      stats.push({ path, additions, deletions });
+    }
+  }
+  return stats;
+}
+function parseNameStatusZ(text) {
+  const parts = text.split("\0");
+  const files = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const code = parts[index];
+    if (code === void 0 || code === "") continue;
+    const letter = code.slice(0, 1);
+    const status = statusFromCode(letter);
+    if (status === null) continue;
+    if (letter === "R" || letter === "C") {
+      const origPath = parts[index + 1];
+      const path = parts[index + 2];
+      if (origPath === void 0 || path === void 0 || path === "") continue;
+      index += 2;
+      files.push({ path, origPath, status });
+    } else {
+      const path = parts[index + 1];
+      if (path === void 0 || path === "") continue;
+      index += 1;
+      files.push({ path, status });
+    }
+  }
+  return files;
+}
+function parseCommitMeta(text) {
+  const fields = text.split("\0");
+  if (fields.length < 5) return null;
+  const hash = fields[0] ?? "";
+  if (hash === "") return null;
+  const parentsRaw = fields[1] ?? "";
+  const author = fields[2] ?? "";
+  const timeRaw = fields[3] ?? "";
+  const subject = fields[4] ?? "";
+  const body = fields.slice(5).join("\0").replace(/\n$/u, "");
+  const time = Number.parseInt(timeRaw, 10);
+  if (!Number.isFinite(time)) return null;
+  return {
+    hash,
+    parents: parentsRaw === "" ? [] : parentsRaw.split(" ").filter(Boolean),
+    author,
+    time,
+    subject,
+    body
+  };
+}
+
+// src/host/detail.ts
+var SAFE_HASH = /^[0-9a-fA-F]{4,64}$/u;
+var META_FORMAT = "--format=%H%x00%P%x00%an%x00%at%x00%s%x00%b";
+async function collectCommit(options, request, signal) {
+  const hash = typeof request.hash === "string" ? request.hash.trim() : "";
+  if (!SAFE_HASH.test(hash)) return fail("invalid-request", "hash must be a hexadecimal object id");
+  const cwd = request.cwd ?? options.cwd;
+  const metaRun = options.runner.run(["show", "-s", META_FORMAT, "--end-of-options", hash], { cwd, signal });
+  const statusRun = options.runner.run(
+    ["diff-tree", "--no-commit-id", "--name-status", "-r", "-z", "-M", "--root", "-m", "--first-parent", hash],
+    { cwd, signal }
+  );
+  const statRun = options.runner.run(
+    ["diff-tree", "--no-commit-id", "--numstat", "-r", "-z", "-M", "--root", "-m", "--first-parent", hash],
+    { cwd, signal }
+  );
+  const [metaResult, statusResult, statResult] = await Promise.all([metaRun, statusRun, statRun]);
+  for (const result of [metaResult, statusResult, statResult]) {
+    const failure = runFailure(result);
+    if (failure !== null) return { ok: false, error: failure };
+    if (result.stdoutLossy) return fail("git-failed", "command output exceeded the collection budget");
+  }
+  const meta = parseCommitMeta(metaResult.stdout);
+  if (meta === null) return fail("git-failed", "the commit record could not be parsed");
+  const stats = new Map(parseNumStatZ(statResult.stdout).map((stat) => [stat.path, stat]));
+  const files = parseNameStatusZ(statusResult.stdout).map((file) => {
+    const stat = stats.get(file.path);
+    return {
+      path: file.path,
+      status: file.status,
+      additions: stat?.additions ?? null,
+      deletions: stat?.deletions ?? null,
+      ...file.origPath === void 0 ? {} : { origPath: file.origPath }
+    };
+  });
+  const detail = { ...meta, files };
+  return { ok: true, detail };
+}
+
+// src/host/git.ts
+import { readFile } from "node:fs/promises";
+var DEFAULT_TIMEOUT_MS = 2e4;
+var DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
+var SPILL_FACTOR = 16;
+function assertArgv(args) {
+  for (const arg of args) {
+    if (typeof arg !== "string" || arg.includes("\0")) {
+      throw new TypeError("git runner: every argv entry must be a NUL-free string");
+    }
+  }
+}
+async function readStream(reader) {
+  if (reader === void 0) return { text: "", lossy: false };
+  const read = reader.readFrom(0);
+  if (!read.lossy || read.spillPath === void 0) return { text: read.text, lossy: read.lossy };
+  try {
+    return { text: await readFile(read.spillPath, "utf8"), lossy: false };
+  } catch {
+    return { text: read.text, lossy: true };
+  }
+}
+function createGitRunner(options) {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const spillMaxBytes = maxBytes * SPILL_FACTOR;
+  return {
+    async run(args, runOptions = {}) {
+      assertArgv(args);
+      const argv = ["git", ...args];
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const callerSignal = runOptions.signal;
+      const signal = callerSignal === void 0 ? controller.signal : AbortSignal.any([controller.signal, callerSignal]);
+      try {
+        const handle = options.subprocess.spawn({
+          argv,
+          cwd: runOptions.cwd ?? options.cwd,
+          // A network command in a repository without credentials must fail
+          // fast instead of waiting for a prompt that has no stdin to read.
+          env: { GIT_TERMINAL_PROMPT: "0" },
+          stdio: {
+            stdin: runOptions.stdinData === void 0 ? "ignore" : { data: runOptions.stdinData },
+            stdout: { collect: { maxBytes, spill: { maxBytes: spillMaxBytes } } },
+            stderr: { collect: { maxBytes, spill: { maxBytes: spillMaxBytes } } }
+          },
+          graceMs: 200,
+          signal
+        });
+        let outcome;
+        try {
+          outcome = await handle.done;
+        } catch (error) {
+          if (controller.signal.aborted || callerSignal?.aborted === true) {
+            return {
+              argv,
+              exitCode: null,
+              stdout: "",
+              stderr: "",
+              timedOut: controller.signal.aborted,
+              cancelled: callerSignal?.aborted === true && !controller.signal.aborted,
+              stdoutLossy: false
+            };
+          }
+          throw error;
+        }
+        const [stdout, stderr] = await Promise.all([
+          readStream(handle.collected.stdout),
+          readStream(handle.collected.stderr)
+        ]);
+        return {
+          argv,
+          exitCode: outcome.exitCode,
+          stdout: stdout.text,
+          stderr: stderr.text,
+          timedOut: controller.signal.aborted,
+          cancelled: callerSignal?.aborted === true && !controller.signal.aborted,
+          stdoutLossy: stdout.lossy
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  };
+}
+
+// src/host/lanes.ts
+var LaneHeap = class {
+  items = [];
+  push(value) {
+    const items = this.items;
+    items.push(value);
+    let index = items.length - 1;
+    while (index > 0) {
+      const parent = index - 1 >> 1;
+      const parentValue = items[parent];
+      if (parentValue === void 0 || parentValue <= value) break;
+      items[index] = parentValue;
+      index = parent;
+    }
+    items[index] = value;
+  }
+  pop() {
+    const items = this.items;
+    const top = items[0];
+    const last = items.pop();
+    if (items.length === 0 || last === void 0) return top;
+    let index = 0;
+    for (; ; ) {
+      const left = index * 2 + 1;
+      const right = left + 1;
+      let smallest = index;
+      let smallestValue = last;
+      const leftValue = items[left];
+      if (leftValue !== void 0 && leftValue < smallestValue) {
+        smallest = left;
+        smallestValue = leftValue;
+      }
+      const rightValue = items[right];
+      if (rightValue !== void 0 && rightValue < smallestValue) {
+        smallest = right;
+        smallestValue = rightValue;
+      }
+      if (smallest === index) break;
+      items[index] = smallestValue;
+      index = smallest;
+    }
+    items[index] = last;
+    return top;
+  }
+};
+function assignLanes(commits) {
+  const present = /* @__PURE__ */ new Set();
+  for (const commit of commits) present.add(commit.hash);
+  const occupants = [];
+  const waiting = /* @__PURE__ */ new Map();
+  const free = new LaneHeap();
+  const removeWaiter = (hash, lane) => {
+    const lanes = waiting.get(hash);
+    if (lanes === void 0) return;
+    const at = lanes.indexOf(lane);
+    if (at >= 0) lanes.splice(at, 1);
+    if (lanes.length === 0) waiting.delete(hash);
+  };
+  const occupy = (lane, hash) => {
+    occupants[lane] = hash;
+    const lanes = waiting.get(hash);
+    if (lanes === void 0) waiting.set(hash, [lane]);
+    else lanes.push(lane);
+  };
+  const release = (lane) => {
+    const hash = occupants[lane] ?? null;
+    if (hash !== null) {
+      occupants[lane] = null;
+      removeWaiter(hash, lane);
+    }
+    free.push(lane);
+  };
+  const acquire = () => {
+    const reused = free.pop();
+    if (reused !== void 0) return reused;
+    occupants.push(null);
+    return occupants.length - 1;
+  };
+  const rows = [];
+  for (let row = 0; row < commits.length; row += 1) {
+    const commit = commits[row];
+    if (commit === void 0) continue;
+    const incoming = waiting.get(commit.hash);
+    let lane;
+    let held;
+    if (incoming !== void 0 && incoming.length > 0) {
+      lane = incoming[0] ?? 0;
+      for (let index = 1; index < incoming.length; index += 1) {
+        const candidate = incoming[index];
+        if (candidate !== void 0 && candidate < lane) lane = candidate;
+      }
+      for (let index = incoming.length - 1; index >= 0; index -= 1) {
+        const candidate = incoming[index];
+        if (candidate !== void 0 && candidate !== lane) release(candidate);
+      }
+      occupants[lane] = null;
+      removeWaiter(commit.hash, lane);
+      held = lane;
+    } else {
+      lane = acquire();
+      held = lane;
+    }
+    const edges = [];
+    let releaseHeld = false;
+    for (let index = 0; index < commit.parents.length; index += 1) {
+      const parent = commit.parents[index];
+      if (parent === void 0) continue;
+      edges.push({ from: commit.hash, to: parent });
+      if (!present.has(parent)) continue;
+      const parentWaiters = waiting.get(parent);
+      const parentHasLane = parentWaiters !== void 0 && parentWaiters.length > 0;
+      if (held !== null && index === 0) {
+        if (parentHasLane) releaseHeld = true;
+        else occupy(held, parent);
+        held = null;
+        continue;
+      }
+      if (!parentHasLane) occupy(acquire(), parent);
+    }
+    if (held !== null) release(held);
+    else if (releaseHeld) release(lane);
+    rows.push({ hash: commit.hash, row, lane, edges });
+  }
+  return rows;
+}
 
 // src/host/query.ts
 var MAX_LIMIT = 5e3;
@@ -571,8 +683,25 @@ function emptySnapshot(root) {
     changes: [],
     commits: [],
     lanes: [],
-    counts: { commits: 0, branches: 0, changes: 0 }
+    counts: { commits: 0, branches: 0, changes: 0 },
+    status: "",
+    stats: []
   };
+}
+function mergeStats(staged, worktree) {
+  const merged = /* @__PURE__ */ new Map();
+  for (const stat of [...staged, ...worktree]) {
+    const previous = merged.get(stat.path);
+    if (previous === void 0) {
+      merged.set(stat.path, { additions: stat.additions, deletions: stat.deletions });
+      continue;
+    }
+    merged.set(stat.path, {
+      additions: previous.additions === null || stat.additions === null ? null : previous.additions + stat.additions,
+      deletions: previous.deletions === null || stat.deletions === null ? null : previous.deletions + stat.deletions
+    });
+  }
+  return [...merged.entries()].map(([path, counts]) => ({ path, ...counts })).sort((left, right) => left.path.localeCompare(right.path));
 }
 function toHead(branch) {
   return {
@@ -610,17 +739,29 @@ async function collectSnapshot(options, request = {}, signal) {
   }
   const root = probe.stdout.trim();
   if (root === "") return { ok: true, snapshot: emptySnapshot(cwd) };
+  const headProbe = await options.runner.run(["rev-parse", "--quiet", "--verify", "HEAD"], { cwd: root, signal });
+  const headFailure = runFailure(headProbe);
+  if (headFailure !== null && headFailure.code !== "git-failed") return { ok: false, error: headFailure };
+  const unborn = headFailure !== null;
   const maxCommits = clampCommits(request.maxCommits, options.maxCommits);
-  const [status, refs, log, count] = await Promise.all([
+  const commands = [
     options.runner.run(["status", "--porcelain=v2", "-z", "--branch"], { cwd: root, signal }),
     options.runner.run(["for-each-ref", REF_FORMAT, "refs/heads", "refs/remotes", "refs/tags"], { cwd: root, signal }),
+    options.runner.run(["diff", "--numstat", "-z"], { cwd: root, signal }),
+    options.runner.run(["diff", "--cached", "--numstat", "-z"], { cwd: root, signal })
+  ];
+  const historyCommands = unborn ? null : [
     options.runner.run(["log", "--all", "--topo-order", "--parents", LOG_FORMAT2, `--max-count=${maxCommits}`], {
       cwd: root,
       signal
     }),
     options.runner.run(["rev-list", "--count", "--all"], { cwd: root, signal })
-  ]);
-  for (const result of [status, refs, log, count]) {
+  ];
+  const [status, refs, worktreeStats, stagedStats] = await Promise.all(commands);
+  const history = historyCommands === null ? null : await Promise.all(historyCommands);
+  const log = history?.[0];
+  const count = history?.[1];
+  for (const result of [status, refs, worktreeStats, stagedStats, ...history ?? []]) {
     const failure = runFailure(result);
     if (failure !== null) return { ok: false, error: failure };
     if (result.stdoutLossy) return fail("git-failed", "command output exceeded the collection budget");
@@ -628,14 +769,14 @@ async function collectSnapshot(options, request = {}, signal) {
   const branch = parseStatusBranch(status.stdout);
   const changes = parseStatusZ(status.stdout);
   const branches = parseRefListing(refs.stdout);
-  const commits = parseLog(log.stdout);
+  const commits = log === void 0 ? [] : parseLog(log.stdout);
   const refsByHash = groupRefs(branches);
   const nodes = commits.map((commit) => ({
     ...commit,
     refs: refsByHash.get(commit.hash) ?? []
   }));
   const lanes = assignLanes(commits);
-  const total = Number.parseInt(count.stdout.trim(), 10);
+  const total = count === void 0 ? 0 : Number.parseInt(count.stdout.trim(), 10);
   return {
     ok: true,
     snapshot: {
@@ -650,7 +791,9 @@ async function collectSnapshot(options, request = {}, signal) {
         commits: Number.isFinite(total) ? total : commits.length,
         branches: branches.length,
         changes: changes.length
-      }
+      },
+      status: status.stdout,
+      stats: mergeStats(parseNumStatZ(stagedStats.stdout), parseNumStatZ(worktreeStats.stdout))
     }
   };
 }
@@ -681,8 +824,8 @@ function normalizeConfig(config) {
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
-var _run_dec, _query_dec, _snapshot_dec, _a, _init;
-var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec = [Remote("snapshot")], _query_dec = [Remote("query")], _run_dec = [Remote("run")], _a) {
+var _run_dec, _commit_dec, _query_dec, _snapshot_dec, _a, _init;
+var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec = [Remote("snapshot")], _query_dec = [Remote("query")], _commit_dec = [Remote("commit")], _run_dec = [Remote("run")], _a) {
   constructor(ctx, config) {
     super(ctx, GIT_SERVICE);
     __runInitializers(_init, 5, this);
@@ -732,6 +875,14 @@ var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec 
       return fail("internal", messageOf(error));
     }
   }
+  async commit(session, request = { hash: "" }, signal) {
+    const cwd = this.baseDirectory(session, request.cwd);
+    try {
+      return await collectCommit({ runner: this.runnerFor(cwd), cwd }, request, signal);
+    } catch (error) {
+      return fail("internal", messageOf(error));
+    }
+  }
   async run(request = {}) {
     void request;
     return {
@@ -743,6 +894,7 @@ var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec 
 _init = __decoratorStart(_a);
 __decorateElement(_init, 1, "snapshot", _snapshot_dec, GitExplorerService);
 __decorateElement(_init, 1, "query", _query_dec, GitExplorerService);
+__decorateElement(_init, 1, "commit", _commit_dec, GitExplorerService);
 __decorateElement(_init, 1, "run", _run_dec, GitExplorerService);
 __decoratorMetadata(_init, GitExplorerService);
 __publicField(GitExplorerService, "inject", inject);

@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { parseLog, parseRefListing, parseRefs, parseStatusBranch, parseStatusZ } from "../src/host/parse.ts";
+import {
+  parseCommitMeta,
+  parseLog,
+  parseNameStatusZ,
+  parseNumStatZ,
+  parseRefListing,
+  parseRefs,
+  parseStatusBranch,
+  parseStatusZ,
+} from "../src/host/parse.ts";
 
 describe("parseLog", () => {
   it("splits the five fields and keeps a pipe inside the subject", () => {
@@ -123,5 +132,46 @@ describe("parseStatusZ", () => {
       branch: null,
       detached: true,
     });
+  });
+});
+
+describe("parseNumStatZ", () => {
+  it("reads additions, deletions, binary files and rename pairs", () => {
+    const text = ["3\t1\tsrc/a.ts", "-\t-\tasset.png", "2\t0\t", "old name.txt", "new name.txt", ""].join("\0");
+    expect(parseNumStatZ(text)).toEqual([
+      { path: "src/a.ts", additions: 3, deletions: 1 },
+      { path: "asset.png", additions: null, deletions: null },
+      { path: "new name.txt", origPath: "old name.txt", additions: 2, deletions: 0 },
+    ]);
+  });
+});
+
+describe("parseNameStatusZ", () => {
+  it("reads ordinary, added, deleted and rename records", () => {
+    const text = ["M", "src/a.ts", "A", "new file.txt", "D", "gone.ts", "R100", "old name.txt", "new name.txt", ""].join("\0");
+    expect(parseNameStatusZ(text)).toEqual([
+      { path: "src/a.ts", status: "modified" },
+      { path: "new file.txt", status: "added" },
+      { path: "gone.ts", status: "deleted" },
+      { path: "new name.txt", origPath: "old name.txt", status: "renamed" },
+    ]);
+  });
+});
+
+describe("parseCommitMeta", () => {
+  it("keeps the body as the final field and parses parents", () => {
+    const text = ["abc", "p1 p2", "Alice", "1700000000", "subject: a | b", "line one\nline two\n"].join("\0");
+    expect(parseCommitMeta(text)).toEqual({
+      hash: "abc",
+      parents: ["p1", "p2"],
+      author: "Alice",
+      time: 1700000000,
+      subject: "subject: a | b",
+      body: "line one\nline two",
+    });
+  });
+
+  it("accepts a root commit with no body", () => {
+    expect(parseCommitMeta(["abc", "", "Alice", "1700000000", "root", ""].join("\0"))?.parents).toEqual([]);
   });
 });
