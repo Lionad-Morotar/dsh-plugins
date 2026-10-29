@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { LOCALE_NAMESPACE, PRESETS, SECTION_ID, SECTION_ORDER, SECTION_SLOT, SETTINGS_NAMESPACE } from "../src/client/registration.ts";
 import { EN, ZH } from "../src/client/copy.ts";
 import { MIN_TIMEOUT_MS } from "../src/shadow.ts";
-import { clientPlugin, inject, resolveKit } from "../src/client/entry.ts";
+import { boot, clientPlugin, inject, resolveKit } from "../src/client/entry.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "..");
@@ -51,6 +51,51 @@ describe("registration", () => {
 });
 
 describe("client entry", () => {
+  it("a repeat apply replaces the dictionary instead of throwing", () => {
+    // The host's locale table refuses a second registration of the same
+    // namespace+locale and its disposer deletes by dictionary identity —
+    // mirror both rules so the test proves the replacement dance, not a tamer
+    // table.
+    const table = new Map<string, unknown>();
+    const registers: Array<() => void> = [];
+    const register = (ns: string, dicts: Record<string, unknown>) => {
+      for (const locale of Object.keys(dicts)) {
+        const key = `${ns}::${locale}`;
+        if (table.has(key)) throw new Error(`locale namespace "${ns}" already has locale "${locale}"`);
+        table.set(key, dicts[locale]);
+      }
+      const off = () => {
+        for (const [locale, entries] of Object.entries(dicts)) {
+          const key = `${ns}::${locale}`;
+          if (table.get(key) === entries) table.delete(key);
+        }
+      };
+      registers.push(off);
+      return off;
+    };
+    const makeCtx = () => ({
+      locale: { bind: () => () => "x", register },
+      slots: { inject: () => () => {} },
+      configForms: undefined,
+    });
+    // resolveKit needs the loader require to hand over the primitives, or
+    // apply returns early without ever touching the locale table.
+    const primitive = { $$typeof: Symbol.for("react.forward_ref"), render: () => null };
+    boot(((name: string) => name === "@deepseek-ai/dsh-client-ui-primitives" ? { SettingsForm: primitive, Button: primitive, Input: primitive } : undefined) as never);
+    const first = clientPlugin.apply(makeCtx() as never);
+    // The desktop sync pass applies once more without disposing the first:
+    // the second registration replaces the first outright — one shared
+    // dictionary, since the dictionaries are module singletons. The price is
+    // that disposing the latest mount takes the dictionary away from any
+    // earlier one still alive; that beats a hard "already has" throw.
+    const second = clientPlugin.apply(makeCtx() as never);
+    expect(table.size).toBe(2);
+    second();
+    expect(table.size).toBe(0);
+    first();
+    expect(table.size).toBe(0);
+  });
+
   it("declares the services the panel reads", () => {
     expect(inject).toEqual(["slots", "locale", "configForms"]);
     expect(clientPlugin.name).toBe("dsh-more-config");
