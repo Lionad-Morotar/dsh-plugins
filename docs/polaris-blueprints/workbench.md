@@ -118,3 +118,9 @@ host 半 `TypertRemoteService` 三端点（snapshot / query / run）；不抄 gi
 6. 三包内联共享源（产物三份副本，无同步断言）。
 7. 把 Markdown 直接 `dangerouslySetInnerHTML`。
 8. 让终端 dock 单方面调用 `retainTabs`。
+
+## 8 决策补记（施工中发现）
+
+- D10 Esc 语义修正：More 菜单行只在菜单展开时挂载（宿主 `Menu` 的 children 条件渲染），其 `onOpen` 绑定随菜单关闭即解绑，不能作为"随时 Esc 回对话"的机制。改为：dock 内 Esc 首先把焦点交还 composer（这是"回对话"的真实语义），仅当 core 的 views seam 上确实存在绑定时才额外调用 `showChat`；会话头菜单行保留为显式可见入口。
+- D11 键位避让：`⌘O` 已被宿主 `workspace.add` 占用（`dsh-command-panel` 的注释与实现均确认），`⌘P` 被 `workspace.files` 占用。文件面板导航不得使用 `⌘O`，改用 `⌘⌥↑/↓` 或 `⌘⇧O/K`；`Ctrl+W` 在浏览器标签内仍不可拦截，只承诺 desktop。
+- D12 主线领先：本 epic 从 `ed696f0` 切出后，主线新增 `dsh-command-panel` 两提交。epic 收尾前必须与 main 合并（merge 而非 rebase）并重跑全套判据。
