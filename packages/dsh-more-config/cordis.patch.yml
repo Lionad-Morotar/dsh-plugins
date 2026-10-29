@@ -1,5 +1,14 @@
 # Enable dsh-more-config by inserting its Loader row. The row id is the
 # settings namespace its shadow config lives under.
+#
+# The top-level empty row below is NOT decoration: the settings write guard
+# compares this row's config against every shadow write across the composed
+# patches, and a row that only exists as an insert has no config to compare —
+# every first write would be refused with "overridden by a home patch". The
+# empty config merges into the same row and lets the first write through.
 - insert:
     - id: more-config
       name: 'dsh-more-config'
+- id: more-config
+  name: 'dsh-more-config'
+  config: {}

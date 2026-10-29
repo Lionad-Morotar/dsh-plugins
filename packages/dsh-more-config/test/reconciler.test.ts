@@ -21,20 +21,38 @@ interface RowState {
 }
 
 function makeDeps(rows: RowState[], shadow: Record<string, number>) {
+  const updates: Array<Record<string, unknown>> = [];
+  const document: Record<string, unknown> = { mcpTimeouts: Object.entries(shadow).map(([id, timeoutMs]) => ({ id, timeoutMs })) };
   const entryOf = new Map(rows.map(row => [row.id, { options: { id: row.id, name: "@deepseek-ai/dsh-mcp-client" } } as McpEntryLike]));
+  const ownRow = { options: { id: "more-config", name: "dsh-more-config" } } as McpEntryLike;
+  const projections: Array<unknown> = [];
+  let failProjection = false;
   const edits: Array<{ id: string; before: Record<string, unknown>; after: Record<string, unknown> }> = [];
   let failIds = new Set<string>();
   const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
   const deps: ReconcilerDeps = {
     ns: "more-config",
     settings: {
-      describe: () => [{ ns: "more-config", value: { mcpTimeouts: Object.entries(shadow).map(([id, timeoutMs]) => ({ id, timeoutMs })) } }],
-      update: async () => {},
+      describe: async () => [{ ns: "more-config", value: { ...document } }],
+      update: async (_ns: string, patch: Record<string, unknown>) => {
+        void _ns;
+        Object.assign(document, patch);
+        updates.push(patch);
+      },
     },
     configEditor: {
-      entries: () => [...entryOf.values()],
+      entries: () => [...entryOf.values(), ownRow],
       configuration: () => rows.map(row => ({ entry: entryOf.get(row.id)!, inherited: row.inherited, override: row.override })),
       edit: async (entry, change) => {
+        if (entry.options.id === "more-config") {
+          if (failProjection) throw new Error("edit rejected for more-config");
+          const next = change({}, {}) as Record<string, unknown>;
+          // The real describe() reads the row's config, so a projection edit
+          // must be visible to the next pass.
+          Object.assign(document, next);
+          projections.push(next.mcpServers);
+          return;
+        }
         const row = rows.find(candidate => candidate.id === entry.options.id)!;
         if (failIds.has(row.id)) throw new Error(`edit rejected for ${row.id}`);
         const before = { ...row.override };
@@ -55,10 +73,47 @@ function makeDeps(rows: RowState[], shadow: Record<string, number>) {
     },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
   };
-  return { deps, edits, listeners, fail: (ids: string[]) => { failIds = new Set(ids); }, rows };
+  return { deps, edits, listeners, updates, projections, fail: (ids: string[]) => { failIds = new Set(ids); }, failProjection: () => { failProjection = true; }, rows };
 }
 
 describe("reconciler", () => {
+  it("projects the live server list through the settings service after a sync", async () => {
+    const { deps, updates } = makeDeps(
+      [{ id: "mcp-kimi-tools", serverName: "kimi", override: {}, inherited: { serverName: "kimi" } }],
+      {},
+    );
+    const reconciler = createReconciler(deps);
+    await reconciler.sync("test");
+    const projection = updates.find(patch => "mcpServers" in patch);
+    expect(projection?.mcpServers).toEqual([{ id: "mcp-kimi-tools", serverName: "kimi", timeoutMs: 60000 }]);
+    await reconciler.dispose();
+  });
+
+  it("an unchanged projection is not rewritten, so the document-updated echo settles", async () => {
+    const { deps, updates } = makeDeps(
+      [{ id: "mcp-kimi-tools", serverName: "kimi", override: {}, inherited: { serverName: "kimi" } }],
+      {},
+    );
+    const reconciler = createReconciler(deps);
+    await reconciler.sync("first");
+    await reconciler.sync("echo");
+    expect(updates.filter(patch => "mcpServers" in patch)).toHaveLength(1);
+    await reconciler.dispose();
+  });
+
+  it("a failed projection write leaves the row sync untouched", async () => {
+    const base = makeDeps([{ id: "mcp-kimi-tools", serverName: "kimi", override: {}, inherited: { serverName: "kimi" } }], { "mcp-kimi-tools": 660000 });
+    const deps: ReconcilerDeps = {
+      ...base.deps,
+      settings: { ...base.deps.settings, update: async (ns, patch) => { if ("mcpServers" in (patch as Record<string, unknown>)) throw new Error("settings write refused"); return base.deps.settings.update(ns, patch); } },
+    };
+    const reconciler = createReconciler(deps);
+    const report = await reconciler.sync("test");
+    expect(report.sets).toHaveLength(1);
+    expect(base.edits).toHaveLength(1);
+    await reconciler.dispose();
+  });
+
   it("applies planned sets by merging the timeout into the row config", async () => {
     const { deps, edits } = makeDeps(
       [{ id: "mcp-kimi-tools", serverName: "kimi", override: { command: "node" }, inherited: { serverName: "kimi" } }],

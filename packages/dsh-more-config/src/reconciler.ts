@@ -14,7 +14,7 @@
  */
 import { planSync, type ShadowTimeouts, type SyncPlan } from "./plan.ts";
 import { readMcpInventory } from "./inventory.ts";
-import { toTimeoutMap } from "./shadow.ts";
+import { toServerList, toTimeoutMap, type ServerEntry } from "./shadow.ts";
 import type { EditingConfigEditorLike, SettingsServiceLike } from "./command.ts";
 
 /** The settings event this reconciler rides. */
@@ -59,6 +59,41 @@ async function readShadow(deps: ReconcilerDeps): Promise<ShadowTimeouts> {
   return toTimeoutMap((own?.value as { mcpTimeouts?: unknown } | undefined)?.mcpTimeouts);
 }
 
+/** Read the server list currently projected for the panel. */
+async function readServerList(deps: ReconcilerDeps): Promise<ServerEntry[]> {
+  const descriptors = await deps.settings.describe();
+  const own = Array.isArray(descriptors) ? descriptors.find(descriptor => descriptor.ns === deps.ns) : undefined;
+  return toServerList((own?.value as { mcpServers?: unknown } | undefined)?.mcpServers);
+}
+
+/** The live inventory, in the stored projection shape. */
+function projectServers(inventory: ReturnType<typeof readMcpInventory>): ServerEntry[] {
+  return inventory.map(row => ({ id: row.id, serverName: row.serverName, timeoutMs: row.effectiveTimeoutMs }));
+}
+
+/** Order-stable equality: the projection is written only when it actually moved. */
+function sameServers(a: readonly ServerEntry[], b: readonly ServerEntry[]): boolean {
+  return a.length === b.length && a.every((row, index) => {
+    const other = b[index];
+    return other !== undefined && row.id === other.id && row.serverName === other.serverName && row.timeoutMs === other.timeoutMs;
+  });
+}
+
+/** Project the live server list into settings; skipped when the guard refuses (seeded profiles). */
+async function projectServerList(deps: ReconcilerDeps, inventory: ReturnType<typeof readMcpInventory>, trigger: string): Promise<void> {
+  const projected = projectServers(inventory);
+  try {
+    const stored = await readServerList(deps);
+    if (sameServers(projected, stored)) return;
+    await deps.settings.update(deps.ns, { mcpServers: projected });
+  } catch (error) {
+    // A seeded profile (this row's config comes from a home patch) refuses
+    // every settings write by the combined-override guard — the same refusal
+    // the shadow writes meet, so the panel degrades consistently.
+    deps.logger?.info?.(`more-config: server list projection skipped (${trigger}): ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 /**
  * Build the reconciler. `attach()` wires the event listener and runs the
  * initial sync; `sync(trigger)` runs one pass on demand; `dispose()` unwires.
@@ -86,6 +121,11 @@ export function createReconciler(deps: ReconcilerDeps) {
       deps.logger?.info?.(`more-config: overrides not owned by the shadow (left untouched): ${plan.unmanaged.map(item => `${item.id}=${item.timeoutMs}ms`).join(", ")}`);
     }
     for (const failure of failures) deps.logger?.error?.(`more-config: sync failed for ${failure.id} (trigger: ${trigger}): ${failure.error}`);
+
+    // Project the live server list for the panel. Diffed before writing, so a
+    // pass that changed nothing writes nothing and the document-updated echo
+    // of a real write settles in one hop instead of looping.
+    await projectServerList(deps, inventory, trigger);
     return { ...plan, failures };
   };
 

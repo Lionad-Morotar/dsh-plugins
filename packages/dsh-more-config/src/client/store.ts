@@ -13,14 +13,14 @@
  * clears, garbage text blocks save, a reset returns to the base layer and drops
  * rows the base never had.
  */
-import { MIN_TIMEOUT_MS, toShadowEntries, toTimeoutMap, type ShadowTimeouts } from "../shadow.ts";
+import { MIN_TIMEOUT_MS, toServerList, toShadowEntries, toTimeoutMap, type ServerEntry, type ShadowTimeouts } from "../shadow.ts";
 import { TIMEOUTS_FIELD } from "./registration.ts";
 
 /** The scope snapshot the settings service serves for one namespace. */
 export interface ScopeSnapshot {
   readonly status: string;
   readonly writable: boolean;
-  readonly value?: { readonly mcpTimeouts?: unknown };
+  readonly value?: { readonly mcpTimeouts?: unknown; readonly mcpServers?: unknown };
   readonly base?: { readonly mcpTimeouts?: unknown };
   readonly user?: Record<string, unknown>;
   readonly revision?: number;
@@ -43,6 +43,12 @@ export interface ScopeLike {
 /** One row the panel renders. */
 export interface TimeoutRowView {
   readonly id: string;
+  /** The server's own name when the row is a live server; empty for a ghost. */
+  readonly serverName: string;
+  /** The timeout a shadow entry would want to know about: absent for an unset row. */
+  readonly serverTimeoutMs: number | undefined;
+  /** True when the shadow has a key for a server the host no longer lists. */
+  readonly ghost: boolean;
   readonly text: string;
   readonly invalid: boolean;
   readonly overridden: boolean;
@@ -127,13 +133,29 @@ export function createTimeoutsStore(scope: ScopeLike | undefined) {
     const live = toTimeoutMap(snap?.value?.mcpTimeouts);
     const base = toTimeoutMap(snap?.base?.mcpTimeouts);
     const user = toTimeoutMap((snap?.user as { mcpTimeouts?: unknown } | undefined)?.mcpTimeouts);
-    const rowIds = [...Object.keys(live)];
-    for (const id of staged.keys()) if (!Object.hasOwn(live, id) && !rowIds.includes(id)) rowIds.push(id);
+    // The host projects the live server list into the same namespace; the panel
+    // renders it as the row skeleton and marks shadow keys without a server as
+    // ghosts instead of pretending they still point at something.
+    const servers = toServerList(snap?.value?.mcpServers);
+    const serverOf = new Map<string, ServerEntry>(servers.map(server => [server.id, server]));
+    const rowIds = [...servers.map(server => server.id)];
+    for (const id of Object.keys(live)) if (!rowIds.includes(id)) rowIds.push(id);
+    for (const id of staged.keys()) if (!rowIds.includes(id)) rowIds.push(id);
     const rows: TimeoutRowView[] = rowIds.map(id => {
       const row = staged.get(id);
+      const server = serverOf.get(id);
       const text = row === undefined ? String(live[id] ?? "") : row.text;
       const invalid = row !== undefined && !row.clear && parseTimeout(row.text) === undefined;
-      return { id, text, invalid, overridden: Object.hasOwn(user, id), inBase: Object.hasOwn(base, id) };
+      return {
+        id,
+        serverName: server?.serverName ?? "",
+        serverTimeoutMs: server?.timeoutMs,
+        ghost: server === undefined,
+        text,
+        invalid,
+        overridden: Object.hasOwn(user, id),
+        inBase: Object.hasOwn(base, id),
+      };
     });
     const { ops, invalid } = planWrite(live, staged);
     return {
