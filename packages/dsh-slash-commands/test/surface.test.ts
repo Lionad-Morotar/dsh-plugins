@@ -51,12 +51,41 @@ describe("surface gating", () => {
     expect(inject).toContain("sessionTitle");
   });
 
+  it("does not gate the whole row on the workspace registry", () => {
+    // Observed on a real headless boot: declaring `workspaceRegistry` left the
+    // whole plugin pending on compositions without the workspace domain, which
+    // would have taken /rename and /copy down with it. The archive pair
+    // resolves the registry softly per invocation instead, so a missing
+    // service is one command's error message, not the row's silence.
+    expect(inject).not.toContain("workspaceRegistry");
+  });
+
   it("registers /rename on a non-terminal surface", async () => {
     const { registered, ctx } = context({ terminal: false, withCommands: true });
 
     await settle(() => apply(ctx as never));
 
-    expect(registered.map(entry => entry.name)).toEqual(["rename"]);
+    expect(registered.map(entry => entry.name)).toContain("rename");
+  });
+
+  it("registers /rename and /archive on a non-terminal surface", async () => {
+    const { registered, ctx } = context({ terminal: false, withCommands: true });
+
+    await settle(() => apply(ctx as never));
+
+    expect(registered.map(entry => entry.name).sort()).toEqual(["archive", "rename"]);
+  });
+
+  it("does not offer /unarchive on a non-terminal surface", async () => {
+    // The web/desktop slash menu gets /unarchive from the client half, whose
+    // contribution gates it on the session actually being archived. Registering
+    // the host command too would collide by name at candidate synthesis and
+    // would show a dead row in every unarchived session.
+    const { registered, ctx } = context({ terminal: false, withCommands: true });
+
+    await settle(() => apply(ctx as never));
+
+    expect(registered.some(entry => entry.name === "unarchive")).toBe(false);
   });
 
   it("does not offer /copy without a terminal", async () => {
@@ -69,17 +98,21 @@ describe("surface gating", () => {
     expect(registered.some(entry => entry.name === "copy")).toBe(false);
   });
 
-  it("registers both commands on a terminal surface", async () => {
+  it("registers every command on a terminal surface", async () => {
+    // The TUI has no client half, so /unarchive comes from the host registry
+    // there, ungated: a TUI session stays open after being archived, so the
+    // archived state is a normal posture and a constant row is honest.
     const { registered, ctx } = context({ terminal: true, withCommands: true });
 
     await settle(() => apply(ctx as never));
 
-    expect(registered.map(entry => entry.name).sort()).toEqual(["copy", "rename"]);
+    expect(registered.map(entry => entry.name).sort()).toEqual(["archive", "copy", "rename", "unarchive"]);
   });
 
-  it("still registers /rename when no commands service is mounted", async () => {
-    // /rename failing loudly is caught and logged: a composition can compose
-    // its surfaces differently, and that must not stop the plugin from trying.
+  it("still registers nothing when no commands service is mounted", async () => {
+    // /rename and the archive pair fail loudly but are caught and logged: a
+    // composition can compose its surfaces differently, and that must not
+    // stop the plugin from trying its other half.
     const { registered, ctx } = context({ terminal: false, withCommands: false });
 
     await settle(() => apply(ctx as never));

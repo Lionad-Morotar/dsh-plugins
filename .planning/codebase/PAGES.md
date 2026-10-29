@@ -8,9 +8,9 @@
 
 | 命令 | 实现文件 | 子命令数 | 说明 |
 | ---- | -------- | -------- | ---- |
-| `pnpm build` | `pnpm -r build` | 15 | 递归十五个包：十四个包出 `lib/`，`ascii-rest-scenes` 出 `src/catalog.generated.ts` |
-| `pnpm test` | `pnpm -r test` | 15 | 递归十五个包的 `vitest run`，实测 106 文件 1056 用例 |
-| `pnpm typecheck` | `pnpm -r typecheck` | 15 | 递归 `tsc -p tsconfig.json`，`noEmit` |
+| `pnpm build` | `pnpm -r build` | 16 | 递归十六个包：十五个包出 `lib/`，`ascii-rest-scenes` 出 `src/catalog.generated.ts` |
+| `pnpm test` | `pnpm -r test` | 16 | 递归十六个包的 `vitest run`，实测 109 文件 1081 用例 |
+| `pnpm typecheck` | `pnpm -r typecheck` | 16 | 递归 `tsc -p tsconfig.json`，`noEmit` |
 | `pnpm check:market` | `scripts/check-market-manifest.mjs` | 1 | 断言可投稿包面向市场索引的暴露面（宿主真正读取的字段），并断言六个自用包保持 `private: true` |
 | `pnpm build:market` | `scripts/build-market-index.mjs` | 1 | 从包自身元数据派生 `market/index.json`（format 1，git source） |
 | `pnpm check:market-index` | `scripts/build-market-index.mjs --check` | 1 | 只校验不写盘，输出每个包的安装 spec |
@@ -32,9 +32,9 @@
 
 | 包 | 脚本 | 命令 | 说明 |
 | -- | ---- | ---- | ---- |
-| 十五个包 | `build` | `node scripts/build.mjs`（`ascii-rest-scenes` 为 `node scripts/generate-catalog.mjs`） | 唯一的产物生成入口，`lib/` 只允许被它写 |
-| 十五个包 | `test` | `vitest run` | 单包测试 |
-| 十五个包 | `typecheck` | `tsc -p tsconfig.json` | 单包类型检查 |
+| 十六个包 | `build` | `node scripts/build.mjs`（`ascii-rest-scenes` 为 `node scripts/generate-catalog.mjs`） | 唯一的产物生成入口，`lib/` 只允许被它写 |
+| 十六个包 | `test` | `vitest run` | 单包测试 |
+| 十六个包 | `typecheck` | `tsc -p tsconfig.json` | 单包类型检查 |
 | `ascii-rest-scenes` | `build:catalog` | `node scripts/generate-catalog.mjs` | 与 `build` 同一条命令，语义化别名：升级上游 ascii.rest commit 后重跑它 |
 
 ## 插件挂载入口
@@ -49,6 +49,7 @@
 | `dsh-preview-more` | `preview-more` | `dsh-preview-more` | `packages/dsh-preview-more/cordis.patch.yml` | `icon.svg` + `locale/{zh,en}.json` |
 | `dsh-slash-commands` | `dsh-slash-commands` | `dsh-slash-commands` | `packages/dsh-slash-commands/cordis.patch.yml` | `dsh-plugin.json`（Community Draft 0.15 准入清单，只声明宿主侧 `/copy` 与 `/rename`） |
 | `dsh-session-timing` | `session-timing` | `dsh-session-timing` | `packages/dsh-session-timing/cordis.patch.yml` | 无；宿主半注册 `sessionTiming` projection，市场文案走 `locale/{zh,en}.json` 的 `meta` |
+| `dsh-session-interruption` | `session-interruption` | `dsh-session-interruption` | `packages/dsh-session-interruption/cordis.patch.yml` | 无；宿主半注册 `sessionInterruption` projection，市场文案走 `locale/{zh,en}.json` 的 `meta` |
 | `dsh-model-provider-label` | `model-provider-label` | `dsh-model-provider-label` | `packages/dsh-model-provider-label/cordis.patch.yml` | 无；同上 |
 | `dsh-better` | `better` | `dsh-better` | `packages/dsh-better/cordis.patch.yml` | 无；宿主半为空挂行，功能全在客户端半边 |
 | `dsh-more-config` | `more-config` | `dsh-more-config` | `packages/dsh-more-config/cordis.patch.yml` | 无；`id` 同时是其设置命名空间 |
@@ -73,6 +74,7 @@
 | `dsh-model-provider-label` | `src/client/entry.ts` | `lib/client.js` | 以 `priority: -1` 接管 `conversation.input.model.label`（`single` slot，1017 徽章插件不再挂载，无注册者时回落 `renderSlot` 的 `fallback`）；`inject = ["slots"]` |
 | `dsh-better` | `src/client/entry.ts` | `lib/client.js` | 以 `id: command-popup`、`priority: -100` 遮蔽 `conversation.input.overlay` 接管 `/model` 弹窗；`inject = ["slots"]` |
 | `dsh-more-config` | `src/client/entry.ts` | `lib/client.js` | `slots.register({ name: "settings.section", id: "mcp", order: 10 })` 注册 MCP 配置栏；`inject = ["slots", "locale", "configForms"]`，读写走 `more-config` 命名空间的 volatile 数组字段 |
+| `dsh-session-interruption` | `src/client/entry.ts` | `lib/client.js` | `sidebar.session.row.leading` 红点、`sidebar.session.row.hover` 中断说明与 `sidebar.workspaces.session.menu.item` 忽略项三座共享一个读数面；`inject = ["slots", "locale", "sessions"]`，投影值走列表快照 `projectionsBySession` 并按 `running` 排除进行中会话 |
 | `dsh-command-panel` | `src/client/entry.ts` → `createRuntime` | `lib/client.js` | `slots.register({ name: "shell.overlay", id: "command-panel.palette", order: 50 })` 承载面板（组件内 portal 到 body），另在 `conversation.input.overlay` 挂 `id: command-panel.bridge` 的隐形会话桥以取当前会话与 `inputActions`；`inject = ["slots", "shortcuts", "sessions", "workspaces", "uiWorkspace", "conversation", "remote", "remote.fileReferences", "remote.commands", "locale"]`（Remote 命名空间是独立的点号服务） |
 | `dsh-workbench-core` | `src/client/entry.ts` | `lib/client.js` | `provide("workbench")` 后再注册 `slots.register({ name: "settings.section", id: "workbench", order: 60 })` 与 `conversation.session.header.views.actions`（id `workbench.return-to-chat`）；`inject = ["slots", "locale", "shortcuts"]` |
 | `dsh-fs-explorer` | `src/client/entry.ts` | `lib/client.js` + `lib/client.preview.js` | `slots.register({ name: "conversation.view", id: "fs-explorer", order: 100 })`；`inject = ["slots", "locale", "workbench", "remote"]`；CodeMirror 与 Markdown 渲染器在懒 chunk |

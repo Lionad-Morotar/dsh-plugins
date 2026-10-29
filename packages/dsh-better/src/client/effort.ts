@@ -62,6 +62,25 @@ export interface CatalogGroupLike {
 }
 
 /**
+ * The reasoning metadata of one catalog model, or nothing.
+ *
+ * @param groups - catalog groups in display order.
+ * @param selection - the model to ask about.
+ * @returns the model's `reasoning` block, undefined when the model is unknown
+ * or advertises no reasoning at all.
+ */
+export function reasoningMetaOf(groups: readonly CatalogGroupLike[], selection: ModelRef): ReasoningLike | undefined {
+  for (const group of groups) {
+    if (group.id !== selection.provider) continue;
+    for (const model of group.models) {
+      if (model.id !== selection.model) continue;
+      return model.reasoning;
+    }
+  }
+  return undefined;
+}
+
+/**
  * The effort levels for one model.
  *
  * Absent, empty and malformed all collapse to the empty list: a model whose
@@ -72,41 +91,46 @@ export interface CatalogGroupLike {
  * @returns the advertised levels, in catalog order.
  */
 export function effortLevelsOf(groups: readonly CatalogGroupLike[], selection: ModelRef): readonly EffortLevel[] {
-  for (const group of groups) {
-    if (group.id !== selection.provider) continue;
-    for (const model of group.models) {
-      if (model.id !== selection.model) continue;
-      const efforts = model.reasoning?.efforts;
-      if (efforts === undefined) return [];
-      // Copy so a caller can index it without aliasing catalog state.
-      return [...efforts];
-    }
-  }
-  return [];
+  const efforts = reasoningMetaOf(groups, selection)?.efforts;
+  if (efforts === undefined) return [];
+  // Copy so a caller can index it without aliasing catalog state.
+  return [...efforts];
+}
+
+/** The signals a row's pointed effort is resolved from. */
+export interface PointedInput {
+  /** A level explicitly picked inside this popup open, if any. */
+  readonly remembered?: string | undefined;
+  /** Whether this row is the session's current model. */
+  readonly isCurrent: boolean;
+  /** The effort currently in effect for the current model, if any. */
+  readonly currentEffort?: string | undefined;
+  /** The adapter's default for the row's model. */
+  readonly defaultEffort?: string | undefined;
 }
 
 /**
- * The effort a fresh selection starts on.
+ * The effort a row points at: the level a plain click applies and the chip the
+ * highlight marks.
  *
- * The adapter's own default when it names one the catalog actually advertises,
- * otherwise the current value if that one survived the model change, otherwise
- * the top of the ladder. Falling back to the top rather than to `undefined`
- * matters: submitting no effort lets the adapter choose silently, which would
- * make the visible choice disagree with the one that took effect.
- * @param levels - the new model's levels.
- * @param current - effort currently in effect, if any.
- * @param advertisedDefault - the adapter's default for the new model.
- * @returns the level to preselect, or undefined when there are no levels.
+ * Priority mirrors the shell's own `selectionOf`: the effort already in effect
+ * survives on the current model's row, every other row starts from the adapter's
+ * default, and both yield to a value the ladder no longer advertises. The
+ * remembered slot sits above both so an explicit in-popup choice wins even
+ * before the directory reflects it. Falling back to the top of the ladder
+ * rather than to `undefined` keeps the invariant that the highlighted level is
+ * the one that takes effect: submitting no effort would let the adapter choose
+ * silently.
+ * @param levels - the row model's levels.
+ * @param input - the signals above.
+ * @returns the level to point at, or undefined when there are no levels.
  */
-export function initialEffort(
-  levels: readonly EffortLevel[],
-  current: string | undefined,
-  advertisedDefault: string | undefined,
-): string | undefined {
+export function rowPointedEffort(levels: readonly EffortLevel[], input: PointedInput): string | undefined {
   if (levels.length === 0) return undefined;
   const has = (id: string | undefined): id is string => id !== undefined && levels.some((level) => level.id === id);
-  if (has(advertisedDefault)) return advertisedDefault;
-  if (has(current)) return current;
+  if (has(input.remembered)) return input.remembered;
+  if (input.isCurrent && has(input.currentEffort)) return input.currentEffort;
+  if (has(input.defaultEffort)) return input.defaultEffort;
   return levels[0]?.id;
 }
 

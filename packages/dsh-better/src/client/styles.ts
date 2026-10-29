@@ -40,6 +40,10 @@ const CSS = `
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
   font-weight: 600;
+  /* The active row's own background is the same fill this chip uses, so the
+     pointed level needs a stroke to stay readable against it. A shadow draws
+     outside the box: no layout shift, and the border token keeps both themes. */
+  box-shadow: 0 0 0 1px var(--dsw-alias-border-l1);
 }
 .dshBetter_badgeChip:focus-visible {
   outline: 1px solid var(--dsw-alias-border-l1);

@@ -11,6 +11,7 @@
  * mirror the sidebar and `/resume`, so the panel never becomes a back door.
  */
 
+import type { CatalogEntry } from "./catalog.ts";
 import type { Copy } from "./copy.ts";
 import type {
   CommandDescriptor,
@@ -29,7 +30,19 @@ export type RowAction =
   | { readonly kind: "execute-command"; readonly name: string; readonly needsInput: boolean }
   | { readonly kind: "open-mode"; readonly mode: PanelMode }
   | { readonly kind: "drill"; readonly scope: SessionScope; readonly title: string }
-  | { readonly kind: "open-session"; readonly sessionId: string };
+  | { readonly kind: "open-session"; readonly sessionId: string }
+  | { readonly kind: "create-session"; readonly scope: "workspace" | "ungrouped" }
+  /** Write `/name ` into the composer and let the host command take the argument. */
+  | { readonly kind: "insert-command"; readonly name: string }
+  | { readonly kind: "session-command"; readonly command: "archive" | "fork" | "cancel" | "pin" }
+  | {
+      readonly kind: "open-surface";
+      readonly surface: "plugins" | "settings" | "shortcuts" | "sidebar" | "files" | "terminal" | "browser";
+    }
+  | { readonly kind: "toggle-theme" };
+
+/** The default catalogue's domain, re-exported so callers keep one import. */
+export type { ActionCategory, CatalogEntry } from "./catalog.ts";
 
 export interface PanelRow {
   /** Stable identity across reloads; used as the React key. */
@@ -40,6 +53,11 @@ export interface PanelRow {
   readonly detail?: string;
   readonly hint?: string;
   readonly group?: string;
+  /**
+   * What the row names. Tree navigation and the file-workbench jump both need
+   * this as a fact rather than as a localized label comparison.
+   */
+  readonly kind?: "file" | "directory";
   readonly action: RowAction;
 }
 
@@ -66,6 +84,7 @@ export function fileRows(input: FileRowInput, copy: Copy): PanelRow[] {
       label,
       alias: slash >= 0 ? label.slice(slash + 1) : label,
       detail: candidate.kind === "directory" ? copy.directory : undefined,
+      kind: candidate.kind,
       action: { kind: "insert-path", absolutePath },
     };
   });
@@ -84,20 +103,27 @@ export function commandRows(commands: readonly CommandDescriptor[], copy: Copy):
 }
 
 /**
- * The panel's own entries, so every mode is reachable from every other mode.
+ * Project the default catalogue into rows.
  *
- * This is the whole "navigation and commands are mounted here" idea expressed in
- * four rows: no plugin API, no registry, just the modes addressing each other.
+ * The label carries the category (`会话：归档当前会话`) instead of the list
+ * carrying a section header: typing the category word then narrows the list with
+ * no extra syntax, which is the reason the word is in the row at all.
+ *
+ * @param copy - active locale.
+ * @param entries - the catalogue entries available right now.
+ * @param hints - keycap by host shortcut id, for the rows whose action has one.
+ * @returns one row per entry, in catalogue order.
  */
-export function builtinRows(copy: Copy, hints: Partial<Record<PanelMode, string>>): PanelRow[] {
-  const modes: readonly PanelMode[] = ["navigate", "command", "switch"];
-  return modes.map(mode => ({
-    key: `mode:${mode}`,
-    label: copy.modeNames[mode],
-    detail: copy.modeDescriptions[mode],
-    hint: hints[mode],
-    group: copy.groupBuiltin,
-    action: { kind: "open-mode", mode },
+export function catalogRows(
+  copy: Copy,
+  entries: readonly CatalogEntry[],
+  hints: ReadonlyMap<string, string>,
+): PanelRow[] {
+  return entries.map(entry => ({
+    key: `catalog:${entry.id}`,
+    label: `${copy.categoryNames[entry.category]}：${copy.actionLabels[entry.id] ?? entry.id}`,
+    hint: entry.shortcutId === undefined ? undefined : hints.get(entry.shortcutId),
+    action: entry.action,
   }));
 }
 

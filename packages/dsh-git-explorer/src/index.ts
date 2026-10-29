@@ -57,20 +57,22 @@ export type { LaneEdge, LaneRow } from "./host/lanes.ts";
 export const name = PACKAGE_NAME;
 
 /** Services the host half needs before it can answer a request. */
-export const inject = ["subprocess", "typert", "workingDirectory"];
+export const inject = ["subprocess", "sessions", "sessionPersistence"];
 
 /**
- * A live Session handle. Typert's `session` lookup resolves the wire-level
- * session id to the host object; this package never reads any other field.
+ * Structural slice of the Cordis sessions store (live session objects).
+ *
+ * Only the persisted header cwd is read; every other field of the live session
+ * is off limits so a host upgrade cannot break this panel through a shape this
+ * package never depended on.
  */
-export interface SessionHandle {
-  readonly id: string;
+export interface SessionsFace {
+  get(id: string): { readonly header?: { readonly cwd?: string } } | undefined;
 }
 
-/** Structural slice of the working-directory service. */
-export interface WorkingDirectoryFace {
-  get(session: SessionHandle): string;
-  readonly defaultDirectory: string;
+/** Structural slice of the sessionPersistence service (persisted header). */
+export interface SessionPersistenceFace {
+  stat(id: string): Promise<{ readonly header?: { readonly cwd?: string } } | undefined>;
 }
 
 export interface GitExplorerConfig {
@@ -106,13 +108,17 @@ function messageOf(error: unknown): string {
 /**
  * Host-side Git data service.
  *
- * The `typert` service is injected because the gateway that exports these
- * endpoints is the consumer of the Remote markers; `workingDirectory` is the
- * only authority for the directory a session's Git panel should read.
+ * `static inject` names exactly the services the app host guarantees. Listing a
+ * name the host does not define (a `typert` helper, a session working
+ * directory) would keep this whole plugin inactive forever, silently, because
+ * Cordis reads a missing inject as "wait for it". Optional collaborators are
+ * read through `ctx.get` per call instead, so a service that activates late is
+ * picked up and an absent one degrades instead of blocking activation.
  *
- * Wire shape: the typert `session` lookup turns the payload's `sessionId` into
- * the live Session object these methods receive; the rest of the payload is
- * `request`, and an optional final `signal` carries cancellation.
+ * Wire shape: the gateway passes the payload straight through — the request
+ * object is the first parameter and an optional trailing `AbortSignal` the
+ * last. Session identity travels inside the request as `sessionId`, and the
+ * gateway's resource reader picks it up from that first object argument.
  */
 export class GitExplorerService extends TypertRemoteService {
   static inject = inject;
@@ -124,35 +130,46 @@ export class GitExplorerService extends TypertRemoteService {
   });
 
   private readonly subprocess: SubprocessLike;
-  private readonly workingDirectory: WorkingDirectoryFace | undefined;
+  private readonly sessions: SessionsFace | undefined;
+  private readonly sessionPersistence: SessionPersistenceFace | undefined;
   private readonly config: GitExplorerConfig;
 
   constructor(ctx: Context, config?: Partial<GitExplorerConfig>) {
     super(ctx, GIT_SERVICE);
     this.config = normalizeConfig(config);
-    const services = ctx as unknown as {
-      readonly subprocess?: SubprocessLike;
-      readonly workingDirectory?: WorkingDirectoryFace;
+    const reader = ctx as unknown as { get?(name: string): unknown };
+    const read = (name: string): unknown => {
+      const value = reader.get?.call(ctx, name);
+      return value === null ? undefined : value;
     };
-    const subprocess = services.subprocess;
+    const subprocess = read("subprocess");
     if (subprocess === undefined) {
       throw new Error("dsh-git-explorer: subprocess service is unavailable");
     }
-    this.subprocess = subprocess;
-    this.workingDirectory = services.workingDirectory;
+    this.subprocess = subprocess as SubprocessLike;
+    this.sessions = read("sessions") as SessionsFace | undefined;
+    this.sessionPersistence = read("sessionPersistence") as SessionPersistenceFace | undefined;
   }
 
-  /** Resolve the repository base directory for one call. */
-  private baseDirectory(session: SessionHandle, override?: string): string {
+  /**
+   * Resolve the repository base directory for one call.
+   *
+   * Order: explicit absolute override, the live session header, the persisted
+   * session header, then the process cwd. Every step tolerates absence, so a
+   * closed session still renders a panel rooted at the deployment directory
+   * instead of failing the request.
+   */
+  private async baseDirectory(sessionId: string, override?: string): Promise<string> {
     if (override !== undefined && isAbsolute(override)) return override;
+    const live = this.sessions?.get(sessionId)?.header?.cwd;
+    if (typeof live === "string" && live !== "") return live;
     try {
-      const directory = this.workingDirectory?.get(session);
-      if (directory !== undefined && directory !== "") return directory;
+      const persisted = (await this.sessionPersistence?.stat(sessionId))?.header?.cwd;
+      if (typeof persisted === "string" && persisted !== "") return persisted;
     } catch {
-      // A session that is no longer live has no projection to read; fall back to
-      // the deployment directory instead of failing the whole panel.
+      // Persistence may be mid-restart; the deployment cwd is the last resort.
     }
-    return this.workingDirectory?.defaultDirectory ?? process.cwd();
+    return process.cwd();
   }
 
   private runnerFor(cwd: string): GitRunner {
@@ -165,12 +182,8 @@ export class GitExplorerService extends TypertRemoteService {
   }
 
   @Remote("snapshot")
-  async snapshot(
-    session: SessionHandle,
-    request: GitSnapshotRequest = {},
-    signal?: AbortSignal,
-  ): Promise<GitSnapshotResult> {
-    const cwd = this.baseDirectory(session, request.cwd);
+  async snapshot(request: GitSnapshotRequest, signal?: AbortSignal): Promise<GitSnapshotResult> {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
     try {
       return await collectSnapshot({ runner: this.runnerFor(cwd), cwd, maxCommits: this.config.maxCommits }, request, signal);
     } catch (error) {
@@ -179,8 +192,8 @@ export class GitExplorerService extends TypertRemoteService {
   }
 
   @Remote("query")
-  async query(session: SessionHandle, request: GitQueryRequest = {}, signal?: AbortSignal): Promise<GitQueryResult> {
-    const cwd = this.baseDirectory(session, request.cwd);
+  async query(request: GitQueryRequest, signal?: AbortSignal): Promise<GitQueryResult> {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
     try {
       return await collectQuery({ runner: this.runnerFor(cwd), cwd, defaultLimit: this.config.maxCommits }, request, signal);
     } catch (error) {
@@ -189,8 +202,8 @@ export class GitExplorerService extends TypertRemoteService {
   }
 
   @Remote("commit")
-  async commit(session: SessionHandle, request: GitCommitRequest = { hash: "" }, signal?: AbortSignal): Promise<GitCommitResult> {
-    const cwd = this.baseDirectory(session, request.cwd);
+  async commit(request: GitCommitRequest, signal?: AbortSignal): Promise<GitCommitResult> {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
     try {
       return await collectCommit({ runner: this.runnerFor(cwd), cwd }, request, signal);
     } catch (error) {

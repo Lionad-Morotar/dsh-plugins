@@ -7,6 +7,16 @@
  *   adapter reads that catalog over the same remote surface, so this single
  *   registration is what makes the command visible on web, desktop and TUI at
  *   once. It needs no terminal.
+ * - `/archive` registers on the same registry for the same reason: the write
+ *   belongs to the host's `workspaceRegistry` (the durable archive set), so
+ *   every surface can execute it and the host's push stream converges the
+ *   web/desktop UI on its own — the sidebar hides the row and the open main
+ *   view is cleared by the host's own reconcile, with no client-half code of
+ *   ours anywhere in that chain.
+ * - `/unarchive` is split by surface: the client half offers it only while
+ *   the open session is actually archived (the state gate the registry
+ *   cannot express), and the TUI takes the registry row here because its
+ *   session stays open after an archive.
  * - `/copy` needs the TUI's terminal: its OSC 52 escape and clipboard helpers
  *   only mean anything there. It registers through `tuiPluginHost` when the
  *   composition admits third-party activations, falling back to the plain
@@ -24,6 +34,7 @@
  * synchronously therefore always missed the mediated path.
  */
 import { MISSING_TOOL } from "./clipboard.ts";
+import { registerArchiveCommand, registerUnarchiveCommand } from "./archive-command.ts";
 import { registerCopyCommand } from "./command.ts";
 import type { ClipboardEffects, HostContextLike } from "./command.ts";
 import { registerRenameCommand } from "./rename-command.ts";
@@ -31,10 +42,18 @@ import { registerRenameCommand } from "./rename-command.ts";
 export const name = "dsh-slash-commands";
 
 /**
- * Cordis refuses a service read from a plugin that did not declare it, so both
- * services this package touches are listed here. `sessionTitle` is what
+ * Cordis refuses a service read from a plugin that did not declare it, so the
+ * services this package reads are declared here. `sessionTitle` is what
  * `/rename` writes through; without the declaration the read throws a
  * gateway-level contract error and the command reports itself unavailable.
+ *
+ * `workspaceRegistry` is deliberately NOT declared: a declaration makes the
+ * whole plugin row wait for the service, and a minimal composition (headless
+ * boots without the workspace domain) would then lose /rename and /copy too —
+ * observed pending on the real headless boot. The archive pair instead
+ * resolves the registry softly per invocation and reports a missing service
+ * as a per-command error, so each command's availability stays independent,
+ * the same way /copy's is gated by the terminal rather than the row.
  */
 export const inject = ["commands", "sessionTitle"];
 
@@ -129,7 +148,9 @@ export function apply(ctx: PluginContext): void {
 
   // `/rename` changes a session title through the harness-wide registry, so it
   // is surface-independent and goes in immediately: the macrotask delay below
-  // exists for `tuiPluginHost`, which this command never touches.
+  // exists for `tuiPluginHost`, which this command never touches. The archive
+  // pair shares that independence — the host registry write converges every
+  // surface — so it registers in the same immediate pass.
   try {
     registerRenameCommand(ctx);
     ctx.logger?.info?.("/rename is ready: /rename <new title>");
@@ -138,6 +159,13 @@ export function apply(ctx: PluginContext): void {
     // than thrown so the terminal half still gets its chance.
     const detail = error instanceof Error ? error.message : String(error);
     ctx.logger?.info?.("dsh-slash-commands: /rename is unavailable on this composition: " + detail);
+  }
+  try {
+    registerArchiveCommand(ctx);
+    ctx.logger?.info?.("/archive is ready: /archive [--stop]");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    ctx.logger?.info?.("dsh-slash-commands: /archive is unavailable on this composition: " + detail);
   }
 
   // One macrotask later the host row is mounted; registering from the same
@@ -155,10 +183,16 @@ export function apply(ctx: PluginContext): void {
       // mediated path validates the Cordis activation marker on it, which a
       // synthesized object would not carry.
       registerCopyCommand(ctx, environment, effects);
-      ctx.logger?.info?.("/copy is ready: /copy [<number=1>] --all");
+      // /unarchive joins /copy in the terminal-only block: web and desktop
+      // take the client half's state-gated contribution instead, so a host
+      // row here would either collide by name or show a dead restore command
+      // in every unarchived session. The TUI keeps the constant row because
+      // a TUI session stays open after being archived.
+      registerUnarchiveCommand(ctx);
+      ctx.logger?.info?.("/copy and /unarchive are ready: /copy [<number=1>] --all, /unarchive");
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      ctx.logger?.warn?.("dsh-slash-commands: /copy is unavailable on this composition: " + detail);
+      ctx.logger?.warn?.("dsh-slash-commands: /copy and /unarchive are unavailable on this composition: " + detail);
     }
   }, 0);
 }

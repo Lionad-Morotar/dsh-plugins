@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { copyFor } from "../src/client/copy.ts";
+import { CATALOG } from "../src/client/catalog.ts";
 import {
-  builtinRows,
+  catalogRows,
   commandRows,
   fileRows,
   sessionRows,
@@ -57,6 +58,29 @@ describe("fileRows", () => {
   });
 });
 
+describe("fileRows", () => {
+  const cwd = "/Users/lionad/Github/Lionad-Morotar/dsh-plugins";
+
+  it("records what each row names, so navigation need not read a label", () => {
+    const rows = fileRows(
+      {
+        cwd,
+        candidates: [
+          { path: "src/client/", kind: "directory" },
+          { path: "src/client/panel.ts", kind: "file" },
+        ],
+      },
+      copy,
+    );
+    expect(rows.map(row => row.kind)).toEqual(["directory", "file"]);
+    expect(rows.map(row => row.label)).toEqual(["src/client/", "src/client/panel.ts"]);
+    expect(rows[1]?.action).toEqual({
+      kind: "insert-path",
+      absolutePath: `${cwd}/src/client/panel.ts`,
+    });
+  });
+});
+
 describe("commandRows", () => {
   it("renders the slash form and advertises the input hint", () => {
     const rows = commandRows(
@@ -73,12 +97,29 @@ describe("commandRows", () => {
   });
 });
 
-describe("builtinRows", () => {
-  it("offers every mode with its keycap", () => {
-    const rows = builtinRows(copy, { navigate: "⌘P", command: "⌘⇧P", switch: "⌘O" });
-    expect(labels(rows)).toEqual(["文件导航", "指令", "切换"]);
-    expect(rows.map(row => row.hint)).toEqual(["⌘P", "⌘⇧P", "⌘O"]);
-    expect(rows.every(row => row.group === copy.groupBuiltin)).toBe(true);
+describe("catalogRows", () => {
+  const entries = CATALOG.filter(
+    entry => entry.id === "panel.navigate" || entry.id === "session.archive" || entry.id === "view.theme",
+  );
+
+  it("prefixes the category word and keeps catalogue order", () => {
+    const rows = catalogRows(copy, entries, new Map());
+    expect(labels(rows)).toEqual(["面板：文件导航", "会话：归档当前会话", "视图：切换亮暗主题"]);
+    expect(rows[0]?.action).toEqual({ kind: "open-mode", mode: "navigate" });
+  });
+
+  it("shows the host keycap when the shortcut is bound", () => {
+    const hints = new Map([
+      ["command-panel.navigate", "⌘P"],
+      ["session.archive", "⌥⇧A"],
+    ]);
+    const rows = catalogRows(copy, entries, hints);
+    expect(rows.map(row => row.hint)).toEqual(["⌘P", "⌥⇧A", undefined]);
+  });
+
+  it("leaves the hint empty for an action with no host shortcut", () => {
+    const [row] = catalogRows(copy, CATALOG.filter(entry => entry.id === "view.theme"), new Map());
+    expect(row?.hint).toBeUndefined();
   });
 });
 

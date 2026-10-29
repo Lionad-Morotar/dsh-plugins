@@ -29,6 +29,11 @@
       "name": "commands.invoke",
       "scope": "lionad.dsh-slash-commands.rename",
       "reason": "/rename 由用户手动发起，只改当前会话的标题"
+    },
+    {
+      "name": "commands.invoke",
+      "scope": "lionad.dsh-slash-commands.archive",
+      "reason": "/archive 由用户手动发起，把当前会话写入宿主归档集合（--stop 时附带请求停止其运行中的工作）"
     }
   ],
   "contributes": {
@@ -42,6 +47,11 @@
         "id": "lionad.dsh-slash-commands.rename",
         "title": "/rename",
         "description": "Rename the current session (web and desktop; the TUI ships its own /rename)"
+      },
+      {
+        "id": "lionad.dsh-slash-commands.archive",
+        "title": "/archive",
+        "description": "Archive the current session (--stop also stops its running work)"
       }
     ]
   },

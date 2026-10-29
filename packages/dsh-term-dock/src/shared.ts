@@ -4,11 +4,16 @@ export const PACKAGE_NAME = "dsh-term-dock";
 /**
  * Host slot the dock occupies.
  *
- * `shell.bottom` is a single, root-scoped slot and the first registrant wins, so
- * the core owns the visibility switch that decides whether this row registers at
- * all (blueprint D2). `apply` reads it before anything else.
+ * `conversation.composer.dock` is a session-scoped list slot rendered
+ * full-width inside the conversation column, below the composer card and
+ * flush with the column bottom, matching the reference terminal placement.
+ * The frame level `shell.bottom` was tried first and rejected: it spans the
+ * whole app frame, so the dock slid under the right sidebar too. The
+ * visibility gate (blueprint D2) stays: the row only registers while the
+ * workbench says the dock is visible, and a hidden dock keeps its processes
+ * by unmounting to `display:none` inside the component.
  */
-export const DOCK_SLOT = "shell.bottom";
+export const DOCK_SLOT = "conversation.composer.dock";
 
 /** Stable product id, used for DOM probes and diagnostics. */
 export const DOCK_ID = "term-dock";

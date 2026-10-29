@@ -4,11 +4,10 @@
  * Registers one root surface — the terminal dock — and nothing else. Three rules
  * shape the file:
  *
- * - The gate comes first. `shell.bottom` is single and first-registrant-wins, so
- *   registering it while the workbench says the dock is hidden would take the slot
- *   from whatever else wants the bottom of the shell (blueprint D2). The gate is
- *   also live: `⌘⇧M` flips the core's observable switch, and a dock hidden at
- *   apply time mounts the first time the switch turns on.
+ * - The gate comes first. The dock slot is session-scoped, so registering while
+ *   the workbench says the dock is hidden would paint a dead surface (blueprint
+ *   D2). The gate is also live: `⌘⇧M` flips the core's observable switch, and a
+ *   dock hidden at apply time mounts the first time the switch turns on.
  * - The heavy half is never imported here. xterm lives in `client.terminal.js`
  *   behind `require.async`; this bundle only knows the chunk's file name.
  * - Everything stateful is created per apply. A reload of the row builds a fresh
@@ -68,7 +67,7 @@ export function apply(ctx: ClientContextLike): () => void {
   let offSlot: (() => void) | undefined;
   let offDockRow: (() => void) | undefined;
 
-  /** Take the single bottom slot; called on apply and on a later show. */
+  /** Take the dock slot; called on apply and on a later show. */
   const mount = (): void => {
     if (offSlot !== undefined) return;
     offDockRow = workbench.registerDock?.({ id: DOCK_ID, title: t("dock.title") });

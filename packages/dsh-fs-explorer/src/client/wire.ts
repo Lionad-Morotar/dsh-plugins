@@ -197,8 +197,7 @@ export function describeFailure(error: unknown): string {
  */
 export interface GitStatusFace {
   snapshot(
-    sessionId: string,
-    request?: { readonly maxCommits?: number },
+    request: { readonly sessionId: string; readonly maxCommits?: number },
     signal?: AbortSignal,
   ): Promise<unknown> | unknown;
 }

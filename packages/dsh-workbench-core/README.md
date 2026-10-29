@@ -29,9 +29,11 @@
 
 ## 核心能力
 
-- 服务 `workbench`（契约版本 1）：`panelStore` 面板台账（按 `order` 与 id 排序、同 id 注册幂等）、`registerDock` / `docks`、`currentSessionId`、`openView` / `closeView`。
+- 服务 `workbench`（契约版本 1）：`panelStore` 面板台账（按 `order` 与 id 排序、同 id 注册幂等）、`registerDock` / `docks`、`currentSessionId`、`openView` / `closeView`、`openViewOrSwitch`、`viewFocus`。
 - 终端开关 `dockVisibility`：默认可见，`get` / `set` / `toggle` / `subscribe` 四件套；`dockVisible` / `setDockVisible` 保留为兼容读写。`shell.bottom` 是单槽且先注册者胜，所以"是否占这个槽"只能有一个决策人，dock 在注册前先读这个开关，运行中则订阅它收放。
-- 视图切换 seam：`views.bind(sessionId, open)` 接住宿主发给会话级的 `openView`，`open` / `showChat` 供 root 作用域的终端 dock 回对话。同一会话后绑定的覆盖先绑定的，旧 disposer 不会误删新绑定。`createViewSwitcher` 在 seam 之上加一条显式兜底：宿主只在 View More 菜单展开时绑定 `openView`，菜单关掉后按精确文本点击宿主自己的「文件」/「Git」/「对话」标签。
+- 视图切换 seam：`views.bind(sessionId, open)` 接住宿主发给会话级的 `openView`，`open` / `showChat` 供 root 作用域的终端 dock 回对话。同一会话后绑定的覆盖先绑定的，旧 disposer 不会误删新绑定。`createViewSwitcher` 在 seam 之上加一条显式兜底：宿主只在 View More 菜单展开时绑定 `openView`，菜单关掉后按精确文本点击宿主自己的「文件」/「Git」/「对话」标签。`openViewOrSwitch` 把这两条合成一次调用，并用 `focused` 回答"focus 是否真的送到了"，因为点标签只能切视图、送不了目标。
+
+- 焦点队列 `viewFocus`：宿主没交出 `openView` 时，调用方（例如命令面板的 `⌘↵`）把 `path:<相对路径>` 放进队列再切视图；文件视图挂载时取走等待中的那条，并订阅后续请求。每个视图只保留一条，后到覆盖，避免读者已经走开之后旧目标被重放。
 - 宿主适配层：`files`（`workspaceFiles` 的 list / read / stat / changes）、`subprocess`、`terminals`（`webTerminals` 的 view / close / recover）、`composerOverlay`（`data-conversation-composer-overlay` 锚点）。全部按名软探测，服务缺失回报 absent 而不是抛错，宿主升级最多打断一个文件。
 - 设置分区「工作台」：文件 / Git / 终端三组，行来自宿主 `ctx.shortcuts.catalog` 的真实快照——没挂载的命令所在组显示"未安装"，不会渲染一张空表。点"修改"进入录制，先 `describeBinding` 查 issue 与冲突，再带 revision 写 `shortcuts.edit`；被拒时把原因写在行下。
 - 命令注册：三条全局命令经 `ctx.shortcuts.register` 注册，desktop 的 macOS / Windows / Linux 三套平台 profile 写同一条声明。单条注册失败只记一条 warn，不连累设置页——设置页正是解释冲突的地方。

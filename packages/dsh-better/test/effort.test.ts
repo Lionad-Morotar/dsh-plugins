@@ -10,8 +10,9 @@ import { describe, expect, it } from "vitest";
 import {
   badgeLevels,
   effortLevelsOf,
-  initialEffort,
   needsEffort,
+  reasoningMetaOf,
+  rowPointedEffort,
   selectionOfDraft,
   type CatalogGroupLike,
   type EffortLevel,
@@ -79,28 +80,54 @@ describe("effortLevelsOf", () => {
   });
 });
 
-describe("initialEffort", () => {
-  it("prefers the adapter's own default", () => {
-    expect(initialEffort(FOUR, "low", "high")).toBe("high");
+describe("reasoningMetaOf", () => {
+  it("returns the reasoning block the row's model advertises", () => {
+    expect(reasoningMetaOf(GROUPS, { provider: "deepseek-account", model: "deepseek-flash" })?.defaultEffort).toBe(
+      "high",
+    );
   });
 
-  it("keeps the value already in effect when the new model has it too", () => {
-    expect(initialEffort(FOUR, "max", undefined)).toBe("max");
+  it("is undefined for a model without a reasoning block or an unknown row", () => {
+    expect(reasoningMetaOf(GROUPS, { provider: "dsh-dk", model: "glm-5.3-flash" })).toBeUndefined();
+    expect(reasoningMetaOf(GROUPS, { provider: "gone", model: "gone" })).toBeUndefined();
+  });
+});
+
+describe("rowPointedEffort", () => {
+  it("keeps the effort already in effect when the row is the session's current model", () => {
+    // The shell's own settlement reads `current.reasoningEffort ?? defaultEffort`
+    // for the current model; a plain row click must land on the same level the
+    // highlight shows, not reset it.
+    expect(rowPointedEffort(FOUR, { isCurrent: true, currentEffort: "max", defaultEffort: "high" })).toBe("max");
   });
 
-  it("ignores a default the catalog does not actually advertise", () => {
+  it("takes the adapter's default for a row that is not the current model", () => {
+    expect(rowPointedEffort(FOUR, { isCurrent: false, currentEffort: "max", defaultEffort: "high" })).toBe("high");
+  });
+
+  it("prefers an explicit in-popup choice over everything else", () => {
+    expect(
+      rowPointedEffort(FOUR, { remembered: "low", isCurrent: true, currentEffort: "max", defaultEffort: "high" }),
+    ).toBe("low");
+  });
+
+  it("falls back to the default when the current selection names no effort", () => {
+    expect(rowPointedEffort(FOUR, { isCurrent: true, currentEffort: undefined, defaultEffort: "high" })).toBe("high");
+  });
+
+  it("skips remembered and current values the ladder no longer advertises", () => {
+    expect(
+      rowPointedEffort(THREE, { remembered: "off", isCurrent: true, currentEffort: "off", defaultEffort: "high" }),
+    ).toBe("high");
+  });
+
+  it("ignores a default the ladder does not advertise, landing on the top", () => {
     // Otherwise the visible choice would name a level the adapter cannot take.
-    expect(initialEffort(THREE, undefined, "off")).toBe("low");
+    expect(rowPointedEffort(THREE, { isCurrent: false, defaultEffort: "off" })).toBe("low");
   });
 
-  it("falls back to the top of the ladder rather than to no choice", () => {
-    // Submitting no effort would let the adapter decide silently, and then the
-    // highlighted level would disagree with what took effect.
-    expect(initialEffort(FOUR, undefined, undefined)).toBe("off");
-  });
-
-  it("has nothing to choose when the model advertises no levels", () => {
-    expect(initialEffort([], "high", "high")).toBeUndefined();
+  it("has nothing to point at when the model advertises no levels", () => {
+    expect(rowPointedEffort([], { isCurrent: true, currentEffort: "max", defaultEffort: "high" })).toBeUndefined();
   });
 });
 

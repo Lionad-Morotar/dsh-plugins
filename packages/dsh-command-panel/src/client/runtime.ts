@@ -23,23 +23,35 @@ import type {
   ConversationService,
   FileReferencesRemote,
   InputActions,
+  LayoutService,
   LocaleService,
+  PluginNavigationService,
   SessionInput,
   SessionsService,
   ShortcutsService,
+  SidebarRightService,
+  WorkbenchService,
   SlotService,
+  ThemeService,
   UiWorkspaceService,
   Unsubscribe,
   WorkspacesService,
 } from "./dsh.ts";
+import { runCatalogAction, type ActionDeps } from "./actions.ts";
 import { createBridgeView, type BridgeState } from "./bridge.ts";
 import { planClaim, type ClaimProbe, type ClaimTarget } from "./claims.ts";
 import type { Copy } from "./copy.ts";
 import { copyFor } from "./copy.ts";
-import { createPanelView, PANEL_MODAL } from "./panel.ts";
+import {
+  PANEL_COMMAND_IDS,
+  availableCatalog,
+  type ActionContext,
+} from "./catalog.ts";
+import { createPanelView, PANEL_MODAL, type PanelVerbs } from "./panel.ts";
 import {
   PANEL_MODES,
   back as backModel,
+  clampHighlight,
   drill,
   highlightAt,
   modelFor,
@@ -50,19 +62,15 @@ import {
 } from "./panel-state.ts";
 import { composeInsertion } from "./paths.ts";
 import { rankRows } from "./ranking.ts";
-import { builtinRows } from "./rows.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
-import type { PanelRow } from "./rows.ts";
+import { catalogRows, type PanelRow } from "./rows.ts";
 import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from "./sources.ts";
 import { createPanelStore } from "./store.ts";
+import { directoryQuery, focusPath, parentQuery } from "./tree.ts";
 import { insertPanelStyles } from "./styles.ts";
 
 /** The three command ids; also the settings rows the reader can rebind. */
-export const COMMAND_IDS = {
-  navigate: "command-panel.navigate",
-  command: "command-panel.commands",
-  switch: "command-panel.switch",
-} as const;
+export const COMMAND_IDS = PANEL_COMMAND_IDS;
 
 /** Upper bound on rendered rows; typing narrows past it. */
 export const MAX_ROWS = 200;
@@ -84,9 +92,16 @@ const COMMAND_MODE_DEFAULTS = {
 
 const MODE_BY_ID: ReadonlyMap<string, PanelMode> = new Map([
   [COMMAND_IDS.navigate, "navigate"],
-  [COMMAND_IDS.command, "command"],
+  [COMMAND_IDS.commands, "command"],
   [COMMAND_IDS.switch, "switch"],
 ] as const);
+
+/** The inverse for registration, where the mode is the loop variable. */
+const ID_BY_MODE: Readonly<Record<PanelMode, string>> = {
+  navigate: COMMAND_IDS.navigate,
+  command: COMMAND_IDS.commands,
+  switch: COMMAND_IDS.switch,
+};
 
 /** Device platform; the host's `primary` expands by it. */
 export type PanelPlatform = "macos" | "windows" | "linux";
@@ -103,6 +118,13 @@ export interface PanelConfig {
    * would do by hand.
    */
   readonly takeoverSwitch?: boolean;
+  /**
+   * Whether the settings page and shortcut reference rows are offered.
+   *
+   * Those two have no service; they are reachable only through a slot store seat
+   * the host pins. Turning this off removes both rows and nothing else.
+   */
+  readonly seatSurfaces?: boolean;
 }
 
 export interface PanelRuntimeDeps {
@@ -118,6 +140,14 @@ export interface PanelRuntimeDeps {
 
 export interface PanelRuntime {
   dispose(): void;
+  /**
+   * Seam for the runtime tests: the same store and verbs the view drives, so a
+   * suite can press keys without a React renderer.
+   */
+  readonly __test: {
+    readonly store: ReturnType<typeof createPanelStore>;
+    readonly verbs: PanelVerbs;
+  };
 }
 
 /** Build the panel's runtime against a live client context. */
@@ -158,6 +188,12 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     conversation?: ConversationService;
     uiWorkspace?: UiWorkspaceService;
     locale?: LocaleService;
+    layout?: LayoutService;
+    theme?: ThemeService;
+    pluginNavigation?: PluginNavigationService;
+    sidebarRight?: SidebarRightService;
+    slots?: SlotService;
+    workbench?: WorkbenchService;
   } = {};
 
   const copy = (): Copy => copyFor(refs.locale?.getSnapshot().active ?? "zh");
@@ -213,7 +249,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     store.set({ notice: text, noticeTone: tone });
   }
 
-  function notify(text: string, tone: "info" | "error" = "info"): void {
+  function notifyComposer(text: string, tone: "info" | "error" = "info"): void {
     const input = inputFor(currentSessionId());
     if (input !== null) {
       try {
@@ -245,16 +281,72 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
 
   // ── loading ─────────────────────────────────────────────────────────────
 
-  function modeHints(): Partial<Record<PanelMode, string>> {
-    const hints: Partial<Record<PanelMode, string>> = {};
+  /** Host slash commands seen in the last successful catalogue read. */
+  let knownHostCommands: ReadonlySet<string> = new Set();
+
+  /** Keycap by host shortcut id; re-read on demand because users rebind live. */
+  function keycapHints(): Map<string, string> {
+    const hints = new Map<string, string>();
     const shortcuts = services.shortcuts();
     if (shortcuts === undefined) return hints;
-    const rows = new Map(shortcuts.catalog.getSnapshot().map(row => [row.id, row]));
-    for (const mode of PANEL_MODES) {
-      const keys = rows.get(COMMAND_IDS[mode])?.keys ?? [];
-      if (keys.length > 0) hints[mode] = keys.join(" ");
+    for (const row of shortcuts.catalog.getSnapshot()) {
+      if (row.keys.length > 0) hints.set(row.id, row.keys.join(" "));
     }
     return hints;
+  }
+
+  /** State the catalogue's availability solve reads. */
+  function actionContext(): ActionContext {
+    const sessions = services.sessions();
+    const id = currentSessionId();
+    const row = id === null ? undefined : sessions?.list.getSnapshot().byId[id];
+    const sidebar = refs.sidebarRight;
+    return {
+      hasSession: id !== null && row !== undefined,
+      sessionRunning: row?.running === true,
+      hasCwd: (row?.cwd ?? "") !== "",
+      // An unknown layout counts as available: hiding every view action because a
+      // service is missing would fail worse than letting the call report itself.
+      sessionSurface: sidebar === undefined ? true : sidebar.mounted.getSnapshot() !== undefined,
+    };
+  }
+
+  /**
+   * The panel's own rows, ahead of the host's slash commands.
+   *
+   * Built synchronously so the command mode can show content on the very first
+   * frame, before the host catalogue round trip settles.
+   */
+  function composeCommandRows(hostRows: readonly PanelRow[]): PanelRow[] {
+    const entries = availableCatalog(actionContext(), {
+      seatSurfaces: deps.config?.seatSurfaces !== false,
+      hostCommands: knownHostCommands,
+    });
+    return [...catalogRows(copy(), entries, keycapHints()), ...hostRows];
+  }
+
+  /** What the executors may call; one object per dispatch keeps them pure of globals. */
+  function actionDeps(): ActionDeps {
+    return {
+      sessions: () => refs.sessions,
+      workspaces: () => refs.workspaces,
+      uiWorkspace: () => refs.uiWorkspace,
+      layout: () => refs.layout,
+      theme: () => refs.theme,
+      pluginNavigation: () => refs.pluginNavigation,
+      sidebarRight: () => refs.sidebarRight,
+      slots: () => refs.slots,
+      currentSessionId,
+      insert,
+      close,
+      // While the panel stays open the reader is looking at it, so the reason
+      // belongs there; once an action closed it, the composer is the surface left.
+      notify: (text, tone = "info") => {
+        if (store.getSnapshot().open) notice(text, tone);
+        else notifyComposer(text, tone);
+      },
+      copy,
+    };
   }
 
   function request(signal: AbortSignal): LoadRequest {
@@ -266,7 +358,6 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       query: snapshot.model.query,
       sessionId: currentSessionId(),
       copy: copy(),
-      hints: modeHints(),
       signal,
     };
   }
@@ -300,10 +391,16 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       const latest = store.getSnapshot();
       if (!latest.open) return;
 
-      rawRows = result.rows;
-      cache.set(keyOf(latest), result.rows);
+      if (latest.model.mode === "command" && result.status === "ready") {
+        knownHostCommands = new Set(
+          result.rows.flatMap(row => (row.action.kind === "execute-command" ? [row.action.name] : [])),
+        );
+      }
+      const composed = latest.model.mode === "command" ? composeCommandRows(result.rows) : result.rows;
+      rawRows = composed;
+      cache.set(keyOf(latest), composed);
       store.set({
-        rows: rankRows(result.rows, latest.model.query).slice(0, MAX_ROWS),
+        rows: rankRows(composed, latest.model.query).slice(0, MAX_ROWS),
         status: result.status,
         message: result.message ?? null,
         // A degraded catalogue still leaves usable rows, so its reason rides the
@@ -364,7 +461,6 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
           query: "",
           sessionId,
           copy: copy(),
-          hints: modeHints(),
           signal: new AbortController().signal,
         });
         if (result.status === "ready") cache.set(key, result.rows);
@@ -382,10 +478,9 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     const sessionId = currentSessionId();
     const cached = cache.get(cacheKey(mode, "root", "-", sessionId));
     rawRows = cached ?? [];
-    // The panel's own entries need no host round trip, so the command mode can
+    // The panel's own rows need no host round trip, so the command mode can
     // honour "open and there is already content" even on a cold start.
-    const seeded =
-      cached === undefined && mode === "command" ? builtinRows(copy(), modeHints()) : (cached ?? []);
+    const seeded = cached === undefined && mode === "command" ? composeCommandRows([]) : (cached ?? []);
     store.set({
       open: true,
       model,
@@ -519,18 +614,18 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         return commands.execute(sessionId, `/${name}`);
       });
       if (!result.ok) {
-        notify(copy().noticeExecuteFailed(name, result.error.code), "error");
+        notifyComposer(copy().noticeExecuteFailed(name, result.error.code), "error");
         return;
       }
       const execution = result.value;
       if (execution === undefined) return;
       if (execution.result.kind === "error") {
-        notify(copy().noticeExecuteFailed(name, execution.result.text), "error");
+        notifyComposer(copy().noticeExecuteFailed(name, execution.result.text), "error");
         return;
       }
-      notify(copy().noticeExecuted(name, execution.result.text));
+      notifyComposer(copy().noticeExecuted(name, execution.result.text));
     } catch (error) {
-      notify(copy().noticeExecuteFailed(name, error instanceof Error ? error.message : undefined), "error");
+      notifyComposer(copy().noticeExecuteFailed(name, error instanceof Error ? error.message : undefined), "error");
     }
   }
 
@@ -574,8 +669,95 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         acceptSession(row.action.sessionId);
         return;
       default:
+        // Catalogue kinds (session lifecycle, surfaces, theme) run in their own
+        // layer, which owns their notices and their failure vocabulary.
+        void runCatalogAction(row.action, actionDeps());
         return;
     }
+  }
+
+  /**
+   * Whether the horizontal arrows and the reveal accelerator belong to the tree.
+   *
+   * Only navigate mode has directories; in the other modes the arrows must keep
+   * moving the caret inside the query field.
+   */
+  function treeActive(): boolean {
+    return store.getSnapshot().model.mode === "navigate";
+  }
+
+  /** Rewrite the query through the same path typing takes. */
+  function applyQuery(query: string): void {
+    const snapshot = store.getSnapshot();
+    store.set({ model: withQuery(snapshot.model, query), notice: null, noticeTone: undefined });
+    rankLocal();
+    scheduleLoad(90);
+  }
+
+  /** Climb one level: drop the directory named by the text, else drop the fragment. */
+  function treeUp(): void {
+    if (!treeActive()) return;
+    const next = parentQuery(store.getSnapshot().model.query);
+    if (next === undefined) return;
+    applyQuery(next);
+  }
+
+  /** Enter the highlighted directory by making its path the query. */
+  function treeInto(): void {
+    if (!treeActive()) return;
+    const snapshot = store.getSnapshot();
+    const row = snapshot.rows[clampHighlight(snapshot.model.highlight, snapshot.rows.length)];
+    const next = directoryQuery(row);
+    if (next === undefined) return;
+    applyQuery(next);
+  }
+
+  /**
+   * Hand the highlighted file to the file workbench.
+   *
+   * The workbench's `openView` both switches the view and consumes the focus, so
+   * an already-open tab for that path is activated rather than duplicated, which
+   * is why this is one call and not a "find then open" pair.
+   */
+  function revealActive(): void {
+    if (!treeActive()) return;
+    const snapshot = store.getSnapshot();
+    const row = snapshot.rows[clampHighlight(snapshot.model.highlight, snapshot.rows.length)];
+    const path = focusPath(row);
+    if (path === undefined) return;
+    const workbench = refs.workbench;
+    const focus = `path:${path}`;
+    if (workbench === undefined) {
+      notice(copy().noticeRevealUnavailable, "error");
+      return;
+    }
+    if (workbench.openViewOrSwitch !== undefined) {
+      // Leave the target queued first: a view that mounts on this switch would
+      // otherwise pass the moment it could have taken the request.
+      workbench.viewFocus?.request("fs-explorer", focus);
+      const result = workbench.openViewOrSwitch("fs-explorer", focus);
+      if (result.focused) {
+        // The host delivered it; drop the queued copy so it cannot replay.
+        workbench.viewFocus?.take("fs-explorer");
+        close();
+        return;
+      }
+      if (result.opened) {
+        // The view switched and will take the queued focus on screen. Without the
+        // queue there is nothing left to deliver it, so say so.
+        close();
+        if (workbench.viewFocus === undefined) notice(copy().noticeRevealUnfocused, "info");
+        return;
+      }
+      workbench.viewFocus?.take("fs-explorer");
+      notice(copy().noticeRevealUnavailable, "error");
+      return;
+    }
+    if (workbench.openView("fs-explorer", focus)) {
+      close();
+      return;
+    }
+    notice(copy().noticeRevealUnavailable, "error");
   }
 
   function acceptActive(): void {
@@ -608,7 +790,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
 
     const stops: Unsubscribe[] = [];
     for (const mode of PANEL_MODES) {
-      const id = COMMAND_IDS[mode];
+      const id = ID_BY_MODE[mode];
       stops.push(
         shortcuts.register({
           id,
@@ -692,6 +874,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   function installSlots(scope: ClientContext): Unsubscribe {
     const slots = scope.get<SlotService>("slots");
     if (slots === undefined) return () => undefined;
+    refs.slots = slots;
 
     const view = createPanelView({
       React: deps.React,
@@ -700,26 +883,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       store,
       copy: copy(),
       document: doc,
-      move: delta => {
-        const snapshot = store.getSnapshot();
-        store.set({ model: moveHighlight(snapshot.model, delta, snapshot.rows.length) });
-      },
-      highlight: index => {
-        const snapshot = store.getSnapshot();
-        store.set({ model: highlightAt(snapshot.model, index, snapshot.rows.length) });
-      },
-      setQuery: query => {
-        const snapshot = store.getSnapshot();
-        store.set({ model: withQuery(snapshot.model, query), notice: null, noticeTone: undefined });
-        rankLocal();
-        scheduleLoad(90);
-      },
-      acceptActive,
-      accept,
-      dismiss: close,
-      back: goBack,
-      switchMode,
-      crumbLabel,
+      ...verbs,
     });
 
     // The bridge publishes the session on screen and its live composer face.
@@ -741,6 +905,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       ),
     ];
     return () => {
+      refs.slots = undefined;
       for (const stop of stops) stop();
     };
   }
@@ -806,6 +971,29 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     };
   }
 
+  /** The runtime's side of the view contract, built once for both consumers. */
+  const verbs: PanelVerbs = {
+    move: delta => {
+      const snapshot = store.getSnapshot();
+      store.set({ model: moveHighlight(snapshot.model, delta, snapshot.rows.length) });
+    },
+    highlight: index => {
+      const snapshot = store.getSnapshot();
+      store.set({ model: highlightAt(snapshot.model, index, snapshot.rows.length) });
+    },
+    setQuery: applyQuery,
+    acceptActive,
+    accept,
+    dismiss: close,
+    back: goBack,
+    switchMode,
+    treeUp,
+    treeInto,
+    revealActive,
+    treeActive,
+    crumbLabel,
+  };
+
   // ── assembly ────────────────────────────────────────────────────────────
 
   const disposers: Unsubscribe[] = [];
@@ -847,11 +1035,44 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     }),
   );
   disposers.push(insertPanelStyles(doc));
+  disposers.push(
+    deps.ctx.inject(["layout", "theme", "sidebarRight"], scope => {
+      refs.layout = scope.get<LayoutService>("layout");
+      refs.theme = scope.get<ThemeService>("theme");
+      refs.sidebarRight = scope.get<SidebarRightService>("sidebarRight");
+      return () => {
+        refs.layout = undefined;
+        refs.theme = undefined;
+        refs.sidebarRight = undefined;
+      };
+    }),
+  );
+  // The plugins page is a separate package; a profile without it simply loses
+  // that one row instead of the whole panel.
+  // The file workbench is another package: without it the reveal accelerator
+  // reports that no panel is available instead of the row disappearing.
+  disposers.push(
+    deps.ctx.inject(["workbench"], scope => {
+      refs.workbench = scope.get<WorkbenchService>("workbench");
+      return () => {
+        refs.workbench = undefined;
+      };
+    }),
+  );
+  disposers.push(
+    deps.ctx.inject(["pluginNavigation"], scope => {
+      refs.pluginNavigation = scope.get<PluginNavigationService>("pluginNavigation");
+      return () => {
+        refs.pluginNavigation = undefined;
+      };
+    }),
+  );
   disposers.push(deps.ctx.inject(["slots"], installSlots));
   disposers.push(deps.ctx.inject(["shortcuts"], installShortcuts));
   disposers.push(deps.ctx.inject(["sessions", "workspaces"], watchCatalogs));
 
   return {
+    __test: { store, verbs },
     dispose(): void {
       if (disposed) return;
       disposed = true;

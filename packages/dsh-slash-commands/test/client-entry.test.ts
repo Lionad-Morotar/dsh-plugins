@@ -50,12 +50,12 @@ describe("the client half", () => {
     expect(inject).toContain("uiWorkspace");
   });
 
-  it("registers /resume once when applied", () => {
+  it("registers /resume and the state-gated /unarchive when applied", () => {
     const { ctx, registrations } = context();
 
     clientPlugin.apply(ctx as never);
 
-    expect(registrations.map(entry => entry.name)).toEqual(["resume"]);
+    expect(registrations.map(entry => entry.name)).toEqual(["resume", "unarchive"]);
   });
 
   it("returns the registration's disposer to the effect, so a reload tears the command down", () => {
@@ -71,16 +71,18 @@ describe("the client half", () => {
 
   it("binds every page-level wiring through its own effect, so a reload tears them down", () => {
     // A second wrapper would stack budgets, a leaked clipboard binding would
-    // outlive the plugin, and a second beforeinput listener would fold one
-    // keystroke twice. All three go through fiber-scoped effects instead.
+    // outlive the plugin, a duplicate command registration would throw, and a
+    // second beforeinput listener would fold one keystroke twice. All of them
+    // go through fiber-scoped effects instead.
     const { ctx, effect, labels } = context();
 
     clientPlugin.apply(ctx as never);
 
-    expect(effect).toHaveBeenCalledTimes(3);
+    expect(effect).toHaveBeenCalledTimes(4);
     expect(labels).toEqual([
       "dsh-slash-commands: bounded clipboard",
       "dsh-slash-commands: /resume",
+      "dsh-slash-commands: /unarchive",
       "dsh-slash-commands: comma fold",
     ]);
   });

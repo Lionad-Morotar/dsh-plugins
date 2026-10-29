@@ -76,11 +76,22 @@ export function resolveKit(require: ModuleRequire | null): SectionKit | undefine
  * @param ctx - client root context.
  * @returns the disposer releasing the dictionary and the store subscription.
  */
+/** Disposer of the dictionary currently sitting in the host's locale table.
+* Module-level on purpose: a repeat apply on one host process (the desktop
+* sync pass followed by the mount pass) meets the same table, and the table
+* refuses a second registration outright. Dropping ours first turns that
+* would-be throw into a plain replacement — the disposer deletes by dictionary
+* identity, so the module-singleton dictionaries are always removable by the
+* very disposer that registered them. */
+let registeredDictionaries: (() => void) | undefined;
+
 export function apply(ctx: ClientContextLike): () => void {
   const kit = resolveKit(loaderRequire);
   if (kit === undefined) return () => {};
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
+  registeredDictionaries?.();
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
+  registeredDictionaries = offLocale;
   // A namespace the host does not serve (plugin absent, profile without the
   // row) surfaces as a scope whose status is not "ready"; get() throwing is
   // treated the same way, leaving the store's unavailable banner to render.
@@ -107,6 +118,7 @@ export function apply(ctx: ClientContextLike): () => void {
   return () => {
     store.dispose();
     offLocale();
+    if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
   };
 }
 

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import manifest from "../dsh-plugin.json" with { type: "json" };
+import { ARCHIVE_COMMAND_NAME } from "../src/archive.ts";
 import { COPY_COMMAND_NAME } from "../src/command.ts";
 import { RENAME_COMMAND_NAME } from "../src/rename.ts";
 
@@ -15,7 +16,14 @@ describe("the admission manifest", () => {
     const ids = manifest.contributes.commands.map((command: { id: string }) => command.id);
     // The host resolves a command by the last dotted segment of its declared
     // contribution id, so a mismatch here is a command that never dispatches.
-    expect(ids.map((id: string) => id.split(".").at(-1))).toEqual([COPY_COMMAND_NAME, RENAME_COMMAND_NAME]);
+    // /unarchive is not declared: on web/desktop it is a client contribution
+    // (visible only for archived sessions) and on the TUI a runtime
+    // registration, so a manifest entry would claim a surface it does not have.
+    expect(ids.map((id: string) => id.split(".").at(-1))).toEqual([
+      COPY_COMMAND_NAME,
+      RENAME_COMMAND_NAME,
+      ARCHIVE_COMMAND_NAME,
+    ]);
   });
 
   it("scopes commands.invoke to exactly those contributions", () => {

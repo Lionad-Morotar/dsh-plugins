@@ -103,7 +103,7 @@ function clampCommits(requested: number | undefined, fallback: number): number {
  */
 export async function collectSnapshot(
   options: SnapshotOptions,
-  request: GitSnapshotRequest = {},
+  request: Omit<GitSnapshotRequest, "sessionId"> = {},
   signal?: AbortSignal,
 ): Promise<GitSnapshotResult> {
   const cwd = request.cwd ?? options.cwd;

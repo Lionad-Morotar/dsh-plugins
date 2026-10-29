@@ -17,6 +17,8 @@ import { createDockVisibility, type DockVisibility } from "./dock-visibility.ts"
 import { WORKBENCH_COMMANDS, type WorkbenchCommandSpec } from "./keymap.ts";
 import { createPanelLedger, type PanelDescriptor, type PanelStore } from "./panels.ts";
 import { readCurrentSessionId } from "./session.ts";
+import { createViewFocusQueue, type ViewFocusQueue } from "./view-focus.ts";
+import { createViewSwitcher } from "./view-switcher.ts";
 import { createViewSeam, type ViewSwitchSeam } from "./views.ts";
 import { WORKBENCH_VERSION } from "../shared.ts";
 
@@ -55,6 +57,22 @@ export interface WorkbenchService {
   docks(): readonly DockDescriptor[];
   /** Open a conversation view for the current session. */
   openView(id: string, focus?: string): boolean;
+  /**
+   * Open a view, falling back to the host's own tab row when the seam is unbound.
+   *
+   * The host only hands its `openView` capability to the View More menu, so a
+   * caller acting from outside that menu cannot rely on the seam. `focused` says
+   * whether the focus string was actually delivered, because the tab fallback
+   * switches the view but has no way to pass one.
+   */
+  openViewOrSwitch(id: string, focus?: string): { readonly opened: boolean; readonly focused: boolean };
+  /**
+   * Focus hand-off for callers the host gave no capability to.
+   *
+   * The target view takes the request when it is on screen, which is the only
+   * way a view mounted lazily can still receive what to open.
+   */
+  readonly viewFocus: ViewFocusQueue;
   /** Return the current session to chat. */
   closeView(): boolean;
   /** The session the user is looking at, or undefined. */
@@ -96,6 +114,8 @@ export function createWorkbenchService(ctx: unknown): WorkbenchService {
 
   const views = createViewSeam();
 
+  const viewFocus = createViewFocusQueue();
+
   const service: WorkbenchService = {
     version: WORKBENCH_VERSION,
     panelStore: panels,
@@ -119,12 +139,24 @@ export function createWorkbenchService(ctx: unknown): WorkbenchService {
       if (sessionId === undefined) return false;
       return views.open(sessionId, id, focus);
     },
+    openViewOrSwitch(id, focus) {
+      const sessionId = readCurrentSessionId(ctx);
+      if (sessionId === undefined) return { opened: false, focused: false };
+      if (views.open(sessionId, id, focus)) return { opened: true, focused: true };
+      const switched = createViewSwitcher({
+        service: views,
+        sessionId,
+        doc: typeof document === "undefined" ? undefined : document,
+      }).open(id);
+      return { opened: switched, focused: false };
+    },
     closeView() {
       const sessionId = readCurrentSessionId(ctx);
       if (sessionId === undefined) return false;
       return views.showChat(sessionId);
     },
     currentSessionId: () => readCurrentSessionId(ctx),
+    viewFocus,
     dockVisibility,
     dockVisible: () => dockVisibility.get(),
     setDockVisible: visible => dockVisibility.set(visible),

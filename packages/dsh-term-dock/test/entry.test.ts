@@ -100,13 +100,13 @@ describe("term dock client entry", () => {
     expect(typeof __test.describeTerminal).toBe("function");
   });
 
-  it("registers shell.bottom, its locale and its dock row when the dock is visible", () => {
+  it("registers the dock slot, its locale and its dock row when the dock is visible", () => {
     const { ctx, calls } = createContext();
 
     apply(ctx as never);
 
-    expect(calls).toContainEqual({ type: "slots.inject", name: "shell.bottom" });
-    expect(calls).toContainEqual({ type: "slots.register", name: "shell.bottom", id: "term-dock" });
+    expect(calls).toContainEqual({ type: "slots.inject", name: "conversation.composer.dock" });
+    expect(calls).toContainEqual({ type: "slots.register", name: "conversation.composer.dock", id: "term-dock" });
     expect(calls).toContainEqual({ type: "locale.register", name: "term-dock" });
     expect(calls).toContainEqual({ type: "dock.register", id: "term-dock" });
   });
@@ -128,8 +128,8 @@ describe("term dock client entry", () => {
     expect(calls.filter(call => call.type === "slots.register")).toEqual([]);
 
     publish(true);
-    expect(calls).toContainEqual({ type: "slots.inject", name: "shell.bottom" });
-    expect(calls).toContainEqual({ type: "slots.register", name: "shell.bottom", id: "term-dock" });
+    expect(calls).toContainEqual({ type: "slots.inject", name: "conversation.composer.dock" });
+    expect(calls).toContainEqual({ type: "slots.register", name: "conversation.composer.dock", id: "term-dock" });
   });
 
   it("disposes its slot, locale and dock row", () => {

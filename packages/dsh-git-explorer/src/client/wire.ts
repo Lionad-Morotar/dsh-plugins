@@ -25,9 +25,9 @@ export type RemoteResult<T> =
 
 /** What `ctx.remote.gitExplorer` must expose for the panel to work. */
 export interface GitRemoteFace {
-  snapshot(sessionId: string, request?: GitSnapshotRequest, signal?: AbortSignal): Promise<RemoteResult<GitSnapshotResult>>;
-  query(sessionId: string, request?: GitQueryRequest, signal?: AbortSignal): Promise<RemoteResult<GitQueryResult>>;
-  commit(sessionId: string, request: GitCommitRequest, signal?: AbortSignal): Promise<RemoteResult<GitCommitResult>>;
+  snapshot(request: GitSnapshotRequest, signal?: AbortSignal): Promise<RemoteResult<GitSnapshotResult>>;
+  query(request: GitQueryRequest, signal?: AbortSignal): Promise<RemoteResult<GitQueryResult>>;
+  commit(request: GitCommitRequest, signal?: AbortSignal): Promise<RemoteResult<GitCommitResult>>;
 }
 
 /** Read the optional service on each call so a late mount starts working. */

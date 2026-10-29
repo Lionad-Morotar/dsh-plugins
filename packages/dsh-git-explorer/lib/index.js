@@ -804,7 +804,7 @@ var GIT_SERVICE = "gitExplorer";
 
 // src/index.ts
 var name = PACKAGE_NAME;
-var inject = ["subprocess", "typert", "workingDirectory"];
+var inject = ["subprocess", "sessions", "sessionPersistence"];
 var DEFAULT_CONFIG = {
   timeoutMs: 2e4,
   maxBytes: 4 * 1024 * 1024,
@@ -830,26 +830,41 @@ var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec 
     super(ctx, GIT_SERVICE);
     __runInitializers(_init, 5, this);
     __publicField(this, "subprocess");
-    __publicField(this, "workingDirectory");
+    __publicField(this, "sessions");
+    __publicField(this, "sessionPersistence");
     __publicField(this, "config");
     this.config = normalizeConfig(config);
-    const services = ctx;
-    const subprocess = services.subprocess;
+    const reader = ctx;
+    const read = (name2) => {
+      const value = reader.get?.call(ctx, name2);
+      return value === null ? void 0 : value;
+    };
+    const subprocess = read("subprocess");
     if (subprocess === void 0) {
       throw new Error("dsh-git-explorer: subprocess service is unavailable");
     }
     this.subprocess = subprocess;
-    this.workingDirectory = services.workingDirectory;
+    this.sessions = read("sessions");
+    this.sessionPersistence = read("sessionPersistence");
   }
-  /** Resolve the repository base directory for one call. */
-  baseDirectory(session, override) {
+  /**
+   * Resolve the repository base directory for one call.
+   *
+   * Order: explicit absolute override, the live session header, the persisted
+   * session header, then the process cwd. Every step tolerates absence, so a
+   * closed session still renders a panel rooted at the deployment directory
+   * instead of failing the request.
+   */
+  async baseDirectory(sessionId, override) {
     if (override !== void 0 && isAbsolute(override)) return override;
+    const live = this.sessions?.get(sessionId)?.header?.cwd;
+    if (typeof live === "string" && live !== "") return live;
     try {
-      const directory = this.workingDirectory?.get(session);
-      if (directory !== void 0 && directory !== "") return directory;
+      const persisted = (await this.sessionPersistence?.stat(sessionId))?.header?.cwd;
+      if (typeof persisted === "string" && persisted !== "") return persisted;
     } catch {
     }
-    return this.workingDirectory?.defaultDirectory ?? process.cwd();
+    return process.cwd();
   }
   runnerFor(cwd) {
     return createGitRunner({
@@ -859,24 +874,24 @@ var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec 
       maxBytes: this.config.maxBytes
     });
   }
-  async snapshot(session, request = {}, signal) {
-    const cwd = this.baseDirectory(session, request.cwd);
+  async snapshot(request, signal) {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
     try {
       return await collectSnapshot({ runner: this.runnerFor(cwd), cwd, maxCommits: this.config.maxCommits }, request, signal);
     } catch (error) {
       return fail("internal", messageOf(error));
     }
   }
-  async query(session, request = {}, signal) {
-    const cwd = this.baseDirectory(session, request.cwd);
+  async query(request, signal) {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
     try {
       return await collectQuery({ runner: this.runnerFor(cwd), cwd, defaultLimit: this.config.maxCommits }, request, signal);
     } catch (error) {
       return fail("internal", messageOf(error));
     }
   }
-  async commit(session, request = { hash: "" }, signal) {
-    const cwd = this.baseDirectory(session, request.cwd);
+  async commit(request, signal) {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
     try {
       return await collectCommit({ runner: this.runnerFor(cwd), cwd }, request, signal);
     } catch (error) {

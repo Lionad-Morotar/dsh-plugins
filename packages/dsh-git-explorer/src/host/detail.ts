@@ -28,7 +28,7 @@ const META_FORMAT = "--format=%H%x00%P%x00%an%x00%at%x00%s%x00%b";
  */
 export async function collectCommit(
   options: CommitOptions,
-  request: GitCommitRequest,
+  request: Omit<GitCommitRequest, "sessionId">,
   signal?: AbortSignal,
 ): Promise<GitCommitResult> {
   const hash = typeof request.hash === "string" ? request.hash.trim() : "";

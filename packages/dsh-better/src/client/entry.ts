@@ -171,6 +171,8 @@ export interface ModelDirectoriesLike {
 
 /** The part of a directory snapshot the effort lookup needs. */
 export interface DirectorySnapshotLike {
+  /** The session's current selection, when one has been settled. */
+  readonly current?: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string } | null;
   readonly groups: readonly { readonly id: string; readonly models: readonly unknown[] }[];
 }
 
@@ -277,17 +279,26 @@ export const clientPlugin = {
               id: POPUP_ID,
               priority: SHADOW_PRIORITY,
               locale: NS,
-              inject: (sessionId) => ({
-                popup: popupFor(ctx, sessionId),
-                // Resolved here because this is the one place that knows the
-                // session; the overlay only formats what it is handed.
-                catalog: directorySnapshot(ctx, sessionId)?.groups,
-                // Selecting a level is this surface's own gesture: the popup's
-                // onSelect rebuilds the choice from the row id and would drop the
-                // level, so the directory takes the settled selection directly.
-                selectModel: (selection: { provider: string; model: string; reasoningEffort?: string }) =>
-                  ctx.modelDirectories?.directoryFor?.(sessionId)?.select?.(selection),
-              }),
+              inject: (sessionId) => {
+                // One snapshot read feeds both faces: the ladder list and the
+                // effort currently in effect.
+                const snapshot = directorySnapshot(ctx, sessionId);
+                return {
+                  popup: popupFor(ctx, sessionId),
+                  // Resolved here because this is the one place that knows the
+                  // session; the overlay only formats what it is handed.
+                  catalog: snapshot?.groups,
+                  // The picker keeps the active effort on its row and lands a
+                  // plain click on it, which needs to know what is in effect.
+                  current: snapshot?.current ?? null,
+                  // Selecting a level is this surface's own gesture: the popup's
+                  // onSelect rebuilds the choice from the row id and would drop
+                  // the level, so the directory takes the settled selection
+                  // directly.
+                  selectModel: (selection: { provider: string; model: string; reasoningEffort?: string }) =>
+                    ctx.modelDirectories?.directoryFor?.(sessionId)?.select?.(selection),
+                };
+              },
             },
             Overlay,
           );
@@ -409,19 +420,21 @@ function popupFor(ctx: ClientContextLike, sessionId: string): unknown {
 }
 
 /**
- * The session's catalog groups, which carry each model's effort ladder.
+ * The session's directory snapshot: the catalog groups, which carry each
+ * model's effort ladder, and the current selection, which carries the effort in
+ * effect.
  *
  * Undefined rather than empty when unavailable: the picker treats "no catalog"
  * as "do not claim to know any effort levels", which is different from "this
  * session genuinely has no models".
  * @param ctx - client context.
  * @param sessionId - session whose catalog is wanted.
- * @returns the catalog groups, or undefined when the session has no directory.
+ * @returns the snapshot, or undefined when the session has no directory.
  */
 function directorySnapshot(
   ctx: ClientContextLike,
   sessionId: string,
-): { readonly groups: readonly { readonly id: string; readonly models: readonly unknown[] }[] } | undefined {
+): DirectorySnapshotLike | undefined {
   return ctx.modelDirectories?.directoryFor?.(sessionId)?.store.getSnapshot();
 }
 
