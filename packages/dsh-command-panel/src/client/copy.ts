@@ -44,6 +44,7 @@ export interface Copy {
   readonly modeDescriptions: Record<PanelMode, string>;
   readonly footer: FooterHint;
   readonly noticeRevealUnavailable: string;
+  readonly noticeRevealUnfocused: string;
   readonly noticeNoSession: string;
   readonly noticeInsertFailed: string;
   readonly noticeExecuted: (name: string, text: string | undefined) => string;
@@ -110,6 +111,7 @@ const ZH: Copy = {
     reveal: "⌘↵ 文件面板",
   },
   noticeRevealUnavailable: "文件面板不可用，宿主里没有注册 fs-explorer 视图",
+  noticeRevealUnfocused: "已切到文件面板；这个宿主没把定位能力交给插件，请手动打开该文件",
   noticeNoSession: "当前没有打开的会话，无法写入输入框",
   noticeInsertFailed: "输入框正忙，稍后重试",
   noticeExecuted: (name, text) => (text === undefined || text === "" ? `已执行 /${name}` : `/${name}：${text}`),
@@ -198,6 +200,7 @@ const EN: Copy = {
     reveal: "⌘↵ file panel",
   },
   noticeRevealUnavailable: "No file panel is available; the host has no fs-explorer view",
+  noticeRevealUnfocused: "Switched to the file panel; this host hands out no focus capability, so open the file there",
   noticeNoSession: "No open session, so there is no composer to write to",
   noticeInsertFailed: "The composer is busy; try again",
   noticeExecuted: (name, text) => (text === undefined || text === "" ? `Ran /${name}` : `/${name}: ${text}`),

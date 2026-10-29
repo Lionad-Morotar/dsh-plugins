@@ -386,6 +386,19 @@ export interface ThemeService {
  */
 export interface WorkbenchService {
   openView(id: string, focus?: string): boolean;
+  /**
+   * Open a view with its focus, or switch to it through the host's tab row when
+   * the host has not handed out the capability. Absent on older builds.
+   */
+  openViewOrSwitch?(id: string, focus?: string): { readonly opened: boolean; readonly focused: boolean };
+  /**
+   * Focus hand-off for views the host gave no capability to: the target view
+   * takes the request when it is on screen.
+   */
+  viewFocus?: {
+    request(view: string, focus: string): void;
+    take(view: string): string | undefined;
+  };
 }
 
 /** Cross-plugin navigation to the Plugins main panel. */

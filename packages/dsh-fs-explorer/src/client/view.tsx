@@ -36,10 +36,18 @@ import {
 } from "./wire.ts";
 import { VIEW_ID } from "../shared.ts";
 
+/** The pending-focus queue the core carries, as this view consumes it. */
+export interface ViewFocusFace {
+  take(view: string): string | undefined;
+  subscribe(listener: () => void): () => void;
+}
+
 /** The slice of the workbench core service this view reads. */
 export interface WorkbenchFace {
   readonly version: number;
   currentSessionId(): string | undefined;
+  /** Absent on cores older than the focus hand-off. */
+  readonly viewFocus?: ViewFocusFace;
 }
 
 /** The request the conversation shell carries when `openView` targets this tab. */
@@ -261,6 +269,27 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       });
       props.completeViewRequest?.();
     }, [props.viewRequest, props.completeViewRequest, stack]);
+
+    // A caller outside the View More menu cannot hand the host's focus to this
+    // view, so it leaves one in the core's queue instead. Take whatever is
+    // waiting now (this view mounted with a request) and keep listening while it
+    // is on screen (the reader asked again with the view already up).
+    useEffect(() => {
+      const queue = workbench.viewFocus;
+      if (queue === undefined || sessionId === undefined) return undefined;
+      const consume = (): void => {
+        const focus = queue.take(VIEW_ID);
+        if (focus === undefined) return;
+        consumeViewRequest(focus, {
+          open: (path, line) => {
+            stack.open(path, line);
+            setReveal({ path, line });
+          },
+        });
+      };
+      consume();
+      return queue.subscribe(consume);
+    }, [workbench, sessionId, stack]);
 
     const rootLevel = levels.get("");
     const rootReady = rootLevel?.status === "ready";

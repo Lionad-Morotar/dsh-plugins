@@ -35,6 +35,43 @@ describe("workbench service", () => {
     expect(service.panelStore.getSnapshot().activeId).toBeNull();
   });
 
+  it("reports the seam as focused when it carries the request", () => {
+    const ctx = { get: (name: string) => (name === "uiSession" ? { adapter: { current: { getSnapshot: () => ({ key: "s1" }) } } } : undefined) };
+    const service = createWorkbenchService(ctx);
+    const opened: Array<[string, string]> = [];
+    service.views.bind("s1", (id, focus) => opened.push([id, focus]));
+
+    expect(service.openViewOrSwitch("fs-explorer", "path:a.ts:3")).toEqual({ opened: true, focused: true });
+    expect(opened).toEqual([["fs-explorer", "path:a.ts:3"]]);
+  });
+
+  it("falls back to the host tab row when nothing holds the capability", () => {
+    const clicks: string[] = [];
+    const tab = {
+      textContent: "文件",
+      getAttribute: () => null,
+      click: () => clicks.push("tab"),
+    };
+    (globalThis as { document?: unknown }).document = {
+      querySelector: () => null,
+      querySelectorAll: () => [tab],
+    };
+    try {
+      const ctx = { get: (name: string) => (name === "uiSession" ? { adapter: { current: { getSnapshot: () => ({ key: "s1" }) } } } : undefined) };
+      const service = createWorkbenchService(ctx);
+
+      expect(service.openViewOrSwitch("fs-explorer", "path:a.ts")).toEqual({ opened: true, focused: false });
+      expect(clicks).toEqual(["tab"]);
+    } finally {
+      delete (globalThis as { document?: unknown }).document;
+    }
+  });
+
+  it("opens nothing without a session", () => {
+    const service = createWorkbenchService(emptyContext);
+    expect(service.openViewOrSwitch("fs-explorer")).toEqual({ opened: false, focused: false });
+  });
+
   it("binds one view opener per session and returns to chat", () => {
     const service = createWorkbenchService(emptyContext);
     const opened: Array<[string, string]> = [];

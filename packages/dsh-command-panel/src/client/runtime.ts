@@ -717,7 +717,35 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     const row = snapshot.rows[clampHighlight(snapshot.model.highlight, snapshot.rows.length)];
     const path = focusPath(row);
     if (path === undefined) return;
-    if (refs.workbench?.openView("fs-explorer", `path:${path}`) === true) {
+    const workbench = refs.workbench;
+    const focus = `path:${path}`;
+    if (workbench === undefined) {
+      notice(copy().noticeRevealUnavailable, "error");
+      return;
+    }
+    if (workbench.openViewOrSwitch !== undefined) {
+      // Leave the target queued first: a view that mounts on this switch would
+      // otherwise pass the moment it could have taken the request.
+      workbench.viewFocus?.request("fs-explorer", focus);
+      const result = workbench.openViewOrSwitch("fs-explorer", focus);
+      if (result.focused) {
+        // The host delivered it; drop the queued copy so it cannot replay.
+        workbench.viewFocus?.take("fs-explorer");
+        close();
+        return;
+      }
+      if (result.opened) {
+        // The view switched and will take the queued focus on screen. Without the
+        // queue there is nothing left to deliver it, so say so.
+        close();
+        if (workbench.viewFocus === undefined) notice(copy().noticeRevealUnfocused, "info");
+        return;
+      }
+      workbench.viewFocus?.take("fs-explorer");
+      notice(copy().noticeRevealUnavailable, "error");
+      return;
+    }
+    if (workbench.openView("fs-explorer", focus)) {
       close();
       return;
     }
