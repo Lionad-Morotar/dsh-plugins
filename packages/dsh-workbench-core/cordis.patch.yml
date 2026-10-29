@@ -1,0 +1,6 @@
+# Workbench core Loader row. The row must be loadable on both surfaces even
+# though every capability lives in `dsh.client`: the client half provides the
+# `workbench` service the three feature packages wait for.
+- insert:
+    - id: core
+      name: 'dsh-workbench-core'

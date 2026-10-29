@@ -1,0 +1,64 @@
+{
+  "profile": "s8-verify",
+  "host": "dsh web @ 127.0.0.1:2948 (browser: Chromium via playwright-core)",
+  "generatedAt": "2026-10-29 20:13:00",
+  "signals": [
+    {
+      "signal": "四包安装挂载：会话标签栏出现「文件」「Git」，页面底部出现终端 dock",
+      "command": "dsh --profile s8-verify --port 2948 --no-open & sleep 8 && node temp/s9-verify/run-ui2.cjs \"$(grep -o 'http://127.0.0.1:2948/?token=[A-Za-z0-9_-]*' temp/s9-verify/logs/server.log | head -1)\"",
+      "exitCode": 0,
+      "artifact": "temp/s9-verify/screens/04-file-panel.png",
+      "ts": "2026-10-29 20:10:21",
+      "note": "profile=s8-verify，port=2948，Chromium(playwright-core) 真机驱动。04 截图同一帧可见会话标签栏「文件」「Git」、文件树/预览与底部终端 dock；对话态同框另见 temp/s9-verify/screens/01-mount-files-git-dock.png。"
+    },
+    {
+      "signal": "文件树 git 状态与命令行一致（accept-s5-fs-status Y1-Y6 全 PASS）",
+      "command": "node .nsl/chain/accept-s5-fs-status.mjs",
+      "exitCode": 0,
+      "artifact": "temp/s9-verify/logs/s5.log",
+      "ts": "2026-10-29 20:11:54",
+      "note": "8/8 通过。Y3 真实仓库 6 条状态与 git status --porcelain=v2 -z 逐条一致；Y2 独立 oracle 覆盖 rename/空格/中文/未跟踪/冲突。"
+    },
+    {
+      "signal": "Git 数据层父子边与 3000 commit 预算（accept-s2-git-data G0-G5 全 PASS）",
+      "command": "node .nsl/chain/accept-s2-git-data.mjs",
+      "exitCode": 0,
+      "artifact": "temp/s9-verify/logs/s2.log",
+      "ts": "2026-10-29 20:11:51",
+      "note": "7/7 通过。G2 解析真实 git log 163 条，父边集合与命令行一致；G3 泳道不变量通过；G4 3000 commit 解析+泳道 3.9ms，预算 300ms。"
+    },
+    {
+      "signal": "终端进程 1:1：打开 dock 两个终端 ps +2，关闭一个 -1，关闭 dock 归零",
+      "command": "node temp/s9-verify/run-workbench-ui.cjs \"$(grep -o 'http://127.0.0.1:2948/?token=[A-Za-z0-9_-]*' temp/s9-verify/logs/server.log | head -1)\"",
+      "exitCode": 0,
+      "artifact": "temp/s9-verify/logs/terminal-1to1.log",
+      "ts": "2026-10-29 20:07:15",
+      "note": "实测计数 0 → 1（dock 自动开一个）→ 2（点 +）→ 1（关一个）→ 0（关完所有面板）；每次计数都记录 ps 原始行（ppid=宿主服务 pid）。截图 02-terminal-two.png / 03-terminal-zero.png。"
+    },
+    {
+      "signal": "键盘闭环：从对话页直接按 ⌘⇧E / ⌘⇧G 切视图、⌘⇧M 收放 dock、Esc 焦点回 composer",
+      "command": "dsh --profile s8-verify（link 本 worktree）+ Playwright：不打开 More 菜单直接按 Control+Shift+E/G/M，读取 data-workbench-view 与 dock 高度",
+      "exitCode": 0,
+      "artifact": "temp/s8c-verify/logs/result.json",
+      "ts": "2026-10-29 20:56:32",
+      "note": "实测：Ctrl+Shift+E → fs-explorer-view 0→1 且 aria-selected=文件；Ctrl+Shift+G → git-explorer-view 0→1；Ctrl+Shift+M → dock display flex/260px → none/0px 且 data-panel-count 保持 1（进程保留）；Esc 后 activeElement=[data-composer-input]"
+    },
+    {
+      "signal": "启动预算：accept-s6-fs-preview 的 Z5（启动包 gzip 与懒 chunk）",
+      "command": "node .nsl/chain/accept-s6-fs-preview.mjs",
+      "exitCode": 0,
+      "artifact": "temp/s9-verify/logs/s6.log",
+      "ts": "2026-10-29 20:11:56",
+      "note": "7/7 通过。Z5：client.preview.js 懒 chunk，启动包 gzip 20.3KB（预算 60KB），大 chunk 同时含 CodeMirror 与 Markdown 渲染器。"
+    },
+    {
+      "signal": "共存无回归：R2 全仓 build / typecheck / test 全绿",
+      "command": "pnpm -r build && pnpm -r typecheck && pnpm -r test",
+      "exitCode": 0,
+      "artifact": "temp/s9-verify/logs/r2-summary.log",
+      "ts": "2026-10-29 20:03:55",
+      "note": "三条命令退出码均 0；明细见 logs/build.log、logs/typecheck.log、logs/test.log。"
+    }
+  ],
+  "updatedAt": "2026-10-29 20:56:32"
+}

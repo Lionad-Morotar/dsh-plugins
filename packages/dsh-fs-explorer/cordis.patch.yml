@@ -1,0 +1,5 @@
+# File workbench Loader row. The client half waits for the `workbench` service
+# through its plugin `inject`, so row order against the core row is irrelevant.
+- insert:
+    - id: fs-explorer
+      name: 'dsh-fs-explorer'

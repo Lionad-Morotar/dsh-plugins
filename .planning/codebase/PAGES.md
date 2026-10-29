@@ -2,15 +2,15 @@
 
 <!-- refreshed: 261029 -->
 
-数据来源：本仓没有前端路由体系（web 客户端半边以 ModuleLoader 工厂挂载，不是页面路由），页面族不适用；命令族取自根 `package.json` 的 scripts 与十个包各自的 scripts，静态提取。另附两张本仓真正对外的入口表：插件挂载入口（profile 里的 Loader row 由哪个 patch 文件提供、带哪份清单）与客户端半边入口（`src/client/entry.ts` 对应哪个产物、注册在哪个 slot）。市场分发产物（`market/`）单列一节，它是本仓对外承诺安装形态的那一面。
+数据来源：本仓没有前端路由体系（web 客户端半边以 ModuleLoader 工厂挂载，不是页面路由），页面族不适用；命令族取自根 `package.json` 的 scripts 与十五个包各自的 scripts，静态提取。另附两张本仓真正对外的入口表：插件挂载入口（profile 里的 Loader row 由哪个 patch 文件提供、带哪份清单）与客户端半边入口（`src/client/entry.ts` 对应哪个产物、注册在哪个 slot）。市场分发产物（`market/`）单列一节，它是本仓对外承诺安装形态的那一面。
 
 ## 命令总览
 
 | 命令 | 实现文件 | 子命令数 | 说明 |
 | ---- | -------- | -------- | ---- |
-| `pnpm build` | `pnpm -r build` | 10 | 递归十个包：九个包出 `lib/`，`ascii-rest-scenes` 出 `src/catalog.generated.ts` |
-| `pnpm test` | `pnpm -r test` | 10 | 递归十个包的 `vitest run`，实测 70 文件 744 用例 |
-| `pnpm typecheck` | `pnpm -r typecheck` | 10 | 递归 `tsc -p tsconfig.json`，`noEmit` |
+| `pnpm build` | `pnpm -r build` | 15 | 递归十五个包：十四个包出 `lib/`，`ascii-rest-scenes` 出 `src/catalog.generated.ts` |
+| `pnpm test` | `pnpm -r test` | 15 | 递归十五个包的 `vitest run`，实测 106 文件 1056 用例 |
+| `pnpm typecheck` | `pnpm -r typecheck` | 15 | 递归 `tsc -p tsconfig.json`，`noEmit` |
 | `pnpm check:market` | `scripts/check-market-manifest.mjs` | 1 | 断言可投稿包面向市场索引的暴露面（宿主真正读取的字段），并断言六个自用包保持 `private: true` |
 | `pnpm build:market` | `scripts/build-market-index.mjs` | 1 | 从包自身元数据派生 `market/index.json`（format 1，git source） |
 | `pnpm check:market-index` | `scripts/build-market-index.mjs --check` | 1 | 只校验不写盘，输出每个包的安装 spec |
@@ -32,9 +32,9 @@
 
 | 包 | 脚本 | 命令 | 说明 |
 | -- | ---- | ---- | ---- |
-| 十个包 | `build` | `node scripts/build.mjs`（`ascii-rest-scenes` 为 `node scripts/generate-catalog.mjs`） | 唯一的产物生成入口，`lib/` 只允许被它写 |
-| 十个包 | `test` | `vitest run` | 单包测试 |
-| 十个包 | `typecheck` | `tsc -p tsconfig.json` | 单包类型检查 |
+| 十五个包 | `build` | `node scripts/build.mjs`（`ascii-rest-scenes` 为 `node scripts/generate-catalog.mjs`） | 唯一的产物生成入口，`lib/` 只允许被它写 |
+| 十五个包 | `test` | `vitest run` | 单包测试 |
+| 十五个包 | `typecheck` | `tsc -p tsconfig.json` | 单包类型检查 |
 | `ascii-rest-scenes` | `build:catalog` | `node scripts/generate-catalog.mjs` | 与 `build` 同一条命令，语义化别名：升级上游 ascii.rest commit 后重跑它 |
 
 ## 插件挂载入口
@@ -53,6 +53,10 @@
 | `dsh-better` | `better` | `dsh-better` | `packages/dsh-better/cordis.patch.yml` | 无；宿主半为空挂行，功能全在客户端半边 |
 | `dsh-more-config` | `more-config` | `dsh-more-config` | `packages/dsh-more-config/cordis.patch.yml` | 无；`id` 同时是其设置命名空间 |
 | `dsh-command-panel` | `command-panel` | `dsh-command-panel` | `packages/dsh-command-panel/cordis.patch.yml` | `icon.svg` + `locale/{zh,en}.json`；Loader 行可带 `config.takeoverSwitch` |
+| `dsh-workbench-core` | `core` | `dsh-workbench-core` | `packages/dsh-workbench-core/cordis.patch.yml` | 无；客户端半 `provide("workbench")`，三件套都按这个名字等它 |
+| `dsh-fs-explorer` | `fs-explorer` | `dsh-fs-explorer` | `packages/dsh-fs-explorer/cordis.patch.yml` | 无；`dsh.client.inject: ["dsh-workbench-core"]` |
+| `dsh-git-explorer` | `git-explorer` | `dsh-git-explorer` | `packages/dsh-git-explorer/cordis.patch.yml` | 无；宿主半导出 Typert 命名空间 `gitExplorer`，客户端半 `dsh.client.inject: ["dsh-workbench-core"]` |
+| `dsh-term-dock` | `term-dock` | `dsh-term-dock` | `packages/dsh-term-dock/cordis.patch.yml` | 无；`dsh.client.inject: ["dsh-workbench-core"]`，占 `shell.bottom` |
 
 ## 客户端半边入口
 
@@ -70,6 +74,10 @@
 | `dsh-better` | `src/client/entry.ts` | `lib/client.js` | 以 `id: command-popup`、`priority: -100` 遮蔽 `conversation.input.overlay` 接管 `/model` 弹窗；`inject = ["slots"]` |
 | `dsh-more-config` | `src/client/entry.ts` | `lib/client.js` | `slots.register({ name: "settings.section", id: "mcp", order: 10 })` 注册 MCP 配置栏；`inject = ["slots", "locale", "configForms"]`，读写走 `more-config` 命名空间的 volatile 数组字段 |
 | `dsh-command-panel` | `src/client/entry.ts` → `createRuntime` | `lib/client.js` | `slots.register({ name: "shell.overlay", id: "command-panel.palette", order: 50 })` 承载面板（组件内 portal 到 body），另在 `conversation.input.overlay` 挂 `id: command-panel.bridge` 的隐形会话桥以取当前会话与 `inputActions`；`inject = ["slots", "shortcuts", "sessions", "workspaces", "uiWorkspace", "conversation", "remote", "remote.fileReferences", "remote.commands", "locale"]`（Remote 命名空间是独立的点号服务） |
+| `dsh-workbench-core` | `src/client/entry.ts` | `lib/client.js` | `provide("workbench")` 后再注册 `slots.register({ name: "settings.section", id: "workbench", order: 60 })` 与 `conversation.session.header.views.actions`（id `workbench.return-to-chat`）；`inject = ["slots", "locale", "shortcuts"]` |
+| `dsh-fs-explorer` | `src/client/entry.ts` | `lib/client.js` + `lib/client.preview.js` | `slots.register({ name: "conversation.view", id: "fs-explorer", order: 100 })`；`inject = ["slots", "locale", "workbench", "remote"]`；CodeMirror 与 Markdown 渲染器在懒 chunk |
+| `dsh-git-explorer` | `src/client/entry.ts` | `lib/client.js`（宿主半 `lib/index.js`） | `slots.register({ name: "conversation.view", id: "git-explorer", order: 110 })`；`inject` 同文件面板，数据走 `remote.gitExplorer` 的 snapshot / query / commit |
+| `dsh-term-dock` | `src/client/entry.ts` | `lib/client.js` + `lib/client.terminal.js` | `slots.register({ name: "shell.bottom", id: "term-dock" })`，仅在 core 的 `dockVisible` 为真时注册；`inject = ["slots", "locale", "workbench"]`；xterm 在懒 chunk |
 
 ## 市场分发产物
 
