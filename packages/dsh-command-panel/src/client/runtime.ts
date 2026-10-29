@@ -47,7 +47,7 @@ import {
   availableCatalog,
   type ActionContext,
 } from "./catalog.ts";
-import { createPanelView, PANEL_MODAL } from "./panel.ts";
+import { createPanelView, PANEL_MODAL, type PanelVerbs } from "./panel.ts";
 import {
   PANEL_MODES,
   back as backModel,
@@ -140,6 +140,14 @@ export interface PanelRuntimeDeps {
 
 export interface PanelRuntime {
   dispose(): void;
+  /**
+   * Seam for the runtime tests: the same store and verbs the view drives, so a
+   * suite can press keys without a React renderer.
+   */
+  readonly __test: {
+    readonly store: ReturnType<typeof createPanelStore>;
+    readonly verbs: PanelVerbs;
+  };
 }
 
 /** Build the panel's runtime against a live client context. */
@@ -875,25 +883,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       store,
       copy: copy(),
       document: doc,
-      move: delta => {
-        const snapshot = store.getSnapshot();
-        store.set({ model: moveHighlight(snapshot.model, delta, snapshot.rows.length) });
-      },
-      highlight: index => {
-        const snapshot = store.getSnapshot();
-        store.set({ model: highlightAt(snapshot.model, index, snapshot.rows.length) });
-      },
-      setQuery: applyQuery,
-      acceptActive,
-      treeUp,
-      treeInto,
-      revealActive,
-      treeActive,
-      accept,
-      dismiss: close,
-      back: goBack,
-      switchMode,
-      crumbLabel,
+      ...verbs,
     });
 
     // The bridge publishes the session on screen and its live composer face.
@@ -981,6 +971,29 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     };
   }
 
+  /** The runtime's side of the view contract, built once for both consumers. */
+  const verbs: PanelVerbs = {
+    move: delta => {
+      const snapshot = store.getSnapshot();
+      store.set({ model: moveHighlight(snapshot.model, delta, snapshot.rows.length) });
+    },
+    highlight: index => {
+      const snapshot = store.getSnapshot();
+      store.set({ model: highlightAt(snapshot.model, index, snapshot.rows.length) });
+    },
+    setQuery: applyQuery,
+    acceptActive,
+    accept,
+    dismiss: close,
+    back: goBack,
+    switchMode,
+    treeUp,
+    treeInto,
+    revealActive,
+    treeActive,
+    crumbLabel,
+  };
+
   // ── assembly ────────────────────────────────────────────────────────────
 
   const disposers: Unsubscribe[] = [];
@@ -1059,6 +1072,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   disposers.push(deps.ctx.inject(["sessions", "workspaces"], watchCatalogs));
 
   return {
+    __test: { store, verbs },
     dispose(): void {
       if (disposed) return;
       disposed = true;

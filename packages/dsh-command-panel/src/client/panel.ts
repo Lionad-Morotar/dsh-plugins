@@ -24,14 +24,13 @@ import type { PanelStore } from "./store.ts";
 /** The modal id this panel publishes to the shortcut service. */
 export const PANEL_MODAL = "command-panel";
 
-/** Everything the view may ask the runtime to do. */
-export interface PanelViewDeps {
-  readonly React: ReactSlice;
-  readonly dom: PanelDomSlice;
-  readonly primitives: PanelPrimitives;
-  readonly store: PanelStore;
-  readonly copy: Copy;
-  readonly document: Document;
+/**
+ * Everything the view may ask the runtime to do.
+ *
+ * Split from `PanelViewDeps` because the verbs are also the runtime's test seam:
+ * a test can drive the panel the way its keys do without a React renderer.
+ */
+export interface PanelVerbs {
   readonly move: (delta: number) => void;
   readonly highlight: (index: number) => void;
   readonly setQuery: (query: string) => void;
@@ -50,6 +49,16 @@ export interface PanelViewDeps {
   readonly switchMode: (mode: PanelMode) => void;
   /** Breadcrumb of the drilled level, or null at the top level. */
   readonly crumbLabel: () => string | null;
+}
+
+/** Everything the view receives: the platform slices plus the runtime's verbs. */
+export interface PanelViewDeps extends PanelVerbs {
+  readonly React: ReactSlice;
+  readonly dom: PanelDomSlice;
+  readonly primitives: PanelPrimitives;
+  readonly store: PanelStore;
+  readonly copy: Copy;
+  readonly document: Document;
 }
 
 const INPUT_PROPS = {
