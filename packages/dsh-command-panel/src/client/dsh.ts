@@ -116,10 +116,16 @@ export interface SessionListState {
   readonly phase?: string;
 }
 
+/** One session's face on the Host; the pair of verbs the panel drives directly. */
+export interface SessionFace {
+  cancel(): Promise<RemoteResult<unknown>>;
+  rename(title: string): Promise<RemoteResult<unknown>>;
+}
+
 /** One retained generation; only `ready` settlement is observed by this plugin. */
 export interface SessionReference {
   readonly sessionId: string;
-  readonly binding: unknown;
+  readonly binding: { readonly session: SessionFace };
   readonly ready: Promise<unknown>;
   release(): void;
 }
@@ -137,6 +143,18 @@ export interface SessionsService {
   ): Promise<T>;
   /** The live Agent-scoped context for a retained generation, if any. */
   scope(id: string): unknown;
+  /**
+   * Create a session on the Host.
+   *
+   * A `workspaceId` attaches it to that workspace; a `cwd` alone leaves it
+   * ungrouped. Passing both is a Host-side bad request.
+   */
+  create(options?: {
+    readonly workspaceId?: string;
+    readonly cwd?: string;
+    readonly sessionId?: string;
+    readonly agentPreset?: string;
+  }): Promise<string>;
 }
 
 // ── Workspace catalogue and navigation ─────────────────────────────────────
@@ -167,6 +185,23 @@ export interface WorkspacesService {
 export interface UiWorkspaceService {
   /** Select a session and show its conversation; cross-workspace needs no extra step. */
   openSession(target: string): void;
+  /**
+   * Open a fresh conversation, reusing the current workspace's blank session.
+   *
+   * Synchronous and void by design: it navigates rather than returning an id, so
+   * pressing it twice lands on the same blank.
+   */
+  startSession(workspaceId?: string, options?: { readonly agentPreset?: string }): void;
+  /** Archive a session; a running one is refused unless `stopActivity` is set. */
+  archiveSession(sessionId: string, options?: { readonly stopActivity?: boolean }): Promise<void>;
+  /** Fork a session without changing the selection; returns the child id. */
+  forkSession(
+    sessionId: string,
+    onCreated?: (childId: string) => void,
+    options?: { readonly allowMigration?: boolean },
+  ): Promise<string>;
+  pinSession(sessionId: string): Promise<void>;
+  unpinSession(sessionId: string): Promise<void>;
 }
 
 // ── Composer input ─────────────────────────────────────────────────────────
@@ -290,10 +325,77 @@ export interface SlotRegistration {
   readonly label?: string | (() => string);
 }
 
+/**
+ * Bound action set of one slot-declared store seat.
+ *
+ * Only the verbs this plugin calls are declared. They are curried by the slot
+ * framework (the draft is peeled), so a call site passes arguments only.
+ */
+export interface SlotSeatActions {
+  open?(): void;
+  openSection?(id: string): void;
+  search?(query: string): void;
+}
+
+/** Declarative store seat carried by a slot registration. */
+export interface SlotStoreDecl {
+  create(): { readonly actions: SlotSeatActions };
+}
+
+/** One live registration row, as `slots.entries()` returns it. */
+export interface SlotEntry {
+  readonly options?: { readonly id?: string; readonly name?: string };
+  readonly store?: SlotStoreDecl | (() => SlotStoreDecl);
+}
+
 export interface SlotService {
   /** Run `callback` for each lifetime of the slot declaration, disposing on re-declare. */
   inject(key: string, callback: () => Unsubscribe): Unsubscribe;
   register(registration: SlotRegistration, component: unknown): Unsubscribe;
+  /**
+   * Raw registration rows of one slot.
+   *
+   * The host pins `create()` of a few seats (the settings shell, the shortcuts
+   * overlay) to the instance the application commands use, which is what makes
+   * opening them reachable at all: neither has a service.
+   */
+  entries?(key: string): readonly SlotEntry[];
+}
+
+// ── Surface navigation ─────────────────────────────────────────────────────
+
+/** Panel transitions exposed to plugins. Sidebar width itself stays private. */
+export interface LayoutService {
+  toggleSidebar(): void;
+}
+
+export interface ThemeService {
+  getTheme(): {
+    readonly preference: string;
+    readonly active: { readonly id: string; readonly colorScheme: "light" | "dark" };
+  };
+  /** Persisted asynchronously; the argument is a theme id. */
+  setTheme(id: string): void;
+}
+
+/** Cross-plugin navigation to the Plugins main panel. */
+export interface PluginNavigationService {
+  openList(): void;
+  openBundle(packageName: string): void;
+}
+
+/**
+ * Right-column page types.
+ *
+ * `mounted` is the on-screen session, and it is what makes these commands
+ * conditional: with a global panel in the main column (or no session at all)
+ * every `openTab` call throws instead of doing nothing.
+ */
+export interface SidebarRightService {
+  readonly mounted: Snapshot<string | undefined>;
+  openTab(kind: string, options?: { readonly params?: unknown }): void;
+  toggleExpanded(): void;
+  isExpanded(): boolean;
 }
 
 export interface LocaleService {

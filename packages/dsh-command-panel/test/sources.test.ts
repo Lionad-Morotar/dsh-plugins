@@ -41,7 +41,6 @@ function request(overrides: Partial<LoadRequest> = {}): LoadRequest {
     query: "",
     sessionId: SESSION_A.id,
     copy,
-    hints: {},
     signal,
     ...overrides,
   };
@@ -91,39 +90,31 @@ describe("loadRows: navigate", () => {
 });
 
 describe("loadRows: command", () => {
-  it("offers the panel's own entries even with no session", async () => {
+  it("returns an empty plane with no session, because the panel builds its own rows", async () => {
     const result = await loadRows(services(), request({ mode: "command", sessionId: null }));
     expect(result.status).toBe("ready");
-    expect(result.rows.map(row => row.label)).toEqual(["文件导航", "指令", "切换"]);
+    expect(result.rows).toEqual([]);
   });
 
-  it("puts the panel's entries before the host catalogue", async () => {
+  it("returns the host catalogue as its own plane, labelled like a command", async () => {
     const result = await loadRows(
       services({
         commands: () => fakeCommands({ commands: [{ name: "goal", description: "设定目标" }] }),
       }),
       request({ mode: "command" }),
     );
-    expect(result.rows.map(row => row.label)).toEqual(["文件导航", "指令", "切换", "/goal"]);
-    expect(result.rows[3]?.group).toBe(copy.groupCommands);
+    expect(result.rows.map(row => row.label)).toEqual(["/goal"]);
+    expect(result.rows[0]?.group).toBe(copy.groupCommands);
   });
 
-  it("keeps the panel's own entries usable when the host catalogue fails", async () => {
+  it("reports a failed catalogue as a warning with an empty plane", async () => {
     const result = await loadRows(
       services({ commands: () => fakeCommands({ commandError: "session/writer-held" }) }),
       request({ mode: "command" }),
     );
     expect(result.status).toBe("ready");
-    expect(result.rows.map(row => row.label)).toEqual(["文件导航", "指令", "切换"]);
+    expect(result.rows).toEqual([]);
     expect(result.warning).toBe("session/writer-held");
-  });
-
-  it("passes the keycaps it was given for the built-in rows", async () => {
-    const result = await loadRows(
-      services(),
-      request({ mode: "command", sessionId: null, hints: { navigate: "⌘P" } }),
-    );
-    expect(result.rows[0]?.hint).toBe("⌘P");
   });
 });
 

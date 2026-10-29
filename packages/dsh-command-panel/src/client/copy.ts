@@ -7,6 +7,7 @@
  * as a total `Copy` and both languages must fill every field.
  */
 
+import type { ActionCategory } from "./catalog.ts";
 import type { PanelMode } from "./panel-state.ts";
 
 export interface FooterHint {
@@ -46,6 +47,21 @@ export interface Copy {
   readonly noticeClaimFailed: (keys: string) => string;
   /** Human age for a session's last update, given the elapsed milliseconds. */
   readonly age: (elapsed: number) => string;
+  /** Category word prefixed to every catalogue row label. */
+  readonly categoryNames: Readonly<Record<ActionCategory, string>>;
+  /** Action text by catalogue id; the row label is `${category}：${action}`. */
+  readonly actionLabels: Readonly<Record<string, string>>;
+  /** Notices the catalogue actions surface when they land or fail. */
+  readonly actions: {
+    readonly needsCwd: string;
+    readonly noSessionSurface: string;
+    readonly seatUnavailable: string;
+    readonly sessionBusy: string;
+    readonly forked: (title: string) => string;
+    readonly pinned: (pinned: boolean) => string;
+    readonly themeSwitched: (dark: boolean) => string;
+    readonly failed: (what: string, code: string | undefined) => string;
+  };
 }
 
 const ZH: Copy = {
@@ -87,6 +103,37 @@ const ZH: Copy = {
   noticeExecuteFailed: (name, text) => `/${name} 执行失败${text === undefined || text === "" ? "" : `：${text}`}`,
   noticeWorkspaceEmpty: "这个工作区还没有会话",
   noticeClaimFailed: keys => `快捷键 ${keys} 已被占用，可在设置 → 快捷键里改绑`,
+  categoryNames: { panel: "面板", session: "会话", navigate: "导航", view: "视图" },
+  actionLabels: {
+    "panel.navigate": "文件导航",
+    "panel.commands": "指令",
+    "panel.switch": "切换",
+    "session.newInWorkspace": "在当前工作区创建新会话",
+    "session.newUngrouped": "创建未分组新会话",
+    "session.rename": "重命名当前会话",
+    "session.archive": "归档当前会话",
+    "session.fork": "Fork 当前会话",
+    "session.cancel": "中断当前回复",
+    "session.pin": "置顶或取消置顶当前会话",
+    "navigate.plugins": "打开插件页面",
+    "navigate.settings": "打开设置",
+    "navigate.shortcuts": "打开快捷键参考",
+    "view.sidebar": "显示或隐藏侧栏",
+    "view.files": "打开文件树",
+    "view.terminal": "新建终端",
+    "view.browser": "打开浏览器面板",
+    "view.theme": "切换亮暗主题",
+  },
+  actions: {
+    needsCwd: "当前会话没有工作目录，无法创建未分组会话",
+    noSessionSurface: "右侧栏需要屏幕上有会话",
+    seatUnavailable: "宿主的这个入口当前不可达",
+    sessionBusy: "会话还在运行，先中断回复或稍后再归档",
+    forked: title => `已 Fork 到新会话「${title}」`,
+    pinned: pinned => (pinned ? "已置顶当前会话" : "已取消置顶"),
+    themeSwitched: dark => (dark ? "已切到深色主题" : "已切到浅色主题"),
+    failed: (what, code) => `${what}失败${code === undefined || code === "" ? "" : `：${code}`}`,
+  },
   age: elapsed => {
     const minutes = Math.floor(elapsed / 60_000);
     if (minutes < 1) return "刚刚";
@@ -136,6 +183,37 @@ const EN: Copy = {
   noticeExecuteFailed: (name, text) => `/${name} failed${text === undefined || text === "" ? "" : `: ${text}`}`,
   noticeWorkspaceEmpty: "This workspace has no sessions yet",
   noticeClaimFailed: keys => `${keys} is taken; rebind it in Settings → Shortcuts`,
+  categoryNames: { panel: "Panel", session: "Session", navigate: "Go", view: "View" },
+  actionLabels: {
+    "panel.navigate": "Files",
+    "panel.commands": "Commands",
+    "panel.switch": "Switch",
+    "session.newInWorkspace": "New session in this workspace",
+    "session.newUngrouped": "New ungrouped session",
+    "session.rename": "Rename this session",
+    "session.archive": "Archive this session",
+    "session.fork": "Fork this session",
+    "session.cancel": "Stop the current reply",
+    "session.pin": "Pin or unpin this session",
+    "navigate.plugins": "Open the Plugins page",
+    "navigate.settings": "Open Settings",
+    "navigate.shortcuts": "Open the keyboard reference",
+    "view.sidebar": "Show or hide the sidebar",
+    "view.files": "Open the file tree",
+    "view.terminal": "New terminal",
+    "view.browser": "Open the browser panel",
+    "view.theme": "Toggle light and dark theme",
+  },
+  actions: {
+    needsCwd: "This session has no working directory, so an ungrouped session cannot be created",
+    noSessionSurface: "The right column needs a session on screen",
+    seatUnavailable: "That host surface is not reachable right now",
+    sessionBusy: "The session is still running; stop the reply or archive later",
+    forked: title => `Forked into “${title}”`,
+    pinned: pinned => (pinned ? "Pinned this session" : "Unpinned this session"),
+    themeSwitched: dark => (dark ? "Switched to the dark theme" : "Switched to the light theme"),
+    failed: (what, code) => `${what} failed${code === undefined || code === "" ? "" : `: ${code}`}`,
+  },
   age: elapsed => {
     const minutes = Math.floor(elapsed / 60_000);
     if (minutes < 1) return "just now";

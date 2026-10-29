@@ -8,6 +8,7 @@
 
 import type {
   CommandDescriptor,
+  SessionFace,
   CommandsRemote,
   FileReferenceCandidate,
   FileReferencesRemote,
@@ -107,12 +108,34 @@ export function workspaceSnapshot(
   return { items, archivedSessionIds: archived, pinnedSessionIds: [], state: "idle" };
 }
 
-export function fakeSessions(state: SessionListState): SessionsService {
+/** The Host verbs a retained binding exposes; both succeed by default. */
+export const SESSION_FACE: SessionFace = {
+  cancel: async () => ({ ok: true, value: {} }),
+  rename: async () => ({ ok: true, value: {} }),
+};
+
+export interface FakeSessionOptions {
+  readonly createdId?: string;
+  readonly createThrows?: unknown;
+  readonly face?: Partial<SessionFace>;
+}
+
+export function fakeSessions(state: SessionListState, options: FakeSessionOptions = {}): SessionsService {
+  const face: SessionFace = { ...SESSION_FACE, ...options.face };
   return {
     list: { getSnapshot: () => state, subscribe: () => () => undefined },
     using: async (target, _options, operation) =>
-      operation({ sessionId: target, binding: {}, ready: Promise.resolve(), release: () => undefined }),
+      operation({
+        sessionId: target,
+        binding: { session: face },
+        ready: Promise.resolve(),
+        release: () => undefined,
+      }),
     scope: () => undefined,
+    create: async () => {
+      if (options.createThrows !== undefined) throw options.createThrows;
+      return options.createdId ?? "sess-created";
+    },
   };
 }
 

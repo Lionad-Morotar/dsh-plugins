@@ -22,14 +22,7 @@ import type {
   WorkspacesService,
 } from "./dsh.ts";
 import type { PanelLevel, PanelMode, SessionScope } from "./panel-state.ts";
-import {
-  builtinRows,
-  commandRows,
-  fileRows,
-  sessionRows,
-  workspaceRows,
-  type PanelRow,
-} from "./rows.ts";
+import { commandRows, fileRows, sessionRows, workspaceRows, type PanelRow } from "./rows.ts";
 
 /** Reference source name used while holding a session for discovery. */
 export const PANEL_SOURCE = "commandPanel";
@@ -50,7 +43,6 @@ export interface LoadRequest {
   readonly query: string;
   readonly sessionId: string | null;
   readonly copy: Copy;
-  readonly hints: Partial<Record<PanelMode, string>>;
   readonly signal: AbortSignal;
 }
 
@@ -142,12 +134,12 @@ async function loadFiles(services: SourceServices, request: LoadRequest): Promis
 }
 
 async function loadCommands(services: SourceServices, request: LoadRequest): Promise<LoadResult> {
-  const { copy, query } = request;
-  const builtin = builtinRows(copy, request.hints);
+  const { copy } = request;
   const sessionId = request.sessionId;
   if (sessionId === null) {
-    // The panel's own entries need no session; only the host catalogue does.
-    return { rows: builtin, status: "ready" };
+    // Without a session the host catalogue is unreachable; the panel's own rows
+    // are still built by the runtime, so an empty plane is the honest answer.
+    return { rows: [], status: "ready" };
   }
   const commands = services.commands();
   const sessions = services.sessions();
@@ -160,14 +152,14 @@ async function loadCommands(services: SourceServices, request: LoadRequest): Pro
       commands.list(sessionId),
     );
     if (!result.ok) {
-      // The catalogue is the host's, not the panel's: keep the panel's own
-      // entries usable and report why the rest is missing.
-      return { rows: builtin, status: "ready", warning: result.error.code };
+      // The catalogue is the host's; the panel keeps its own rows either way and
+      // reports why the host half is missing.
+      return { rows: [], status: "ready", warning: result.error.code };
     }
-    return { rows: [...builtin, ...commandRows(result.value, copy)], status: "ready" };
+    return { rows: commandRows(result.value, copy), status: "ready" };
   } catch (error) {
     if (isAbort(error)) return { rows: [], status: "ready" };
-    return { rows: builtin, status: "ready", warning: messageOf(error, copy.failed) };
+    return { rows: [], status: "ready", warning: messageOf(error, copy.failed) };
   }
 }
 
