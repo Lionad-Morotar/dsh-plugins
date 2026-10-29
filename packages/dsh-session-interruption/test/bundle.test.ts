@@ -114,8 +114,9 @@ describe("client bundle", () => {
     expect(dictionary.en?.["menu.dismiss"]).toBe("Dismiss this interruption");
   });
 
-  it("does not bundle a second React", () => {
+  it("does not bundle a second React or any node builtin", () => {
     expect(bundle).not.toContain("react.production.min.js");
+    expect(bundle).not.toContain("node:");
     expect(bundle.length).toBeLessThan(64 * 1024);
   });
 });

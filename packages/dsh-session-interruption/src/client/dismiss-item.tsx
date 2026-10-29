@@ -6,7 +6,7 @@
  * turn's start seq, so a newer interruption of the same session marks again.
  * The entry renders only while the row actually shows a dismissal-able marker.
  */
-import { useInterruptionReading } from "./row-badge.tsx";
+import { useInterruptionReading } from "./use-interruption-reading.ts";
 import type { Translate } from "./reading.ts";
 import type { InterruptionFace } from "./face.ts";
 
@@ -27,7 +27,9 @@ export interface DismissItemProps {
 export function DismissItem({ sessionId, face, t, useMenuOpenState }: DismissItemProps) {
   const reading = useInterruptionReading(sessionId, face);
   const [, setMenuOpen] = useMenuOpenState();
-  if (reading === undefined || reading.turnStartSeq === null) return null;
+  if (reading === undefined) return null;
+  const turnStartSeq = reading.turnStartSeq;
+  if (turnStartSeq === null) return null;
   return (
     <button
       type="button"
@@ -35,7 +37,7 @@ export function DismissItem({ sessionId, face, t, useMenuOpenState }: DismissIte
       data-testid="session-interruption-dismiss"
       onClick={() => {
         setMenuOpen(false);
-        face.dismiss(sessionId, reading.turnStartSeq as number);
+        face.dismiss(sessionId, turnStartSeq);
       }}
     >
       {t("menu.dismiss")}

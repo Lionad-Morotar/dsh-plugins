@@ -89,7 +89,6 @@ function view(state: InterruptionState): InterruptionView {
   const interrupted = state.lastTurn !== null && !state.lastTurnClosed;
   return {
     interrupted,
-    turn: interrupted ? state.lastTurn : null,
     since: interrupted ? state.lastTurnStart : null,
     turnStartSeq: interrupted ? state.lastTurnStartSeq : null,
     pendingToolCount: interrupted ? Object.keys(state.pendingCalls).length : 0,

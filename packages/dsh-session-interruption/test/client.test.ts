@@ -7,10 +7,9 @@
  * loader mounts.
  */
 import { describe, expect, it } from "vitest";
-import { narrowView, selectReading, readDismissed, writeDismiss, formatRelative, PROJECTION_KEY, type SessionListWire, type StorageLike } from "../src/client/reading.ts";
+import { narrowView, selectReading, readDismissed, writeDismiss, formatRelative, PROJECTION_KEY, DISMISS_STORAGE_KEY, type SessionListWire, type StorageLike } from "../src/client/reading.ts";
 import { buildInterruptionFace, type SessionsLike } from "../src/client/face.ts";
 import { EN, ZH } from "../src/client/copy.ts";
-import { DISMISS_STORAGE_KEY } from "../src/client/reading.ts";
 import { ENTRY_ID_BADGE, ENTRY_ID_DISMISS, ENTRY_ID_HOVER, SLOT_HOVER, SLOT_LEADING, SLOT_MENU } from "../src/client/registration.ts";
 
 /** A translate seat over one dictionary, with the shipped parameter syntax. */
@@ -23,7 +22,7 @@ function seat(dictionary: Record<string, string>): (key: string, params?: Record
 
 /** An interrupted wire view as the host projection ships it. */
 function interruptedView(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return { interrupted: true, turn: 3, since: 1_000, turnStartSeq: 12, pendingToolCount: 1, ...overrides };
+  return { interrupted: true, since: 1_000, turnStartSeq: 12, pendingToolCount: 1, ...overrides };
 }
 
 /** A list snapshot with one interrupted idle session and knobs for the case. */
@@ -63,7 +62,7 @@ describe("reading selection", () => {
   it("treats absent, unready, and healthy projections as silence", () => {
     expect(selectReading({ byId: {}, projectionsBySession: {} }, "s1")).toBeUndefined();
     expect(selectReading(list({ state: "error" }), "s1")).toBeUndefined();
-    expect(selectReading(list({ values: { [PROJECTION_KEY]: { interrupted: false, turn: null, since: null, turnStartSeq: null, pendingToolCount: 0 } } }), "s1")).toBeUndefined();
+    expect(selectReading(list({ values: { [PROJECTION_KEY]: { interrupted: false, since: null, turnStartSeq: null, pendingToolCount: 0 } } }), "s1")).toBeUndefined();
   });
 
   it("narrows hostile shapes into silence, never a wrong marker", () => {

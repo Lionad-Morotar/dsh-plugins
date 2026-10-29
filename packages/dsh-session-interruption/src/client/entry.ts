@@ -38,8 +38,6 @@ export {
   SLOT_LEADING,
   SLOT_MENU,
 } from "./registration.ts";
-export { buildInterruptionFace } from "./face.ts";
-export { selectReading, narrowView, formatRelative, PROJECTION_KEY } from "./reading.ts";
 
 /** The services the registration reads; declared so Cordis resolves them first. */
 export const inject = ["slots", "locale", "sessions"];

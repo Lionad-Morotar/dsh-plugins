@@ -60,7 +60,7 @@ export const interruptionStateSchema = {
 };
 
 /** The wire reading's exact field set; the view must not carry state internals. */
-const VIEW_FIELDS = ["interrupted", "turn", "since", "turnStartSeq", "pendingToolCount"] as const;
+const VIEW_FIELDS = ["interrupted", "since", "turnStartSeq", "pendingToolCount"] as const;
 
 /** Validate the wire view; throws with every failed field listed. */
 export const interruptionViewSchema = {
@@ -71,7 +71,6 @@ export const interruptionViewSchema = {
     const expected = new Set<string>(VIEW_FIELDS);
     for (const key of Object.keys(record)) if (!expected.has(key)) issues.push(`view must not carry extra field ${JSON.stringify(key)}`);
     if (typeof record.interrupted !== "boolean") issues.push("interrupted must be a boolean");
-    assertTurn(record.turn, "turn", issues);
     assertInstant(record.since, "since", issues);
     assertTurn(record.turnStartSeq, "turnStartSeq", issues);
     assertCount(record.pendingToolCount, "pendingToolCount", issues);

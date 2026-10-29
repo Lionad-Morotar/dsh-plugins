@@ -25,8 +25,6 @@ export interface InterruptionState {
 export interface InterruptionView {
   /** The newest turn never closed: the session stopped mid-work. */
   readonly interrupted: boolean;
-  /** The open turn number; null when nothing is interrupted. */
-  readonly turn: number | null;
   /** When the open turn started (epoch ms); null when nothing is interrupted. */
   readonly since: number | null;
   /** Seq of the open turn's start; the client's dismissal anchor. */

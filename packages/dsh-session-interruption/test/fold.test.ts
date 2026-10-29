@@ -31,7 +31,6 @@ describe("session interruption fold", () => {
       event(4_000, "turn/end", { turn: 1 }),
     ]);
     expect(value.interrupted).toBe(false);
-    expect(value.turn).toBeNull();
     expect(value.since).toBeNull();
     expect(value.pendingToolCount).toBe(0);
   });
@@ -43,7 +42,6 @@ describe("session interruption fold", () => {
       event(1_100, "step/start", { turn: 1, step: 1 }),
     ]);
     expect(value.interrupted).toBe(true);
-    expect(value.turn).toBe(1);
     expect(value.since).toBe(1_000);
     expect(value.turnStartSeq).toBe(start.seq);
   });
@@ -65,7 +63,6 @@ describe("session interruption fold", () => {
       event(3_000, "turn/end", { turn: 2 }),
     ]);
     expect(value.interrupted).toBe(false);
-    expect(value.turn).toBeNull();
   });
 
   it("keeps the interrupted reading while the newest turn is the open one", () => {
@@ -76,7 +73,6 @@ describe("session interruption fold", () => {
       event(5_100, "step/start", { turn: 2, step: 1 }),
     ]);
     expect(value.interrupted).toBe(true);
-    expect(value.turn).toBe(2);
     expect(value.since).toBe(5_000);
   });
 
@@ -118,7 +114,6 @@ describe("session interruption fold", () => {
       event(700, "session/end-seed", {}),
     ]);
     expect(value.interrupted).toBe(false);
-    expect(value.turn).toBeNull();
     expect(value.since).toBeNull();
     expect(value.pendingToolCount).toBe(0);
   });
@@ -130,7 +125,6 @@ describe("session interruption fold", () => {
       event(2_500, "turn/end", { turn: 1 }),
     ]);
     expect(value.interrupted).toBe(true);
-    expect(value.turn).toBe(2);
   });
 
   it("validates the persisted state and rejects a widened wire view", () => {

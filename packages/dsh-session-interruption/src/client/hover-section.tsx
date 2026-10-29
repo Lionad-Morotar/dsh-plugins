@@ -5,7 +5,7 @@
  * Mounted only while the row's hover card is open, so a per-row subscription
  * costs nothing while the pointer is elsewhere.
  */
-import { useInterruptionReading } from "./row-badge.tsx";
+import { useInterruptionReading } from "./use-interruption-reading.ts";
 import { formatRelative, type Translate } from "./reading.ts";
 import type { InterruptionFace } from "./face.ts";
 import { installStyles } from "./styles.ts";
