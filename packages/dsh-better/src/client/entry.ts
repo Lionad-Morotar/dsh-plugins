@@ -279,20 +279,26 @@ export const clientPlugin = {
               id: POPUP_ID,
               priority: SHADOW_PRIORITY,
               locale: NS,
-              inject: (sessionId) => ({
-                popup: popupFor(ctx, sessionId),
-                // Resolved here because this is the one place that knows the
-                // session; the overlay only formats what it is handed.
-                catalog: directorySnapshot(ctx, sessionId)?.groups,
-                // The picker keeps the active effort on its row and lands a
-                // plain click on it, which needs to know what is in effect.
-                current: directorySnapshot(ctx, sessionId)?.current ?? null,
-                // Selecting a level is this surface's own gesture: the popup's
-                // onSelect rebuilds the choice from the row id and would drop the
-                // level, so the directory takes the settled selection directly.
-                selectModel: (selection: { provider: string; model: string; reasoningEffort?: string }) =>
-                  ctx.modelDirectories?.directoryFor?.(sessionId)?.select?.(selection),
-              }),
+              inject: (sessionId) => {
+                // One snapshot read feeds both faces: the ladder list and the
+                // effort currently in effect.
+                const snapshot = directorySnapshot(ctx, sessionId);
+                return {
+                  popup: popupFor(ctx, sessionId),
+                  // Resolved here because this is the one place that knows the
+                  // session; the overlay only formats what it is handed.
+                  catalog: snapshot?.groups,
+                  // The picker keeps the active effort on its row and lands a
+                  // plain click on it, which needs to know what is in effect.
+                  current: snapshot?.current ?? null,
+                  // Selecting a level is this surface's own gesture: the popup's
+                  // onSelect rebuilds the choice from the row id and would drop
+                  // the level, so the directory takes the settled selection
+                  // directly.
+                  selectModel: (selection: { provider: string; model: string; reasoningEffort?: string }) =>
+                    ctx.modelDirectories?.directoryFor?.(sessionId)?.select?.(selection),
+                };
+              },
             },
             Overlay,
           );

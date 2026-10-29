@@ -49,8 +49,8 @@ export interface OverlayProps {
   readonly t?: ((key: string) => string) | undefined;
   /** The session's catalog groups, which carry each model's effort ladder. */
   readonly catalog?: readonly CatalogGroupLike[] | undefined;
-  /** The session's current selection, which keeps the active effort on its row. */
-  readonly current?: { provider: string; model: string; reasoningEffort?: string } | undefined;
+  /** The session's current selection, null before one has been settled. */
+  readonly current?: { provider: string; model: string; reasoningEffort?: string } | null | undefined;
   /**
    * Submit a complete selection, including the effort level.
    *
@@ -180,8 +180,8 @@ interface ModelPickerProps {
    * here means reading the same source rather than extending the rows.
    */
   readonly catalog: readonly CatalogGroupLike[] | undefined;
-  /** The session's current selection, or undefined when the session has none. */
-  readonly current: { provider: string; model: string; reasoningEffort?: string } | undefined;
+  /** The session's current selection, or null when the session has none. */
+  readonly current: { provider: string; model: string; reasoningEffort?: string } | null | undefined;
   readonly selectModel:
     | ((selection: { provider: string; model: string; reasoningEffort?: string }) => Promise<unknown> | undefined)
     | undefined;
