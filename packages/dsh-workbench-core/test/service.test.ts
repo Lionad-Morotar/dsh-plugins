@@ -12,9 +12,12 @@ describe("workbench service", () => {
     expect(service.version).toBe(1);
     expect(service.shortcuts.catalog()).toBe(service.keymap);
     expect(service.keymap.map(command => command.id)).toEqual([
-      "workbench.openFiles",
-      "workbench.openGit",
-      "workbench.toggleTerminal",
+      "workbench.files.toggle",
+      "workbench.git.toggle",
+      "workbench.term.toggle",
+      "workbench.panel.next",
+      "workbench.panel.previous",
+      "workbench.panel.close",
     ]);
   });
 

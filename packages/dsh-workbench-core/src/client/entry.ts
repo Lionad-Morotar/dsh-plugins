@@ -11,6 +11,7 @@
  * the adapter snapshot, and a section that renders before the service exists
  * would report every adapter as missing.
  */
+import { registerWorkbenchCommands, type ShortcutRegistryLike } from "./commands.ts";
 import { EN, ZH } from "./copy.ts";
 import {
   LOCALE_NAMESPACE,
@@ -21,7 +22,8 @@ import {
   VIEW_ACTIONS_ORDER,
   VIEW_ACTIONS_SLOT,
 } from "./registration.ts";
-import { createWorkbenchSection } from "./section.tsx";
+import { createWorkbenchSection, type ShortcutsLike } from "./section.tsx";
+import { buildSettingsGroups, checkBindings } from "./settings.ts";
 import { createSessionSelection } from "./session.ts";
 import { createWorkbenchService } from "./service.ts";
 import { createReturnToChatRow, resolveMenuItemButton, type LoaderRequire } from "./view-actions.tsx";
@@ -48,11 +50,38 @@ export interface ClientContextLike {
   };
   /** Cordis service registration; present on every supported client host. */
   provide?(name: string, value: unknown): () => void;
+  /** Cordis service lookup, the safe way to probe a service this plugin may not own. */
+  get?(name: string): unknown;
+  /** Host shortcut registry; the settings matrix reads its catalog. */
+  readonly shortcuts?: ShortcutRegistryLike & ShortcutsLike;
   readonly logger?: { warn?(message: string): void };
 }
 
+/**
+ * Read the shortcut service defensively.
+ *
+ * `shortcuts` is declared in `inject`, so `ctx.shortcuts` is the primary read.
+ * The `ctx.get` fallback keeps the settings section mountable in hosts that
+ * predate the service or guard the property; a missing service degrades to the
+ * "未安装" state instead of taking down the section.
+ */
+export function readShortcutService(ctx: ClientContextLike): (ShortcutRegistryLike & ShortcutsLike) | undefined {
+  try {
+    if (ctx.shortcuts !== undefined && ctx.shortcuts !== null) return ctx.shortcuts;
+  } catch {
+    // Fall through to ctx.get for hosts that guard undeclared properties.
+  }
+  try {
+    const viaGet = typeof ctx.get === "function" ? ctx.get("shortcuts") : undefined;
+    if (viaGet !== undefined && viaGet !== null) return viaGet as ShortcutRegistryLike & ShortcutsLike;
+  } catch {
+    // Absent service: the section still mounts and reports the missing groups.
+  }
+  return undefined;
+}
+
 /** Services this plugin waits for before applying. */
-export const inject = ["slots", "locale"];
+export const inject = ["slots", "locale", "shortcuts"];
 
 /** Mount the workbench service and its settings section. */
 export function apply(ctx: ClientContextLike): () => void {
@@ -67,7 +96,14 @@ export function apply(ctx: ClientContextLike): () => void {
 
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
-  const Section = createWorkbenchSection({ service, t });
+  const shortcuts = readShortcutService(ctx);
+  // The global commands are registered before the section renders: the section
+  // reads the host catalog, so a command registered after the first paint would
+  // appear only on the next catalog push.
+  const offCommands = registerWorkbenchCommands(shortcuts, service, t, message =>
+    ctx.logger?.warn?.(`${LOCALE_NAMESPACE}: ${message}`),
+  );
+  const Section = createWorkbenchSection({ service, t, shortcuts });
 
   ctx.slots.inject(SECTION_SLOT, () =>
     ctx.slots.register(
@@ -105,6 +141,7 @@ export function apply(ctx: ClientContextLike): () => void {
 
   return () => {
     if (typeof offViewActions === "function") offViewActions();
+    offCommands();
     offLocale();
     offService?.();
   };
@@ -116,7 +153,7 @@ export function apply(ctx: ClientContextLike): () => void {
  * The seam has to be drivable in Node with no browser, no host tree and no
  * React, so it is exported rather than hidden behind the service instance.
  */
-export const __test = { createViewSeam };
+export const __test = { createViewSeam, buildSettingsGroups, checkBindings };
 
 /** The plugin object the loader mounts. */
 export const clientPlugin = { name: "dsh-workbench-core", inject, apply, __test };
