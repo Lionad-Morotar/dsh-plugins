@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { registerWorkbenchCommands, type ShortcutCommandRegistration } from "../src/client/commands.ts";
+import { registerWorkbenchCommands, runWorkbenchCommand, type ShortcutCommandRegistration } from "../src/client/commands.ts";
 import { createWorkbenchService } from "../src/client/service.ts";
 
 function harness() {
@@ -64,6 +64,30 @@ describe("workbench command registration", () => {
     expect(resolution?.status).toBe("handled");
     if (resolution?.status === "handled") resolution.run();
     expect(service.dockVisible()).toBe(false);
+  });
+
+  it("lets the web router replace the view opener with its DOM fallback", () => {
+    const ctx = {
+      get: (name: string) =>
+        name === "uiSession" ? { adapter: { current: { getSnapshot: () => ({ key: "s1" }) } } } : undefined,
+    };
+    const service = createWorkbenchService(ctx);
+    const opened: string[] = [];
+
+    expect(runWorkbenchCommand("workbench.files.toggle", service, { openView: id => (opened.push(id), true) })).toBe(
+      true,
+    );
+    expect(opened).toEqual(["fs-explorer"]);
+  });
+
+  it("flips the observable dock switch from the terminal command", () => {
+    const service = createWorkbenchService({ get: () => undefined });
+    const seen: boolean[] = [];
+    service.dockVisibility.subscribe(visible => seen.push(visible));
+    runWorkbenchCommand("workbench.term.toggle", service);
+    expect(seen).toEqual([false]);
+    runWorkbenchCommand("workbench.term.toggle", service);
+    expect(seen).toEqual([false, true]);
   });
 
   it("keeps registering after one host rejection", () => {

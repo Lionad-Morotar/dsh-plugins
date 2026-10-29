@@ -30,8 +30,8 @@
 ## 核心能力
 
 - 服务 `workbench`（契约版本 1）：`panelStore` 面板台账（按 `order` 与 id 排序、同 id 注册幂等）、`registerDock` / `docks`、`currentSessionId`、`openView` / `closeView`。
-- 终端开关 `dockVisible` / `setDockVisible`：默认可见。`shell.bottom` 是单槽且先注册者胜，所以"是否占这个槽"只能有一个决策人，dock 在注册前先读这个开关。
-- 视图切换 seam：`views.bind(sessionId, open)` 接住宿主发给会话级的 `openView`，`open` / `showChat` 供 root 作用域的终端 dock 回对话。同一会话后绑定的覆盖先绑定的，旧 disposer 不会误删新绑定。
+- 终端开关 `dockVisibility`：默认可见，`get` / `set` / `toggle` / `subscribe` 四件套；`dockVisible` / `setDockVisible` 保留为兼容读写。`shell.bottom` 是单槽且先注册者胜，所以"是否占这个槽"只能有一个决策人，dock 在注册前先读这个开关，运行中则订阅它收放。
+- 视图切换 seam：`views.bind(sessionId, open)` 接住宿主发给会话级的 `openView`，`open` / `showChat` 供 root 作用域的终端 dock 回对话。同一会话后绑定的覆盖先绑定的，旧 disposer 不会误删新绑定。`createViewSwitcher` 在 seam 之上加一条显式兜底：宿主只在 View More 菜单展开时绑定 `openView`，菜单关掉后按精确文本点击宿主自己的「文件」/「Git」/「对话」标签。
 - 宿主适配层：`files`（`workspaceFiles` 的 list / read / stat / changes）、`subprocess`、`terminals`（`webTerminals` 的 view / close / recover）、`composerOverlay`（`data-conversation-composer-overlay` 锚点）。全部按名软探测，服务缺失回报 absent 而不是抛错，宿主升级最多打断一个文件。
 - 设置分区「工作台」：文件 / Git / 终端三组，行来自宿主 `ctx.shortcuts.catalog` 的真实快照——没挂载的命令所在组显示"未安装"，不会渲染一张空表。点"修改"进入录制，先 `describeBinding` 查 issue 与冲突，再带 revision 写 `shortcuts.edit`；被拒时把原因写在行下。
 - 命令注册：三条全局命令经 `ctx.shortcuts.register` 注册，desktop 的 macOS / Windows / Linux 三套平台 profile 写同一条声明。单条注册失败只记一条 warn，不连累设置页——设置页正是解释冲突的地方。
@@ -53,7 +53,7 @@
 
 ## 已知边界
 
-- web 上 `⌘⇧E` / `⌘⇧G` / `⌘⇧M` 会被宿主快捷键服务判为 `unsupported-browser`，因此不作为宿主默认值注册；客户端在 window 捕获阶段装一个本地路由，命中后走与宿主命令同一套 `commands.ts` 实现。desktop 不装这个监听，避免与原生加速键双触发。`Ctrl+W` 仍只有 desktop 承诺。
+- web 上 `⌘⇧E` / `⌘⇧G` / `⌘⇧M` 会被宿主快捷键服务判为 `unsupported-browser`，因此不作为宿主默认值注册；客户端在 window 捕获阶段装一个本地路由，命中后走与宿主命令同一套 `commands.ts` 实现。视图命令先试 seam，未绑定（View More 菜单未打开）时按精确文本点宿主标签；终端命令直接翻转可订阅的 dock 开关。desktop 不装这个监听，避免与原生加速键双触发。`Ctrl+W` 仍只有 desktop 承诺。
 - `⌘O` 归宿主 `workspace.add`、`⌘P` 归 `workspace.files`，工作台不抢；`Cmd+Insert` 在 Mac 键盘上不存在，任何端都不注册。设置页把这几条"刻意不绑"的组合单列一节并给替代键。
 - 设置页只显示已挂载的 `workbench.*` 命令；组里没有行时是"未安装"，不是故障。
 - 核心包没有独立可视面：设置分区之外，它只提供服务和命令注册。没有功能包时 `shell.bottom`、`conversation.view` 都不会出现。
@@ -69,8 +69,8 @@ node .nsl/chain/accept-s1b-view-seam.mjs  # views seam 真的调到宿主 openVi
 node .nsl/chain/accept-s8-settings.mjs    # 三组矩阵、跟随目录、不可用组合带原因与替代键
 ```
 
-单包：`pnpm --filter dsh-workbench-core test`（44 用例）、`typecheck`、`build`。
+单包：`pnpm --filter dsh-workbench-core test`（57 用例）、`typecheck`、`build`。
 
 ## 结构
 
-`src/client/keymap.ts` 是命令与键位的单一来源，设置矩阵与宿主注册都读它；`src/client/shortcut-router.ts` 是 web 端的捕获阶段本地路由，命中后调 `commands.ts` 的同一套解析器；`src/client/settings.ts` 是纯决策（分组、跨端可用性、冲突检查），不碰 React；`src/client/service.ts` 只做装配；`section.tsx` 把快照投影成 DOM。宿主半 `src/index.ts` 是空挂行，让 Loader 在两侧都能解析这个包名。
+`src/client/keymap.ts` 是命令与键位的单一来源，设置矩阵与宿主注册都读它；`src/client/shortcut-router.ts` 是 web 端的捕获阶段本地路由，命中后调 `commands.ts` 的同一套解析器；`src/client/view-switcher.ts` 是 seam → 宿主标签的双路切视图；`src/client/dock-visibility.ts` 是 dock 开关的可订阅状态；`src/client/settings.ts` 是纯决策（分组、跨端可用性、冲突检查），不碰 React；`src/client/service.ts` 只做装配；`section.tsx` 把快照投影成 DOM。宿主半 `src/index.ts` 是空挂行，让 Loader 在两侧都能解析这个包名。

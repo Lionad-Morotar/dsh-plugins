@@ -41,6 +41,19 @@ const VIEW_BY_GROUP: Partial<Record<WorkbenchCommandSpec["group"], string>> = {
   git: "git-explorer",
 };
 
+/**
+ * Per-call overrides for the command body.
+ *
+ * The web shell cannot rely on `service.openView`: the host only binds its
+ * `openView` capability while the View More menu is mounted. The local key
+ * router therefore hands the command a two-path opener that falls back to the
+ * host's own tabs, while desktop registration keeps the service default.
+ */
+export interface WorkbenchCommandRuntime {
+  /** Replace the view-opening step; returns whether the view was opened. */
+  readonly openView?: (viewId: string) => boolean;
+}
+
 /** Desktop profiles all carry the declared binding; web intentionally has none. */
 function desktopDefaults(binding: KeyBinding): Record<string, KeyBinding> {
   return {
@@ -51,14 +64,19 @@ function desktopDefaults(binding: KeyBinding): Record<string, KeyBinding> {
 }
 
 /** Build the resolver for one command, closing over the service. */
-function resolverFor(spec: WorkbenchCommandSpec, service: WorkbenchService): () => ShortcutResolutionLike {
+function resolverFor(
+  spec: WorkbenchCommandSpec,
+  service: WorkbenchService,
+  runtime: WorkbenchCommandRuntime = {},
+): () => ShortcutResolutionLike {
   if (spec.id === "workbench.term.toggle") {
     return () => ({
       status: "handled",
-      run: () => service.setDockVisible(!service.dockVisible()),
+      run: () => service.dockVisibility.toggle(),
     });
   }
   const viewId = VIEW_BY_GROUP[spec.group];
+  const openView = runtime.openView ?? ((id: string) => service.openView(id));
   return () => {
     if (service.currentSessionId() === undefined) {
       return { status: "blocked", reason: "请先选择会话" };
@@ -67,7 +85,7 @@ function resolverFor(spec: WorkbenchCommandSpec, service: WorkbenchService): () 
     return {
       status: "handled",
       run: () => {
-        service.openView(viewId);
+        openView(viewId);
       },
     };
   };
@@ -80,12 +98,17 @@ function resolverFor(spec: WorkbenchCommandSpec, service: WorkbenchService): () 
  * bodies: a chord and a host menu selection must never diverge.
  * @param id - global command id.
  * @param service - the workbench service the command drives.
+ * @param runtime - optional view-opening override for the web shell.
  * @returns true when the command ran; false when unknown or currently blocked.
  */
-export function runWorkbenchCommand(id: string, service: WorkbenchService): boolean {
+export function runWorkbenchCommand(
+  id: string,
+  service: WorkbenchService,
+  runtime: WorkbenchCommandRuntime = {},
+): boolean {
   const spec = GLOBAL_COMMANDS.find(command => command.id === id);
   if (spec === undefined) return false;
-  const resolution = resolverFor(spec, service)();
+  const resolution = resolverFor(spec, service, runtime)();
   if (resolution.status !== "handled") return false;
   resolution.run();
   return true;

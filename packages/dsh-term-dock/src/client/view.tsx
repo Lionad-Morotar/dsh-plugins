@@ -15,6 +15,7 @@
 import { useEffect, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 
 import { createTerminalPanel } from "./terminal-panel.tsx";
+import { createDockController, type DockVisibilitySource } from "./dock-controller.ts";
 import type { DockHost } from "./host.ts";
 import type { DockPanel, DockState } from "./dock-state.ts";
 import type { TerminalRack } from "./rack.ts";
@@ -38,6 +39,26 @@ export interface DockWiring {
   readonly rack: TerminalRack;
   readonly host: DockHost;
   readonly t: Translate;
+  /** The core's observable switch; the dock follows it for its whole life. */
+  readonly visibility: DockVisibilitySource;
+}
+
+/**
+ * Follow the core's dock switch for one mounted dock.
+ *
+ * The controller is the subscription point; React only projects the latest
+ * value. Reading the source once here would reintroduce the defect this hook
+ * exists to remove.
+ * @param visibility - the core's read/subscribe face.
+ * @returns whether the dock should currently occupy height.
+ */
+function useDockVisible(visibility: DockVisibilitySource): boolean {
+  const [visible, setVisible] = useState(() => visibility.get());
+  useEffect(() => {
+    const controller = createDockController({ visibility, onChange: setVisible });
+    return () => controller.dispose();
+  }, [visibility]);
+  return visible;
 }
 
 const rootStyle: CSSProperties = {
@@ -136,7 +157,7 @@ function IconButton({
  * @param wiring - dock state, view rack, host seams and the translate seat.
  * @returns the component registered into `shell.bottom`.
  */
-export function createTermDockView({ dock, rack, host, t }: DockWiring): ComponentType {
+export function createTermDockView({ dock, rack, host, t, visibility }: DockWiring): ComponentType {
   const TerminalPanel = createTerminalPanel({ t });
   let panelSeq = 0;
   const nextPanelId = (): string => `terminal-${(panelSeq += 1)}`;
@@ -156,6 +177,7 @@ export function createTermDockView({ dock, rack, host, t }: DockWiring): Compone
   }
 
   function TermDock() {
+    const visible = useDockVisible(visibility);
     const snapshot = useSyncExternalStore(dock.subscribe, dock.snapshot);
     const sessionId = host.currentSessionId();
     const terminals = host.terminals();
@@ -201,13 +223,17 @@ export function createTermDockView({ dock, rack, host, t }: DockWiring): Compone
     const activeId = snapshot.activeId;
     const minimized = snapshot.mode === "minimized";
 
+    // Hiding keeps the subtree mounted: display:none releases the height
+    // without detaching a terminal or replaying its scrollback, which is what
+    // "收起 dock" means for the processes living behind these panels.
     return (
       <section
         data-workbench-dock="term-dock"
         data-dock-mode={snapshot.mode}
+        data-dock-visible={visible ? "true" : "false"}
         data-panel-count={panels.length}
         data-dock-session={sessionId ?? ""}
-        style={{ ...rootStyle, height }}
+        style={{ ...rootStyle, height, display: visible ? "flex" : "none" }}
         onKeyDownCapture={handleKeyDown}
       >
         <header style={headerStyle}>

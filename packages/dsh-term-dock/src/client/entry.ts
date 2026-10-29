@@ -6,7 +6,9 @@
  *
  * - The gate comes first. `shell.bottom` is single and first-registrant-wins, so
  *   registering it while the workbench says the dock is hidden would take the slot
- *   from whatever else wants the bottom of the shell (blueprint D2).
+ *   from whatever else wants the bottom of the shell (blueprint D2). The gate is
+ *   also live: `⌘⇧M` flips the core's observable switch, and a dock hidden at
+ *   apply time mounts the first time the switch turns on.
  * - The heavy half is never imported here. xterm lives in `client.terminal.js`
  *   behind `require.async`; this bundle only knows the chunk's file name.
  * - Everything stateful is created per apply. A reload of the row builds a fresh
@@ -15,8 +17,9 @@
 import { createTerminalBinding } from "./binding.ts";
 import { EN, ZH } from "./copy.ts";
 import { createDockState } from "./dock-state.ts";
+import { createDockController } from "./dock-controller.ts";
 import { boot } from "./chunk-loader.ts";
-import { createDockHost, readDockVisible, type WorkbenchFace } from "./host.ts";
+import { createDockHost, readDockVisibility, type WorkbenchFace } from "./host.ts";
 import { createTerminalRack } from "./rack.ts";
 import { describeTerminal } from "./status.ts";
 import { createTermDockView } from "./view.tsx";
@@ -51,23 +54,44 @@ export const inject = ["slots", "locale", "workbench"];
  */
 export function apply(ctx: ClientContextLike): () => void {
   const workbench = (ctx.workbench ?? (ctx.get?.("workbench") as WorkbenchFace | undefined)) || undefined;
-  if (!readDockVisible(workbench)) return () => {};
+  if (workbench === undefined) return () => {};
 
+  const visibility = readDockVisibility(workbench);
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
-  const offDockRow = workbench?.registerDock?.({ id: DOCK_ID, title: t("dock.title") });
 
   const dock = createDockState();
   const host = createDockHost(ctx);
   const rack = createTerminalRack({ host });
-  const Dock = createTermDockView({ dock, rack, host, t });
+  const Dock = createTermDockView({ dock, rack, host, t, visibility });
 
-  const offSlot = ctx.slots.inject(DOCK_SLOT, () =>
-    ctx.slots.register({ name: DOCK_SLOT, id: DOCK_ID, locale: LOCALE_NAMESPACE }, Dock),
-  );
+  let offSlot: (() => void) | undefined;
+  let offDockRow: (() => void) | undefined;
+
+  /** Take the single bottom slot; called on apply and on a later show. */
+  const mount = (): void => {
+    if (offSlot !== undefined) return;
+    offDockRow = workbench.registerDock?.({ id: DOCK_ID, title: t("dock.title") });
+    const dispose = ctx.slots.inject(DOCK_SLOT, () =>
+      ctx.slots.register({ name: DOCK_SLOT, id: DOCK_ID, locale: LOCALE_NAMESPACE }, Dock),
+    );
+    offSlot = typeof dispose === "function" ? (dispose as () => void) : () => {};
+  };
+
+  // The controller delivers the current value immediately and every later
+  // transition. Hiding is handled inside the component (display:none keeps the
+  // processes and their scrollback); showing may need to take the slot the
+  // dock never registered while it started hidden.
+  const controller = createDockController({
+    visibility,
+    onChange: visible => {
+      if (visible) mount();
+    },
+  });
 
   return () => {
-    if (typeof offSlot === "function") offSlot();
+    controller.dispose();
+    offSlot?.();
     if (typeof offDockRow === "function") offDockRow();
     offLocale();
     // Unload closes the processes this plugin started instead of disposing the
@@ -83,7 +107,7 @@ export function apply(ctx: ClientContextLike): () => void {
  * so the state machine and the view adapter are exported rather than hidden
  * behind the component tree.
  */
-export const __test = { createDockState, createTerminalBinding, describeTerminal };
+export const __test = { createDockState, createDockController, createTerminalBinding, describeTerminal };
 
 /** The plugin object the loader mounts. */
 export const clientPlugin = { name: PACKAGE_NAME, inject, apply, __test };

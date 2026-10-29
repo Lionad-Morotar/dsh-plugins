@@ -28,6 +28,8 @@ import { createSessionSelection } from "./session.ts";
 import { createWorkbenchService, type WorkbenchService } from "./service.ts";
 import { createGlobalKeyRouter, installGlobalKeyRouter } from "./shortcut-router.ts";
 import { createReturnToChatRow, resolveMenuItemButton, type LoaderRequire } from "./view-actions.tsx";
+import { createViewSwitcher } from "./view-switcher.ts";
+import { createDockVisibility } from "./dock-visibility.ts";
 import { createViewSeam } from "./views.ts";
 import { WORKBENCH_SERVICE } from "../shared.ts";
 
@@ -85,6 +87,27 @@ export function readShortcutService(ctx: ClientContextLike): (ShortcutRegistryLi
 export const inject = ["slots", "locale", "shortcuts"];
 
 /**
+ * Open a conversation view from a global chord.
+ *
+ * The seam is tried first. It only holds a binding while the View More menu is
+ * mounted, which is exactly the state a global chord cannot assume, so the
+ * switcher falls back to clicking the host's own tab (exact label match). This
+ * is the web path only; desktop commands keep the registered resolver.
+ * @param service - the workbench service.
+ * @param viewId - the feature package's view id.
+ * @returns whether a seam binding or a host tab accepted the switch.
+ */
+function openViewFromWeb(service: WorkbenchService, viewId: string): boolean {
+  const sessionId = service.currentSessionId();
+  if (sessionId === undefined) return false;
+  return createViewSwitcher({
+    service: service.views,
+    sessionId,
+    doc: typeof document === "undefined" ? undefined : document,
+  }).open(viewId);
+}
+
+/**
  * Install the web-only fallback router for the host-refused chords.
  *
  * Desktop keeps the native menu accelerator; a second listener there would run
@@ -98,7 +121,9 @@ function installWebShortcutRouter(
   return installGlobalKeyRouter({
     runtime: shortcuts?.runtime,
     run: commandId => {
-      runWorkbenchCommand(commandId, service);
+      runWorkbenchCommand(commandId, service, {
+        openView: viewId => openViewFromWeb(service, viewId),
+      });
     },
     ...(typeof window === "undefined" ? {} : { target: window }),
   });
@@ -179,7 +204,14 @@ export function apply(ctx: ClientContextLike): () => void {
  * The seam has to be drivable in Node with no browser, no host tree and no
  * React, so it is exported rather than hidden behind the service instance.
  */
-export const __test = { createViewSeam, buildSettingsGroups, checkBindings, createGlobalKeyRouter };
+export const __test = {
+  createViewSeam,
+  createViewSwitcher,
+  createDockVisibility,
+  buildSettingsGroups,
+  checkBindings,
+  createGlobalKeyRouter,
+};
 
 /** The plugin object the loader mounts. */
 export const clientPlugin = { name: "dsh-workbench-core", inject, apply, __test };

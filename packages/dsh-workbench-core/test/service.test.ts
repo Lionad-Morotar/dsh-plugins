@@ -66,6 +66,18 @@ describe("workbench service", () => {
     expect(opened).toEqual(["git-explorer", "chat"]);
   });
 
+  it("exposes the dock switch as a store and keeps the compatibility pair in sync", () => {
+    const service = createWorkbenchService(emptyContext);
+    const seen: boolean[] = [];
+    service.dockVisibility.subscribe(visible => seen.push(visible));
+
+    service.setDockVisible(false);
+    expect(service.dockVisible()).toBe(false);
+    service.dockVisibility.set(true);
+    expect(service.dockVisible()).toBe(true);
+    expect(seen).toEqual([false, true]);
+  });
+
   it("registers docks idempotently", () => {
     const service = createWorkbenchService(emptyContext);
     const off = service.registerDock({ id: "term-dock", title: "终端" });

@@ -13,6 +13,7 @@
  * - adapters: the structural host faces described in `adapters.ts`.
  */
 import { createHostAdapters, type WorkbenchAdapters } from "./adapters.ts";
+import { createDockVisibility, type DockVisibility } from "./dock-visibility.ts";
 import { WORKBENCH_COMMANDS, type WorkbenchCommandSpec } from "./keymap.ts";
 import { createPanelLedger, type PanelDescriptor, type PanelStore } from "./panels.ts";
 import { readCurrentSessionId } from "./session.ts";
@@ -21,6 +22,7 @@ import { WORKBENCH_VERSION } from "../shared.ts";
 
 export { CHAT_VIEW_ID } from "./views.ts";
 export type { ViewOpener, ViewSwitchSeam } from "./views.ts";
+export type { DockVisibility, DockVisibilityListener } from "./dock-visibility.ts";
 
 /** A dock surface the workbench owns (the terminal dock for now). */
 export interface DockDescriptor {
@@ -58,14 +60,24 @@ export interface WorkbenchService {
   /** The session the user is looking at, or undefined. */
   currentSessionId(): string | undefined;
   /**
-   * Whether the terminal dock should occupy its host slot.
+   * The terminal dock switch as an observable store.
    *
    * `shell.bottom` is single and first-registrant-wins, so the decision has one
    * owner (blueprint D2): the dock reads this before registering and registers
-   * nothing while it answers false.
+   * nothing while it answers false. The store is the responsive face; a
+   * runtime toggle from the `⌘⇧M` command must reach the mounted dock without a
+   * remount.
+   */
+  readonly dockVisibility: DockVisibility;
+  /**
+   * Compatibility read of {@link dockVisibility}.
+   * @returns the current answer.
    */
   dockVisible(): boolean;
-  /** Flip the dock switch; the settings section exposes it in a later slice. */
+  /**
+   * Compatibility write of {@link dockVisibility}.
+   * @param visible - whether the dock should occupy its slot.
+   */
   setDockVisible(visible: boolean): void;
 }
 
@@ -80,7 +92,7 @@ export function createWorkbenchService(ctx: unknown): WorkbenchService {
   const dockRows: DockDescriptor[] = [];
   // The dock is on by default: a fresh install should show the surface the user
   // installed, and hiding it is the explicit choice.
-  let dockVisible = true;
+  const dockVisibility = createDockVisibility(true);
 
   const views = createViewSeam();
 
@@ -113,10 +125,9 @@ export function createWorkbenchService(ctx: unknown): WorkbenchService {
       return views.showChat(sessionId);
     },
     currentSessionId: () => readCurrentSessionId(ctx),
-    dockVisible: () => dockVisible,
-    setDockVisible: visible => {
-      dockVisible = visible;
-    },
+    dockVisibility,
+    dockVisible: () => dockVisibility.get(),
+    setDockVisible: visible => dockVisibility.set(visible),
   };
 
   return service;

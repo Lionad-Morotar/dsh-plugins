@@ -12,6 +12,7 @@
  * - the host `webTerminals` service for the terminal views themselves.
  */
 import type { TerminalViewLike } from "./binding.ts";
+import type { DockVisibilitySource } from "./dock-controller.ts";
 
 /** The host service that owns browser terminal views. */
 export interface WebTerminalsFace {
@@ -21,6 +22,8 @@ export interface WebTerminalsFace {
 /** The core service members this package reads. */
 export interface WorkbenchFace {
   readonly version?: number;
+  /** Observable dock switch; present from core contract version 1 onward. */
+  readonly dockVisibility?: DockVisibilitySource;
   readonly dockVisible?: () => boolean;
   readonly currentSessionId?: () => string | undefined;
   readonly views?: { showChat?: (sessionId: string) => boolean };
@@ -73,6 +76,32 @@ export function readDockVisible(workbench: WorkbenchFace | undefined): boolean {
   if (workbench === undefined || workbench === null) return false;
   if (typeof workbench.dockVisible !== "function") return true;
   return workbench.dockVisible() !== false;
+}
+
+/** Whether a value is the core's observable switch rather than a stray field. */
+function isDockVisibilitySource(value: unknown): value is DockVisibilitySource {
+  if (value === null || typeof value !== "object") return false;
+  const source = value as { get?: unknown; subscribe?: unknown };
+  return typeof source.get === "function" && typeof source.subscribe === "function";
+}
+
+/**
+ * Resolve the dock switch as a subscribeable source.
+ *
+ * A core with the observable store is authoritative. An older core only has the
+ * boolean pair, so it is wrapped as a static source: the dock still respects the
+ * value it read at apply time, it just cannot react to a later flip.
+ * @param workbench - the core service, when mounted.
+ * @returns a source the dock controller can subscribe to; never undefined.
+ */
+export function readDockVisibility(workbench: WorkbenchFace | undefined): DockVisibilitySource {
+  if (workbench !== undefined && workbench !== null && isDockVisibilitySource(workbench.dockVisibility)) {
+    return workbench.dockVisibility;
+  }
+  return {
+    get: () => readDockVisible(workbench),
+    subscribe: () => () => {},
+  };
 }
 
 /**

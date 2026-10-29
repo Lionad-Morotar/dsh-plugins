@@ -45,11 +45,57 @@ function createContext({ dockVisible = true }: { dockVisible?: boolean } = {}) {
   return { ctx, calls };
 }
 
+/** A context whose core exposes the observable switch. */
+function createObservableContext(initial: boolean) {
+  const calls: Call[] = [];
+  let visible = initial;
+  const listeners = new Set<(visible: boolean) => void>();
+  const ctx = {
+    slots: {
+      inject(name: string, factory: () => () => void) {
+        calls.push({ type: "slots.inject", name });
+        factory();
+        return () => {};
+      },
+      register(spec: Record<string, unknown>) {
+        calls.push({ type: "slots.register", name: spec.name as string, id: spec.id as string | undefined });
+        return () => {};
+      },
+    },
+    locale: {
+      register: () => () => {},
+      bind: (namespace: string) => (key: string) => `${namespace}.${key}`,
+    },
+    workbench: {
+      version: 1,
+      dockVisibility: {
+        get: () => visible,
+        subscribe(listener: (next: boolean) => void) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+      currentSessionId: () => "s1",
+      registerDock: () => () => {},
+    },
+    get: () => undefined,
+  };
+  return {
+    ctx,
+    calls,
+    publish(next: boolean) {
+      visible = next;
+      for (const listener of [...listeners]) listener(next);
+    },
+  };
+}
+
 describe("term dock client entry", () => {
   it("declares the workbench service dependency and exposes the test surface", () => {
     expect(clientPlugin.name).toBe("dsh-term-dock");
     expect(inject).toEqual(["slots", "locale", "workbench"]);
     expect(typeof __test.createDockState).toBe("function");
+    expect(typeof __test.createDockController).toBe("function");
     expect(typeof __test.createTerminalBinding).toBe("function");
     expect(typeof __test.describeTerminal).toBe("function");
   });
@@ -65,13 +111,25 @@ describe("term dock client entry", () => {
     expect(calls).toContainEqual({ type: "dock.register", id: "term-dock" });
   });
 
-  it("registers nothing at all while the core hides the dock", () => {
+  it("keeps the bottom slot free while the core hides the dock", () => {
     const { ctx, calls } = createContext({ dockVisible: false });
 
     const dispose = apply(ctx as never);
 
-    expect(calls).toEqual([]);
+    expect(calls.filter(call => call.type === "slots.register")).toEqual([]);
+    expect(calls.filter(call => call.type === "dock.register")).toEqual([]);
     expect(typeof dispose).toBe("function");
+  });
+
+  it("mounts the dock when an initially hidden core turns the switch on", () => {
+    const { ctx, calls, publish } = createObservableContext(false);
+
+    apply(ctx as never);
+    expect(calls.filter(call => call.type === "slots.register")).toEqual([]);
+
+    publish(true);
+    expect(calls).toContainEqual({ type: "slots.inject", name: "shell.bottom" });
+    expect(calls).toContainEqual({ type: "slots.register", name: "shell.bottom", id: "term-dock" });
   });
 
   it("disposes its slot, locale and dock row", () => {
