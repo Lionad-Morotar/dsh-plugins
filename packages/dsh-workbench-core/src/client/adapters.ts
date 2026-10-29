@@ -86,12 +86,15 @@ interface ContextLike {
 export function readHostService(ctx: unknown, name: string): unknown {
   if (ctx === null || typeof ctx !== "object") return undefined;
   const getter = (ctx as ContextLike).get;
-  let value: unknown;
-  if (typeof getter === "function") value = getter.call(ctx, name);
-  if (value === undefined || value === null) {
-    value = (ctx as unknown as Record<string, unknown>)[name];
+  // Cordis's `get` is the non-throwing resolver and works without declaring the
+  // service in `inject`; a property read on a real context throws for exactly
+  // that reason. Only contexts without `get` (the plain objects unit tests use)
+  // are read directly.
+  if (typeof getter === "function") {
+    const value = getter.call(ctx, name);
+    return value === null ? undefined : value;
   }
-  return value;
+  return (ctx as unknown as Record<string, unknown>)[name];
 }
 
 /**
