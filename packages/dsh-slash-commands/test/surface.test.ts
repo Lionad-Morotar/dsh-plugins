@@ -68,16 +68,24 @@ describe("surface gating", () => {
     expect(registered.map(entry => entry.name)).toContain("rename");
   });
 
-  it("registers the archive pair on a non-terminal surface", async () => {
-    // Archiving writes the host's durable archive set, so it is meaningful on
-    // every surface — the opposite of /copy, whose clipboard belongs to one
-    // machine. No terminal gate applies.
+  it("registers /rename and /archive on a non-terminal surface", async () => {
     const { registered, ctx } = context({ terminal: false, withCommands: true });
 
     await settle(() => apply(ctx as never));
 
-    expect(registered.map(entry => entry.name)).toContain("archive");
-    expect(registered.map(entry => entry.name)).toContain("unarchive");
+    expect(registered.map(entry => entry.name).sort()).toEqual(["archive", "rename"]);
+  });
+
+  it("does not offer /unarchive on a non-terminal surface", async () => {
+    // The web/desktop slash menu gets /unarchive from the client half, whose
+    // contribution gates it on the session actually being archived. Registering
+    // the host command too would collide by name at candidate synthesis and
+    // would show a dead row in every unarchived session.
+    const { registered, ctx } = context({ terminal: false, withCommands: true });
+
+    await settle(() => apply(ctx as never));
+
+    expect(registered.some(entry => entry.name === "unarchive")).toBe(false);
   });
 
   it("does not offer /copy without a terminal", async () => {
@@ -91,6 +99,9 @@ describe("surface gating", () => {
   });
 
   it("registers every command on a terminal surface", async () => {
+    // The TUI has no client half, so /unarchive comes from the host registry
+    // there, ungated: a TUI session stays open after being archived, so the
+    // archived state is a normal posture and a constant row is honest.
     const { registered, ctx } = context({ terminal: true, withCommands: true });
 
     await settle(() => apply(ctx as never));

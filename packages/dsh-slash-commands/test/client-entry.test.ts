@@ -50,12 +50,12 @@ describe("the client half", () => {
     expect(inject).toContain("uiWorkspace");
   });
 
-  it("registers /resume once when applied", () => {
+  it("registers /resume and the state-gated /unarchive when applied", () => {
     const { ctx, registrations } = context();
 
     clientPlugin.apply(ctx as never);
 
-    expect(registrations.map(entry => entry.name)).toEqual(["resume"]);
+    expect(registrations.map(entry => entry.name)).toEqual(["resume", "unarchive"]);
   });
 
   it("returns the registration's disposer to the effect, so a reload tears the command down", () => {
@@ -76,7 +76,7 @@ describe("the client half", () => {
 
     clientPlugin.apply(ctx as never);
 
-    expect(effect).toHaveBeenCalledTimes(2);
-    expect(labels).toEqual(["dsh-slash-commands: bounded clipboard", "dsh-slash-commands: /resume"]);
+    expect(effect).toHaveBeenCalledTimes(3);
+    expect(labels).toEqual(["dsh-slash-commands: bounded clipboard", "dsh-slash-commands: /resume", "dsh-slash-commands: /unarchive"]);
   });
 });

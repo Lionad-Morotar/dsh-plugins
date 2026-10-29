@@ -7,12 +7,16 @@
  *   adapter reads that catalog over the same remote surface, so this single
  *   registration is what makes the command visible on web, desktop and TUI at
  *   once. It needs no terminal.
- * - `/archive` and `/unarchive` register on the same registry for the same
- *   reason: the write belongs to the host's `workspaceRegistry` (the durable
- *   archive set), so every surface can execute them and the host's push
- *   stream converges the web/desktop UI on its own — the sidebar hides the
- *   row and the open main view is cleared by the host's own reconcile, with
- *   no client-half code of ours anywhere in that chain.
+ * - `/archive` registers on the same registry for the same reason: the write
+ *   belongs to the host's `workspaceRegistry` (the durable archive set), so
+ *   every surface can execute it and the host's push stream converges the
+ *   web/desktop UI on its own — the sidebar hides the row and the open main
+ *   view is cleared by the host's own reconcile, with no client-half code of
+ *   ours anywhere in that chain.
+ * - `/unarchive` is split by surface: the client half offers it only while
+ *   the open session is actually archived (the state gate the registry
+ *   cannot express), and the TUI takes the registry row here because its
+ *   session stays open after an archive.
  * - `/copy` needs the TUI's terminal: its OSC 52 escape and clipboard helpers
  *   only mean anything there. It registers through `tuiPluginHost` when the
  *   composition admits third-party activations, falling back to the plain
@@ -30,7 +34,7 @@
  * synchronously therefore always missed the mediated path.
  */
 import { MISSING_TOOL } from "./clipboard.ts";
-import { registerArchiveCommands } from "./archive-command.ts";
+import { registerArchiveCommand, registerUnarchiveCommand } from "./archive-command.ts";
 import { registerCopyCommand } from "./command.ts";
 import type { ClipboardEffects, HostContextLike } from "./command.ts";
 import { registerRenameCommand } from "./rename-command.ts";
@@ -157,11 +161,11 @@ export function apply(ctx: PluginContext): void {
     ctx.logger?.info?.("dsh-slash-commands: /rename is unavailable on this composition: " + detail);
   }
   try {
-    registerArchiveCommands(ctx);
-    ctx.logger?.info?.("/archive and /unarchive are ready: /archive [--stop], /unarchive");
+    registerArchiveCommand(ctx);
+    ctx.logger?.info?.("/archive is ready: /archive [--stop]");
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    ctx.logger?.info?.("dsh-slash-commands: /archive and /unarchive are unavailable on this composition: " + detail);
+    ctx.logger?.info?.("dsh-slash-commands: /archive is unavailable on this composition: " + detail);
   }
 
   // One macrotask later the host row is mounted; registering from the same
@@ -179,10 +183,16 @@ export function apply(ctx: PluginContext): void {
       // mediated path validates the Cordis activation marker on it, which a
       // synthesized object would not carry.
       registerCopyCommand(ctx, environment, effects);
-      ctx.logger?.info?.("/copy is ready: /copy [<number=1>] --all");
+      // /unarchive joins /copy in the terminal-only block: web and desktop
+      // take the client half's state-gated contribution instead, so a host
+      // row here would either collide by name or show a dead restore command
+      // in every unarchived session. The TUI keeps the constant row because
+      // a TUI session stays open after being archived.
+      registerUnarchiveCommand(ctx);
+      ctx.logger?.info?.("/copy and /unarchive are ready: /copy [<number=1>] --all, /unarchive");
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      ctx.logger?.warn?.("dsh-slash-commands: /copy is unavailable on this composition: " + detail);
+      ctx.logger?.warn?.("dsh-slash-commands: /copy and /unarchive are unavailable on this composition: " + detail);
     }
   }, 0);
 }

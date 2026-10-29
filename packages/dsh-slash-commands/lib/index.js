@@ -199,17 +199,18 @@ function createUnarchiveCommand(ctx) {
     }
   };
 }
-function registerArchiveCommands(ctx) {
-  const commands = ctx.get?.("commands", false) ?? ctx.commands;
-  if (typeof commands?.register !== "function") {
+function commandsOf(ctx) {
+  const register = (ctx.get?.("commands", false) ?? ctx.commands)?.register;
+  if (typeof register !== "function") {
     throw new Error("archive commands cannot register: the commands service is not mounted on this context");
   }
-  const disposeArchive = commands.register(createArchiveCommand(ctx));
-  const disposeUnarchive = commands.register(createUnarchiveCommand(ctx));
-  return () => {
-    disposeUnarchive();
-    disposeArchive();
-  };
+  return { register };
+}
+function registerArchiveCommand(ctx) {
+  return commandsOf(ctx).register(createArchiveCommand(ctx));
+}
+function registerUnarchiveCommand(ctx) {
+  return commandsOf(ctx).register(createUnarchiveCommand(ctx));
 }
 
 // src/arguments.ts
@@ -477,11 +478,11 @@ function apply(ctx) {
     ctx.logger?.info?.("dsh-slash-commands: /rename is unavailable on this composition: " + detail);
   }
   try {
-    registerArchiveCommands(ctx);
-    ctx.logger?.info?.("/archive and /unarchive are ready: /archive [--stop], /unarchive");
+    registerArchiveCommand(ctx);
+    ctx.logger?.info?.("/archive is ready: /archive [--stop]");
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    ctx.logger?.info?.("dsh-slash-commands: /archive and /unarchive are unavailable on this composition: " + detail);
+    ctx.logger?.info?.("dsh-slash-commands: /archive is unavailable on this composition: " + detail);
   }
   setTimeout(() => {
     if (!isTerminalSurface(ctx)) {
@@ -489,10 +490,11 @@ function apply(ctx) {
     }
     try {
       registerCopyCommand(ctx, environment, effects);
-      ctx.logger?.info?.("/copy is ready: /copy [<number=1>] --all");
+      registerUnarchiveCommand(ctx);
+      ctx.logger?.info?.("/copy and /unarchive are ready: /copy [<number=1>] --all, /unarchive");
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      ctx.logger?.warn?.("dsh-slash-commands: /copy is unavailable on this composition: " + detail);
+      ctx.logger?.warn?.("dsh-slash-commands: /copy and /unarchive are unavailable on this composition: " + detail);
     }
   }, 0);
 }

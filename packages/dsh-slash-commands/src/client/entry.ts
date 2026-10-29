@@ -20,13 +20,26 @@
  */
 import { bindExecCommandCopy, installBoundedClipboard } from "./clipboard-shim.ts";
 import { createResumeContribution, type ResumeWiringContext } from "./resume-command.ts";
+import { createUnarchiveContribution } from "./unarchive-contribution.ts";
 
 /** Services the wiring reads; declared so Cordis resolves them before apply. */
 export const inject = ["commandUi", "sessions", "workspaces", "uiWorkspace"];
 
-/** The client context this plugin reads: the wiring's collaborators plus the
+/**
+ * The registration face this half hands contributions to, narrowed to what
+ * the two contributions use: the shell accepts one name keyed entry per
+ * registration and returns its disposer. The kind stays with each
+ * contribution's own spec — the popupSelect of /resume, the action of
+ * /unarchive — instead of this face picking one.
+ */
+interface CommandUiRegisterLike {
+  register(contribution: { readonly name: string }): () => void;
+}
+
+/** The client context this plugin reads: the wirings' collaborators plus the
  *  fiber-scoped effect `apply` registers through. Cordis supplies the services. */
-export type ClientContextLike = ResumeWiringContext & {
+export type ClientContextLike = Omit<ResumeWiringContext, "commandUi"> & {
+  commandUi: Omit<ResumeWiringContext["commandUi"], "register"> & CommandUiRegisterLike;
   effect(callback: () => () => void, label?: string): void;
 };
 
@@ -67,6 +80,8 @@ export const clientPlugin = {
     // registration, and a second clipboard wrapper would stack budgets.
     ctx.effect(() => boundClipboard(globalThis) ?? (() => {}), "dsh-slash-commands: bounded clipboard");
     ctx.effect(() => ctx.commandUi.register(createResumeContribution(ctx)), "dsh-slash-commands: /resume");
+    // Visible only while the open session is archived; see unarchive-contribution.
+    ctx.effect(() => ctx.commandUi.register(createUnarchiveContribution(ctx)), "dsh-slash-commands: /unarchive");
   },
 };
 

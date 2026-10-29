@@ -265,27 +265,36 @@ export function createUnarchiveCommand(ctx: ArchiveContextLike): ArchiveDefiniti
   };
 }
 
-/**
- * Register both commands on the composed command registry.
- *
- * Returns a disposer that unwinds both registrations. Throws when no
- * commands service is mounted: a plugin that silently registers nothing is
- * harder to diagnose than an activation error in the log — `/rename`'s
- * registered contract, kept for these two.
- */
-export function registerArchiveCommands(ctx: ArchiveContextLike): () => void {
-  const commands = (ctx.get?.("commands", false) ?? (ctx as { commands?: unknown }).commands) as
-    | { register?: (definition: ArchiveDefinitionLike) => () => void }
-    | undefined;
-  if (typeof commands?.register !== "function") {
+/** The registry slice registration needs, resolved the way `/rename` does it. */
+function commandsOf(ctx: ArchiveContextLike): { register(definition: ArchiveDefinitionLike): () => void } {
+  const register = (
+    (ctx.get?.("commands", false) ?? (ctx as { commands?: unknown }).commands) as
+      | { register?: (definition: ArchiveDefinitionLike) => () => void }
+      | undefined
+  )?.register;
+  if (typeof register !== "function") {
     throw new Error("archive commands cannot register: the commands service is not mounted on this context");
   }
-  const disposeArchive = commands.register(createArchiveCommand(ctx));
-  const disposeUnarchive = commands.register(createUnarchiveCommand(ctx));
-  return () => {
-    disposeUnarchive();
-    disposeArchive();
-  };
+  return { register };
+}
+
+/**
+ * Register `/archive` on the composed command registry. It is a constant on
+ * every surface: archiving is meaningful for the session in use unless it is
+ * already archived (idempotent), so there is nothing to gate on.
+ */
+export function registerArchiveCommand(ctx: ArchiveContextLike): () => void {
+  return commandsOf(ctx).register(createArchiveCommand(ctx));
+}
+
+/**
+ * Register `/unarchive` on the composed command registry — terminal surfaces
+ * only. Web and desktop take the client contribution instead, which gates the
+ * row on the session actually being archived; registering both would collide
+ * by name at candidate synthesis, and a registry row could not gate anyway.
+ */
+export function registerUnarchiveCommand(ctx: ArchiveContextLike): () => void {
+  return commandsOf(ctx).register(createUnarchiveCommand(ctx));
 }
 
 /** Re-exported so the wiring module and tests share one usage-line source. */

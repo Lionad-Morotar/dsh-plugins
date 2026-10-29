@@ -5,7 +5,8 @@ import {
   archiveRejectionOf,
   createArchiveCommand,
   createUnarchiveCommand,
-  registerArchiveCommands,
+  registerArchiveCommand,
+  registerUnarchiveCommand,
   type ArchiveContextLike,
   type SessionActivityLike,
   type WorkspaceRegistryLike,
@@ -248,30 +249,43 @@ describe("/unarchive command", () => {
 });
 
 describe("registration", () => {
-  it("registers both commands on the harness-wide registry and returns a disposer", () => {
+  it("registers /archive and returns that registration's disposer", () => {
     const registered: string[] = [];
-    const disposers: Array<() => void> = [];
-    const dispose = registerArchiveCommands(context(registry(), { register: definition => {
+    const dispose = registerArchiveCommand(context(registry(), { register: definition => {
       registered.push((definition as { name: string }).name);
-      disposers.push(() => {});
       return () => {};
     } }));
 
-    expect(registered).toEqual(["archive", "unarchive"]);
+    expect(registered).toEqual(["archive"]);
     expect(typeof dispose).toBe("function");
-    expect(disposers.length).toBe(2);
+  });
+
+  it("registers /unarchive separately, so terminal surfaces can take it alone", () => {
+    // Web/desktop take /unarchive from the client contribution instead: a host
+    // row there could not gate on the session's archived state and would
+    // collide with the contribution by name at candidate synthesis.
+    const registered: string[] = [];
+    registerUnarchiveCommand(context(registry(), { register: definition => {
+      registered.push((definition as { name: string }).name);
+      return () => {};
+    } }));
+
+    expect(registered).toEqual(["unarchive"]);
   });
 
   it("throws when the commands service is not mounted, like /rename does", () => {
-    expect(() => registerArchiveCommands(context(registry(), undefined))).toThrow();
+    expect(() => registerArchiveCommand(context(registry(), undefined))).toThrow();
+    expect(() => registerUnarchiveCommand(context(registry(), undefined))).toThrow();
   });
 
   it("describes both commands for the palette", () => {
     const definitions: Array<{ name: string; description: string }> = [];
-    registerArchiveCommands(context(registry(), { register: definition => {
+    const collect = { register: (definition: unknown) => {
       definitions.push(definition as { name: string; description: string });
       return () => {};
-    } }));
+    } };
+    registerArchiveCommand(context(registry(), collect));
+    registerUnarchiveCommand(context(registry(), collect));
 
     expect(definitions.find(d => d.name === "archive")?.description).toContain("Archive");
     expect(definitions.find(d => d.name === "unarchive")?.description).toContain("archive");
