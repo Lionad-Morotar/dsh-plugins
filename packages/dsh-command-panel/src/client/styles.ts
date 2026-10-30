@@ -26,8 +26,8 @@ const CSS = `
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: max(64px, var(--dsh-frame-overlay-top, 64px)) 16px 16px;
-  font: var(--dsw-font-s-14, 14px/22px system-ui, sans-serif);
+  padding: max(56px, var(--dsh-frame-overlay-top, 56px)) 16px 16px;
+  font: var(--dsw-font-xs-13, 13px/20px system-ui, sans-serif);
   color: var(--dsw-alias-label-primary, #1b1b1f);
 }
 
@@ -43,11 +43,11 @@ const CSS = `
   position: relative;
   display: flex;
   flex-direction: column;
-  width: min(680px, 100%);
-  max-height: min(64vh, 620px);
+  width: min(720px, 100%);
+  max-height: min(76vh, 760px);
   overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
-  border-radius: var(--dsw-radius-panel, 16px);
+  border-radius: var(--dsw-radius-panel, 14px);
   background: var(--dsw-alias-bg-layer-2, #ffffff);
   box-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0, 0, 0, 0.16));
   animation: dcp-rise var(--ds-transition-duration, 0.2s) var(--ds-ease-in-out, ease-out);
@@ -56,8 +56,8 @@ const CSS = `
 [${ROOT_ATTR}] [data-dcp-head] {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06));
 }
 
@@ -70,7 +70,7 @@ const CSS = `
 }
 
 [${ROOT_ATTR}] [data-dcp-mode] {
-  padding: 3px 9px;
+  padding: 2px 8px;
   border: 0;
   border-radius: calc(var(--dsw-radius-sm, 8px) - 2px);
   background: transparent;
@@ -78,7 +78,7 @@ const CSS = `
   cursor: pointer;
   font: inherit;
   font-size: 12px;
-  line-height: 18px;
+  line-height: 16px;
   white-space: nowrap;
 }
 
@@ -97,8 +97,8 @@ const CSS = `
   cursor: pointer;
   font: inherit;
   font-size: 12px;
-  line-height: 18px;
-  max-width: 180px;
+  line-height: 16px;
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -128,24 +128,25 @@ const CSS = `
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 6px;
+  padding: 3px;
 }
 
 [${ROOT_ATTR}] [data-dcp-group] {
-  padding: 8px 10px 4px;
+  padding: 4px 8px 1px;
   color: var(--dsw-alias-label-tertiary, #8a8a95);
-  font-size: 11px;
-  line-height: 16px;
+  font-size: 10.5px;
+  line-height: 13px;
   letter-spacing: 0.02em;
 }
 
 [${ROOT_ATTR}] [data-dcp-row] {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 34px;
-  padding: 6px 10px;
-  border-radius: var(--dsw-radius-sm, 8px);
+  gap: 8px;
+  min-height: 24px;
+  padding: 2px 8px;
+  line-height: 18px;
+  border-radius: 6px;
   cursor: pointer;
 }
 
@@ -164,42 +165,42 @@ const CSS = `
 
 [${ROOT_ATTR}] [data-dcp-row][data-kind="command"] [data-dcp-label] {
   font-family: var(--ds-font-family-code, ui-monospace, monospace);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 [${ROOT_ATTR}] [data-dcp-detail] {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 46%;
+  max-width: 44%;
   overflow: hidden;
   color: var(--dsw-alias-label-tertiary, #8a8a95);
-  font-size: 12px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 [${ROOT_ATTR}] [data-dcp-hint] {
   flex: none;
-  padding: 0 5px;
+  padding: 0 4px;
   border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.1));
-  border-radius: 4px;
+  border-radius: 3px;
   color: var(--dsw-alias-label-tertiary, #8a8a95);
-  font-size: 11px;
-  line-height: 16px;
+  font-size: 10px;
+  line-height: 14px;
   font-variant-numeric: tabular-nums;
 }
 
 [${ROOT_ATTR}] [data-dcp-status] {
-  padding: 12px 14px;
+  padding: 8px 10px;
   color: var(--dsw-alias-label-tertiary, #8a8a95);
-  font-size: 12px;
+  font-size: 11.5px;
 }
 
 [${ROOT_ATTR}] [data-dcp-notice] {
-  padding: 8px 14px;
+  padding: 6px 10px;
   border-top: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06));
   color: var(--dsw-alias-label-secondary, #4a4a55);
-  font-size: 12px;
+  font-size: 11.5px;
 }
 
 [${ROOT_ATTR}] [data-dcp-notice][data-tone="error"] {
@@ -208,11 +209,11 @@ const CSS = `
 
 [${ROOT_ATTR}] [data-dcp-foot] {
   display: flex;
-  gap: 14px;
-  padding: 8px 14px;
+  gap: 10px;
+  padding: 4px 10px;
   border-top: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06));
   color: var(--dsw-alias-label-tertiary, #8a8a95);
-  font-size: 11px;
+  font-size: 10.5px;
   line-height: 16px;
 }
 
