@@ -51,13 +51,24 @@ export const inject = ["slots", "locale", "workbench"];
  * @param ctx - the client context, with the core service already injected.
  * @returns a disposer that closes every terminal this plugin started.
  */
+/** Disposer of the dictionary currently sitting in the host's locale table.
+* A repeat apply on one host process (the desktop sync pass followed by the
+* mount pass) meets the same table, and the table refuses a second
+* registration for the same namespace and locale. Dropping ours first turns
+* that would-be throw into a plain replacement: the disposer deletes by
+* dictionary identity, so the module-singleton dictionaries are always
+* removable by the very disposer that registered them. */
+let registeredDictionaries: (() => void) | undefined;
+
 export function apply(ctx: ClientContextLike): () => void {
   const workbench = (ctx.workbench ?? (ctx.get?.("workbench") as WorkbenchFace | undefined)) || undefined;
   if (workbench === undefined) return () => {};
 
   const visibility = readDockVisibility(workbench);
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
+  registeredDictionaries?.();
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
+  registeredDictionaries = offLocale;
 
   const dock = createDockState();
   const host = createDockHost(ctx);
@@ -93,6 +104,7 @@ export function apply(ctx: ClientContextLike): () => void {
     offSlot?.();
     if (typeof offDockRow === "function") offDockRow();
     offLocale();
+    if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
     // Unload closes the processes this plugin started instead of disposing the
     // views: a detached view with no owner is an orphan shell (blueprint D7).
     rack.closeAll();

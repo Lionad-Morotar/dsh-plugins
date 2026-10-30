@@ -54,6 +54,37 @@ function createContext() {
 }
 
 describe("fs explorer client entry", () => {
+  it("a repeat apply replaces the dictionary instead of throwing", () => {
+    // The desktop sync pass and the mount pass both apply against one host
+    // process; the locale table throws on a second registration of the same
+    // namespace+locale and deletes by dictionary identity. Mirror both rules.
+    const table = new Map<string, unknown>();
+    const register = (ns: string, dicts: Record<string, unknown>) => {
+      for (const locale of Object.keys(dicts)) {
+        const key = `${ns}::${locale}`;
+        if (table.has(key)) throw new Error(`locale namespace "${ns}" already has locale "${locale}"`);
+        table.set(key, dicts[locale]);
+      }
+      const off = () => {
+        for (const [locale, entries] of Object.entries(dicts)) {
+          const key = `${ns}::${locale}`;
+          if (table.get(key) === entries) table.delete(key);
+        }
+      };
+      return off;
+    };
+    const makeCtx = () => {
+      const { ctx } = createContext();
+      return { ...ctx, locale: { bind: () => () => "x", register } };
+    };
+    const first = apply(makeCtx() as never);
+    const second = apply(makeCtx() as never);
+    expect(table.size).toBe(2);
+    second();
+    expect(table.size).toBe(0);
+    first();
+    expect(table.size).toBe(0);
+  });
   it("declares the workbench and Remote dependencies", () => {
     expect(clientPlugin.name).toBe("dsh-fs-explorer");
     expect(inject).toEqual(["slots", "locale", "workbench", "remote"]);

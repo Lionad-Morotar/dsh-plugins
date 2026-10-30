@@ -73,12 +73,23 @@ export function createRemoteResolver(ctx: ClientContextLike): RemoteResolver {
 }
 
 /** Mount the Git workbench view. */
+/** Disposer of the dictionary currently sitting in the host's locale table.
+* A repeat apply on one host process (the desktop sync pass followed by the
+* mount pass) meets the same table, and the table refuses a second
+* registration for the same namespace and locale. Dropping ours first turns
+* that would-be throw into a plain replacement: the disposer deletes by
+* dictionary identity, so the module-singleton dictionaries are always
+* removable by the very disposer that registered them. */
+let registeredDictionaries: (() => void) | undefined;
+
 export function apply(ctx: ClientContextLike): () => void {
   const workbench = ctx.workbench;
   if (workbench === undefined || workbench === null) return () => {};
 
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
+  registeredDictionaries?.();
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
+  registeredDictionaries = offLocale;
   const offStyles = insertStyles(typeof document === "undefined" ? undefined : document);
   const View = createGitExplorerView({ workbench, version: workbench.version, t, remote: createRemoteResolver(ctx) });
 
@@ -98,6 +109,7 @@ export function apply(ctx: ClientContextLike): () => void {
   return () => {
     offStyles();
     offLocale();
+    if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
   };
 }
 

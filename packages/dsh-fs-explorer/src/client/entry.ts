@@ -75,13 +75,24 @@ function activeLocale(ctx: ClientContextLike): string {
 }
 
 /** Mount the file workbench view. */
+/** Disposer of the dictionary currently sitting in the host's locale table.
+* A repeat apply on one host process (the desktop sync pass followed by the
+* mount pass) meets the same table, and the table refuses a second
+* registration for the same namespace and locale. Dropping ours first turns
+* that would-be throw into a plain replacement: the disposer deletes by
+* dictionary identity, so the module-singleton dictionaries are always
+* removable by the very disposer that registered them. */
+let registeredDictionaries: (() => void) | undefined;
+
 export function apply(ctx: ClientContextLike): () => void {
   const workbench = ctx.workbench;
   if (workbench === undefined || workbench === null) return () => {};
 
   // Register before binding: the label thunk may run during slot registration,
   // and a dictionary that arrives afterwards would paint the English fallback.
+  registeredDictionaries?.();
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
+  registeredDictionaries = offLocale;
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
   const offStyles = insertStyles(typeof document === "undefined" ? undefined : document);
   const View = createFsExplorerView({
@@ -108,6 +119,7 @@ export function apply(ctx: ClientContextLike): () => void {
   return () => {
     offStyles();
     offLocale();
+    if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
   };
 }
 
