@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { __test, apply, clientPlugin, inject } from "../src/client/entry.ts";
+import { __test, apply, clientPlugin, DOCK_ROW_CSS, inject, installDockRowCss } from "../src/client/entry.ts";
 
 interface Call {
   readonly type: string;
@@ -187,5 +187,63 @@ describe("term dock client entry", () => {
     apply(ctx as never)();
 
     expect(disposed).toEqual(["slot", "dock", "locale"]);
+  });
+});
+
+describe("dock row css", () => {
+  it("lets the host's composer dock row wrap while this dock is mounted", () => {
+    expect(DOCK_ROW_CSS).toContain("[data-composer-dock]");
+    expect(DOCK_ROW_CSS).toContain('[data-workbench-dock="term-dock"]');
+    expect(DOCK_ROW_CSS).toContain("flex-wrap:wrap");
+  });
+
+  it("is a no-op outside a document", () => {
+    expect(typeof document).toBe("undefined");
+    const dispose = installDockRowCss();
+    expect(typeof dispose).toBe("function");
+    expect(dispose()).toBeUndefined();
+  });
+
+  it("owns one tag per document and removes only that tag", () => {
+    const appended: FakeStyle[] = [];
+    const removed: FakeStyle[] = [];
+    class FakeStyle {
+      dataset: Record<string, string> = {};
+      textContent = "";
+      remove(): void {
+        removed.push(this);
+      }
+    }
+    const fakeDocument = {
+      head: {
+        appendChild: (tag: FakeStyle) => {
+          appended.push(tag);
+          return tag;
+        },
+      },
+      createElement: () => new FakeStyle(),
+      querySelector: (selector: string) => {
+        const id = selector.replace(/^style\[data-plugin-css="(.*)"\]$/, "$1");
+        return appended.find(tag => tag.dataset.pluginCss === id) ?? null;
+      },
+    };
+    const original = (globalThis as { document?: unknown }).document;
+    (globalThis as { document?: unknown }).document = fakeDocument;
+    try {
+      const dispose = installDockRowCss();
+      expect(appended).toHaveLength(1);
+      expect(appended[0]?.dataset.pluginCss).toBe("dsh-term-dock/dock-row.css");
+      expect(appended[0]?.textContent).toBe(DOCK_ROW_CSS);
+
+      // 重复 apply 复用第一份标签，不再叠加
+      const second = installDockRowCss();
+      expect(appended).toHaveLength(1);
+      second();
+
+      dispose();
+      expect(removed).toEqual([appended[0]]);
+    } finally {
+      (globalThis as { document?: unknown }).document = original;
+    }
   });
 });

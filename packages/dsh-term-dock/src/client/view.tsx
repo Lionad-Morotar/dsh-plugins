@@ -78,8 +78,9 @@ const rootStyle: CSSProperties = {
   flexDirection: "column",
   // The dock hangs below the composer card inside the conversation column, and
   // the spec keeps it 1.5em clear of that input box. Full block width matters:
-  // the host's usage meter next in line is an inline element and would share
-  // the row with anything narrower.
+  // the host's composer dock row is a nowrap flex row, so this width only sets a
+  // flex basis that the row would shrink; entry.ts lets that row wrap while the
+  // dock is mounted, which is what keeps the dock on its own full-width line.
   marginTop: "1.5em",
   width: "100%",
   borderTop: "1px solid color-mix(in srgb, currentColor 14%, transparent)",

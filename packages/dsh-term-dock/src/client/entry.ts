@@ -47,6 +47,40 @@ export interface ClientContextLike {
 export const inject = ["slots", "locale", "workbench"];
 
 /**
+ * The one host rule this plugin has to change, and why.
+ *
+ * The composer dock row (`[data-composer-dock]`) is a nowrap flex row that
+ * centres its entries, and the usage meter is one of them. A terminal panel is a
+ * full-width block, not a chip: as a nowrap flex item its `width:100%` only
+ * supplies a flex basis, and the default `flex-shrink` hands the row's other
+ * entries their space back, so the dock renders narrower than the composer and
+ * sits beside the meter. Letting the row wrap (only while this dock is in the
+ * DOM, which is what `:has()` scopes) gives the dock line one and moves the
+ * meter below it.
+ */
+export const DOCK_ROW_CSS = '[data-composer-dock]:has([data-workbench-dock="term-dock"]){flex-wrap:wrap}';
+
+/**
+ * Publish {@link DOCK_ROW_CSS} once per document.
+ *
+ * The tag is owned by this plugin (`data-plugin-css`), so a repeat apply on one
+ * host process reuses the first tag instead of stacking duplicates, and the
+ * disposer only removes the tag it created.
+ * @returns a disposer that removes the tag, or a no-op outside a document.
+ */
+export function installDockRowCss(): () => void {
+  if (typeof document === "undefined") return () => {};
+  const tagId = `${PACKAGE_NAME}/dock-row.css`;
+  if (document.querySelector(`style[data-plugin-css="${tagId}"]`) !== null) return () => {};
+  const tag = document.createElement("style");
+  tag.dataset.plugin = PACKAGE_NAME;
+  tag.dataset.pluginCss = tagId;
+  tag.textContent = DOCK_ROW_CSS;
+  document.head.appendChild(tag);
+  return () => tag.remove();
+}
+
+/**
  * Mount the terminal dock.
  * @param ctx - the client context, with the core service already injected.
  * @returns a disposer that closes every terminal this plugin started.
@@ -74,6 +108,7 @@ export function apply(ctx: ClientContextLike): () => void {
   const host = createDockHost(ctx);
   const rack = createTerminalRack({ host });
   const Dock = createTermDockView({ dock, rack, host, t, visibility });
+  const offRowCss = installDockRowCss();
 
   let offSlot: (() => void) | undefined;
   let offDockRow: (() => void) | undefined;
@@ -103,6 +138,7 @@ export function apply(ctx: ClientContextLike): () => void {
     controller.dispose();
     offSlot?.();
     if (typeof offDockRow === "function") offDockRow();
+    offRowCss();
     offLocale();
     if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
     // Unload closes the processes this plugin started instead of disposing the
