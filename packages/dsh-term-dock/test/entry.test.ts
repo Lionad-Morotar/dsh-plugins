@@ -194,7 +194,19 @@ describe("dock row css", () => {
   it("lets the host's composer dock row wrap while this dock is mounted", () => {
     expect(DOCK_ROW_CSS).toContain("[data-composer-dock]");
     expect(DOCK_ROW_CSS).toContain('[data-workbench-dock="term-dock"]');
-    expect(DOCK_ROW_CSS).toContain("flex-wrap:wrap");
+    // 宿主的 nowrap 来自运行时注入的样式表，普通声明压不住
+    expect(DOCK_ROW_CSS).toContain("flex-wrap:wrap !important");
+  });
+
+  it("orders the dock after the row's other entries, so it sits at the bottom", () => {
+    expect(DOCK_ROW_CSS).toContain('[data-workbench-dock="term-dock"]{order:1');
+  });
+
+  it("zeroes the row's inset so the terminal is flush instead of framed", () => {
+    expect(DOCK_ROW_CSS).toContain("padding:0 !important");
+    expect(DOCK_ROW_CSS).toContain("margin:0 !important");
+    expect(DOCK_ROW_CSS).toContain("gap:0 !important");
+    expect(DOCK_ROW_CSS).toContain("width:100% !important");
   });
 
   it("is a no-op outside a document", () => {

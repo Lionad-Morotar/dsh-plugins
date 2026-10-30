@@ -47,7 +47,7 @@ export interface ClientContextLike {
 export const inject = ["slots", "locale", "workbench"];
 
 /**
- * The one host rule this plugin has to change, and why.
+ * The host declarations this plugin has to state, and why.
  *
  * The composer dock row (`[data-composer-dock]`) is a nowrap flex row that
  * centres its entries, and the usage meter is one of them. A terminal panel is a
@@ -55,10 +55,26 @@ export const inject = ["slots", "locale", "workbench"];
  * supplies a flex basis, and the default `flex-shrink` hands the row's other
  * entries their space back, so the dock renders narrower than the composer and
  * sits beside the meter. Letting the row wrap (only while this dock is in the
- * DOM, which is what `:has()` scopes) gives the dock line one and moves the
- * meter below it.
+ * DOM, which is what `:has()` scopes) gives the dock a line of its own.
+ *
+ * `!important` is load-bearing, not decoration: the host declares
+ * `flex-wrap: nowrap` from a runtime-inserted stylesheet that outranks a plain
+ * rule of ours, and the row measured `nowrap` until this declaration carried the
+ * flag.
+ *
+ * The inset zeroing is what makes the terminal flush instead of framed: the host
+ * pads this row, centres it with a gap, and caps its width, so the dock inherited
+ * a margin above the meter and gutters at the sides. The panel is the bottom of
+ * the column, so it owns the full width and touches its neighbours.
+ *
+ * `order: 1` is the reader's sentence "the terminal belongs at the bottom": the
+ * row's other entries keep the default order and stay above the dock, so the
+ * stack reads composer, meter, terminal instead of the dock wedged between them.
  */
-export const DOCK_ROW_CSS = '[data-composer-dock]:has([data-workbench-dock="term-dock"]){flex-wrap:wrap}';
+export const DOCK_ROW_CSS = [
+  '[data-composer-dock]:has([data-workbench-dock="term-dock"]){flex-wrap:wrap !important;padding:0 !important;margin:0 !important;gap:0 !important;width:100% !important;max-width:none !important}',
+  '[data-composer-dock] [data-workbench-dock="term-dock"]{order:1;margin:0 !important;width:100% !important}',
+].join("\n");
 
 /**
  * Publish {@link DOCK_ROW_CSS} once per document.

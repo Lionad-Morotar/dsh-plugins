@@ -76,12 +76,12 @@ const DOCK_REST_HEIGHT = "clamp(120px, 32dvh, 300px)";
 const rootStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  // The dock hangs below the composer card inside the conversation column, and
-  // the spec keeps it 1.5em clear of that input box. Full block width matters:
-  // the host's composer dock row is a nowrap flex row, so this width only sets a
-  // flex basis that the row would shrink; entry.ts lets that row wrap while the
-  // dock is mounted, which is what keeps the dock on its own full-width line.
-  marginTop: "1.5em",
+  // The dock is a panel, not a chip: no margin of its own, so the terminal reads
+  // as part of the column instead of a card floating under the composer. Full
+  // block width matters too: the host's composer dock row is a nowrap flex row,
+  // so this width only sets a flex basis that the row would shrink; entry.ts
+  // lets that row wrap while the dock is mounted, which keeps the dock on a
+  // full-width line of its own.
   width: "100%",
   borderTop: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
   background: "color-mix(in srgb, currentColor 3%, transparent)",
@@ -114,7 +114,9 @@ const bodyStyle: CSSProperties = {
   gap: 8,
   flex: 1,
   minHeight: 0,
-  padding: 8,
+  // No inset: the terminal screen runs to the dock's edges, which is what makes
+  // the panel read as docked rather than as a card with a frame around it.
+  padding: 0,
   boxSizing: "border-box",
 };
 const emptyStyle: CSSProperties = {
