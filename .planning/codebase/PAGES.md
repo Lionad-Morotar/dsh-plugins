@@ -2,16 +2,16 @@
 
 <!-- refreshed: 261030 -->
 
-数据来源：本仓没有前端路由体系（web 客户端半边以 ModuleLoader 工厂挂载，不是页面路由），页面族不适用；命令族取自根 `package.json` 的 scripts 与十五个包各自的 scripts，静态提取。另附两张本仓真正对外的入口表：插件挂载入口（profile 里的 Loader row 由哪个 patch 文件提供、带哪份清单）与客户端半边入口（`src/client/entry.ts` 对应哪个产物、注册在哪个 slot）。市场分发产物（`market/`）单列一节，它是本仓对外承诺安装形态的那一面。
+数据来源：本仓没有前端路由体系（web 客户端半边以 ModuleLoader 工厂挂载，不是页面路由），页面族不适用；命令族取自根 `package.json` 的 scripts 与十六个包各自的 scripts，静态提取。另附两张本仓真正对外的入口表：插件挂载入口（profile 里的 Loader row 由哪个 patch 文件提供、带哪份清单）与客户端半边入口（`src/client/entry.ts` 对应哪个产物、注册在哪个 slot）。市场分发产物（`market/`）单列一节，它是本仓对外承诺安装形态的那一面。
 
 ## 命令总览
 
 | 命令 | 实现文件 | 子命令数 | 说明 |
 | ---- | -------- | -------- | ---- |
-| `pnpm build` | `pnpm -r build` | 15 | 递归十五个包：十四个包出 `lib/`，`ascii-rest-scenes` 出 `src/catalog.generated.ts` |
-| `pnpm test` | `pnpm -r test` | 15 | 递归十五个包的 `vitest run`，实测 122 文件 1266 用例 |
-| `pnpm typecheck` | `pnpm -r typecheck` | 15 | 递归 `tsc -p tsconfig.json`，`noEmit` |
-| `pnpm check:market` | `scripts/check-market-manifest.mjs` | 1 | 断言可投稿包面向市场索引的暴露面（宿主真正读取的字段），并断言六个自用包保持 `private: true` |
+| `pnpm build` | `pnpm -r build` | 16 | 递归十六个包：十五个包出 `lib/`，`ascii-rest-scenes` 出 `src/catalog.generated.ts` |
+| `pnpm test` | `pnpm -r test` | 16 | 递归十六个包的 `vitest run`，实测 130 文件 1327 用例 |
+| `pnpm typecheck` | `pnpm -r typecheck` | 16 | 递归 `tsc -p tsconfig.json`，`noEmit` |
+| `pnpm check:market` | `scripts/check-market-manifest.mjs` | 1 | 断言可投稿包面向市场索引的暴露面（宿主真正读取的字段），并断言七个自用包保持 `private: true` |
 | `pnpm build:market` | `scripts/build-market-index.mjs` | 1 | 从包自身元数据派生 `market/index.json`（format 1，git source） |
 | `pnpm check:market-index` | `scripts/build-market-index.mjs --check` | 1 | 只校验不写盘，输出每个包的安装 spec |
 | `pnpm build:awesome` | `scripts/build-awesome-entry.mjs` | 1 | 产出 awesome 社区目录条目 YAML，须带 `assets/icon-180.png` 光栅图 |
@@ -32,9 +32,9 @@
 
 | 包 | 脚本 | 命令 | 说明 |
 | -- | ---- | ---- | ---- |
-| 十五个包 | `build` | `node scripts/build.mjs`（`ascii-rest-scenes` 为 `node scripts/generate-catalog.mjs`） | 唯一的产物生成入口，`lib/` 只允许被它写 |
-| 十五个包 | `test` | `vitest run` | 单包测试 |
-| 十五个包 | `typecheck` | `tsc -p tsconfig.json` | 单包类型检查 |
+| 十六个包 | `build` | `node scripts/build.mjs`（`ascii-rest-scenes` 为 `node scripts/generate-catalog.mjs`） | 唯一的产物生成入口，`lib/` 只允许被它写 |
+| 十六个包 | `test` | `vitest run` | 单包测试 |
+| 十六个包 | `typecheck` | `tsc -p tsconfig.json` | 单包类型检查 |
 | `ascii-rest-scenes` | `build:catalog` | `node scripts/generate-catalog.mjs` | 与 `build` 同一条命令，语义化别名：升级上游 ascii.rest commit 后重跑它 |
 
 ## 插件挂载入口
@@ -53,6 +53,7 @@
 | `dsh-better` | `better` | `dsh-better` | `packages/dsh-better/cordis.patch.yml` | 无；宿主半为空挂行，功能全在客户端半边 |
 | `dsh-more-config` | `more-config` | `dsh-more-config` | `packages/dsh-more-config/cordis.patch.yml` | 无；`id` 同时是其设置命名空间 |
 | `dsh-command-panel` | `command-panel` | `dsh-command-panel` | `packages/dsh-command-panel/cordis.patch.yml` | `icon.svg` + `locale/{zh,en}.json`；Loader 行可带 `config.takeoverSwitch` |
+| `dsh-repo-harness` | `repo-harness` | `dsh-repo-harness` | `packages/dsh-repo-harness/cordis.patch.yml` | 无；宿主侧 merge-steer，无客户端入口 |
 | `dsh-workbench-core` | `core` | `dsh-workbench-core` | `packages/dsh-workbench-core/cordis.patch.yml` | 无；客户端半 `provide("workbench")`，三件套都按这个名字等它 |
 | `dsh-fs-explorer` | `fs-explorer` | `dsh-fs-explorer` | `packages/dsh-fs-explorer/cordis.patch.yml` | 无；`dsh.client.inject: ["dsh-workbench-core"]` |
 | `dsh-git-explorer` | `git-explorer` | `dsh-git-explorer` | `packages/dsh-git-explorer/cordis.patch.yml` | 无；宿主半导出 Typert 命名空间 `gitExplorer`，客户端半 `dsh.client.inject: ["dsh-workbench-core"]` |

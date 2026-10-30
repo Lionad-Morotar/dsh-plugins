@@ -17,6 +17,7 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 | [`dsh-session-timing`](packages/dsh-session-timing) | 会话统计的计时口径修正：模型用时只计最后成功的那次尝试，重试用时单独成行，TTFT 与 TPS 随之回到真实值 |
 | [`dsh-better`](packages/dsh-better) | 原生能力增强：`/model` 选择器支持按供应商搜索（模型名搜索语义不变），输入框的模型触发器接到同一个选择器并在模型名左侧带 provider 名，推理等级也在那里选 |
 | [`dsh-command-panel`](packages/dsh-command-panel) | 命令面板：`⌘P` 搜文件并把绝对路径写进输入框、`⌘⇧P` 搜并执行宿主注册的指令、`⌘O` 先选工作区再选会话切换 |
+| [`dsh-repo-harness`](packages/dsh-repo-harness) | 仓库自动化 harness：merge-steer 监视活跃仓库的 reflog，在分支被合并时向同仓库 running 会话发一条 clamp 过的 steer 提醒；不装 hook、不写 refs |
 
 ## 安装皮肤
 
@@ -61,7 +62,7 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 git clone --recurse-submodules <repo>   # 或在已克隆的仓库里跑 git submodule update --init
 pnpm install
 pnpm build      # 产出 lib/（包内分块 + 主入口），lib 是要提交的，profile 直接读它
-pnpm test       # 十五个包递归
+pnpm test       # 十六个包递归
 pnpm typecheck
 ```
 
@@ -71,7 +72,7 @@ pnpm typecheck
 
 ## 市场分发
 
-`dsh-jump` 用于投进 DSH 插件市场与 awesome 社区目录（`dsh-better-keybindings`、`dsh-slash-commands`、`dsh-session-timing`、`dsh-better`、`dsh-command-panel` 仍在日常验证中，以 `private: true` 声明自用，清单检查器会断言它们保持 private）。索引与条目都是生成物，从包自身的 `package.json` 与 `locale` 派生，别手改：
+`dsh-jump` 用于投进 DSH 插件市场与 awesome 社区目录（`dsh-better-keybindings`、`dsh-slash-commands`、`dsh-session-timing`、`dsh-better`、`dsh-command-panel`、`dsh-repo-harness` 仍在日常验证中，以 `private: true` 声明自用，清单检查器会断言它们保持 private）。索引与条目都是生成物，从包自身的 `package.json` 与 `locale` 派生，别手改：
 
 ```sh
 pnpm check:market            # 校验可投稿包的对外暴露面（宿主真正读取的字段），并断言自用包保持 private

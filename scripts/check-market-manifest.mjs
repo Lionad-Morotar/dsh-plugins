@@ -35,6 +35,7 @@ const UNPUBLISHED = [
   "dsh-session-interruption",
   "dsh-better",
   "dsh-more-config",
+  "dsh-repo-harness",
 ];
 const MAX_ICON_BYTES = 256 * 1024;
 const ICON_TYPES = new Map([[".svg", "image/svg+xml"], [".png", "image/png"], [".jpg", "image/jpeg"], [".jpeg", "image/jpeg"], [".webp", "image/webp"]]);
