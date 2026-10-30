@@ -12,7 +12,7 @@
  * the workbench's `Cmd/Ctrl+Shift+*` family — belongs to the core's shortcut
  * registration and is deliberately not read here.
  */
-import { useEffect, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 
 import { createTerminalPanel } from "./terminal-panel.tsx";
 import { createDockController, type DockVisibilitySource } from "./dock-controller.ts";
@@ -59,6 +59,43 @@ function useDockVisible(visibility: DockVisibilitySource): boolean {
     return () => controller.dispose();
   }, [visibility]);
   return visible;
+}
+
+/** Rest height between the dock's top edge and the viewport bottom.
+ *
+ * The composer dock hangs below the composer card inside the conversation
+ * column, so the space left for the terminal body is whatever the viewport
+ * still offers at the dock's flow position. No CSS expression reaches that
+ * number reliably through the host's sticky composer seat, so the mount
+ * measures it: distance from the dock root's top to the viewport bottom,
+ * clamped to the 140px..280px usability band. The composer card and the
+ * column are observed because they move the dock without a window resize;
+ * the dock itself is excluded to keep the loop acyclic.
+ * @returns the height in px the dock may occupy.
+ */
+function useDockRestHeight(ref: RefObject<HTMLDivElement | null>): number {
+  const [rest, setRest] = useState(260);
+  useEffect(() => {
+    const el = ref.current;
+    if (el === null) return;
+    const update = (): void => {
+      const top = el.getBoundingClientRect().top;
+      const available = window.innerHeight - top - 12;
+      setRest(Math.max(140, Math.min(280, Math.round(available))));
+    };
+    update();
+    const frame = requestAnimationFrame(update);
+    const observer = new ResizeObserver(update);
+    if (el.parentElement !== null) observer.observe(el.parentElement);
+    if (el.parentElement?.parentElement) observer.observe(el.parentElement.parentElement);
+    window.addEventListener("resize", update);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [ref]);
+  return rest;
 }
 
 const rootStyle: CSSProperties = {
@@ -221,7 +258,9 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
       }
     };
 
-    const height = snapshot.mode === "minimized" ? "auto" : snapshot.mode === "fullscreen" ? "min(72vh, 900px)" : 260;
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    const rest = useDockRestHeight(rootRef);
+    const height = snapshot.mode === "minimized" ? "auto" : snapshot.mode === "fullscreen" ? "min(72vh, 900px)" : rest;
     const activeId = snapshot.activeId;
     const minimized = snapshot.mode === "minimized";
 
@@ -235,6 +274,7 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
         data-dock-visible={visible ? "true" : "false"}
         data-panel-count={panels.length}
         data-dock-session={sessionId ?? ""}
+        ref={rootRef}
         style={{ ...rootStyle, height, display: visible ? "flex" : "none" }}
         onKeyDownCapture={handleKeyDown}
       >
