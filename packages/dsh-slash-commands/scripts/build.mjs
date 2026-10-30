@@ -50,10 +50,9 @@ ${code}
  * package, while the client half is evaluated by the browser as a classic script
  * inside the factory.
  *
- * The host half is left unminified. This package has no bundle test, so a
- * mismatch between `src/` and `lib/` can only be caught by reading the committed
- * output; minifying it would hide that evidence to save a few kilobytes in a file
- * Node reads once at boot.
+ * The host half is left unminified. `test/bundle.test.ts` pins the client
+ * bundle's boot shape; readable host output keeps a `src/`-to-`lib/` drift
+ * visible to review instead of hiding it behind a minifier.
  */
 async function bundle(entry, format) {
   const host = format === "esm";

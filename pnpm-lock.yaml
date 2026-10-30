@@ -320,9 +320,15 @@ importers:
 
   packages/dsh-slash-commands:
     devDependencies:
+      '@types/jsdom':
+        specifier: ^30.0.0
+        version: 30.0.0
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
+      jsdom:
+        specifier: ^30.1.3
+        version: 30.1.3
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.19.2)(jsdom@30.1.3)(yaml@2.9.1)

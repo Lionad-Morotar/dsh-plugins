@@ -19,6 +19,7 @@
  * untouched here and every service is read through the declared inject list.
  */
 import { bindExecCommandCopy, installBoundedClipboard } from "./clipboard-shim.ts";
+import { installCommaFold } from "./comma-listener.ts";
 import { createResumeContribution, type ResumeWiringContext } from "./resume-command.ts";
 import { createUnarchiveContribution } from "./unarchive-contribution.ts";
 
@@ -49,6 +50,27 @@ interface ClipboardHost {
   readonly document?: Document;
 }
 
+/** The page globals the fold touches; same absence rules as the clipboard. */
+interface FoldHost {
+  readonly document?: Document;
+}
+
+/**
+ * Install the 顿号→斜杠 fallback, if this surface has a document.
+ *
+ * Best-effort by design: the client boot is fail-closed, so an install that
+ * cannot happen must degrade to "absent" instead of failing the whole page.
+ */
+function commaFold(host: FoldHost): (() => void) | undefined {
+  const doc = host.document;
+  if (doc === undefined) return undefined;
+  try {
+    return installCommaFold(doc);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Bound the page's clipboard writer, if this surface has one.
  *
@@ -75,13 +97,15 @@ export const clientPlugin = {
   name: "dsh-slash-commands",
   inject,
   apply(ctx: ClientContextLike): void {
-    // Both registrations go through `effect` so a profile reload drops them
+    // Every registration goes through `effect` so a profile reload drops them
     // instead of leaving a second copy: a duplicate command would throw on
-    // registration, and a second clipboard wrapper would stack budgets.
+    // registration, a second clipboard wrapper would stack budgets, and a
+    // second beforeinput listener would fold one keystroke twice.
     ctx.effect(() => boundClipboard(globalThis) ?? (() => {}), "dsh-slash-commands: bounded clipboard");
     ctx.effect(() => ctx.commandUi.register(createResumeContribution(ctx)), "dsh-slash-commands: /resume");
     // Visible only while the open session is archived; see unarchive-contribution.
     ctx.effect(() => ctx.commandUi.register(createUnarchiveContribution(ctx)), "dsh-slash-commands: /unarchive");
+    ctx.effect(() => commaFold(globalThis) ?? (() => {}), "dsh-slash-commands: comma fold");
   },
 };
 

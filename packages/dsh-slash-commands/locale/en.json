@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Slash commands",
-    "description": "/copy the last replies from the terminal, /rename the current session, /resume to switch to another one."
+    "description": "/copy the last replies from the terminal, /rename the current session, /resume to switch to another one. A leading enumeration comma folds into a slash so the command panel opens from Chinese punctuation too."
   }
 }

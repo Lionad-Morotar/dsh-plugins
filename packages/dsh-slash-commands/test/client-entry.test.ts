@@ -69,14 +69,21 @@ describe("the client half", () => {
     expect(disposers).toContain(dispose);
   });
 
-  it("binds the clipboard through its own effect, so a reload restores the original writer", () => {
-    // A second wrapper would stack budgets, and a leaked one would outlive the
-    // plugin. Both are avoided by binding once, through a fiber-scoped effect.
+  it("binds every page-level wiring through its own effect, so a reload tears them down", () => {
+    // A second wrapper would stack budgets, a leaked clipboard binding would
+    // outlive the plugin, a duplicate command registration would throw, and a
+    // second beforeinput listener would fold one keystroke twice. All of them
+    // go through fiber-scoped effects instead.
     const { ctx, effect, labels } = context();
 
     clientPlugin.apply(ctx as never);
 
-    expect(effect).toHaveBeenCalledTimes(3);
-    expect(labels).toEqual(["dsh-slash-commands: bounded clipboard", "dsh-slash-commands: /resume", "dsh-slash-commands: /unarchive"]);
+    expect(effect).toHaveBeenCalledTimes(4);
+    expect(labels).toEqual([
+      "dsh-slash-commands: bounded clipboard",
+      "dsh-slash-commands: /resume",
+      "dsh-slash-commands: /unarchive",
+      "dsh-slash-commands: comma fold",
+    ]);
   });
 });

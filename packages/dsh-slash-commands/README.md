@@ -2,9 +2,9 @@
 
 <img src="./assets/icon.svg" width="72" height="72" alt="dsh-slash-commands icon" align="right" />
 
-DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回复放进系统剪贴板，web 与 desktop 用 `/rename` 改当前会话标题、用 `/resume` 切换到另一个会话，三端都用 `/archive` 归档当前会话、用 `/unarchive` 把归档的当前会话放回来。
+DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回复放进系统剪贴板，web 与 desktop 用 `/rename` 改当前会话标题、用 `/resume` 切换到另一个会话，三端都用 `/archive` 归档当前会话、用 `/unarchive` 把归档的当前会话放回来；中文标点态下按 `/` 键打出的顿号会在行首自动折叠成 `/`，让命令面板照常唤出。
 
-[命令归属](#命令归属) · [安装](#安装) · [实现要点](#实现要点) · [开发](#开发)
+[命令归属](#命令归属) · [安装](#安装) · [顿号折叠](#中文标点态唤出命令面板) · [实现要点](#实现要点) · [开发](#开发)
 
 ## 命令归属
 
@@ -98,7 +98,7 @@ SSH 会话里绝不尝试 `native`：那会写远端机器的剪贴板，写了�
 
 ## 客户端半与复制按钮
 
-web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `package.json` 的 `dsh.client` 与 `exports["./client"]` 两处一起被发现。它做两件事：注册 `/resume`，以及给页面的剪贴板写入套上一道上限。
+web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `package.json` 的 `dsh.client` 与 `exports["./client"]` 两处一起被发现。它做四件事：注册 `/resume` 与 `/unarchive`，给页面的剪贴板写入套上一道上限，以及把行首的顿号折叠成斜杠（见下一节）。
 
 后一件事是替运行环境兜底，不是本包的功能。harness 渲染的复制按钮在 `await navigator.clipboard.writeText()` 前后置了一个「复制中」标志，而那个 promise 在文档失焦时并不总是会 settle——它可能永远悬着。标志于是永不释放，第一次点击永远不结束，之后每次点击都被当成重复操作丢掉。表现出来的不是「复制失败」，是「按钮从此死了」。
 
@@ -109,6 +109,21 @@ web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `packa
 - 两条路都失败时 reject，让调用方走它自己的失败分支，而不是拿着一个永不结算的 promise 干等。
 
 代价要说清：包装是全局的，页面上所有 `writeText` 调用都会经过它；并且平台调用真的悬住时，真实写入和兜底写入会各发生一次（同一段文本，用户分辨不出来）。
+
+## 中文标点态唤出命令面板
+
+macOS 中文输入法的标点态把物理 `/` 键映射成顿号「、」，而命令面板由草稿里的字面 `/` 驱动，于是在中文标点态下敲 `/` 什么都不会发生。客户端半在 `beforeinput` 的捕获阶段把「行首的、可取消的、非输入法合成态」的顿号拦下，原位写回一个 `/`，宿主自己的面板逻辑照常接管：过滤、Enter 裁决、命令 chip 全都和英文态一致。
+
+只折叠行首：光标之前没有非空白内容才生效。句中的「苹果、香蕉」原样通过，因为斜杠命令本来就只在行首被列出与裁决，行内折叠没有收益还误伤中文句读。命中后先写入斜杠、写入成功才取消原插入，顺序反了就会打出「、/」双字；写入抛错或返回 false 时原样放行，绝不吞字。
+
+边界四条：
+
+- 写入靠 `execCommand('insertText')`，浏览器已宣布废弃但仍在。写入不可用、返回 false 或抛错时都不取消原插入，那次输入退化为今天的行为（打出「、」），不会吞字、不会影响启动。
+- 只验证过 Apple 拼音（简体）：它的顿号是直接提交而非合成态。搜狗、微信、鼠须管等若把标点做成合成态，`isComposing` 标志会把这类事件挡在门外（`insertCompositionText` 这个 inputType 更先进不来），本功能对这些输入法不生效，退化为原样打字。
+- 折叠看的是「光标之前是否全是空白」，跨行累计：第一行为空时，换行之后的行首也会折叠；只要前文出现过正文，任何行都不再折叠。以顿号开头的句子极少见，真遇到会弹出面板，Escape 关闭后草稿里是 `/`。
+- composer 锚点首选宿主标记 `data-composer-input`，找不到时按「`contenteditable` 且 `role="textbox"`」的形状兜底。形状不是宿主承诺的契约，宿主改样式时兜底会无声失效，届时功能退化为不折叠；解析行为由 jsdom 契约测试锁定。
+
+监听按事件落点反查 composer、写入前校验焦点面，同屏多个会话的输入框各管各的；同一文档重复安装有幂等键挡着，profile 重载由 effect 摘除旧监听。
 
 ## 安装
 
@@ -162,6 +177,8 @@ web 与 desktop 端还多带一个客户端半（`lib/client.js`），由 `packa
 - `src/client/resume.ts` 是 `/resume` 的全部判定（行集、范围过滤、切换派发），DOM-free、协作者全用结构化类型接收，因此切换语义不需要浏览器就能测。
 - `src/client/resume-command.ts` 只做接线：读 `ctx.sessions.list` 与 `ctx.workspaces.list` 的快照，把范围重开交给 `ctx.commandUi.popupFor(actx).open()`。快照必须在 `options` 里读而不是注册时读——插件常驻期间会话会新建、结束、归档，注册时抓一次到第二次调用就过期了。
 - `src/client/clipboard-shim.ts` 是有界的剪贴板写入：预算、兜底、以及「包装只装一次」的实现（`writeText` 通常挂在原型上，还原时要删掉自己加的影子属性而不是把原型方法拷成自有属性）。
+- `src/client/comma-fold.ts` 是顿号折叠的纯判定（来源、合成态、可取消、行首四个条件），`src/client/comma-listener.ts` 只做 DOM 接线：按事件落点找 composer、取光标前文本、命中后取消原插入并写入斜杠。元素判定走 nodeType 与 `contenteditable` 属性而不是 `instanceof Element`（node 环境没有那个全局）或 `isContentEditable`（jsdom 未实现），这两处坑都由 jsdom 契约测试钉住。
+- `test/bundle.test.ts` 读提交态的 `lib/client.js`：ModuleLoader 形状、自包含（工厂拿不到 `node:` 内建）、折叠代码存活于压缩文本、裸 window 里能加载出插件对象。
 - `src/index.ts` 是宿主半，`inject = ['commands', 'sessionTitle']`，两者都必须声明：漏了 `sessionTitle` 时 Cordis 抛 gateway 契约错误，被 catch 吞掉后表现为「命令执行失败」却给不出原因；`commands` 则是插件行激活早于命令服务挂载，不声明会出现 `apply` 先跑、注册不到、装完即失效（首次真机启动即如此）。它还决定端别分派：探到终端服务才注册 `/copy` 与 `/unarchive`，`/rename` 与 `/archive` 无条件注册。注册再延后一个宏任务，因为 `tuiPluginHost` 由另一行挂载，`apply` 时它还不存在（实测 apply 时缺失、约 250ms 后出现）。
 
 `lib/` 是构建产物且要提交：harness 从安装包直接读它，不会替你跑构建。改了 `src/` 就 `pnpm build` 再提交。
