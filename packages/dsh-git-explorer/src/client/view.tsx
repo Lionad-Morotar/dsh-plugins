@@ -13,14 +13,23 @@ import { ChangesPane } from "./changes-pane.tsx";
 import { DetailPane } from "./detail-pane.tsx";
 import { HistoryPane, HISTORY_PAGE_SIZE } from "./history-pane.tsx";
 import type { Translate } from "./copy.ts";
-import { createJump, groupChanges, layoutGraph, type GraphRow } from "./model.ts";
+import { createJump, groupChanges, layoutGraph, parseCommitFocus, type GraphRow } from "./model.ts";
 import { describeFailure, unwrapTransport, type GitRemoteFace, type RemoteResolver } from "./wire.ts";
 import type { GitCommitNode, GitQueryResult, GitSnapshot, GitSnapshotResult } from "../host/types.ts";
+import { VIEW_ID } from "../shared.ts";
 
 /** The `workbench.views` seam this view binds and jumps through. */
 export interface ViewSeamFace {
   bind?(sessionId: string, open: (id: string, focus: string) => void): () => void;
   open(sessionId: string, id: string, focus?: string): boolean | void;
+}
+
+/** The pending-focus queue the core carries, as this view consumes it. */
+export interface ViewFocusFace {
+  take(view: string): string | undefined;
+  /** Replace the pending request; the command palette leaves one here. */
+  request?(view: string, focus: string): void;
+  subscribe(listener: () => void): () => void;
 }
 
 /** The slice of the workbench core service this view reads. */
@@ -29,12 +38,22 @@ export interface WorkbenchFace {
   currentSessionId(): string | undefined;
   readonly views?: ViewSeamFace;
   openView?(id: string, focus?: string): boolean;
+  /** Absent on cores older than the focus hand-off. */
+  readonly viewFocus?: ViewFocusFace;
+}
+
+/** The request the conversation shell carries when `openView` targets this tab. */
+export interface ViewRequestLike {
+  readonly view: string;
+  readonly focus: string;
 }
 
 /** Owner props the host passes to a `conversation.view` entry. */
 export interface ConversationViewProps {
   readonly sessionId?: string;
   readonly openView?: (view: string, focus: string) => void;
+  readonly viewRequest?: ViewRequestLike | null;
+  readonly completeViewRequest?: () => void;
 }
 
 /** What one view mount closes over. */
@@ -57,6 +76,34 @@ export type InitialViewState = "idle" | "no-service" | "loading";
 export function initialViewState(sessionId: string | undefined, hasRemote: boolean): InitialViewState {
   if (sessionId === undefined) return "idle";
   return hasRemote ? "loading" : "no-service";
+}
+
+/** What one focus consumption does to the view that accepts it. */
+export interface CommitFocusSink {
+  /** Select one commit hash; the detail pane loads any hash on its own. */
+  select(hash: string): void;
+  /** Hand the shell's request back; the host clears it only after this call. */
+  complete?(): void;
+}
+
+/**
+ * Consume one focus hand-off for the Git view.
+ *
+ * `commit:<hash>` selects the commit: the history list keeps its topo lane
+ * order (no row is inserted) and the detail pane loads the hash through the
+ * commit endpoint, so a hash outside the loaded pages still renders. A focus
+ * that does not address a commit still completes: the host clears its pending
+ * request only after this callback, and an uncompleted one would strand the
+ * next open.
+ * @param focus - the focus payload, or undefined when the tab opened directly.
+ * @param sink - receives the selected hash and the completion.
+ * @returns whether the focus addressed a commit.
+ */
+export function consumeCommitFocus(focus: string | undefined, sink: CommitFocusSink): boolean {
+  const target = parseCommitFocus(focus);
+  if (target !== undefined) sink.select(target.hash);
+  sink.complete?.();
+  return target !== undefined;
 }
 
 type LoadState =
@@ -119,6 +166,15 @@ export function createGitExplorerView(wiring: ViewWiring) {
     const [loadingMore, setLoadingMore] = useState(false);
     const [loadError, setLoadError] = useState<string | undefined>(undefined);
     const [selected, setSelected] = useState<string | undefined>(undefined);
+    // A focus consumed while the snapshot is still in flight must survive the
+    // snapshot's default selection, so it parks here until the page arrives.
+    const pendingFocus = useRef<string | undefined>(undefined);
+    const handledRequest = useRef<string | undefined>(undefined);
+
+    const selectFromFocus = useCallback((hash: string): void => {
+      pendingFocus.current = hash;
+      setSelected(hash);
+    }, []);
 
     // The shell hands the selected-view opener to the entry. Binding it here is
     // what lets a jump from the changes pane land in fs-explorer for this very
@@ -160,11 +216,17 @@ export function createGitExplorerView(wiring: ViewWiring) {
           setLoad({ kind: "ready", snapshot });
           setCommits(snapshot.commits);
           setHasMore(snapshot.commits.length < snapshot.counts.commits);
-          setSelected(previous =>
-            previous !== undefined && snapshot.commits.some(commit => commit.hash === previous)
+          // Read the parked focus at resolution time: a request consumed after
+          // this effect ran (or while the request was in flight) is honoured by
+          // this page instead of being reset to the newest commit.
+          const focusHash = pendingFocus.current;
+          pendingFocus.current = undefined;
+          setSelected(previous => {
+            if (focusHash !== undefined) return focusHash;
+            return previous !== undefined && snapshot.commits.some(commit => commit.hash === previous)
               ? previous
-              : snapshot.commits[0]?.hash,
-          );
+              : snapshot.commits[0]?.hash;
+          });
         })
         .catch((error: unknown) => {
           if (alive) setLoad({ kind: "failed", message: describeFailure(error) });
@@ -173,6 +235,37 @@ export function createGitExplorerView(wiring: ViewWiring) {
         alive = false;
       };
     }, [sessionId, remote, reloadToken]);
+
+    // The command panel jumps with `commit:<hash>`: consume the shell's request
+    // once and select the commit. The host clears its request only after the
+    // callback, so a focus this view cannot parse still completes the hand-over.
+    useEffect(() => {
+      const request = props.viewRequest;
+      if (request === null || request === undefined || request.view !== VIEW_ID) return;
+      const key = `${request.view}:${request.focus}`;
+      if (handledRequest.current === key) return;
+      handledRequest.current = key;
+      consumeCommitFocus(request.focus, {
+        select: selectFromFocus,
+        complete: () => props.completeViewRequest?.(),
+      });
+    }, [props.viewRequest, props.completeViewRequest, selectFromFocus]);
+
+    // A caller that cannot hand the host's focus to this view (the command
+    // panel when the tab is already on screen) leaves one in the core's queue
+    // instead: take whatever is waiting at mount and keep listening while it
+    // stays up, so a lazy mount never loses the target.
+    useEffect(() => {
+      const queue = workbench.viewFocus;
+      if (queue === undefined || sessionId === undefined) return undefined;
+      const consume = (): void => {
+        const focus = queue.take(VIEW_ID);
+        if (focus === undefined) return;
+        consumeCommitFocus(focus, { select: selectFromFocus });
+      };
+      consume();
+      return queue.subscribe(consume);
+    }, [workbench, sessionId, selectFromFocus]);
 
     const graph = useMemo<readonly GraphRow[]>(() => layoutGraph(commits), [commits]);
 
