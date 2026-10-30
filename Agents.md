@@ -40,6 +40,12 @@ Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。十五个包：DSH �
 | `dsh-git-explorer` | [README](./packages/dsh-git-explorer/README.md)：argv-only 取数、泳道提交图、两栏视图与跨面板跳转 |
 | `dsh-term-dock` | [README](./packages/dsh-term-dock/README.md)：会话级终端 dock、xterm 懒 chunk、背压与进程台账 |
 
+## 项目技能
+
+| 技能 | 说明 |
+| --- | --- |
+| [dsh-plugin-submission](./.agents/skills/dsh-plugin-submission/SKILL.md) | 把插件投进索引、awesome、dsh-plugin.org 与 npm 四条通道，含投稿预检脚本与收录状态的真实判据。只允许 `/dsh-plugin-submission` 手动调用 |
+
 ## 只读参考仓库
 
 下表仓库以 git submodule 形式挂在 `refs/` 下，均为 `ignore = all`，日常不参与构建与测试，仅供查阅实现细节。
