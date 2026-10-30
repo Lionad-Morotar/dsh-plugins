@@ -17,12 +17,14 @@ import type { Copy } from "./copy.ts";
 import type {
   CommandsRemote,
   FileReferencesRemote,
+  PathExplorerRemote,
   SessionListState,
   SessionsService,
   WorkspacesService,
 } from "./dsh.ts";
 import type { PanelLevel, PanelMode, SessionScope } from "./panel-state.ts";
-import { commandRows, fileRows, sessionRows, workspaceRows, type PanelRow } from "./rows.ts";
+import { isTypedAbsolutePath } from "./paths.ts";
+import { commandRows, fileRows, filesystemRows, sessionRows, workspaceRows, type PanelRow } from "./rows.ts";
 
 /** Reference source name used while holding a session for discovery. */
 export const PANEL_SOURCE = "commandPanel";
@@ -31,6 +33,7 @@ export const PANEL_SOURCE = "commandPanel";
 export interface SourceServices {
   readonly fileReferences: () => FileReferencesRemote | undefined;
   readonly commands: () => CommandsRemote | undefined;
+  readonly pathExplorer: () => PathExplorerRemote | undefined;
   readonly sessions: () => SessionsService | undefined;
   readonly workspaces: () => WorkspacesService | undefined;
   readonly now: () => number;
@@ -110,6 +113,9 @@ function loadSwitch(services: SourceServices, request: LoadRequest): LoadResult 
 
 async function loadFiles(services: SourceServices, request: LoadRequest): Promise<LoadResult> {
   const { copy, query } = request;
+  // A typed-absolute query browses the raw filesystem, which needs no session
+  // and none of the workspace index: different plane, different loader.
+  if (isTypedAbsolutePath(query)) return loadFilesystem(services, request);
   const sessionId = request.sessionId;
   if (sessionId === null) {
     return { rows: [], status: "error", message: copy.noticeNoSession };
@@ -130,6 +136,33 @@ async function loadFiles(services: SourceServices, request: LoadRequest): Promis
   } catch (error) {
     if (isAbort(error)) return { rows: [], status: "ready" };
     return { rows: [], status: "error", message: messageOf(error, copy.failed) };
+  }
+}
+
+/**
+ * The absolute-path plane: one resolve call, no session retention.
+ *
+ * The host half reads the filesystem itself, so nothing here holds a session;
+ * a missing service or a failed call is reported exactly like the workspace
+ * plane reports its own.
+ */
+async function loadFilesystem(services: SourceServices, request: LoadRequest): Promise<LoadResult> {
+  const pathExplorer = services.pathExplorer();
+  if (pathExplorer === undefined) {
+    return { rows: [], status: "error", message: request.copy.failed };
+  }
+  try {
+    const transport = await pathExplorer.resolve({ query: request.query }, request.signal);
+    if (!transport.ok) return { rows: [], status: "error", message: transport.error.code };
+    const result = transport.value;
+    if (!result.ok) return { rows: [], status: "error", message: result.error.code };
+    return {
+      rows: filesystemRows({ home: result.home, entries: result.entries }, request.copy),
+      status: "ready",
+    };
+  } catch (error) {
+    if (isAbort(error)) return { rows: [], status: "ready" };
+    return { rows: [], status: "error", message: messageOf(error, request.copy.failed) };
   }
 }
 

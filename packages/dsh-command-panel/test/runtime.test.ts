@@ -20,11 +20,22 @@ import type {
   ClientContext,
   CommandDescriptor,
   FileReferenceCandidate,
+  PathExplorerRemote,
   SessionInput,
+  SessionOpenFace,
   ShortcutCommand,
   ShortcutConfigSnapshot,
 } from "../src/client/dsh.ts";
-import { SESSION_A, SESSION_B, fakeWorkspaces, sessionList, workspaceSnapshot } from "./fixtures.ts";
+import {
+  SESSION_A,
+  SESSION_B,
+  fakePathExplorer,
+  fakeSessionOpen,
+  fakeWorkspaces,
+  sessionList,
+  workspaceSnapshot,
+} from "./fixtures.ts";
+import { homedir } from "node:os";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>");
 const document = dom.window.document;
@@ -60,6 +71,10 @@ interface HarnessOptions {
   readonly claimBlocked?: boolean;
   readonly seatSurfaces?: boolean;
   readonly openViewResult?: { readonly opened: boolean; readonly focused: boolean };
+  /** The filesystem exploration remote; null keeps it out of the context. */
+  readonly pathExplorer?: PathExplorerRemote | null;
+  /** The session open remote for the reveal fallback; null keeps it out. */
+  readonly sessionOpen?: SessionOpenFace | null;
 }
 
 interface Harness {
@@ -172,6 +187,10 @@ function harness(options: HarnessOptions = {}): Harness {
     },
     pluginNavigation: { openList: vi.fn(), openBundle: vi.fn() },
     workbench,
+    ...(options.pathExplorer === null ? {} : { "remote.pathExplorer": options.pathExplorer ?? defaultPathExplorer() }),
+    ...(options.sessionOpen === undefined || options.sessionOpen === null
+      ? {}
+      : { "remote.session": options.sessionOpen }),
   };
 
   const ctx = {
@@ -218,6 +237,11 @@ function harness(options: HarnessOptions = {}): Harness {
     verbs: runtime.__test.verbs,
     store: runtime.__test.store,
   };
+}
+
+/** The filesystem remote the harness answers with unless a case replaces it. */
+function defaultPathExplorer(): PathExplorerRemote {
+  return fakePathExplorer({ home: homedir(), entries: [] });
 }
 
 /** A sessions fake whose `scope()` answers, so the composer can be reached. */
@@ -454,6 +478,91 @@ describe("file reveal", () => {
 
   it("says so when the file view is not registered", async () => {
     const h = harness({ openViewResult: { opened: false, focused: false } });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery("packages/dsh-command-panel/src/client/panel.ts");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label.endsWith("panel.ts"))).toBe(true),
+    );
+    h.verbs.highlight(0);
+    h.verbs.revealActive();
+
+    const snapshot = h.store.getSnapshot();
+    expect(snapshot.open).toBe(true);
+    expect(snapshot.notice).toContain("文件面板不可用");
+  });
+});
+
+describe("absolute path navigation", () => {
+  it("reveals a filesystem row through the abs focus and inserts the expanded path", async () => {
+    const h = harness({
+      pathExplorer: fakePathExplorer({
+        home: "/Users/lionad",
+        entries: [{ path: "/Users/lionad/notes/todo.md", kind: "file", exists: true }],
+      }),
+    });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery("/Users/lionad/notes/tod");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label === "/Users/lionad/notes/todo.md")).toBe(true),
+    );
+    const row = h.store.getSnapshot().rows.find(entry => entry.label === "/Users/lionad/notes/todo.md");
+    expect(row?.origin).toBe("filesystem");
+
+    h.verbs.highlight(0);
+    h.verbs.revealActive();
+    expect(h.workbench.viewFocus.request).toHaveBeenCalledWith("fs-explorer", "abs:/Users/lionad/notes/todo.md");
+
+    h.verbs.accept(row!);
+    expect(h.inserted.at(-1)).toBe("/Users/lionad/notes/todo.md");
+  });
+
+  it("keeps filesystem rows matching while the query is spelled with a tilde", async () => {
+    const home = homedir();
+    const h = harness({
+      pathExplorer: fakePathExplorer({
+        home,
+        entries: [{ path: `${home}/notes/todo.md`, kind: "file", exists: true }],
+      }),
+    });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery("~/notes/tod");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label === `${home}/notes/todo.md`)).toBe(true),
+    );
+  });
+});
+
+describe("reveal fallback", () => {
+  it("opens the file with the system application when the file view is missing", async () => {
+    const h = harness({
+      openViewResult: { opened: false, focused: false },
+      sessionOpen: fakeSessionOpen({ canOpen: true }),
+    });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery("packages/dsh-command-panel/src/client/panel.ts");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label.endsWith("panel.ts"))).toBe(true),
+    );
+    h.verbs.highlight(0);
+    h.verbs.revealActive();
+
+    await vi.waitFor(() => expect(h.store.getSnapshot().open).toBe(false));
+    expect(h.input.notify).toHaveBeenCalledWith("info", expect.stringContaining("系统默认应用"));
+  });
+
+  it("explains when neither the view nor a system opener is available", async () => {
+    const h = harness({
+      openViewResult: { opened: false, focused: false },
+      sessionOpen: null,
+    });
     runCommand(h, "command-panel.navigate");
     await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
 

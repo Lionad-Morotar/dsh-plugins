@@ -33,6 +33,7 @@ export interface Copy {
   readonly groupBuiltin: string;
   readonly groupCommands: string;
   readonly groupShortcuts: string;
+  readonly groupFilesystem: string;
   readonly groupWorkspaces: string;
   readonly groupSessions: string;
   readonly allSessions: string;
@@ -44,8 +45,9 @@ export interface Copy {
   readonly modeNames: Record<PanelMode, string>;
   readonly modeDescriptions: Record<PanelMode, string>;
   readonly footer: FooterHint;
-  readonly noticeRevealUnavailable: string;
   readonly noticeRevealUnfocused: string;
+  readonly noticeOpenedBySystem: string;
+  readonly noticeOpenUnavailable: string;
   readonly noticeNoSession: string;
   readonly noticeInsertFailed: string;
   readonly noticeExecuted: (name: string, text: string | undefined) => string;
@@ -90,6 +92,7 @@ const ZH: Copy = {
   groupBuiltin: "面板",
   groupCommands: "指令",
   groupShortcuts: "快捷键",
+  groupFilesystem: "文件系统",
   groupWorkspaces: "工作区",
   groupSessions: "会话",
   allSessions: "全部会话",
@@ -112,8 +115,9 @@ const ZH: Copy = {
     tree: "←→ 上下层",
     reveal: "⌘↵ 文件面板",
   },
-  noticeRevealUnavailable: "文件面板不可用，宿主里没有注册 fs-explorer 视图",
   noticeRevealUnfocused: "已切到文件面板；这个宿主没把定位能力交给插件，请手动打开该文件",
+  noticeOpenedBySystem: "已用系统默认应用打开",
+  noticeOpenUnavailable: "文件面板不可用，也无法用系统默认应用打开（web 端或宿主未提供该能力）",
   noticeNoSession: "当前没有打开的会话，无法写入输入框",
   noticeInsertFailed: "输入框正忙，稍后重试",
   noticeExecuted: (name, text) => (text === undefined || text === "" ? `已执行 /${name}` : `/${name}：${text}`),
@@ -180,6 +184,7 @@ const EN: Copy = {
   groupBuiltin: "Panel",
   groupCommands: "Commands",
   groupShortcuts: "Shortcuts",
+  groupFilesystem: "Filesystem",
   groupWorkspaces: "Workspaces",
   groupSessions: "Sessions",
   allSessions: "All sessions",
@@ -202,8 +207,9 @@ const EN: Copy = {
     tree: "←→ up/down a level",
     reveal: "⌘↵ file panel",
   },
-  noticeRevealUnavailable: "No file panel is available; the host has no fs-explorer view",
   noticeRevealUnfocused: "Switched to the file panel; this host hands out no focus capability, so open the file there",
+  noticeOpenedBySystem: "Opened with the system default application",
+  noticeOpenUnavailable: "No file panel, and this environment cannot open files with a system application",
   noticeNoSession: "No open session, so there is no composer to write to",
   noticeInsertFailed: "The composer is busy; try again",
   noticeExecuted: (name, text) => (text === undefined || text === "" ? `Ran /${name}` : `/${name}: ${text}`),

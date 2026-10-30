@@ -6,6 +6,7 @@ import {
   catalogRows,
   commandRows,
   fileRows,
+  filesystemRows,
   sessionRows,
   shortcutRows,
   visibleSessions,
@@ -80,6 +81,50 @@ describe("fileRows", () => {
       kind: "insert-path",
       absolutePath: `${cwd}/src/client/panel.ts`,
     });
+  });
+});
+
+describe("filesystemRows", () => {
+  it("labels with the expanded absolute path and carries the tilde alias under home", () => {
+    const rows = filesystemRows(
+      {
+        home: "/Users/lionad",
+        entries: [
+          { path: "/Users/lionad/notes/todo.md", kind: "file", exists: true },
+          { path: "/Users/lionad/notes", kind: "directory", exists: true },
+        ],
+      },
+      copy,
+    );
+
+    expect(rows.map(row => row.label)).toEqual(["/Users/lionad/notes/todo.md", "/Users/lionad/notes/"]);
+    expect(rows.map(row => row.alias)).toEqual(["~/notes/todo.md", "~/notes/"]);
+    expect(rows.map(row => row.kind)).toEqual(["file", "directory"]);
+    expect(rows[0]?.action).toEqual({ kind: "insert-path", absolutePath: "/Users/lionad/notes/todo.md" });
+    expect(rows[1]?.action).toEqual({ kind: "insert-path", absolutePath: "/Users/lionad/notes/" });
+  });
+
+  it("marks the rows as filesystem origin with the directory detail", () => {
+    const rows = filesystemRows(
+      {
+        home: "/Users/lionad",
+        entries: [
+          { path: "/opt/tool/bin", kind: "directory", exists: true },
+          { path: "/opt/tool/bin/run", kind: "file", exists: true },
+        ],
+      },
+      copy,
+    );
+
+    expect(rows.map(row => row.origin)).toEqual(["filesystem", "filesystem"]);
+    expect(rows.map(row => row.group)).toEqual([copy.groupFilesystem, copy.groupFilesystem]);
+    expect(rows[0]?.detail).toBe(copy.directory);
+    expect(rows[1]?.detail).toBeUndefined();
+    expect(rows.map(row => row.key)).toEqual([
+      "fsys:directory:/opt/tool/bin/",
+      "fsys:file:/opt/tool/bin/run",
+    ]);
+    expect(rows[0]?.alias).toBeUndefined();
   });
 });
 

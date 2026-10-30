@@ -12,7 +12,9 @@ import type {
   CommandsRemote,
   FileReferenceCandidate,
   FileReferencesRemote,
+  PathExplorerRemote,
   SessionListState,
+  SessionOpenFace,
   SessionSummary,
   SessionsService,
   WorkspaceSnapshot,
@@ -156,6 +158,41 @@ export function fakeFileReferences(script: RemoteScript = {}): FileReferencesRem
       script.fileError === undefined
         ? { ok: true, value: script.files ?? [] }
         : { ok: false, error: { code: script.fileError } },
+  };
+}
+
+export interface PathScript {
+  readonly home?: string;
+  readonly entries?: ReadonlyArray<{ readonly path: string; readonly kind: "file" | "directory"; readonly exists: boolean }>;
+  readonly error?: string;
+}
+
+/** The filesystem exploration service this package's own host half publishes. */
+export function fakePathExplorer(script: PathScript = {}): PathExplorerRemote {
+  return {
+    resolve: async () =>
+      script.error === undefined
+        ? {
+            ok: true as const,
+            value: { ok: true as const, home: script.home ?? "/Users/lionad", entries: script.entries ?? [] },
+          }
+        : { ok: false as const, error: { code: script.error } },
+  };
+}
+
+export interface SessionOpenScript {
+  readonly canOpen?: boolean;
+  readonly openError?: string;
+}
+
+/** The `remote.session` pair the reveal fallback asks for. */
+export function fakeSessionOpen(script: SessionOpenScript = {}): SessionOpenFace {
+  return {
+    canOpenWorkspacePath: async () => ({ ok: true as const, value: script.canOpen ?? true }),
+    openWorkspacePath: async () =>
+      script.openError === undefined
+        ? { ok: true as const, value: { opened: true as const } }
+        : { ok: false as const, error: { code: script.openError } },
   };
 }
 

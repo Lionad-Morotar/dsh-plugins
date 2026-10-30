@@ -4,7 +4,9 @@ import {
   composeInsertion,
   displayPath,
   isAbsolutePath,
+  isTypedAbsolutePath,
   separatorOf,
+  tildeForm,
   toAbsolutePath,
 } from "../src/client/paths.ts";
 
@@ -62,6 +64,37 @@ describe("isAbsolutePath", () => {
     expect(isAbsolutePath("C:\\a")).toBe(true);
     expect(isAbsolutePath("\\\\server\\share")).toBe(true);
     expect(isAbsolutePath("a/b")).toBe(false);
+  });
+});
+
+describe("isTypedAbsolutePath", () => {
+  it("treats the tilde spellings a reader types as absolute", () => {
+    expect(isTypedAbsolutePath("~")).toBe(true);
+    expect(isTypedAbsolutePath("~/notes/todo.md")).toBe(true);
+    expect(isTypedAbsolutePath("~\\notes")).toBe(true);
+    expect(isTypedAbsolutePath("~user/notes")).toBe(false);
+  });
+
+  it("accepts the platform absolute spellings and rejects relative words", () => {
+    expect(isTypedAbsolutePath("/etc/hosts")).toBe(true);
+    expect(isTypedAbsolutePath("C:\\Users\\lionad")).toBe(true);
+    expect(isTypedAbsolutePath("\\\\server\\share")).toBe(true);
+    expect(isTypedAbsolutePath("src/client/panel.ts")).toBe(false);
+    expect(isTypedAbsolutePath("panel")).toBe(false);
+  });
+});
+
+describe("tildeForm", () => {
+  it("spells a home path back into the tilde form a query would use", () => {
+    expect(tildeForm("/Users/lionad/notes/todo.md", "/Users/lionad")).toBe("~/notes/todo.md");
+    expect(tildeForm("/Users/lionad/notes/", "/Users/lionad")).toBe("~/notes/");
+    expect(tildeForm("/Users/lionad", "/Users/lionad")).toBe("~");
+  });
+
+  it("leaves paths outside home unspelled", () => {
+    expect(tildeForm("/opt/homebrew/x", "/Users/lionad")).toBeUndefined();
+    expect(tildeForm("/Users/lionadother/x", "/Users/lionad")).toBeUndefined();
+    expect(tildeForm("/x", "")).toBeUndefined();
   });
 });
 

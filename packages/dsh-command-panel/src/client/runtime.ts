@@ -25,8 +25,10 @@ import type {
   InputActions,
   LayoutService,
   LocaleService,
+  PathExplorerRemote,
   PluginNavigationService,
   SessionInput,
+  SessionOpenFace,
   SessionsService,
   ShortcutsService,
   SidebarRightService,
@@ -37,6 +39,7 @@ import type {
   Unsubscribe,
   WorkspacesService,
 } from "./dsh.ts";
+import { isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
 import { runCatalogAction, type ActionDeps } from "./actions.ts";
 import { createBridgeView, type BridgeState } from "./bridge.ts";
 import { planClaim, type ClaimProbe, type ClaimTarget } from "./claims.ts";
@@ -68,6 +71,7 @@ import { catalogRows, shortcutRows, type PanelRow } from "./rows.ts";
 import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from "./sources.ts";
 import { createPanelStore } from "./store.ts";
 import { directoryQuery, focusPath, parentQuery } from "./tree.ts";
+import { createPathExplorerFace, createSessionOpenFace, gatewayRpcOf } from "./wire.ts";
 import { insertPanelStyles } from "./styles.ts";
 
 /** The three command ids; also the settings rows the reader can rebind. */
@@ -185,6 +189,8 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   const refs: {
     fileReferences?: FileReferencesRemote;
     commands?: CommandsRemote;
+    pathExplorer?: PathExplorerRemote;
+    sessionOpen?: SessionOpenFace;
     sessions?: SessionsService;
     workspaces?: WorkspacesService;
     shortcuts?: ShortcutsService;
@@ -199,6 +205,36 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     workbench?: WorkbenchService;
   } = {};
 
+  // ── raw-RPC fallbacks ───────────────────────────────────────────────────
+
+  /**
+   * Faces over the connection service's unary caller, built at most once.
+   *
+   * The typed `remote.<namespace>` faces exist only where the host mounted a
+   * generated client contribution; a third-party package reaches its own host
+   * half (and the session open pair) through the same `/api` routes instead.
+   */
+  let rpcPathExplorer: PathExplorerRemote | null | undefined;
+  let rpcSessionOpen: SessionOpenFace | null | undefined;
+
+  function pathExplorerFace(): PathExplorerRemote | undefined {
+    if (isPathExplorerFace(refs.pathExplorer)) return refs.pathExplorer;
+    if (rpcPathExplorer === undefined) {
+      const rpc = gatewayRpcOf(deps.ctx);
+      rpcPathExplorer = rpc === undefined ? null : createPathExplorerFace(rpc);
+    }
+    return rpcPathExplorer ?? undefined;
+  }
+
+  function sessionOpenFace(): SessionOpenFace | undefined {
+    if (isSessionOpenFace(refs.sessionOpen)) return refs.sessionOpen;
+    if (rpcSessionOpen === undefined) {
+      const rpc = gatewayRpcOf(deps.ctx);
+      rpcSessionOpen = rpc === undefined ? null : createSessionOpenFace(rpc);
+    }
+    return rpcSessionOpen ?? undefined;
+  }
+
   const copy = (): Copy => copyFor(refs.locale?.getSnapshot().active ?? "zh");
 
   const services: SourceServices & {
@@ -208,6 +244,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   } = {
     fileReferences: () => refs.fileReferences,
     commands: () => refs.commands,
+    pathExplorer: pathExplorerFace,
     sessions: () => refs.sessions,
     workspaces: () => refs.workspaces,
     shortcuts: () => refs.shortcuts,
@@ -752,29 +789,77 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   }
 
   /**
+   * What the reveal accelerator hands to the file workbench for one row.
+   *
+   * Workspace rows speak the relative `path:` protocol; filesystem rows carry
+   * their own absolute path, so they speak `abs:` and out-of-workspace files
+   * preview too. Directories and non-file rows have no panel to open.
+   */
+  function revealTarget(row: PanelRow | undefined): { focus: string; absolutePath: string } | undefined {
+    if (row === undefined || row.kind === "directory") return undefined;
+    if (row.origin === "filesystem" && row.action.kind === "insert-path") {
+      return { focus: `abs:${row.action.absolutePath}`, absolutePath: row.action.absolutePath };
+    }
+    const path = focusPath(row);
+    if (path === undefined) return undefined;
+    return {
+      focus: `path:${path}`,
+      absolutePath: row.action.kind === "insert-path" ? row.action.absolutePath : path,
+    };
+  }
+
+  /**
+   * Open a path with the system default application.
+   *
+   * The desktop host answers the session namespace's open pair; a probe that
+   * says no (web) or a host without the face at all lands on the explanatory
+   * notice, because a reveal that silently does nothing is the one failure a
+   * reader cannot diagnose.
+   */
+  async function revealWithSystemApp(absolutePath: string): Promise<void> {
+    const face = sessionOpenFace();
+    if (face !== undefined) {
+      try {
+        const can = await face.canOpenWorkspacePath();
+        if (can.ok && can.value === true) {
+          const opened = await face.openWorkspacePath({ path: absolutePath });
+          if (opened.ok) {
+            close();
+            notifyComposer(copy().noticeOpenedBySystem, "info");
+            return;
+          }
+        }
+      } catch {
+        // A probe that throws is an unavailable opener, not a panel error.
+      }
+    }
+    notice(copy().noticeOpenUnavailable, "error");
+  }
+
+  /**
    * Hand the highlighted file to the file workbench.
    *
    * The workbench's `openView` both switches the view and consumes the focus, so
    * an already-open tab for that path is activated rather than duplicated, which
-   * is why this is one call and not a "find then open" pair.
+   * is why this is one call and not a "find then open" pair. When the file view
+   * is missing altogether, the system-application fallback answers instead.
    */
   function revealActive(): void {
     if (!treeActive()) return;
     const snapshot = store.getSnapshot();
     const row = snapshot.rows[clampHighlight(snapshot.model.highlight, snapshot.rows.length)];
-    const path = focusPath(row);
-    if (path === undefined) return;
+    const target = revealTarget(row);
+    if (target === undefined) return;
     const workbench = refs.workbench;
-    const focus = `path:${path}`;
     if (workbench === undefined) {
-      notice(copy().noticeRevealUnavailable, "error");
+      void revealWithSystemApp(target.absolutePath);
       return;
     }
     if (workbench.openViewOrSwitch !== undefined) {
       // Leave the target queued first: a view that mounts on this switch would
       // otherwise pass the moment it could have taken the request.
-      workbench.viewFocus?.request("fs-explorer", focus);
-      const result = workbench.openViewOrSwitch("fs-explorer", focus);
+      workbench.viewFocus?.request("fs-explorer", target.focus);
+      const result = workbench.openViewOrSwitch("fs-explorer", target.focus);
       if (result.focused) {
         // The host delivered it; drop the queued copy so it cannot replay.
         workbench.viewFocus?.take("fs-explorer");
@@ -789,14 +874,14 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         return;
       }
       workbench.viewFocus?.take("fs-explorer");
-      notice(copy().noticeRevealUnavailable, "error");
+      void revealWithSystemApp(target.absolutePath);
       return;
     }
-    if (workbench.openView("fs-explorer", focus)) {
+    if (workbench.openView("fs-explorer", target.focus)) {
       close();
       return;
     }
-    notice(copy().noticeRevealUnavailable, "error");
+    void revealWithSystemApp(target.absolutePath);
   }
 
   function acceptActive(): void {
@@ -1071,6 +1156,29 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       refs.commands = scope.get<CommandsRemote>("remote.commands");
       return () => {
         refs.commands = undefined;
+      };
+    }),
+  );
+  // This package's own host half publishes the pathExplorer namespace; waiting
+  // for it through the runtime (not the entry's inject list) keeps a failed
+  // host activation from taking the whole panel down with it.
+  disposers.push(
+    deps.ctx.inject(["remote.pathExplorer"], scope => {
+      const face = scope.get("remote.pathExplorer");
+      if (isPathExplorerFace(face)) refs.pathExplorer = face;
+      return () => {
+        refs.pathExplorer = undefined;
+      };
+    }),
+  );
+  // The reveal fallback's opener pair; absent on hosts without the session
+  // namespace, where the raw-RPC tier answers instead.
+  disposers.push(
+    deps.ctx.inject(["remote.session"], scope => {
+      const face = scope.get("remote.session");
+      if (isSessionOpenFace(face)) refs.sessionOpen = face;
+      return () => {
+        refs.sessionOpen = undefined;
       };
     }),
   );

@@ -22,8 +22,9 @@ import type {
   WorkspaceSnapshot,
   WorkspaceView,
 } from "./dsh.ts";
+import type { PathEntry } from "../shared.ts";
 import type { PanelMode, SessionScope } from "./panel-state.ts";
-import { displayPath, toAbsolutePath } from "./paths.ts";
+import { displayPath, tildeForm, toAbsolutePath } from "./paths.ts";
 
 /** What picking a row does; the runtime maps each variant onto host services. */
 export type RowAction =
@@ -61,6 +62,12 @@ export interface PanelRow {
    * this as a fact rather than as a localized label comparison.
    */
   readonly kind?: "file" | "directory";
+  /**
+   * Which plane the row came from. Workspace rows leave it unset; filesystem
+   * rows mark themselves so the reveal accelerator knows to speak the
+   * workbench's absolute `abs:` protocol instead of `path:`.
+   */
+  readonly origin?: "filesystem";
   readonly action: RowAction;
 }
 
@@ -68,6 +75,36 @@ export interface PanelRow {
 export interface FileRowInput {
   readonly candidates: readonly FileReferenceCandidate[];
   readonly cwd: string;
+}
+
+/** Filesystem entries plus the home they were expanded against. */
+export interface FilesystemRowInput {
+  readonly home: string;
+  readonly entries: readonly PathEntry[];
+}
+
+/**
+ * Project filesystem entries into rows.
+ *
+ * The label is the expanded absolute path (what the composer will receive and
+ * what the tree drill rewrites the query with); the tilde spelling rides along
+ * as the alias so a query typed `~/…` keeps matching these rows between round
+ * trips.
+ */
+export function filesystemRows(input: FilesystemRowInput, copy: Copy): PanelRow[] {
+  return input.entries.map(entry => {
+    const label = entry.kind === "directory" && !/[\\/]$/.test(entry.path) ? `${entry.path}/` : entry.path;
+    return {
+      key: `fsys:${entry.kind}:${label}`,
+      label,
+      alias: tildeForm(label, input.home),
+      detail: entry.kind === "directory" ? copy.directory : undefined,
+      kind: entry.kind,
+      group: copy.groupFilesystem,
+      origin: "filesystem",
+      action: { kind: "insert-path", absolutePath: label },
+    };
+  });
 }
 
 /**

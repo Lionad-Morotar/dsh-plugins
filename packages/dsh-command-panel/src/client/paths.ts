@@ -17,6 +17,36 @@ export function isAbsolutePath(target: string): boolean {
   return target.startsWith("/") || WINDOWS_ABSOLUTE.test(target) || UNICODE_ABSOLUTE.test(target);
 }
 
+/**
+ * Whether the text is absolute the way a reader types it.
+ *
+ * Adds the expandable tilde spellings to {@link isAbsolutePath}: `~` alone and
+ * `~/…` name the home directory, while `~user/…` stays a relative word because
+ * the expansion is explicitly out of scope. `isAbsolutePath` itself keeps its
+ * "already absolute" meaning for joining payloads.
+ */
+export function isTypedAbsolutePath(target: string): boolean {
+  if (target === "~" || target.startsWith("~/") || target.startsWith("~\\")) return true;
+  if (target.startsWith("~")) return false;
+  return isAbsolutePath(target);
+}
+
+/**
+ * The tilde spelling of a path under home, or undefined outside it.
+ *
+ * Filesystem rows carry the expanded path as their label; the tilde form rides
+ * along as the alias so a query typed `~/…` still matches after the load, and
+ * keeps matching while the next keystroke waits for its round trip.
+ */
+export function tildeForm(path: string, home: string): string | undefined {
+  if (home === "") return undefined;
+  if (path === home) return "~";
+  const slashy = path.startsWith(`${home}/`);
+  const backslashed = !slashy && path.startsWith(`${home}\\`);
+  if (!slashy && !backslashed) return undefined;
+  return `~${path.slice(home.length)}`;
+}
+
 /** The separator a directory path is written with, inferred from its own spelling. */
 export function separatorOf(directory: string): string {
   return directory.includes("\\") && !directory.includes("/") ? "\\" : "/";

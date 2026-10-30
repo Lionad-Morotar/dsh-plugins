@@ -13,6 +13,8 @@
  * fallback somewhere in the panel.
  */
 
+import type { PathResolveResult } from "../shared.ts";
+
 export type Unsubscribe = () => void;
 
 /** The observable snapshot shape every Cordis client store exposes. */
@@ -88,6 +90,44 @@ export interface CommandsRemote {
     attachments?: readonly unknown[],
     signal?: AbortSignal,
   ): Promise<RemoteResult<CommandExecution | undefined>>;
+}
+
+// ── Filesystem path exploration (this package's host half) ─────────────────
+
+/** The one endpoint the panel's absolute-path branch calls. */
+export interface PathExplorerRemote {
+  resolve(
+    request: { readonly query: string; readonly limit?: number },
+    signal?: AbortSignal,
+  ): Promise<RemoteResult<PathResolveResult>>;
+}
+
+/** Whether a value structurally answers the pathExplorer face. */
+export function isPathExplorerFace(value: unknown): value is PathExplorerRemote {
+  if (value === null || typeof value !== "object") return false;
+  return typeof (value as Record<string, unknown>).resolve === "function";
+}
+
+/**
+ * The `remote.session` pair the reveal fallback asks for.
+ *
+ * Desktop hosts answer `canOpenWorkspacePath` with true and hand the path to
+ * the OS default application; web hosts answer false, which is the fallback's
+ * own "explain, do not stay silent" exit.
+ */
+export interface SessionOpenFace {
+  canOpenWorkspacePath(signal?: AbortSignal): Promise<RemoteResult<boolean>>;
+  openWorkspacePath(
+    request: { readonly path: string; readonly action?: "reveal" },
+    signal?: AbortSignal,
+  ): Promise<RemoteResult<{ readonly opened: true }>>;
+}
+
+/** Whether a value structurally answers the session open pair. */
+export function isSessionOpenFace(value: unknown): value is SessionOpenFace {
+  if (value === null || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.canOpenWorkspacePath === "function" && typeof record.openWorkspacePath === "function";
 }
 
 // ── Session catalogue ──────────────────────────────────────────────────────
