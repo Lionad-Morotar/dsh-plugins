@@ -21,6 +21,8 @@ export interface TerminalStatus {
   readonly readOnly: boolean;
   /** The process will not come back on its own. */
   readonly ended: boolean;
+  /** A host refresh can rebuild this panel; the dock offers a retry button. */
+  readonly retryable: boolean;
 }
 
 /**
@@ -33,25 +35,34 @@ export function describeTerminal(state: TerminalViewState, t: Translate): Termin
   const ended = state.phase === "closed" || state.info?.state === "exited" || state.info?.state === "failed";
   const running = state.info?.state === "running";
   const readOnly = state.phase === "connected" && running && state.writable === false;
+  // The host's own sentence is the only thing that says *why* a panel is dead
+  // (unavailable terminal, spawn failure, limit). Dropping it left the reader
+  // with "process gone" and no next step, so it rides along in parentheses.
+  const reason = typeof state.error === "string" && state.error !== "" ? `（${state.error}）` : "";
 
-  if (state.issue === "terminalLimit") return { label: t("dock.limitReached"), tone: "error", readOnly, ended };
-  if (state.issue === "missingTerminal") return { label: t("dock.missing"), tone: "error", readOnly, ended };
-  if (state.issue === "inputFull") return { label: t("dock.failed"), tone: "error", readOnly, ended };
-  if (state.phase === "failed" && state.error !== undefined) {
-    return { label: state.error, tone: "error", readOnly, ended };
+  if (state.issue === "terminalLimit") return { label: t("dock.limitReached"), tone: "error", readOnly, ended, retryable: false };
+  if (state.issue === "missingTerminal") {
+    return { label: `${t("dock.missing")}${reason}`, tone: "error", readOnly, ended, retryable: true };
   }
-  if (state.phase === "closed") return { label: t("dock.closed"), tone: "info", readOnly: false, ended };
+  if (state.issue === "inputFull") return { label: t("dock.failed"), tone: "error", readOnly, ended, retryable: false };
+  if (state.phase === "failed" && state.error !== undefined) {
+    return { label: state.error, tone: "error", readOnly, ended, retryable: true };
+  }
+  if (state.phase === "closed") return { label: t("dock.closed"), tone: "info", readOnly: false, ended, retryable: false };
   if (state.info?.state === "exited") {
     const code = state.info.exitCode === undefined ? "" : ` (${String(state.info.exitCode)})`;
-    return { label: `${t("dock.exited")}${code}`, tone: "info", readOnly: false, ended };
+    return { label: `${t("dock.exited")}${code}`, tone: "info", readOnly: false, ended, retryable: false };
   }
-  if (state.info?.state === "failed") return { label: t("dock.missing"), tone: "error", readOnly: false, ended };
-  if (readOnly) return { label: t("dock.readOnly"), tone: "warn", readOnly, ended };
+  if (state.info?.state === "failed") {
+    const spawnReason = typeof state.info.error === "string" && state.info.error !== "" ? `（${state.info.error}）` : reason;
+    return { label: `${t("dock.missing")}${spawnReason}`, tone: "error", readOnly: false, ended, retryable: true };
+  }
+  if (readOnly) return { label: t("dock.readOnly"), tone: "warn", readOnly, ended, retryable: false };
   if (state.phase === "idle" || state.phase === "loading") {
-    return { label: t("dock.loading"), tone: "info", readOnly, ended };
+    return { label: t("dock.loading"), tone: "info", readOnly, ended, retryable: false };
   }
-  if (state.phase === "creating") return { label: t("dock.creating"), tone: "info", readOnly, ended };
-  if (state.phase === "connecting") return { label: t("dock.connecting"), tone: "info", readOnly, ended };
-  if (state.phase === "disconnected") return { label: t("dock.disconnected"), tone: "warn", readOnly, ended };
-  return { tone: "info", readOnly, ended };
+  if (state.phase === "creating") return { label: t("dock.creating"), tone: "info", readOnly, ended, retryable: false };
+  if (state.phase === "connecting") return { label: t("dock.connecting"), tone: "info", readOnly, ended, retryable: false };
+  if (state.phase === "disconnected") return { label: t("dock.disconnected"), tone: "warn", readOnly, ended, retryable: false };
+  return { tone: "info", readOnly, ended, retryable: false };
 }

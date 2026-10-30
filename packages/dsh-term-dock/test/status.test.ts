@@ -27,7 +27,7 @@ describe("terminal status", () => {
       { phase: "connected", writable: true, info: { cols: 80, rows: 24, state: "running" } },
       t,
     );
-    expect(status).toEqual({ tone: "info", readOnly: false, ended: false });
+    expect(status).toEqual({ tone: "info", readOnly: false, ended: false, retryable: false });
   });
 
   it("marks an exited shell as ended and keeps its code", () => {
@@ -40,5 +40,29 @@ describe("terminal status", () => {
     const status = describeTerminal({ phase: "failed", issue: "missingTerminal" }, t);
     expect(status.label).toBe("dock.missing");
     expect(status.tone).toBe("error");
+    expect(status.retryable).toBe(true);
+  });
+
+  it("carries the host's own reason so the reader knows what failed", () => {
+    const status = describeTerminal(
+      { phase: "failed", issue: "missingTerminal", error: "Terminal no longer exists in this Session" },
+      t,
+    );
+    expect(status.label).toBe("dock.missing（Terminal no longer exists in this Session）");
+  });
+
+  it("offers a retry for a spawn failure and keeps the spawn message", () => {
+    const status = describeTerminal(
+      { phase: "failed", info: { cols: 80, rows: 24, state: "failed", error: "spawn /bin/zsh ENOENT" } },
+      t,
+    );
+    expect(status.retryable).toBe(true);
+    expect(status.label).toBe("dock.missing（spawn /bin/zsh ENOENT）");
+  });
+
+  it("does not offer a retry where retrying cannot help", () => {
+    expect(describeTerminal({ phase: "failed", issue: "terminalLimit" }, t).retryable).toBe(false);
+    expect(describeTerminal({ phase: "closed" }, t).retryable).toBe(false);
+    expect(describeTerminal({ phase: "connected", info: { cols: 80, rows: 24, state: "exited", exitCode: 0 } }, t).retryable).toBe(false);
   });
 });

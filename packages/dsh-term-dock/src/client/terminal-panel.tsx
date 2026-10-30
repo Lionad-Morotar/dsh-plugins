@@ -41,6 +41,17 @@ const panelStyle: CSSProperties = {
   background: "color-mix(in srgb, currentColor 2%, transparent)",
 };
 const screenStyle: CSSProperties = { flex: 1, minHeight: 0, minWidth: 0 };
+const retryStyle: CSSProperties = {
+  marginLeft: 8,
+  border: "1px solid color-mix(in srgb, currentColor 28%, transparent)",
+  borderRadius: 4,
+  background: "transparent",
+  color: "inherit",
+  cursor: "pointer",
+  fontSize: 11,
+  padding: "0 6px",
+  lineHeight: 1.5,
+};
 const statusStyle: CSSProperties = {
   fontSize: 11,
   lineHeight: 1.5,
@@ -78,7 +89,17 @@ export function createTerminalPanel({ t }: { t: Translate }): ComponentType<Term
         </div>
         {status.label === undefined ? null : (
           <div role="status" data-tone={status.tone} style={{ ...statusStyle, color: TONE_COLOR[status.tone] }}>
-            {status.label}
+            <span>{status.label}</span>
+            {status.retryable ? (
+              <button
+                type="button"
+                data-testid="dock-retry"
+                onClick={() => binding.retry()}
+                style={retryStyle}
+              >
+                {t("dock.retry")}
+              </button>
+            ) : null}
           </div>
         )}
       </div>

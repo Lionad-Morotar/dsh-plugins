@@ -36,6 +36,7 @@
 - 渲染器懒加载：xterm 与 FitAddon 在 `client.terminal.js` 里，第一次有终端面板挂载时才取，取到后缓存在页面生命周期内；启动包不含任何 xterm 符号。
 - 背压泵：宿主按 revision 发 `snapshot` / `output` / `state` 帧，只有等模拟器把这一帧写进屏幕后才 `acknowledge`，不会因为渲染慢把终端刷爆。
 - 状态行：连接中、创建 shell、重连、断开、已关闭、shell 已退出（带退出码）、只读、进程不存在、达到上限各有文案；只读时输入框禁用。
+- 失败态带原因并可重试：宿主的 `issue` / `info.error` 原文跟在文案后的括号里（此前被通用句吞掉，读者看不到 `terminal/unavailable` 这类真实原因）；`missingTerminal` 与 shell 启动失败给「重试」按钮，走宿主 `TerminalView.refresh()` 重新 attach（宿主侧 `createWhenMissing` 会顺手重建进程），上限与已关闭态不给重试。
 - 无孤儿：每个由 dock 创建的 `TerminalView` 都记在 rack 里，按 `(sessionId, panelId)` 索引；关闭面板立即 `close()`，插件卸载时 `closeAll()` 把所有自己起过的进程收干净。
 - 快捷键只碰两个键：`Ctrl+W` 关当前终端，`Esc` 经 core 的 views seam 回对话。其余按键全部留给终端本身和宿主的全局命令。
 

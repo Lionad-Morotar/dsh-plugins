@@ -69,6 +69,8 @@ export interface TerminalViewLike {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   acknowledge(revision: number): void;
+  /** Re-attach to the process, creating one when the host no longer has it. */
+  refresh?(): unknown;
   /** Terminate the process; returns a promise in the host implementation. */
   close(): unknown;
   /** Stop client work without touching the process. */
@@ -107,6 +109,8 @@ export interface TerminalBinding {
   acknowledge(revision: number): void;
   /** Follow the view's render frames into an emulator; returns the unsubscribe. */
   attachEmulator(sink: EmulatorSink): () => void;
+  /** Ask the host to rebuild this panel's process after a terminal-domain failure. */
+  retry(): void;
   /** Terminate the process and detach. */
   close(): void;
   /** Detach without terminating; used when the plugin itself is disposed. */
@@ -193,6 +197,9 @@ export function createTerminalBinding({ view, key }: TerminalBindingInput): Term
     },
     acknowledge(revision) {
       view().acknowledge(revision);
+    },
+    retry() {
+      settleQuietly(view().refresh?.());
     },
     attachEmulator(sink) {
       const target = view();

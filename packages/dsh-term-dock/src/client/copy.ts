@@ -28,6 +28,7 @@ export const ZH: Record<string, string> = {
   "dock.readOnly": "当前终端只读，输入已禁用。",
   "dock.limitReached": "已达上限，关闭一个终端",
   "dock.missing": "终端进程已不存在",
+  "dock.retry": "重试",
 };
 
 export const EN: Record<string, string> = {
@@ -56,4 +57,5 @@ export const EN: Record<string, string> = {
   "dock.readOnly": "This terminal is read-only; input is disabled.",
   "dock.limitReached": "Terminal limit reached, close one",
   "dock.missing": "The terminal process is gone",
+  "dock.retry": "Retry",
 };
