@@ -1,7 +1,16 @@
-// Host half of dsh-command-panel. The Loader mounts both halves by package name,
-// so the host entry must resolve even though the whole plugin lives in the
-// client half; apply stays empty until a host-side service is actually needed.
+// Host half of dsh-command-panel. The Loader mounts both halves by package
+// name; until this slice the host entry was an empty apply. The panel's
+// absolute-path branch needs one host capability the official surfaces refuse
+// to provide (workspace-bound by design), so the entry now publishes the
+// PathExplorerService: no other host service is required, `inject` stays empty
+// and a missing entry there would keep the plugin pending forever.
+import { PathExplorerService } from "./host/path-explorer.ts";
+
+export { PathExplorerService };
+export { PATH_SERVICE } from "./shared.ts";
+export type { PathEntry, PathResolveRequest, PathResolveResult } from "./shared.ts";
+
 export const name = "dsh-command-panel";
 export const inject: string[] = [];
 
-export function apply(): void {}
+export default PathExplorerService;

@@ -34,6 +34,14 @@ const PLATFORM_MODULES = [
 ];
 
 /**
+ * Host-half platform packages: the Harness install provides its own copy of
+ * every `@deepseek-ai/*` module. Bundling one would ship a second Typert
+ * protocol or Cordis `Service` class, and class identity is what the gateway
+ * uses to find the service.
+ */
+const HOST_MODULES = ["@deepseek-ai/*"];
+
+/**
  * The ModuleLoader wrapper for the client half.
  *
  * `window.__ModuleLoader__.load` accepts only `{id, factory}` and the id must
@@ -90,7 +98,7 @@ async function main() {
 
   await writeFile(
     join(libRoot, "index.js"),
-    await bundle(join(packageRoot, "src", "index.ts"), "esm"),
+    await bundle(join(packageRoot, "src", "index.ts"), "esm", HOST_MODULES),
     "utf8",
   );
 
