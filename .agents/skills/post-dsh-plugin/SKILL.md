@@ -1,5 +1,5 @@
 ---
-name: dsh-plugin-submission
+name: post-dsh-plugin
 description: 把 DSH 插件投进各市场并如实标注收录状态
 argument-hint: "[预检 | 索引 | awesome | hub | 徽章] <包目录>"
 disable-model-invocation: true
@@ -7,14 +7,14 @@ metadata:
   version: alpha
 ---
 
-# dsh-plugin-submission：DSH 插件投稿
+# post-dsh-plugin：DSH 插件投稿
 
 ## 要求
 
 - 事实先于文本：每个市场的收录规则要现读其站点或仓库，不凭印象写条目。规则会变，本技能的 references 记录的是取数方式与判据，不是可以被抄进条目的常量。
 - 收录状态的声明必须可验证。徽章、README 措辞、"已收录"字样只在详情页真的能打开时才写。提交了不等于收录了。
 - 一个包能进哪些面由包自身的事实决定，不由想投多少决定。预检脚本先跑，它红的项不要绕过。
-- 本技能有副作用（写条目文件、提交 Issue 或 PR、改 README），因此只允许 `/dsh-plugin-submission` 手动调用。
+- 本技能有副作用（写条目文件、提交 Issue 或 PR、改 README），因此只允许 `/post-dsh-plugin` 手动调用。
 
 ## 意图路由
 
@@ -27,12 +27,12 @@ metadata:
 ## 外部依赖入口
 
 - `scripts/preflight.mjs` — 读一个包，按各市场的公开收录规则逐条判定，退出码定性。
-  本技能是项目级落点，实体在项目内 `.agents/skills/dsh-plugin-submission/`，
-  `.claude/skills/dsh-plugin-submission` 是指向它的镜像链接；下面的路径相对技能目录
+  本技能是项目级落点，实体在项目内 `.agents/skills/post-dsh-plugin/`，
+  `.claude/skills/post-dsh-plugin` 是指向它的镜像链接；下面的路径相对技能目录
 
   调用：
   ```sh
-  node .agents/skills/dsh-plugin-submission/scripts/preflight.mjs --mode check \
+  node .agents/skills/post-dsh-plugin/scripts/preflight.mjs --mode check \
     --package <dir> --target hub|awesome|index|all [--repo-created <iso>] [--json]
   ```
 

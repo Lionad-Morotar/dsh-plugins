@@ -45,7 +45,7 @@ Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。十六个包：DSH �
 
 | 技能 | 说明 |
 | --- | --- |
-| [dsh-plugin-submission](./.agents/skills/dsh-plugin-submission/SKILL.md) | 把插件投进索引、awesome、dsh-plugin.org 与 npm 四条通道，含投稿预检脚本与收录状态的真实判据。只允许 `/dsh-plugin-submission` 手动调用 |
+| [post-dsh-plugin](./.agents/skills/post-dsh-plugin/SKILL.md) | 把插件投进索引、awesome、dsh-plugin.org 与 npm 四条通道，含投稿预检脚本与收录状态的真实判据。只允许 `/post-dsh-plugin` 手动调用 |
 
 ## 只读参考仓库
 
