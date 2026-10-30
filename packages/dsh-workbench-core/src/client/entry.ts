@@ -11,7 +11,13 @@
  * the adapter snapshot, and a section that renders before the service exists
  * would report every adapter as missing.
  */
-import { registerWorkbenchCommands, runWorkbenchCommand, type ShortcutRegistryLike } from "./commands.ts";
+import {
+  registerViewDigitCommands,
+  registerWorkbenchCommands,
+  runWorkbenchCommand,
+  type ShortcutRegistryLike,
+  type ViewDigitRuntime,
+} from "./commands.ts";
 import { EN, ZH } from "./copy.ts";
 import {
   LOCALE_NAMESPACE,
@@ -28,7 +34,8 @@ import { createSessionSelection } from "./session.ts";
 import { createWorkbenchService, type WorkbenchService } from "./service.ts";
 import { createGlobalKeyRouter, installGlobalKeyRouter } from "./shortcut-router.ts";
 import { createReturnToChatRow, resolveMenuItemButton, type LoaderRequire } from "./view-actions.tsx";
-import { createViewSwitcher } from "./view-switcher.ts";
+import { createViewDigitPreference, installViewDigitKeyRouter } from "./view-digits.ts";
+import { createViewSwitcher, listViewTabs, switchToViewTab } from "./view-switcher.ts";
 import { createDockVisibility } from "./dock-visibility.ts";
 import { createViewSeam } from "./views.ts";
 import { WORKBENCH_SERVICE } from "../shared.ts";
@@ -49,7 +56,8 @@ export interface ClientContextLike {
   };
   readonly locale: {
     register(namespace: string, dictionaries: Record<string, Record<string, string>>): () => void;
-    bind(namespace: string): (key: string) => string;
+    /** Host translate seat; interpolates `{name}` from the optional params. */
+    bind(namespace: string): (key: string, params?: Record<string, string | number>) => string;
   };
   /** Cordis service registration; present on every supported client host. */
   provide?(name: string, value: unknown): () => void;
@@ -105,6 +113,31 @@ function openViewFromWeb(service: WorkbenchService, viewId: string): boolean {
     sessionId,
     doc: typeof document === "undefined" ? undefined : document,
   }).open(viewId);
+}
+
+/**
+ * The browser document, or undefined outside a browser.
+ *
+ * Read per call rather than captured: the acceptance probe and the unit tests
+ * load this bundle without a DOM, and a captured reference would be null there.
+ */
+function currentDocument(): Document | undefined {
+  return typeof document === "undefined" ? undefined : document;
+}
+
+/**
+ * The tab-strip seam the digit chords and the web digit router share.
+ *
+ * Position, not identity: the digits follow whatever the host currently renders,
+ * so a view a feature package registers later needs no change here. Both calls
+ * answer false rather than throwing when the strip is absent (no session, a
+ * mount without tabs), which is what keeps a stray chord from being consumed.
+ */
+function createTabStripRuntime(): ViewDigitRuntime {
+  return {
+    available: index => listViewTabs(currentDocument()).length >= index,
+    switchTo: index => switchToViewTab(currentDocument(), index),
+  };
 }
 
 /**
@@ -170,7 +203,36 @@ export function apply(ctx: ClientContextLike): () => void {
   // them itself in the capture phase. Registering the host defaults stays
   // desktop-only either way.
   const offKeyRouter = installWebShortcutRouter(service, shortcuts);
-  const Section = createWorkbenchSection({ service, t, shortcuts });
+  // The digit chords are opt-out: one persisted switch owns both the host
+  // registration (desktop) and the local alt+digit route (web), so flipping it
+  // in settings takes effect without a remount.
+  const viewDigits = createViewDigitPreference();
+  const tabStrip = createTabStripRuntime();
+  const reportShortcutProblem = (message: string): void => {
+    console.warn(`[dsh-workbench-core] ${message}`);
+    ctx.logger?.warn?.(`${LOCALE_NAMESPACE}: ${message}`);
+  };
+  const offDigitCommands = registerViewDigitCommands(
+    shortcuts,
+    service,
+    t,
+    viewDigits,
+    tabStrip,
+    reportShortcutProblem,
+  );
+  const offDigitRouter = installViewDigitKeyRouter({
+    runtime: shortcuts?.runtime,
+    isEnabled: () => viewDigits.get(),
+    switchTab: index => tabStrip.switchTo(index),
+    ...(typeof window === "undefined" ? {} : { target: window }),
+  });
+  const Section = createWorkbenchSection({
+    service,
+    t,
+    shortcuts,
+    viewDigits,
+    ...(shortcuts?.runtime === undefined ? {} : { runtime: shortcuts.runtime }),
+  });
 
   ctx.slots.inject(SECTION_SLOT, () =>
     ctx.slots.register(
@@ -208,6 +270,8 @@ export function apply(ctx: ClientContextLike): () => void {
 
   return () => {
     if (typeof offViewActions === "function") offViewActions();
+    offDigitRouter();
+    offDigitCommands();
     offKeyRouter();
     offCommands();
     offLocale();
@@ -225,10 +289,13 @@ export function apply(ctx: ClientContextLike): () => void {
 export const __test = {
   createViewSeam,
   createViewSwitcher,
+  createViewDigitPreference,
   createDockVisibility,
   buildSettingsGroups,
   checkBindings,
   createGlobalKeyRouter,
+  switchToViewTab,
+  listViewTabs,
 };
 
 /** The plugin object the loader mounts. */

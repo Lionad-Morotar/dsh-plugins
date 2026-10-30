@@ -46,6 +46,14 @@ export const ZH: Record<string, string> = {
   "keymap.previousPanel": "上一个面板",
   "keymap.closePanel": "关闭当前面板",
   "keymap.empty": "尚未登记命令",
+  "command.noSession": "请先选择会话",
+  "keymap.viewDigit": "切换到第 {index} 个会话视图",
+  "viewDigits.title": "会话视图",
+  "viewDigits.label": "使用 {chord} + 数字切换会话视图",
+  "viewDigits.detail": "{chord}1 … {chord}9 按标签顺序切换；关闭后立即解除绑定。",
+  "viewDigits.webNote": "Web 端宿主不接受 {primary} + 数字（浏览器会先接管），改由插件本地路由投递 {chord} + 数字。",
+  "viewDigits.on": "已开启",
+  "viewDigits.off": "已关闭",
   "view.backToChat": "返回对话",
 };
 
@@ -96,5 +104,13 @@ export const EN: Record<string, string> = {
   "keymap.previousPanel": "Previous panel",
   "keymap.closePanel": "Close current panel",
   "keymap.empty": "No commands registered",
+  "command.noSession": "Select a session first",
+  "keymap.viewDigit": "Switch to view {index}",
+  "viewDigits.title": "Conversation views",
+  "viewDigits.label": "Switch views with {chord} + digits",
+  "viewDigits.detail": "{chord}1 … {chord}9 follow the tab order; turning this off unbinds them immediately.",
+  "viewDigits.webNote": "The web host refuses {primary} + digit (the browser answers first), so the bundle routes {chord} + digit itself.",
+  "viewDigits.on": "On",
+  "viewDigits.off": "Off",
   "view.backToChat": "Back to chat",
 };

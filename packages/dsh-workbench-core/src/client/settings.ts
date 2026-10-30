@@ -14,8 +14,9 @@
  * bundle's own router, so the matrix keeps the row available while the note
  * names the local fallback. Panel-only nulls stay unavailable with a reason.
  */
-import { bindingCaps, WORKBENCH_COMMANDS, type WorkbenchCommandSpec, type WorkbenchGroup } from "./keymap.ts";
+import { bindingCaps, WORKBENCH_COMMANDS, type KeyBinding, type WorkbenchCommandSpec, type WorkbenchGroup } from "./keymap.ts";
 import { GLOBAL_KEY_ROUTES } from "./shortcut-router.ts";
+import { VIEW_DIGIT_COMMANDS } from "./view-digits.ts";
 
 /** Commands the browser shell receives from the local capture-phase router. */
 const LOCAL_WEB_COMMANDS: ReadonlySet<string> = new Set(GLOBAL_KEY_ROUTES.map(route => route.commandId));
@@ -186,6 +187,21 @@ function toSettingsRow(entry: ShortcutCatalogEntryLike, runtime: "desktop" | "we
 }
 
 /**
+ * Generated command ids the matrix hides.
+ *
+ * The nine view-digit chords are one toggle in the section, not nine editable
+ * rows: they exist only while the switch is on, and the switch's own detail line
+ * names the chord range. Listing them here would make the matrix look like the
+ * feature packages had mounted nine commands nobody can rebind individually.
+ */
+const HIDDEN_COMMAND_PREFIXES: readonly string[] = ["workbench.view.digit"];
+
+/** Whether one catalog id belongs to a generated row the matrix leaves out. */
+function isHiddenCommand(id: string): boolean {
+  return HIDDEN_COMMAND_PREFIXES.some(prefix => id.startsWith(prefix));
+}
+
+/**
  * Build the three settings groups from a host catalog snapshot.
  * @param catalog - `ctx.shortcuts.catalog.getSnapshot()` or an equivalent array.
  * @returns files, Git and terminal groups in display order; every group is
@@ -199,6 +215,7 @@ export function buildSettingsGroups(
   const buckets = new Map<WorkbenchGroup, SettingsRow[]>(GROUP_ORDER.map(group => [group, []]));
   for (const entry of catalog) {
     if (!entry.id.startsWith("workbench.")) continue;
+    if (isHiddenCommand(entry.id)) continue;
     buckets.get(settingsGroupOf(entry.id))?.push(toSettingsRow(entry, runtime));
   }
   return GROUP_ORDER.map(group => {
@@ -228,8 +245,31 @@ export interface BindingReport {
   readonly issues: readonly string[];
 }
 
+/** What the report should cover. */
+export interface CheckBindingsOptions {
+  /**
+   * Include the generated digit chords. They are registered only while the
+   * settings switch is on, so the count follows the switch instead of claiming
+   * twelve checked chords on a workbench that binds three.
+   */
+  readonly digits?: boolean;
+}
+
+/** The chords the report walks: three globals, plus the digits when they exist. */
+function reportedCommands(options: CheckBindingsOptions): Array<{
+  readonly id: string;
+  readonly desktop: KeyBinding;
+}> {
+  const globals = WORKBENCH_COMMANDS.filter(spec => spec.scope === "global").map(spec => ({
+    id: spec.id,
+    desktop: spec.desktop,
+  }));
+  if (options.digits !== true) return globals;
+  return [...globals, ...VIEW_DIGIT_COMMANDS.map(spec => ({ id: spec.id, desktop: spec.desktop }))];
+}
+
 /**
- * Ask the host to describe the three global workbench chords.
+ * Ask the host to describe the workbench's global chords.
  *
  * The `describeBinding` probe is the same one the host's shortcut editor uses,
  * so this is a real conflict check rather than a local string comparison.
@@ -237,13 +277,17 @@ export interface BindingReport {
  * accepted default naturally points back at itself.
  *
  * @param shortcuts - the host shortcut service or a test double.
+ * @param options - whether the digit chords are currently installed.
  * @returns checked count plus foreign conflicts and per-command issues.
  */
-export function checkBindings(shortcuts: ShortcutDescriberLike | undefined | null): BindingReport {
+export function checkBindings(
+  shortcuts: ShortcutDescriberLike | undefined | null,
+  options: CheckBindingsOptions = {},
+): BindingReport {
   const conflicts = new Set<string>();
   const issues = new Set<string>();
   let checked = 0;
-  for (const command of WORKBENCH_COMMANDS.filter(spec => spec.scope === "global")) {
+  for (const command of reportedCommands(options)) {
     checked += 1;
     const describe = shortcuts?.describeBinding;
     if (typeof describe !== "function") {

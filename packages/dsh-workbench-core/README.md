@@ -33,6 +33,7 @@
 - 终端开关 `dockVisibility`：默认可见，`get` / `set` / `toggle` / `subscribe` 四件套；`dockVisible` / `setDockVisible` 保留为兼容读写。`shell.bottom` 是单槽且先注册者胜，所以"是否占这个槽"只能有一个决策人，dock 在注册前先读这个开关，运行中则订阅它收放。
 - 视图切换 seam：`views.bind(sessionId, open)` 接住宿主发给会话级的 `openView`，`open` / `showChat` 供 root 作用域的终端 dock 回对话。同一会话后绑定的覆盖先绑定的，旧 disposer 不会误删新绑定。`createViewSwitcher` 在 seam 之上加一条显式兜底：宿主只在 View More 菜单展开时绑定 `openView`，菜单关掉后按精确文本点击宿主自己的「文件」/「Git」/「对话」标签。`openViewOrSwitch` 把这两条合成一次调用，并用 `focused` 回答"focus 是否真的送到了"，因为点标签只能切视图、送不了目标。
 
+- 会话视图数字键（`src/client/view-digits.ts`）：`⌘1 … ⌘9`（web 端 `⌥1 … ⌥9`）按会话视图标签的可见顺序切换，位置寻址而不是身份寻址，所以功能包以后新注册的视图不用改这里。默认开启，设置页「工作台 → 会话视图」有一个持久开关（`localStorage`，键 `dsh-workbench:view-digits:v1`）：关掉即刻释放九条注册，宿主目录里也不再出现它们。桌面端走 `ctx.shortcuts`，web 端走插件自己的捕获阶段路由，与 `⌘⇧E/G/M` 同一套理由。
 - 焦点队列 `viewFocus`：宿主没交出 `openView` 时，调用方（例如命令面板的 `⌘↵`）把 `path:<相对路径>` 放进队列再切视图；文件视图挂载时取走等待中的那条，并订阅后续请求。每个视图只保留一条，后到覆盖，避免读者已经走开之后旧目标被重放。
 - 宿主适配层：`files`（`workspaceFiles` 的 list / read / stat / changes）、`subprocess`、`terminals`（`webTerminals` 的 view / close / recover）、`composerOverlay`（`data-conversation-composer-overlay` 锚点）。全部按名软探测，服务缺失回报 absent 而不是抛错，宿主升级最多打断一个文件。
 - 设置分区「工作台」：文件 / Git / 终端三组，行来自宿主 `ctx.shortcuts.catalog` 的真实快照——没挂载的命令所在组显示"未安装"，不会渲染一张空表。点"修改"进入录制，先 `describeBinding` 查 issue 与冲突，再带 revision 写 `shortcuts.edit`；被拒时把原因写在行下。
@@ -49,6 +50,7 @@
 | 打开文件面板 | `⌘⇧E` | 全局命令 | 可用（插件本地路由兜底，宿主不注册该组合） |
 | 打开 Git 面板 | `⌘⇧G` | 全局命令 | 可用（插件本地路由兜底，宿主不注册该组合） |
 | 展开 / 收起终端 dock | `⌘⇧M` | 全局命令 | 可用（插件本地路由兜底，宿主不注册该组合） |
+| 切换会话视图 | `⌘1 … ⌘9` | 全局命令（设置页可关） | `⌥1 … ⌥9`（插件本地路由兜底，宿主不注册数字组合） |
 | 下一个 / 上一个面板 | `⌘⌥↓` / `⌘⌥↑` | 文件面板内 | 可用（面板自己的 keydown） |
 | 关闭当前面板 | `Ctrl+W` | 文件面板内 | 浏览器先接管，用标签上的关闭按钮 |
 
@@ -58,7 +60,9 @@
 
 - web 上 `⌘⇧E` / `⌘⇧G` / `⌘⇧M` 会被宿主快捷键服务判为 `unsupported-browser`，因此不作为宿主默认值注册；客户端在 window 捕获阶段装一个本地路由，命中后走与宿主命令同一套 `commands.ts` 实现。视图命令先试 seam，未绑定（View More 菜单未打开）时按精确文本点宿主标签；终端命令直接翻转可订阅的 dock 开关。desktop 不装这个监听，避免与原生加速键双触发。`Ctrl+W` 仍只有 desktop 承诺。
 - `⌘O` 归宿主 `workspace.add`、`⌘P` 归 `workspace.files`，工作台不抢；`Cmd+Insert` 在 Mac 键盘上不存在，任何端都不注册。设置页把这几条"刻意不绑"的组合单列一节并给替代键。
-- 设置页只显示已挂载的 `workbench.*` 命令；组里没有行时是"未安装"，不是故障。
+- 数字键按"标签顺序"而不是"视图身份"工作：`⌘1` 永远是当前标签行里的第一个（正常是「对话」），收进「更多会话视图」菜单的视图不在行里，因此也没有数字可点；标签不足时按下的数字直接落回页面（`resolve` 回报 `pass`），不会被吞掉。
+- 数字键在 web 上只能走本地路由：宿主快捷键服务判 `⌘+数字` 为 `unsupported-browser`（浏览器自己用这组键切标签页），所以 web 用 `⌥+数字`，桌面端才是 `⌘+数字`。开关存在 `localStorage` 而不是宿主 settings：它是纯展示偏好，进不了 profile，换窗口不会串。
+- 设置页只显示已挂载的 `workbench.*` 命令；组里没有行时是"未安装"，不是故障。九条数字命令是生成行，矩阵里刻意隐藏（它们的说明写在开关那一行），"已检查全局键"的计数会跟着开关在 3 与 12 之间变化。
 - 核心包没有独立可视面：设置分区之外，它只提供服务和命令注册。没有功能包时 `shell.bottom`、`conversation.view` 都不会出现。
 - 契约版本是 1。功能包先读 `ctx.workbench.version` 再信任可选成员，形状变化时旧包会拒绝挂载，而不是在半路读到 undefined。
 
@@ -72,8 +76,8 @@ node .nsl/chain/accept-s1b-view-seam.mjs  # views seam 真的调到宿主 openVi
 node .nsl/chain/accept-s8-settings.mjs    # 三组矩阵、跟随目录、不可用组合带原因与替代键
 ```
 
-单包：`pnpm --filter dsh-workbench-core test`（57 用例）、`typecheck`、`build`。
+单包：`pnpm --filter dsh-workbench-core test`（98 用例）、`typecheck`、`build`。
 
 ## 结构
 
-`src/client/keymap.ts` 是命令与键位的单一来源，设置矩阵与宿主注册都读它；`src/client/shortcut-router.ts` 是 web 端的捕获阶段本地路由，命中后调 `commands.ts` 的同一套解析器；`src/client/view-switcher.ts` 是 seam → 宿主标签的双路切视图；`src/client/dock-visibility.ts` 是 dock 开关的可订阅状态；`src/client/settings.ts` 是纯决策（分组、跨端可用性、冲突检查），不碰 React；`src/client/service.ts` 只做装配；`section.tsx` 把快照投影成 DOM。宿主半 `src/index.ts` 是空挂行，让 Loader 在两侧都能解析这个包名。
+`src/client/keymap.ts` 是命令与键位的单一来源，设置矩阵与宿主注册都读它；`src/client/view-digits.ts` 是会话视图数字键的偏好、命令表与 web 路由；`src/client/shortcut-router.ts` 是 web 端的捕获阶段本地路由，命中后调 `commands.ts` 的同一套解析器；`src/client/view-switcher.ts` 是 seam → 宿主标签的双路切视图（按标签文本切视图、按位置切标签都在这里）；`src/client/dock-visibility.ts` 是 dock 开关的可订阅状态；`src/client/settings.ts` 是纯决策（分组、跨端可用性、冲突检查），不碰 React；`src/client/service.ts` 只做装配；`section.tsx` 把快照投影成 DOM。宿主半 `src/index.ts` 是空挂行，让 Loader 在两侧都能解析这个包名。

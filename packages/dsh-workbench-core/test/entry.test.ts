@@ -158,11 +158,18 @@ describe("core client entry", () => {
 
       const dispose = apply(ctx as never);
 
-      expect(addEventListener).toHaveBeenCalledTimes(1);
-      expect(addEventListener).toHaveBeenCalledWith("keydown", expect.any(Function), true);
-      const listener = addEventListener.mock.calls[0]?.[1];
+      // Two capture-phase listeners on web: the three host-refused chords and
+      // the optional alt+digit view switch. Desktop installs neither.
+      expect(addEventListener).toHaveBeenCalledTimes(2);
+      for (const call of addEventListener.mock.calls) {
+        expect(call[0]).toBe("keydown");
+        expect(typeof call[1]).toBe("function");
+        expect(call[2]).toBe(true);
+      }
       dispose();
-      expect(removeEventListener).toHaveBeenCalledWith("keydown", listener, true);
+      for (const call of addEventListener.mock.calls) {
+        expect(removeEventListener).toHaveBeenCalledWith("keydown", call[1], true);
+      }
     } finally {
       vi.unstubAllGlobals();
     }

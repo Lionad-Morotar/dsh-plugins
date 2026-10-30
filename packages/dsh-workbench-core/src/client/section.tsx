@@ -17,6 +17,7 @@ import { bindingCaps, detectPlatform, type BindingPlatform, type KeyBinding } fr
 import { isSupportedShortcutCode } from "./keycode.ts";
 import { buildSettingsGroups, checkBindings, RESERVED_BINDINGS, type ShortcutCatalogEntryLike, type SettingsRow } from "./settings.ts";
 import type { WorkbenchService } from "./service.ts";
+import { viewDigitChord, type ViewDigitPreference } from "./view-digits.ts";
 
 /** A translate seat over this package's dictionary. */
 export type Translate = (key: string, params?: Record<string, string | number>) => string;
@@ -46,6 +47,10 @@ export interface SectionWiring {
   readonly service: WorkbenchService;
   readonly t: Translate;
   readonly shortcuts?: ShortcutsLike;
+  /** The persisted digit-chord toggle this section is the only editor of. */
+  readonly viewDigits: ViewDigitPreference;
+  /** Receiving shell; decides whether the explanation prints ⌘ or ⌥. */
+  readonly runtime?: "desktop" | "web";
 }
 
 const EMPTY_CATALOG: readonly ShortcutCatalogEntryLike[] = [];
@@ -95,6 +100,22 @@ const editButtonStyle: CSSProperties = {
   background: "transparent",
   color: "inherit",
   cursor: "pointer",
+};
+const switchStyle: CSSProperties = {
+  font: "inherit",
+  fontSize: 12,
+  minWidth: 56,
+  padding: "4px 10px",
+  borderRadius: 999,
+  border: "1px solid color-mix(in srgb, currentColor 26%, transparent)",
+  background: "transparent",
+  color: "inherit",
+  cursor: "pointer",
+};
+const switchOnStyle: CSSProperties = {
+  ...switchStyle,
+  borderColor: "color-mix(in srgb, currentColor 46%, transparent)",
+  background: "color-mix(in srgb, currentColor 14%, transparent)",
 };
 
 const MODIFIER_CODES = new Set([
@@ -171,10 +192,19 @@ function mergeCatalog(
  * @param wiring - service, translate seat and optional host shortcut service.
  * @returns the component to register into `settings.section`.
  */
-export function createWorkbenchSection({ service, t, shortcuts }: SectionWiring): ComponentType {
+export function createWorkbenchSection({ service, t, shortcuts, viewDigits, runtime }: SectionWiring): ComponentType {
+  const receivingRuntime = runtime ?? "desktop";
+
   function WorkbenchSection() {
     const [editing, setEditing] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
+
+    const subscribeDigits = useCallback(
+      (listener: () => void) => viewDigits.subscribe(() => listener()),
+      [viewDigits],
+    );
+    const getDigits = useCallback(() => viewDigits.get(), [viewDigits]);
+    const digitsEnabled = useSyncExternalStore(subscribeDigits, getDigits, getDigits);
 
     const subscribe = useCallback(
       (listener: () => void) => (shortcuts === undefined ? () => {} : shortcuts.catalog.subscribe(listener)),
@@ -186,6 +216,8 @@ export function createWorkbenchSection({ service, t, shortcuts }: SectionWiring)
     );
     const hostCatalog = useSyncExternalStore(subscribe, getHostSnapshot, getHostSnapshot);
     const platform = useMemo(() => detectPlatform(), []);
+    const digitChord = useMemo(() => viewDigitChord(receivingRuntime, platform), [platform]);
+    const primaryChord = platform === "macos" ? "⌘" : "Ctrl";
     const local = useMemo(() => localCatalog(service, t, platform), [service, t, platform]);
     const catalog = useMemo(
       () => mergeCatalog(hostCatalog, local, service, platform),
@@ -195,7 +227,10 @@ export function createWorkbenchSection({ service, t, shortcuts }: SectionWiring)
       () => buildSettingsGroups(catalog, { runtime: shortcuts?.runtime ?? "desktop" }),
       [catalog, shortcuts],
     );
-    const report = useMemo(() => checkBindings(shortcuts), [shortcuts, hostCatalog]);
+    const report = useMemo(
+      () => checkBindings(shortcuts, { digits: digitsEnabled }),
+      [shortcuts, hostCatalog, digitsEnabled],
+    );
     const hostIds = useMemo(() => new Set(hostCatalog.map(entry => entry.id)), [hostCatalog]);
     const canEdit = shortcuts?.edit !== undefined && shortcuts.describeBinding !== undefined;
 
@@ -306,6 +341,33 @@ export function createWorkbenchSection({ service, t, shortcuts }: SectionWiring)
     return (
       <section data-workbench-section="workbench" style={sectionStyle}>
         <p style={{ ...detailStyle, margin: 0 }}>{t("section.description")}</p>
+
+        <div data-view-digits="true" style={groupStyle}>
+          <h3 style={groupTitleStyle}>{t("viewDigits.title")}</h3>
+          <ul style={listStyle}>
+            <li style={rowStyle} data-view-digit-toggle={digitsEnabled ? "on" : "off"}>
+              <div style={rowTextStyle}>
+                <span style={labelStyle}>{t("viewDigits.label", { chord: digitChord })}</span>
+                <span style={detailStyle}>{t("viewDigits.detail", { chord: digitChord })}</span>
+                {receivingRuntime === "web" ? (
+                  <span style={detailStyle}>{t("viewDigits.webNote", { primary: primaryChord, chord: digitChord })}</span>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={digitsEnabled}
+                data-view-digit-switch="true"
+                style={digitsEnabled ? switchOnStyle : switchStyle}
+                onClick={() => {
+                  viewDigits.set(!digitsEnabled);
+                }}
+              >
+                {digitsEnabled ? t("viewDigits.on") : t("viewDigits.off")}
+              </button>
+            </li>
+          </ul>
+        </div>
 
         {groups.map(group => (
           <div key={group.id} data-settings-group={group.id} style={groupStyle}>

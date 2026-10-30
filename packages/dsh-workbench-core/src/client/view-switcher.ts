@@ -56,6 +56,15 @@ export interface ViewSwitcher {
 /** The conversation tab list the host renders, with a broad fallback selector. */
 const TAB_SELECTOR = '[data-conversation-tabs] [role="tab"], [role="tab"], button';
 
+/** The host's own marker on the tab row; the strip is the row's whole content. */
+const TAB_ROW_SELECTOR = "[data-conversation-tabs]";
+
+/**
+ * Tabs only, never a bare button: index switching counts positions, and the
+ * overflow menu button living in the same row would shift every digit after it.
+ */
+const TAB_ONLY_SELECTOR = '[role="tab"]';
+
 /**
  * Labels the host renders for the views this workbench opens.
  *
@@ -121,6 +130,43 @@ function findTab(doc: ViewSwitcherDocument, labels: readonly string[]): ViewSwit
 function clickLabels(doc: ViewSwitcherDocument | undefined, labels: readonly string[]): boolean {
   if (doc === undefined) return false;
   const target = findTab(doc, labels);
+  if (target === undefined) return false;
+  target.click?.();
+  return true;
+}
+
+/**
+ * Collect the host's conversation view tabs in visible order.
+ *
+ * The row marker is tried first so a same-named control elsewhere in the shell
+ * cannot be counted; a document that drops the marker still answers through the
+ * scoped selector. Views parked in the "更多会话视图" overflow menu are not in
+ * the strip, so they are not counted either.
+ * @param doc - document face, or undefined outside a browser.
+ * @returns the tabs in render order; empty when there is no strip.
+ */
+export function listViewTabs(doc: ViewSwitcherDocument | undefined): ViewSwitcherElement[] {
+  if (doc === undefined) return [];
+  const row = doc.querySelector?.(TAB_ROW_SELECTOR);
+  const scoped = row?.querySelectorAll?.(TAB_ONLY_SELECTOR);
+  if (scoped !== undefined && scoped !== null) return Array.from(scoped);
+  const loose = doc.querySelectorAll?.(`${TAB_ROW_SELECTOR} ${TAB_ONLY_SELECTOR}`);
+  return loose === undefined || loose === null ? [] : Array.from(loose);
+}
+
+/**
+ * Switch to one conversation view by its position in the tab strip.
+ *
+ * Positions are 1-based to match the digit that selects them, and an index past
+ * the last tab answers false instead of wrapping: `⌘7` with four tabs open must
+ * do nothing rather than land on the third.
+ * @param doc - document face, or undefined outside a browser.
+ * @param index - 1-based tab position.
+ * @returns whether a tab was clicked.
+ */
+export function switchToViewTab(doc: ViewSwitcherDocument | undefined, index: number): boolean {
+  if (!Number.isInteger(index) || index < 1) return false;
+  const target = listViewTabs(doc)[index - 1];
   if (target === undefined) return false;
   target.click?.();
   return true;

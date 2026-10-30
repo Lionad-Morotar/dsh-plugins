@@ -12,6 +12,17 @@
  */
 import { GLOBAL_COMMANDS, type KeyBinding, type WorkbenchCommandSpec } from "./keymap.ts";
 import type { WorkbenchService } from "./service.ts";
+import { VIEW_DIGIT_COMMANDS, type ViewDigitPreference, type ViewDigitSpec } from "./view-digits.ts";
+
+/** The localized label seat; digit rows pass their index through it. */
+export type CommandLabel = (key: string, params?: Record<string, string | number>) => string;
+
+/**
+ * Answer used when the command has no session, in the one place that knows the
+ * dictionary key. The registry path passes a real translate seat; the
+ * `runWorkbenchCommand` probe has none and never shows the string.
+ */
+const NO_SESSION_KEY = "command.noSession";
 
 /** One host command registration; structurally the client shortcut service. */
 export interface ShortcutCommandRegistration {
@@ -68,6 +79,7 @@ function resolverFor(
   spec: WorkbenchCommandSpec,
   service: WorkbenchService,
   runtime: WorkbenchCommandRuntime = {},
+  label: CommandLabel = key => key,
 ): () => ShortcutResolutionLike {
   if (spec.id === "workbench.term.toggle") {
     return () => ({
@@ -79,7 +91,7 @@ function resolverFor(
   const openView = runtime.openView ?? ((id: string) => service.openView(id));
   return () => {
     if (service.currentSessionId() === undefined) {
-      return { status: "blocked", reason: "请先选择会话" };
+      return { status: "blocked", reason: label(NO_SESSION_KEY) };
     }
     if (viewId === undefined) return { status: "pass" };
     return {
@@ -125,7 +137,7 @@ export function runWorkbenchCommand(
 export function registerWorkbenchCommands(
   shortcuts: ShortcutRegistryLike | undefined,
   service: WorkbenchService,
-  label: (key: string) => string,
+  label: CommandLabel,
   onError?: (message: string) => void,
 ): () => void {
   if (shortcuts === undefined || typeof shortcuts.register !== "function") return () => {};
@@ -144,7 +156,7 @@ export function registerWorkbenchCommands(
           // shortcuts exactly when terminals are the user's focus.
           regions: ["page", "editable", "terminal"],
           modals: [],
-          resolve: resolverFor(spec, service),
+          resolve: resolverFor(spec, service, {}, label),
         }),
       );
     } catch (error) {
@@ -153,5 +165,96 @@ export function registerWorkbenchCommands(
   }
   return () => {
     for (const dispose of disposers.splice(0)) dispose();
+  };
+}
+
+/** The tab-strip seam the digit commands drive; injected so this module stays DOM-free. */
+export interface ViewDigitRuntime {
+  /** Whether the tab strip currently has the addressed slot. */
+  available(index: number): boolean;
+  /** Switch to the addressed tab; false when the click did not land. */
+  switchTo(index: number): boolean;
+}
+
+/**
+ * Register the nine digit chords while the preference says so.
+ *
+ * The registration is live, not a mount-time decision: flipping the settings
+ * switch installs or releases the nine commands immediately, so a disabled
+ * workbench holds no digit binding and the host catalog stops advertising them.
+ *
+ * Desktop only, deliberately. The web shell receives `⌥1 … ⌥9` through the
+ * bundle's own capture-phase router (`view-digits.ts`): the host refuses a
+ * digit binding there, and declaring one would put a chord in the catalog that
+ * the browser answers first.
+ *
+ * @param shortcuts - host shortcut service, or undefined outside a capable host.
+ * @param service - the workbench service, read for the current session.
+ * @param label - localized label seat; digits pass their index through it.
+ * @param preference - the persisted toggle this registration follows.
+ * @param runtime - tab-strip probe and click sink.
+ * @param onError - called for each registration the host rejects.
+ * @returns one disposer releasing the subscription and every accepted registration.
+ */
+export function registerViewDigitCommands(
+  shortcuts: ShortcutRegistryLike | undefined,
+  service: WorkbenchService,
+  label: CommandLabel,
+  preference: ViewDigitPreference,
+  runtime: ViewDigitRuntime,
+  onError?: (message: string) => void,
+): () => void {
+  if (shortcuts === undefined || typeof shortcuts.register !== "function") return () => {};
+  const disposers: Array<() => void> = [];
+
+  const release = (): void => {
+    for (const dispose of disposers.splice(0)) dispose();
+  };
+
+  const resolverForDigit = (spec: ViewDigitSpec) => (): ShortcutResolutionLike => {
+    if (service.currentSessionId() === undefined) {
+      return { status: "blocked", reason: label(NO_SESSION_KEY) };
+    }
+    // Nothing to switch to: let the chord fall through instead of consuming it.
+    if (!runtime.available(spec.index)) return { status: "pass" };
+    return {
+      status: "handled",
+      run: () => {
+        runtime.switchTo(spec.index);
+      },
+    };
+  };
+
+  const install = (): void => {
+    if (disposers.length > 0) return;
+    for (const spec of VIEW_DIGIT_COMMANDS) {
+      try {
+        disposers.push(
+          shortcuts.register({
+            id: spec.id,
+            label: () => label(spec.labelKey, { index: spec.index }),
+            aliases: [],
+            defaults: desktopDefaults(spec.desktop),
+            regions: ["page", "editable", "terminal"],
+            modals: [],
+            resolve: resolverForDigit(spec),
+          }),
+        );
+      } catch (error) {
+        onError?.(`${spec.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  };
+
+  const sync = (enabled: boolean): void => {
+    if (enabled) install();
+    else release();
+  };
+
+  sync(preference.get());
+  const offPreference = preference.subscribe(sync);
+  return () => {
+    offPreference();
+    release();
   };
 }
