@@ -38,15 +38,29 @@ export interface AgentSessionLike {
   };
 }
 
+/**
+ * The identified user-role message merge-steer hands to `agent.steer()`.
+ *
+ * The host persists this object verbatim as a `user/message` event and only
+ * accepts it back when it is an identified message, so a delivery carries its
+ * own identity and role instead of a bare content/source pair: the host's
+ * append path does not check message identity, so a message without `id` and
+ * `role` lands in the log silently and then refuses the whole session log on
+ * replay.
+ */
+export interface SteerMessage {
+  readonly id: string;
+  readonly role: "user";
+  readonly content: readonly { readonly type: "text"; readonly text: string }[];
+  readonly source: { readonly kind: "merge-steer"; readonly [key: string]: unknown };
+}
+
 /** The slice of an Agent that merge-steer uses. */
 export interface AgentLike {
   readonly id: string;
   readonly status: "idle" | "running";
   readonly session: AgentSessionLike;
-  steer(input: {
-    readonly content: readonly { readonly type: "text"; readonly text: string }[];
-    readonly source: { readonly kind: "merge-steer"; readonly [key: string]: unknown };
-  }): void;
+  steer(message: SteerMessage): void;
 }
 
 /** The slice of the Agent registry merge-steer uses. */

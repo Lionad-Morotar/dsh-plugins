@@ -6,6 +6,7 @@
  * fake world in tests. The 15-second poll is the correctness floor; `fs.watch`
  * and `agent/status` only request an earlier tick.
  */
+import { randomUUID } from "node:crypto";
 import { watch as fsWatch } from "node:fs";
 import { join } from "node:path";
 
@@ -20,7 +21,15 @@ import {
   resolveRepo,
   type GitRunner,
 } from "../git.ts";
-import type { AgentLike, AgentsLike, LoggerLike, MergeEvent, RepoRef, WorkingDirectoryLike } from "../types.ts";
+import type {
+  AgentLike,
+  AgentsLike,
+  LoggerLike,
+  MergeEvent,
+  RepoRef,
+  SteerMessage,
+  WorkingDirectoryLike,
+} from "../types.ts";
 import { selectMergeEntries } from "./classify.ts";
 import { composeNotice } from "./message.ts";
 import type { MergeSteerConfig } from "./config.ts";
@@ -52,6 +61,27 @@ export interface MergeSteerCore {
   tick(): Promise<void>;
   requestTick(): void;
   status(): { readonly runningSessions: number; readonly repos: number; readonly delivered: number };
+}
+
+/**
+ * Build the identified user message that carries one merge notice.
+ *
+ * A fresh identity per delivery is what keeps the persisted `user/message`
+ * replayable: the host stores the steered object as-is and re-validates it as
+ * an identified message when the session is loaded.
+ */
+function steerMessage(event: MergeEvent, config: MergeSteerConfig): SteerMessage {
+  return {
+    id: randomUUID(),
+    role: "user",
+    content: [{ type: "text", text: composeNotice(event, config) }],
+    source: {
+      kind: "merge-steer",
+      repo: event.repoRoot,
+      target: event.targetBranch,
+      sha: event.mergeSha,
+    },
+  };
 }
 
 interface SessionBinding {
@@ -368,15 +398,7 @@ export function createMergeSteerCore(deps: MergeSteerDeps): MergeSteerCore {
     const attempt = attempts.get(attemptKey) ?? 0;
     if (attempt >= MAX_ATTEMPTS) return "failed";
     try {
-      agent.steer({
-        content: [{ type: "text", text: composeNotice(event, deps.config) }],
-        source: {
-          kind: "merge-steer",
-          repo: event.repoRoot,
-          target: event.targetBranch,
-          sha: event.mergeSha,
-        },
-      });
+      agent.steer(steerMessage(event, deps.config));
       seen.add(key);
       if (seen.size > DELIVERED_PER_SESSION) {
         const oldest = seen.values().next().value;

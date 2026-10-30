@@ -163,6 +163,11 @@
 - 宿主侧对应事实：本轮实测安装的 dsh-tui 已经是 0.17.0，而 `lib/types/adapter/standard/registry.js:15` 的 `EXPECTED_STD_MANIFEST_VERSION` 仍是 `'0.15'`——清单版本由标准而不是宿主版本决定，宿主跨小版本时它没有跟着动
 - 安全修改：升级 TUI 宿主前先跑一次官方 `validateManifest`（人工或临时脚本），再更新 `manifestVersion`
 
+**插件注入的会话消息形状只在回放时校验：**
+- 事实：`agent.steer(message)` 与 `session.append("user/message", data)` 都把调用方对象原样落盘；宿主 append 只校验 JSON 可序列化与 seq 连续（`dsh-session-persistence` 的 `materializeAppendBatch` / `assertContiguous`），消息身份（非空 `id`、`role`、`source.kind`、`content` 数组）要到 `adoptSessionEvent` 回放时才校验。形状错了不会当场报错，而是让该会话日志之后每次加载都失败：`stored session ... failed validation: session event at seq N lacks an identified message`
+- 实例：`dsh-repo-harness` 的 merge-steer 曾用裸 `{ content, source }` 调 `agent.steer()`，落盘 5 条坏事件、3 个会话无法加载（261030 修复，投递改为自带 UUID `id` 与 `role: "user"` 的 identified message）
+- 安全修改：任何写 `user/message` 的代码都要构造完整 identified message，并在测试里断言形状；改了投递形状后用真实 `adoptSessionEvent`（`@deepseek-ai/dsh-session` 具名导出）验一条样本，别只信 fake agent
+
 ## 规模上限
 
 **catalog.generated.ts 随上游增长：**

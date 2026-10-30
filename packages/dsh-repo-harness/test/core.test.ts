@@ -11,20 +11,34 @@ const COMMON = "/repo/.git";
 const OTHER = "/other";
 const OTHER_COMMON = "/other/.git";
 
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+interface TestCall {
+  readonly id: string;
+  readonly role: string;
+  readonly text: string;
+  readonly source: unknown;
+}
+
 interface TestAgent extends AgentLike {
   status: "idle" | "running";
-  readonly calls: { readonly text: string; readonly source: unknown }[];
+  readonly calls: TestCall[];
 }
 
 function makeAgent(id: string, cwd: string, options: { status?: "idle" | "running"; origin?: "subagent" } = {}): TestAgent {
-  const calls: { text: string; source: unknown }[] = [];
+  const calls: TestCall[] = [];
   return {
     id,
     status: options.status ?? "running",
     session: { header: { cwd, ...(options.origin === undefined ? {} : { origin: options.origin }) } },
     calls,
-    steer(input) {
-      calls.push({ text: input.content.map((part) => part.text).join(""), source: input.source });
+    steer(message) {
+      calls.push({
+        id: message.id,
+        role: message.role,
+        text: message.content.map((part) => part.text).join(""),
+        source: message.source,
+      });
     },
   };
 }
@@ -159,6 +173,33 @@ describe("createMergeSteerCore", () => {
     expect(main.calls[0]?.text).toContain("feature 已合并进 main");
     expect(main.calls[0]?.text).toContain("merge feature");
     expect(main.calls[0]?.source).toMatchObject({ kind: "merge-steer" });
+  });
+
+  it("delivers an identified user message so the persisted log stays loadable", async () => {
+    const world = createWorld();
+    const main = makeAgent("main", REPO);
+    const worktree = makeAgent("worktree", WORKTREE);
+    const core = createMergeSteerCore({
+      agents: { list: () => [main, worktree] },
+      createRunner: world.createRunner,
+      config,
+    });
+
+    await core.tick();
+    mergeMain(world);
+    await core.tick();
+
+    const calls = [...main.calls, ...worktree.calls];
+    expect(calls).toHaveLength(2);
+    // The host persists the steered object verbatim as a `user/message` and
+    // re-validates it as an identified message on replay; a delivery without
+    // its own id/role would make the whole session log refuse to load.
+    for (const call of calls) {
+      expect(call.role).toBe("user");
+      expect(call.id).toMatch(UUID_V4);
+      expect(call.source).toMatchObject({ kind: "merge-steer" });
+    }
+    expect(new Set(calls.map((call) => call.id)).size).toBe(calls.length);
   });
 
   it("does not wake idle sessions, subagents or sessions in another repository", async () => {

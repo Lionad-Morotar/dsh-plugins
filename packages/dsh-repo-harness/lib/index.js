@@ -234,6 +234,7 @@ function normalizeConfig(raw) {
 }
 
 // src/merge-steer/core.ts
+import { randomUUID } from "node:crypto";
 import { watch as fsWatch } from "node:fs";
 import { join } from "node:path";
 
@@ -352,6 +353,19 @@ var WATCHER_GRACE_MS = 6e4;
 var DELIVERED_PER_SESSION = 256;
 var MAX_ATTEMPTS = 3;
 var WATCH_DEBOUNCE_MS = 80;
+function steerMessage(event, config) {
+  return {
+    id: randomUUID(),
+    role: "user",
+    content: [{ type: "text", text: composeNotice(event, config) }],
+    source: {
+      kind: "merge-steer",
+      repo: event.repoRoot,
+      target: event.targetBranch,
+      sha: event.mergeSha
+    }
+  };
+}
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -583,15 +597,7 @@ function createMergeSteerCore(deps) {
     const attempt = attempts.get(attemptKey) ?? 0;
     if (attempt >= MAX_ATTEMPTS) return "failed";
     try {
-      agent.steer({
-        content: [{ type: "text", text: composeNotice(event, deps.config) }],
-        source: {
-          kind: "merge-steer",
-          repo: event.repoRoot,
-          target: event.targetBranch,
-          sha: event.mergeSha
-        }
-      });
+      agent.steer(steerMessage(event, deps.config));
       seen.add(key);
       if (seen.size > DELIVERED_PER_SESSION) {
         const oldest = seen.values().next().value;

@@ -10,6 +10,7 @@ DeepSeek Harness 的仓库自动化与治理 harness，宿主侧私有包。第�
 - 同一 Git common dir 下的所有工作树（worktree）视为同一仓库。
 - 只提醒检测时 `status === "running"` 的会话；空闲会话不会被唤醒，子代理默认跳过。
 - 提醒以 `agent.steer()` 注入，最终作为带 `merge-steer` source 的 `user/message` 进入会话记录。
+- 注入的是完整的 identified message：自带 `id`（UUID v4）与 `role: "user"`。宿主把 steer 的对象原样落盘，回放时才按 identified message 校验，缺 `id`/`role` 的事件会让整个会话永久无法加载。
 
 默认受众：
 
@@ -81,6 +82,7 @@ Loader row 由 `cordis.patch.yml` 注入：
 - 子模块是独立仓库；不同 clone 不共享 refs。
 - 长工具调用期间 steer 只能在下一次 step 边界送达，可能晚于合并本身。
 - 提醒是模型可见的 `user/message`，人类用户也会在会话记录里看到它。
+- 宿主 append 只校验 JSON 可序列化与 seq 连续，不校验消息身份；投递形状错了不会当场报错，而是等下一次加载会话时才暴露，所以消息形状只能靠本包自己的类型与测试兜住。
 
 ## 为什么不用 Git hook
 
