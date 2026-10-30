@@ -12,9 +12,10 @@
  * the workbench's `Cmd/Ctrl+Shift+*` family — belongs to the core's shortcut
  * registration and is deliberately not read here.
  */
-import { useEffect, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 
 import { createTerminalPanel } from "./terminal-panel.tsx";
+import { bleedBetween, pickColumn, type Box } from "./bleed.ts";
 import { createDockController, type DockVisibilitySource } from "./dock-controller.ts";
 import type { DockHost } from "./host.ts";
 import type { DockPanel, DockState } from "./dock-state.ts";
@@ -72,6 +73,55 @@ function useDockVisible(visibility: DockVisibilitySource): boolean {
  * height directly, and the inspector bottom panel sizes itself the same way.
  */
 const DOCK_REST_HEIGHT = "clamp(120px, 32dvh, 300px)";
+
+/** Custom properties the injected rule reads to widen the dock row. */
+const BLEED_LEFT = "--dsh-dock-bleed-left";
+const BLEED_RIGHT = "--dsh-dock-bleed-right";
+
+/**
+ * Widen the dock row out to the conversation column's edges.
+ *
+ * The row lives inside the composer's centred max-width stack, so it inherits
+ * that stack's width and stops short of the column on both sides. CSS cannot
+ * reference an ancestor's width, so this measures the gap once per layout and
+ * publishes it on the row; the injected rule turns it into negative margins.
+ * @param ref - the dock root, used to find the row it was placed in.
+ */
+function useDockBleed(ref: RefObject<HTMLDivElement | null>): void {
+  useEffect(() => {
+    const element = ref.current;
+    const wrap = element?.closest("[data-composer-dock]");
+    if (!(wrap instanceof HTMLElement)) return;
+
+    const measure = (): void => {
+      const row = wrap.getBoundingClientRect();
+      if (row.width === 0) return;
+      const candidates: { box: Box; isDocument: boolean }[] = [];
+      let node: Element | null = wrap.parentElement;
+      for (let hop = 0; hop < 8 && node !== null; hop += 1) {
+        const box = node.getBoundingClientRect();
+        const tag = node.tagName;
+        candidates.push({ box, isDocument: tag === "BODY" || tag === "HTML" });
+        node = node.parentElement;
+      }
+      const column = pickColumn(candidates);
+      if (column === undefined) return;
+      const bleed = bleedBetween(row, column);
+      wrap.style.setProperty(BLEED_LEFT, `${String(bleed.left)}px`);
+      wrap.style.setProperty(BLEED_RIGHT, `${String(bleed.right)}px`);
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    const parent = wrap.parentElement;
+    if (parent !== null) observer.observe(parent);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [ref]);
+}
 
 const rootStyle: CSSProperties = {
   display: "flex",
@@ -239,6 +289,8 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
       }
     };
 
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    useDockBleed(rootRef);
     const height = snapshot.mode === "minimized" ? "auto" : snapshot.mode === "fullscreen" ? "min(72vh, 900px)" : DOCK_REST_HEIGHT;
     const activeId = snapshot.activeId;
     const minimized = snapshot.mode === "minimized";
@@ -253,6 +305,7 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
         data-dock-visible={visible ? "true" : "false"}
         data-panel-count={panels.length}
         data-dock-session={sessionId ?? ""}
+        ref={rootRef}
         style={{ ...rootStyle, height, display: visible ? "flex" : "none" }}
         onKeyDownCapture={handleKeyDown}
       >
