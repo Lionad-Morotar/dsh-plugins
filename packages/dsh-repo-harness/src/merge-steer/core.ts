@@ -307,15 +307,20 @@ export function createMergeSteerCore(deps: MergeSteerDeps): MergeSteerCore {
     watcher.defaultBranchAt = at;
   }
 
-  async function branchOf(binding: SessionBinding, at: number): Promise<string | null> {
-    if (binding.branchAt !== 0 && at - binding.branchAt < BRANCH_CACHE_MS) return binding.branch;
+  async function branchOf(binding: SessionBinding, at: number): Promise<{ branch: string | null; failed: boolean }> {
+    if (binding.branchAt !== 0 && at - binding.branchAt < BRANCH_CACHE_MS) {
+      return { branch: binding.branch, failed: false };
+    }
     try {
       binding.branch = await readCurrentBranch(deps.createRunner(binding.probeDir));
+      binding.branchAt = at;
+      return { branch: binding.branch, failed: false };
     } catch {
-      binding.branch = null;
+      // Leave the cache unset so the next event retries the probe instead of
+      // caching a transient failure for a whole branch-cache window.
+      binding.branchAt = 0;
+      return { branch: null, failed: true };
     }
-    binding.branchAt = at;
-    return binding.branch;
   }
 
   async function selectAudience(
@@ -329,8 +334,21 @@ export function createMergeSteerCore(deps: MergeSteerDeps): MergeSteerCore {
     if (deps.config.audienceAll || watcher.defaultBranch === null || event.targetBranch === watcher.defaultBranch) {
       return group;
     }
-    const resolved = await Promise.all(group.map(async (binding) => ({ binding, branch: await branchOf(binding, at) })));
-    return resolved.filter((entry) => entry.branch === event.targetBranch).map((entry) => entry.binding);
+    const resolved = await Promise.all(
+      group.map(async (binding) => ({ binding, probe: await branchOf(binding, at) })),
+    );
+    for (const entry of resolved) {
+      if (entry.probe.failed) {
+        logger?.warn?.(
+          `merge-steer: branch probe failed for session ${entry.binding.agent.id}; notifying conservatively`,
+        );
+      }
+    }
+    // An unreadable branch is unknown, not "confirmed elsewhere": dropping the
+    // notice would lose the event because the ref baseline already advanced.
+    return resolved
+      .filter((entry) => entry.probe.failed || entry.probe.branch === event.targetBranch)
+      .map((entry) => entry.binding);
   }
 
   function noticeKey(event: MergeEvent): string {
@@ -338,6 +356,7 @@ export function createMergeSteerCore(deps: MergeSteerDeps): MergeSteerCore {
   }
 
   function trySteer(event: MergeEvent, binding: SessionBinding): "delivered" | "skipped" | "failed" {
+    if (disposed) return "skipped";
     const agent = binding.agent;
     // Check and steer in the same synchronous task: no await may sit between
     // them or an idle transition could let steer open a fresh turn.

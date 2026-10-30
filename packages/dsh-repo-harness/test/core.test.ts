@@ -33,6 +33,9 @@ interface World {
   readonly refs: Map<string, Map<string, string>>;
   readonly reflogs: Map<string, Map<string, { sha: string; time: number; subject: string }[]>>;
   readonly branches: Map<string, string | null>;
+  readonly failBranches: Set<string>;
+  refsGate: Promise<void> | null;
+  gateStarted: (() => void) | null;
   failRefs: boolean;
   createRunner(cwd: string): GitRunner;
 }
@@ -61,6 +64,9 @@ function createWorld(): World {
     refs,
     reflogs,
     branches,
+    failBranches: new Set(),
+    refsGate: null,
+    gateStarted: null,
     failRefs: false,
     createRunner(cwd: string): GitRunner {
       const common = cwd === OTHER ? OTHER_COMMON : COMMON;
@@ -82,6 +88,10 @@ function createWorld(): World {
           }
           if (world.failRefs && args[0] === "for-each-ref") throw new Error("boom");
           if (args[0] === "for-each-ref") {
+            if (world.refsGate !== null) {
+              world.gateStarted?.();
+              await world.refsGate;
+            }
             const repoRefs = refs.get(common) ?? new Map();
             return ok([...repoRefs].map(([ref, sha]) => `${ref}\t${sha}`).join("\n"));
           }
@@ -92,7 +102,10 @@ function createWorld(): World {
           }
           if (args[0] === "show") return ok("merge feature");
           if (args[0] === "merge-base") return ok("", 0);
-          if (args[0] === "symbolic-ref") return ok(branches.get(cwd) ?? "", branches.get(cwd) === null ? 1 : 0);
+          if (args[0] === "symbolic-ref") {
+            if (args.at(-1) === "HEAD" && world.failBranches.has(cwd)) throw new Error("branch probe failed");
+            return ok(branches.get(cwd) ?? "", branches.get(cwd) === null ? 1 : 0);
+          }
           if (args[0] === "config") return ok("", 1);
           if (args[0] === "show-ref") return ok("", args.includes("refs/heads/main") ? 0 : 1);
           return ok("", 1);
@@ -275,6 +288,59 @@ describe("createMergeSteerCore", () => {
 
     await core.tick();
     expect(agent.calls).toHaveLength(1);
+  });
+
+  it("does not steer after dispose while a tick is in flight", async () => {
+    const world = createWorld();
+    const agent = makeAgent("main", REPO);
+    const core = createMergeSteerCore({
+      agents: { list: () => [agent] },
+      createRunner: world.createRunner,
+      config,
+    });
+
+    await core.tick();
+    mergeMain(world);
+    let release!: () => void;
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    world.refsGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    world.gateStarted = started;
+
+    const pending = core.tick();
+    await startedPromise;
+    core.dispose();
+    release();
+    await pending;
+
+    expect(agent.calls).toHaveLength(0);
+  });
+
+  it("notifies conservatively when a session branch probe fails", async () => {
+    const world = createWorld();
+    const main = makeAgent("main", REPO);
+    const worktree = makeAgent("worktree", WORKTREE);
+    const core = createMergeSteerCore({
+      agents: { list: () => [main, worktree] },
+      createRunner: world.createRunner,
+      config,
+    });
+
+    await core.tick();
+    world.failBranches.add(REPO);
+    world.refs.get(COMMON)?.set("refs/heads/feature", "merge-feature");
+    world.reflogs.get(COMMON)?.set("refs/heads/feature", [
+      { sha: "merge-feature", time: 2, subject: "merge main: Fast-forward" },
+      { sha: "old-feature", time: 1, subject: "commit (initial): base" },
+    ]);
+    await core.tick();
+
+    expect(main.calls).toHaveLength(1);
+    expect(worktree.calls).toHaveLength(1);
   });
 
   it("does not deliver after dispose", async () => {

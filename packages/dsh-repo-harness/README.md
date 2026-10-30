@@ -16,6 +16,7 @@ DeepSeek Harness 的仓库自动化与治理 harness，宿主侧私有包。第�
 - 合并进默认分支（`origin/HEAD` → `init.defaultBranch` → 本地 `main`/`master`）：提醒同仓库所有 running 会话。
 - 合并进其他分支：只提醒当前分支等于目标分支的会话。
 - 默认分支无法判定时退化为全仓库广播；`audienceAll: true` 可强制广播。
+- 当前分支探测失败时按“未知”处理并保守提醒该会话，避免事件因 ref 基线推进而静默丢失；下一次事件会重新探测。
 
 ## 提醒长什么样
 

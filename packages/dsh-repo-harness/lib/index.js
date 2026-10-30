@@ -539,14 +539,17 @@ function createMergeSteerCore(deps) {
     watcher.defaultBranchAt = at;
   }
   async function branchOf(binding, at) {
-    if (binding.branchAt !== 0 && at - binding.branchAt < BRANCH_CACHE_MS) return binding.branch;
+    if (binding.branchAt !== 0 && at - binding.branchAt < BRANCH_CACHE_MS) {
+      return { branch: binding.branch, failed: false };
+    }
     try {
       binding.branch = await readCurrentBranch(deps.createRunner(binding.probeDir));
+      binding.branchAt = at;
+      return { branch: binding.branch, failed: false };
     } catch {
-      binding.branch = null;
+      binding.branchAt = 0;
+      return { branch: null, failed: true };
     }
-    binding.branchAt = at;
-    return binding.branch;
   }
   async function selectAudience(event, group, watcher, runner) {
     const at = now();
@@ -554,13 +557,23 @@ function createMergeSteerCore(deps) {
     if (deps.config.audienceAll || watcher.defaultBranch === null || event.targetBranch === watcher.defaultBranch) {
       return group;
     }
-    const resolved = await Promise.all(group.map(async (binding) => ({ binding, branch: await branchOf(binding, at) })));
-    return resolved.filter((entry) => entry.branch === event.targetBranch).map((entry) => entry.binding);
+    const resolved = await Promise.all(
+      group.map(async (binding) => ({ binding, probe: await branchOf(binding, at) }))
+    );
+    for (const entry of resolved) {
+      if (entry.probe.failed) {
+        logger?.warn?.(
+          `merge-steer: branch probe failed for session ${entry.binding.agent.id}; notifying conservatively`
+        );
+      }
+    }
+    return resolved.filter((entry) => entry.probe.failed || entry.probe.branch === event.targetBranch).map((entry) => entry.binding);
   }
   function noticeKey(event) {
     return `${event.targetRef}\0${event.mergeSha}`;
   }
   function trySteer(event, binding) {
+    if (disposed) return "skipped";
     const agent = binding.agent;
     if (agent.status !== "running") return "skipped";
     const key = noticeKey(event);
