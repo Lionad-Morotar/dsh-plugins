@@ -56,6 +56,7 @@ import {
   highlightAt,
   modelFor,
   moveHighlight,
+  readPrefix,
   withQuery,
   type PanelMode,
   type SessionScope,
@@ -170,6 +171,8 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   let queued = false;
   /** Cheap fingerprint of the data the switch mode renders. */
   let lastSignature = "";
+  /** Command mode was entered by the `>` mark, so an empty Backspace leaves it. */
+  let prefixEntry = false;
 
   /**
    * Services captured from an injected scope.
@@ -472,9 +475,12 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
 
   // ── panel lifecycle ─────────────────────────────────────────────────────
 
-  function show(mode: PanelMode): void {
+  function show(mode: PanelMode, initialQuery = ""): void {
     const current = store.getSnapshot();
-    const model = modelFor(mode);
+    // Every entrance starts without the mark's backspace contract; the mark's
+    // own path turns it on right after this returns.
+    prefixEntry = false;
+    const model = withQuery(modelFor(mode), initialQuery);
     const sessionId = currentSessionId();
     const cached = cache.get(cacheKey(mode, "root", "-", sessionId));
     rawRows = cached ?? [];
@@ -484,7 +490,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     store.set({
       open: true,
       model,
-      rows: rankRows(seeded, "").slice(0, MAX_ROWS),
+      rows: rankRows(seeded, initialQuery).slice(0, MAX_ROWS),
       status: "loading",
       message: null,
       notice: null,
@@ -521,6 +527,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     loading = false;
     queued = false;
     lastSignature = "";
+    prefixEntry = false;
     store.set({ open: false, status: "idle", notice: null, noticeTone: undefined });
   }
 
@@ -687,11 +694,32 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   }
 
   /** Rewrite the query through the same path typing takes. */
-  function applyQuery(query: string): void {
+  function applyQuery(raw: string): void {
     const snapshot = store.getSnapshot();
-    store.set({ model: withQuery(snapshot.model, query), notice: null, noticeTone: undefined });
+    const reading = readPrefix(raw, snapshot.model.mode);
+    if (reading.enterCommand) {
+      show("command", reading.query);
+      prefixEntry = true;
+      return;
+    }
+    store.set({ model: withQuery(snapshot.model, reading.query), notice: null, noticeTone: undefined });
     rankLocal();
     scheduleLoad(90);
+  }
+
+  /**
+   * Backspace on an empty command field leaves command mode.
+   *
+   * Only the mark's entrance qualifies: when the reader opened the command mode
+   * with its own key, an empty field is just an empty field.
+   *
+   * @returns whether this keypress was consumed as a mode change.
+   */
+  function backspaceToNavigate(): boolean {
+    const snapshot = store.getSnapshot();
+    if (!prefixEntry || snapshot.model.mode !== "command" || snapshot.model.query !== "") return false;
+    show("navigate");
+    return true;
   }
 
   /** Climb one level: drop the directory named by the text, else drop the fragment. */
@@ -982,6 +1010,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       store.set({ model: highlightAt(snapshot.model, index, snapshot.rows.length) });
     },
     setQuery: applyQuery,
+    backspaceToNavigate,
     acceptActive,
     accept,
     dismiss: close,

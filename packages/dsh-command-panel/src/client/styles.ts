@@ -61,33 +61,6 @@ const CSS = `
   border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.06));
 }
 
-[${ROOT_ATTR}] [data-dcp-modes] {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--dsw-radius-sm, 8px);
-  background: var(--dsw-alias-bg-layer-1, rgba(0, 0, 0, 0.04));
-}
-
-[${ROOT_ATTR}] [data-dcp-mode] {
-  padding: 2px 8px;
-  border: 0;
-  border-radius: calc(var(--dsw-radius-sm, 8px) - 2px);
-  background: transparent;
-  color: var(--dsw-alias-label-tertiary, #6b6b76);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  line-height: 16px;
-  white-space: nowrap;
-}
-
-[${ROOT_ATTR}] [data-dcp-mode][data-active="true"] {
-  background: var(--dsw-alias-bg-layer-2, #ffffff);
-  color: var(--dsw-alias-label-primary, #1b1b1f);
-  box-shadow: var(--dsw-elevation-soft, 0 1px 2px rgba(0, 0, 0, 0.08));
-}
-
 [${ROOT_ATTR}] [data-dcp-crumb] {
   padding: 3px 9px;
   border: 0;

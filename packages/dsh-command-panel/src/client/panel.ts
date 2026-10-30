@@ -14,7 +14,7 @@
  * "one level up" before it means "close", which is the whole two-level model.
  */
 
-import { PANEL_MODES, highlightOf, type PanelMode, type PanelModel } from "./panel-state.ts";
+import { highlightOf, type PanelMode, type PanelModel } from "./panel-state.ts";
 import type { Copy } from "./copy.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
 import type { PanelRow } from "./rows.ts";
@@ -34,6 +34,12 @@ export interface PanelVerbs {
   readonly move: (delta: number) => void;
   readonly highlight: (index: number) => void;
   readonly setQuery: (query: string) => void;
+  /**
+   * Backspace on an empty field leaves command mode when the `>` mark put it
+   * there. The view only swallows the key when this answers true, so ordinary
+   * editing is untouched.
+   */
+  readonly backspaceToNavigate: () => boolean;
   readonly acceptActive: () => void;
   /** Move the tree cursor up one level; no-op outside navigate mode. */
   readonly treeUp: () => void;
@@ -80,6 +86,7 @@ const OWNED_KEYS = new Set([
   "Enter",
   "Tab",
   "Escape",
+  "Backspace",
 ]);
 
 /**
@@ -139,6 +146,13 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
         // gate covers `composing`, `isComposing`, keyCode 229 and the one-shot
         // `ended` flag that makes Chinese input commit without selecting a row.
         if (composition.guards(event)) return;
+        if (event.key === "Backspace") {
+          // Deleting characters is the field's job; only the mode exit is ours.
+          if (!deps.backspaceToNavigate()) return;
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         // Outside the tree the horizontal arrows belong to the text field: the
         // reader is moving a caret, not a directory cursor.
         if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && !deps.treeActive()) return;
@@ -229,26 +243,6 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
       h(
         "div",
         { "data-dcp-head": "" },
-        h(
-          "div",
-          { "data-dcp-modes": "", role: "tablist" },
-          ...PANEL_MODES.map(mode =>
-            h(
-              "button",
-              {
-                key: mode,
-                type: "button",
-                role: "tab",
-                "data-dcp-mode": "",
-                "data-active": mode === model.mode ? "true" : undefined,
-                "aria-selected": mode === model.mode,
-                onMouseDown: (event: Event) => event.preventDefault(),
-                onClick: () => deps.switchMode(mode),
-              },
-              copy.modeNames[mode],
-            ),
-          ),
-        ),
         crumb === null
           ? null
           : h(

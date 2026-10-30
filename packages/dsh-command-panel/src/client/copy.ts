@@ -73,9 +73,9 @@ export interface Copy {
 const ZH: Copy = {
   title: "命令面板",
   placeholder: {
-    navigate: "搜索文件，回车把绝对路径写进输入框",
+    navigate: "搜索文件，回车写入路径（> 切指令）",
     command: "搜索已注册的指令，回车执行",
-    switch: "搜索工作区",
+    switch: "搜索工作区或会话（> 切指令）",
   },
   empty: {
     navigate: "没有可导航的文件",
@@ -162,9 +162,9 @@ const ZH: Copy = {
 const EN: Copy = {
   title: "Command Panel",
   placeholder: {
-    navigate: "Search files; Enter inserts the absolute path",
+    navigate: "Search files; Enter writes the path (> for commands)",
     command: "Search registered commands; Enter runs one",
-    switch: "Search workspaces",
+    switch: "Search workspaces or sessions (> for commands)",
   },
   empty: {
     navigate: "No files to navigate",

@@ -114,3 +114,30 @@ export function back(model: PanelModel): BackResult {
 export function highlightOf(model: PanelModel, count: number): number {
   return clampHighlight(model.highlight, count);
 }
+
+/** What one query keystroke means for the mode, before any side effect. */
+export interface PrefixReading {
+  /** The text that should reach the filter. */
+  readonly query: string;
+  /** Whether this keystroke asks for command mode. */
+  readonly enterCommand: boolean;
+}
+
+/**
+ * Read the VS Code quick-open mark: a leading `>` moves the palette to command
+ * mode without a second keystroke, and the mark never reaches the filter.
+ *
+ * The mark is stripped inside command mode too, so a paste or a stray `>` cannot
+ * turn into a filter that matches nothing. Emptying the query does not leave by
+ * itself: going back is a deliberate Backspace on an empty field, handled by the
+ * runtime, because clearing a query and asking for another mode are different
+ * intentions.
+ *
+ * @param text - the raw field value.
+ * @param mode - the mode before this keystroke.
+ * @returns the text to filter by and whether command mode is requested.
+ */
+export function readPrefix(text: string, mode: PanelMode): PrefixReading {
+  if (!text.startsWith(">")) return { query: text, enterCommand: false };
+  return { query: text.slice(1), enterCommand: mode !== "command" };
+}

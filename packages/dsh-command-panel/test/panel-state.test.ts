@@ -7,6 +7,7 @@ import {
   highlightAt,
   modelFor,
   moveHighlight,
+  readPrefix,
   reconciled,
   withQuery,
 } from "../src/client/panel-state.ts";
@@ -93,5 +94,27 @@ describe("drill and back", () => {
 describe("highlightAt", () => {
   it("clamps an absolute index", () => {
     expect(highlightAt(modelFor("command"), 99, 4).highlight).toBe(3);
+  });
+});
+
+describe("readPrefix", () => {
+  it("reads a leading mark as a request for command mode", () => {
+    expect(readPrefix(">", "navigate")).toEqual({ query: "", enterCommand: true });
+    expect(readPrefix(">goal", "navigate")).toEqual({ query: "goal", enterCommand: true });
+  });
+
+  it("keeps the mark out of the filter inside command mode", () => {
+    expect(readPrefix(">goal", "command")).toEqual({ query: "goal", enterCommand: false });
+  });
+
+  it("passes ordinary text through untouched", () => {
+    expect(readPrefix("panel.ts", "navigate")).toEqual({ query: "panel.ts", enterCommand: false });
+    expect(readPrefix("", "command")).toEqual({ query: "", enterCommand: false });
+    // A mark that is not first is a literal character.
+    expect(readPrefix("a>b", "navigate")).toEqual({ query: "a>b", enterCommand: false });
+  });
+
+  it("does not leave the command mode by itself", () => {
+    expect(readPrefix("", "command")).toEqual({ query: "", enterCommand: false });
   });
 });

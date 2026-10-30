@@ -334,6 +334,62 @@ describe("panel lifecycle", () => {
   });
 });
 
+describe("the > mark", () => {
+  it("moves the palette to command mode and never reaches the filter", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery(">");
+    const snapshot = h.store.getSnapshot();
+    expect(snapshot.model.mode).toBe("command");
+    expect(snapshot.model.query).toBe("");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    expect(h.store.getSnapshot().rows[0]?.label).toBe("面板：文件导航");
+  });
+
+  it("filters on the text after the mark", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery(">goal");
+    expect(h.store.getSnapshot().model.mode).toBe("command");
+    expect(h.store.getSnapshot().model.query).toBe("goal");
+  });
+
+  it("leaves command mode on an empty Backspace", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    h.verbs.setQuery(">");
+    expect(h.store.getSnapshot().model.mode).toBe("command");
+
+    expect(h.verbs.backspaceToNavigate()).toBe(true);
+    expect(h.store.getSnapshot().model.mode).toBe("navigate");
+    expect(h.store.getSnapshot().open).toBe(true);
+  });
+
+  it("keeps command mode when its own key opened it", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.commands");
+    expect(h.store.getSnapshot().model.mode).toBe("command");
+
+    expect(h.verbs.backspaceToNavigate()).toBe(false);
+    expect(h.store.getSnapshot().model.mode).toBe("command");
+  });
+
+  it("does not leave while the field still holds text", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    h.verbs.setQuery(">go");
+
+    expect(h.verbs.backspaceToNavigate()).toBe(false);
+    expect(h.store.getSnapshot().model.mode).toBe("command");
+  });
+});
+
 describe("tree verbs", () => {
   it("enters the highlighted directory and climbs back out", async () => {
     const h = harness();
