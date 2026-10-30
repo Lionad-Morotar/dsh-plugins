@@ -62,6 +62,7 @@ export interface PopupOptionLike {
 export interface PopupStoreLike {
   subscribe(listener: () => void): () => void;
   getSnapshot(): PopupStateLike;
+  set?(state: PopupStateLike): void;
 }
 
 /** The open-time binding whose token segment is consumed after settlement. */
@@ -99,25 +100,39 @@ export interface PopupControllerLike {
   dismiss(options?: { focusComposer?: boolean }): void;
 }
 
+/** Direct submissions already in flight, one per session popup controller. */
+const DIRECT_SETTLEMENTS = new WeakSet<object>();
+
 /**
  * Settle a selection outside the controller's `onSelect`, then close natively.
  *
  * Direct directory submission preserves the chosen reasoning effort, but it
- * bypasses the controller's usual token-consumption step. Reuse that same
- * guarded consumer after business success so a typed `/model` token leaves the
- * composer exactly as it does through native settlement.
+ * bypasses the controller's usual token-consumption step. Admission is
+ * single-flight and publishing `submitting` locks the picker while that work is
+ * pending. Reuse the native guarded consumer after business success so a typed
+ * `/model` token leaves the composer exactly as it does through native settlement.
  * @param popup - controller that opened the picker.
  * @param select - direct business submission.
  */
 export async function settleDirectSelection(
-  popup: Pick<PopupControllerLike, "binding" | "deps" | "dismiss">,
+  popup: Pick<PopupControllerLike, "binding" | "state" | "deps" | "dismiss">,
   select: () => Promise<unknown> | undefined,
 ): Promise<void> {
   const binding = popup.binding;
+  const snapshot = popup.state.getSnapshot();
+  if (binding === null || snapshot.submitting || DIRECT_SETTLEMENTS.has(popup)) return;
+  DIRECT_SETTLEMENTS.add(popup);
+  popup.state.set?.({ ...snapshot, submitting: true, confirming: null, acknowledged: false, error: null });
   try {
-    await select();
+    const attempt = select();
+    // Optional host wiring answers undefined synchronously when the directory
+    // entry is absent. A Promise<void>, by contrast, is a real submission whose
+    // successful resolution must still consume the token.
+    if (attempt === undefined) return;
+    await attempt;
     if (binding !== null && popup.binding === binding) popup.deps?.consume?.(binding.segment);
   } finally {
+    DIRECT_SETTLEMENTS.delete(popup);
     // A superseded binding owns neither the old token nor the replacement popup.
     if (binding !== null && popup.binding === binding) popup.dismiss({ focusComposer: true });
   }
