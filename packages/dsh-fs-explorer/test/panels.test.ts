@@ -64,6 +64,26 @@ describe("panel stack", () => {
   it("renders the basename as the tab caption", () => {
     expect(panelTitle("src/client/view.tsx")).toBe("view.tsx");
     expect(panelTitle("README.md")).toBe("README.md");
+    expect(panelTitle("/Users/x/project/a.ts")).toBe("a.ts");
+  });
+
+  it("keeps an absolute path absolute and apart from its relative twin", () => {
+    const stack = createPanelStack();
+    stack.open("/Users/x/project/a.ts", 4, true);
+    stack.open("Users/x/project/a.ts", 1);
+
+    const panels = stack.snapshot().panels;
+    expect(panels.map(panel => panel.path)).toEqual(["/Users/x/project/a.ts", "Users/x/project/a.ts"]);
+    expect(panels[0]?.absolute).toBe(true);
+    expect(panels[1]?.absolute).toBe(false);
+
+    // Activating and closing go through the stored key, not a re-normalized one.
+    stack.activate("/Users/x/project/a.ts");
+    expect(stack.snapshot().active).toBe("/Users/x/project/a.ts");
+    expect(stack.isOpen("/Users/x/project/a.ts")).toBe(true);
+    stack.close("/Users/x/project/a.ts");
+    expect(stack.isOpen("/Users/x/project/a.ts")).toBe(false);
+    expect(stack.isOpen("Users/x/project/a.ts")).toBe(true);
   });
 
   it("keeps one stack per conversation", () => {
@@ -80,10 +100,20 @@ describe("panel stack", () => {
 
 describe("view requests", () => {
   it("parses path:...:line and opens the panel", () => {
-    const opened: Array<[string, number]> = [];
-    const result = consumeViewRequest("path:src/a b.ts:42", { open: (path, line) => opened.push([path, line]) });
+    const opened: Array<[string, number, boolean]> = [];
+    const result = consumeViewRequest("path:src/a b.ts:42", {
+      open: (path, line, absolute) => opened.push([path, line, absolute]),
+    });
     expect(result).toBe(true);
-    expect(opened).toEqual([["src/a b.ts", 42]]);
+    expect(opened).toEqual([["src/a b.ts", 42, false]]);
+  });
+
+  it("hands an absolute target over without touching its leading slash", () => {
+    const opened: Array<[string, number, boolean]> = [];
+    consumeViewRequest("abs:/Users/x/project/a.ts:7", {
+      open: (path, line, absolute) => opened.push([path, line, absolute]),
+    });
+    expect(opened).toEqual([["/Users/x/project/a.ts", 7, true]]);
   });
 
   it("leaves other focus payloads alone", () => {

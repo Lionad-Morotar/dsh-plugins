@@ -6,6 +6,14 @@
  * (direct service first, Remote carrier second) because waiting for it would
  * hide the tab exactly when the panel needs its "service unavailable" state.
  */
+import {
+  canBridgeFile,
+  decideBridge,
+  focusForFileAddress,
+  forwardFocus,
+  registerAddressBridge,
+  type BridgeContextLike,
+} from "./bridge.ts";
 import { EN, ZH, tabLabel } from "./copy.ts";
 import { LOCALE_NAMESPACE, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
 import { KEYMAP, createEscapeHandler } from "./keyboard.ts";
@@ -44,11 +52,7 @@ import {
 } from "./wire.ts";
 
 /** The slice of the client context this entry uses. */
-export interface ClientContextLike extends FilesContextLike {
-  readonly slots: {
-    inject(slot: string, factory: () => () => void): unknown;
-    register(options: Record<string, unknown>, component: unknown): () => void;
-  };
+export interface ClientContextLike extends FilesContextLike, BridgeContextLike {
   readonly locale: {
     register(namespace: string, dictionaries: Record<string, Record<string, string>>): () => void;
     bind(namespace: string): (key: string) => string;
@@ -84,6 +88,13 @@ function activeLocale(ctx: ClientContextLike): string {
 * removable by the very disposer that registered them. */
 let registeredDictionaries: (() => void) | undefined;
 
+/** Disposer of the address bridge currently registered on the host.
+ * The tab-type registry throws on a second registration of one id, and a repeat
+ * apply on a live host meets its own earlier registration, so the previous
+ * bridge is dropped before the next one is made — the same reason the locale
+ * dictionary above is replaced rather than re-registered. */
+let registeredBridge: (() => void) | undefined;
+
 export function apply(ctx: ClientContextLike): () => void {
   const workbench = ctx.workbench;
   if (workbench === undefined || workbench === null) return () => {};
@@ -103,6 +114,12 @@ export function apply(ctx: ClientContextLike): () => void {
     status: createGitStatusResolver(ctx),
   });
 
+  // The address bridge hangs off the optional right sidebar; it registers
+  // nothing when the host has none and never blocks the view below.
+  registeredBridge?.();
+  const offBridge = registerAddressBridge(ctx, workbench);
+  registeredBridge = offBridge;
+
   ctx.slots.inject(VIEW_SLOT, () =>
     ctx.slots.register(
       {
@@ -117,6 +134,8 @@ export function apply(ctx: ClientContextLike): () => void {
   );
 
   return () => {
+    offBridge();
+    if (registeredBridge === offBridge) registeredBridge = undefined;
     offStyles();
     offLocale();
     if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
@@ -158,6 +177,11 @@ export const __test = {
   classifyPreviewFailure,
   normalizePreviewPage,
   previewChunkRoute,
+  canBridgeFile,
+  decideBridge,
+  focusForFileAddress,
+  forwardFocus,
+  registerAddressBridge,
 };
 
 /** The plugin object the loader mounts. */
