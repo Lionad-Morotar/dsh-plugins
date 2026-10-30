@@ -146,9 +146,6 @@ const headerStyle: CSSProperties = {
   padding: "6px 12px",
   borderBottom: "1px solid color-mix(in srgb, currentColor 10%, transparent)",
 };
-const titleRowStyle: CSSProperties = { display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 };
-const titleStyle: CSSProperties = { fontSize: 12, fontWeight: 600, letterSpacing: 0.2 };
-const hintStyle: CSSProperties = { fontSize: 11, opacity: 0.5, whiteSpace: "nowrap" };
 const actionsStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 2 };
 // Mid-section of the single-row header: session tabs with inline close, then
 // the new-terminal button. No own border, the header's bottom rule is enough.
@@ -237,10 +234,7 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
     const [binding] = useState(() => rack.open(sessionId, panelId));
     if (binding === undefined) {
       return (
-        <div style={emptyStyle}>
-          <strong>{t("dock.serviceMissing")}</strong>
-          <span style={{ opacity: 0.7 }}>{t("dock.serviceMissingHint")}</span>
-        </div>
+        <div style={emptyStyle}>{t("dock.serviceMissing")}</div>
       );
     }
     return <TerminalPanel binding={binding} label={label} />;
@@ -300,6 +294,7 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
     // "收起 dock" means for the processes living behind these panels.
     return (
       <section
+        aria-label={t("dock.title")}
         data-workbench-dock="term-dock"
         data-dock-mode={snapshot.mode}
         data-dock-visible={visible ? "true" : "false"}
@@ -310,10 +305,6 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
         onKeyDownCapture={handleKeyDown}
       >
         <header style={headerStyle}>
-          <div style={titleRowStyle}>
-            <span style={titleStyle}>{t("dock.title")}</span>
-            <span style={hintStyle}>{t("dock.hint")}</span>
-          </div>
           <div style={tabStripStyle}>
             {panels.map((panel: DockPanel, index: number) => (
               <button
@@ -371,13 +362,11 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
 
         {sessionId === undefined ? (
           <div style={emptyStyle} role="note">
-            <strong>{t("dock.sessionRequired")}</strong>
-            <span style={{ opacity: 0.7 }}>{t("dock.sessionRequiredHint")}</span>
+            {t("dock.sessionRequired")}
           </div>
         ) : terminals === undefined ? (
           <div style={emptyStyle} role="note">
-            <strong>{t("dock.serviceMissing")}</strong>
-            <span style={{ opacity: 0.7 }}>{t("dock.serviceMissingHint")}</span>
+            {t("dock.serviceMissing")}
           </div>
         ) : (
           // Minimizing hides the body but keeps it mounted: unmounting would

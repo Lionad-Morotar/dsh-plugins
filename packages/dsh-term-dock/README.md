@@ -32,6 +32,7 @@
 - 可见性跟着 core 走：`createDockController` 订阅 `workbench.dockVisibility`，运行中按 `⌘⇧M` 收起时只把高度释放（`display:none`），面板子树与终端进程都留在原地，再按一次恢复停靠高度，不重放屏幕。
 - 布局状态机：停靠 / 最小化 / 全屏三态，停靠高度 `clamp(120px, 32dvh, 300px)`（随窗口高度伸缩，与宿主 inspector 底部面板同一量法），全屏到 `min(72vh, 900px)`；`split()` 在当前面板旁新开一个终端（新 id、新 shell），上限两栏。此前用 `innerHeight − rect.top` 实测余量定高，但 dock 贴底、`rect.top` 编码了刚写入的高度，ResizeObserver 每轮触发都会把间隙常量再扣一次，打开后高度棘轮式压缩到下限，视口比例没有这个回路。
 - 标签栏：一个终端一个标签，点选切换、点 × 关闭；关闭后相邻面板接管选中，全部关掉时 body 为空，用头部的「新建终端」再开一个。
+- 头部只放控件：左侧页签与「+」，右侧最小化 / 全屏 / 分割 / 关闭四个图标按钮。标题与「Ctrl+W 关闭 · Esc 回到对话」这类提示行已移除，页签本身就是标识，键位写在设置页与本文档里而不是常驻在界面上；`section` 上留一个不可见的 `aria-label` 供读屏。
 - 占满整行：宿主的 composer dock 行（`[data-composer-dock]`）是 `flex-direction:row` + `nowrap` 的居中行，用量条也是其中一个条目。终端面板不是小 chip，在 nowrap 行里 `width:100%` 只等于 flex-basis，默认 `flex-shrink` 会把空间还给用量条，于是 dock 比输入框窄、和用量条并排。插件注入一条 `:has()` 规则（只在 dock 挂载时命中），让那一行换行：dock 占第一行整宽，用量条落到下一行。
 - 撑到列宽：dock 行住在 composer 那个居中、有 max-width 的栈里，只清零内边距仍会左右各差一截（App 上实测 ~200px）。CSS 无法引用祖先宽度，所以 `useDockBleed` 每次布局量一次「行到最宽祖先（排除 body/html）的间距」，写成 `--dsh-dock-bleed-left/right` 两个自定义属性；注入规则用它们做负外边距与 `calc(100% + 两侧)` 的宽度。实测终端左右边缘与对话列逐像素对齐。
 - 渲染器懒加载：xterm 与 FitAddon 在 `client.terminal.js` 里，第一次有终端面板挂载时才取，取到后缓存在页面生命周期内；启动包不含任何 xterm 符号。
