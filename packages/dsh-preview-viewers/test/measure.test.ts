@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BoxGeometry, Group, Mesh, MeshBasicMaterial } from "three";
 
-import { measure } from "../src/client/scene3d.ts";
+import { measure } from "../src/scene3d.ts";
 
 /**
  * Build one mesh whose geometry has a known triangle count.

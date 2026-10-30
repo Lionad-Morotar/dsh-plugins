@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import * as utif from "utif";
 
-import { decodeTiff } from "../src/client/raster.ts";
+import { decodeTiff } from "../src/raster.ts";
 
 /** Fixture directory, resolved from this file rather than the process cwd. */
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "fixtures");

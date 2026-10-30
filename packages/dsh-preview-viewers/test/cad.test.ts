@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { mountDrawing, type DxfViewerConstructor, type DxfViewerFace } from "../src/client/cad.ts";
+import { mountDrawing, type DxfViewerConstructor, type DxfViewerFace } from "../src/cad.ts";
 
 /** Everything the fake viewer was asked to do, in order. */
 type Call =

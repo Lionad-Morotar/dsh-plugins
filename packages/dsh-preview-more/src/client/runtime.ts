@@ -7,16 +7,28 @@
  * actually uses, once, in this module — reading a field the host stopped
  * sending fails here with a named error instead of a `undefined is not a
  * function` three frames down the render.
+ *
+ * The body-facing shapes (the two mount forms and the reader) live in the shared
+ * package, because the surfaces that consume them do; what stays here is the
+ * registration half: the client plugin context, its optional services and the
+ * byte reader this plugin hands the surfaces.
  */
+
+/**
+ * Read one file's complete bytes: the shape every preview body calls.
+ *
+ * Re-exported rather than redeclared: a body compiled against a second copy of
+ * this signature would still be structurally compatible, but the two would drift
+ * the moment one side gains a parameter, and the drift would surface as a
+ * runtime call error in the surface instead of a type error here.
+ */
+export type { ReadFile } from "dsh-preview-viewers/contracts.ts";
 
 /** A resolved Session file address, as the byte reader wants it. */
 export interface FileTarget {
   readonly sessionId: string;
   readonly path: string;
 }
-
-/** Read one file's complete bytes: the shape every preview body calls. */
-export type ReadFile = (sessionId: string, path: string, signal: AbortSignal) => Promise<Uint8Array>;
 
 /** What `ctx.remote.workspaceFiles.readBytes` resolves to on success. */
 export interface ReadBytesValue {

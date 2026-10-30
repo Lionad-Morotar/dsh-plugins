@@ -16,10 +16,18 @@
  * factory can reach the loader's `require` (needed for `require.async` and the
  * seeded React instance).
  *
+ * The renderers themselves are not in this package: `src/client/chunks/*.tsx`
+ * re-export surfaces from `dsh-preview-viewers`, and esbuild inlines them here.
+ * That split is why this script still owns the artifact names, the size budgets
+ * and the licence banner: they describe the files this package ships, not the
+ * sources they were assembled from.
+ *
  * The Draco decoder is embedded here, not fetched at runtime: three's
  * DRACOLoader resolves it through `new URL(..., import.meta.url)`, which cannot
- * work in a plugin served from a versioned asset route. The virtual module
- * `virtual:draco-assets` carries the payloads as text and bytes.
+ * work in a plugin served from a versioned asset route. The inlining itself
+ * lives in the shared package's build helper (build/draco-plugin.mjs), so every
+ * package that bundles a Draco-capable chunk gets the same treatment; what stays
+ * here is the payload resolution, which must use this package's `three`.
  */
 import { build } from "esbuild";
 import { createRequire } from "node:module";
@@ -28,26 +36,43 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { dracoDefines, dracoPlugin, loadDracoPayloads } from "dsh-preview-viewers/build/draco-plugin.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "..");
 const libRoot = join(packageRoot, "lib");
 const require = createRequire(join(packageRoot, "package.json"));
 const manifest = require(join(packageRoot, "package.json"));
 
-/** Renderer families, each one lazy chunk. Mirrors src/client/formats.ts. */
+/** Renderer families, each one lazy chunk. Mirrors the shared src/formats.ts. */
 const CHUNKS = ["scene3d", "raster", "cad"];
+
+/**
+ * Reserved URL the never-fetched Draco decoder paths resolve against.
+ *
+ * three's DRACOLoader builds those URLs at module scope; a CJS bundle has no
+ * import.meta, so they only have to be constructible. The host is `.invalid` by
+ * convention: it can never resolve, which is the point.
+ */
+const DRACO_RESERVED_URL = "https://dsh-preview-more.invalid/client.js";
+
 
 /**
  * Assert the chunk list still covers every family the catalogue declares.
  *
- * `formats.ts` decides the families and `entry.ts` derives its registration from
- * it, so a family added there but not here would register a renderer whose chunk
- * was never built: the entry would load a 404 and the preview would sit on its
- * loading state forever. Catching it here turns that into a build failure.
+ * The catalogue decides the families and `entry.ts` derives its registration
+ * from it, so a family added there but not here would register a renderer whose
+ * chunk was never built: the entry would load a 404 and the preview would sit on
+ * its loading state forever. Catching it here turns that into a build failure.
+ *
+ * The catalogue is read out of the shared package rather than imported: this is
+ * a plain Node script, and importing a TypeScript module here would need a loader
+ * the build does not otherwise have. Resolving it through the package name keeps
+ * the path out of this script's assumptions.
  * @throws when the two disagree.
  */
 async function assertChunksCoverCatalogue() {
-  const source = await readFile(join(packageRoot, "src", "client", "formats.ts"), "utf8");
+  const source = await readFile(require.resolve("dsh-preview-viewers/formats.ts"), "utf8");
   const declared = [...source.matchAll(/family:\s*"([a-zA-Z0-9]+)"/gu)].map((match) => match[1]);
   const families = [...new Set(declared)];
   const missing = families.filter((family) => !CHUNKS.includes(family));
@@ -151,65 +176,19 @@ async function bundle(entry, format, { external = [], loader = {}, plugins = [] 
     loader,
     plugins,
     jsx: "automatic",
-    // The Draco emscripten wrapper branches on `process.versions.node` and only
-    // then reaches for fs/path. Folding that probe to undefined lets the minifier
-    // drop the branch, so a renderer that happens to expose `process` cannot trip
-    // the factory require over a module the bundle does not have.
+    // The Draco/three overrides come from the shared build helper: they exist
+    // for the inlined decoder and for three's module-scope decoder URLs, and a
+    // second package bundling the same surfaces needs the identical pair. The
+    // Node-env fold is this build's own.
     define: {
       "process.env.NODE_ENV": JSON.stringify("production"),
-      "process.versions.node": "undefined",
-      // three's DRACOLoader resolves its decoder paths at module scope with
-      // `new URL(..., import.meta.url)`. A CJS bundle has no import.meta, so
-      // esbuild substitutes an empty object and the URL constructor throws
-      // during evaluation: the whole chunk fails before the loader is ever
-      // reached. These URLs are never fetched (see draco-assets.d.ts: the
-      // decoder is inlined and _loadLibrary is overridden), they only have to
-      // be valid, so they point at a reserved host.
-      "import.meta.url": JSON.stringify("https://dsh-preview-more.invalid/client.js"),
+      ...dracoDefines(DRACO_RESERVED_URL),
     },
     logLevel: "silent",
   });
   const output = result.outputFiles?.[0];
   if (output === undefined) throw new Error(`esbuild produced nothing for ${entry}`);
   return output.text;
-}
-
-/**
- * The Draco payloads, read from the installed three package.
- *
- * Reading them from three's own `libs/draco/gltf` directory pins the decoder to
- * the exact loader version this package bundles; a hand-copied payload would
- * drift silently at the next three upgrade.
- * @returns the wrapper text and wasm bytes.
- */
-async function dracoPayloads() {
-  const dracoRoot = join(dirname(require.resolve("three/addons/loaders/DRACOLoader.js")), "..", "libs", "draco", "gltf");
-  const [wasmWrapper, wasmBinary] = await Promise.all([
-    readFile(join(dracoRoot, "draco_wasm_wrapper.js"), "utf8"),
-    readFile(join(dracoRoot, "draco_decoder.wasm")),
-  ]);
-  return { wasmWrapper, wasmBinary };
-}
-
-/**
- * esbuild plugin serving `virtual:draco-assets`.
- * @param payloads - decoder text and bytes.
- * @returns the plugin.
- */
-function dracoPlugin(payloads) {
-  return {
-    name: "draco-assets",
-    setup(buildContext) {
-      buildContext.onResolve({ filter: /^virtual:draco-assets$/ }, () => ({ path: "draco-assets", namespace: "draco" }));
-      buildContext.onLoad({ filter: /.*/, namespace: "draco" }, () => ({
-        contents: [
-          `export const wasmWrapper = ${JSON.stringify(payloads.wasmWrapper)};`,
-          `export const wasmBinary = new Uint8Array(${JSON.stringify(Array.from(payloads.wasmBinary))});`,
-        ].join("\n"),
-        loader: "js",
-      }));
-    },
-  };
 }
 
 /**
@@ -251,7 +230,11 @@ async function main(checkOnly) {
   await emit("client.js", wrap(manifest.name, client, { boot: true }));
   written.push("client.js");
 
-  const payloads = await dracoPayloads();
+  // The payloads are resolved through this package's `three` so the inlined
+  // decoder matches the loader that will call it. A hand-copied payload, or one
+  // resolved from the shared package's own dependency, would drift silently at
+  // the next three upgrade.
+  const payloads = await loadDracoPayloads((specifier) => require.resolve(specifier));
   for (const family of CHUNKS) {
     const code = await bundle(join(packageRoot, "src", "client", "chunks", `${family}.tsx`), "cjs", {
       external: ["react", "react/jsx-runtime"],

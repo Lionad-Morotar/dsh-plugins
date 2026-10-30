@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 
-import { loaderFor, meshKindOf, releasePartialViewport } from "../src/client/scene3d.ts";
+import { loaderFor, meshKindOf, releasePartialViewport } from "../src/scene3d.ts";
 
 /** The smallest Draco seam these tests need; nothing here decodes Draco. */
 const draco = new DRACOLoader();

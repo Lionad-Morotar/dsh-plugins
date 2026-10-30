@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { meshKindOf } from "../src/client/scene3d.ts";
+import { meshKindOf } from "../src/scene3d.ts";
 
 describe("meshKindOf", () => {
   it("classifies every suffix the viewport can read", () => {

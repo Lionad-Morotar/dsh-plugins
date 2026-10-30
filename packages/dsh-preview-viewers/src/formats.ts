@@ -1,5 +1,5 @@
 /**
- * Format catalogue for the previews this plugin owns.
+ * Format catalogue for the previews these surfaces own.
  *
  * Every suffix here is one the built-in preview package either does not claim
  * at all (glb/gltf/obj/stl/3mf/dxf) or claims only as an unviewable binary
@@ -8,7 +8,11 @@
  * better implementation.
  *
  * The catalogue is data, not behaviour, so it is the one place a new format is
- * added: the registry, the better-sidebar adapter and the docs all read it.
+ * added: every consuming plugin derives its registry from it and its sidebar
+ * adapter derives its viewers from it, and a family declared here without a
+ * chunk built for it fails the consuming build instead of 404ing at runtime.
+ * That is why it lives in the shared package rather than in one plugin: two
+ * consumers keeping two catalogues would disagree about who claims what.
  */
 
 /** Which renderer draws one family. */

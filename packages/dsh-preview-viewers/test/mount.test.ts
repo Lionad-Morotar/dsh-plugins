@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { UNREPORTED, canAttempt, failureMessage, prepareAttempt, shouldSettle } from "../src/client/mount.ts";
+import { UNREPORTED, canAttempt, failureMessage, prepareAttempt, shouldSettle } from "../src/mount.ts";
 
 describe("mount lifecycle", () => {
   it("refuses to attempt without a container", () => {

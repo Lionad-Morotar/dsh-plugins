@@ -9,6 +9,12 @@
  *
  * Colours come from the host's own custom properties so the preview follows the
  * light and dark themes instead of pinning one palette.
+ *
+ * The class names and the tag attribute still say `preview-more`: they are the
+ * vocabulary the shipped DOM already uses, and this package was extracted from
+ * that plugin without a behaviour change. Renaming them would be a cosmetic edit
+ * with a real cost — the tag is also the identity two mounted hosts reference
+ * count against, so a rename would let the old and new stylesheets coexist.
  */
 
 /** Attribute value identifying this stylesheet, so a second mount is a no-op. */

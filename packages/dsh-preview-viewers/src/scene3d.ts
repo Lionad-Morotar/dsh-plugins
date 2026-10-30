@@ -39,10 +39,15 @@ import {
 } from "three";
 
 /**
- * Draco decoder sources, inlined at build time (see scripts/build.mjs).
+ * Draco decoder sources, inlined at build time by the consuming package.
+ *
+ * The payloads reach the bundle through `virtual:draco-assets`, which the
+ * consumer's build serves from build/draco-plugin.mjs: the decoder has to come
+ * from the same three version that build bundles, so the inlining cannot live
+ * here where it would pin whichever three this package resolves.
  *
  * Only the wasm pair ships. The pure-JS decoder is another 512 KiB of text for
- * hosts that predate WebAssembly, and every target this plugin runs in (the
+ * hosts that predate WebAssembly, and every target these surfaces run in (the
  * Electron desktop app and current browsers) has it; a host without it gets the
  * named unsupported error instead of a silent heavy fallback download.
  */

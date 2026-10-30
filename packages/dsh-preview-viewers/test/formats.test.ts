@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { claimedExtensions, chunkOf, familyOf } from "../src/client/formats.ts";
+import { claimedExtensions, chunkOf, familyOf } from "../src/formats.ts";
 
 describe("format catalogue", () => {
   it("claims the formats the built-in preview does not render", () => {
