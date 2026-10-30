@@ -3,10 +3,13 @@
  * document registry asks for, and the viewport's own states (loading, failure,
  * retry, facts). Keeping both in one namespace means the manifest's locale
  * files and the runtime dictionary cannot drift.
+ *
+ * The copy lives with the plugin rather than with the shared surfaces: the
+ * surfaces only format messages, and whoever registers a preview is the party
+ * that knows which namespace and which wording its readers get. A second
+ * consumer of `dsh-preview-viewers` therefore ships its own dictionary for the
+ * same keys instead of inheriting this plugin's voice.
  */
-
-/** Dictionary rows, keyed by message id, per language. */
-export type PreviewDictionaries = Record<string, Record<string, string>>;
 
 /** Dictionary namespace, shared by the registry title and the bodies. */
 export const LOCALE_NAMESPACE = "previewMore";
@@ -60,14 +63,4 @@ export function dictionaries(): Record<"zh" | "en", Record<string, string>> {
       "cad.layers": "{count} layers",
     },
   };
-}
-
-/**
- * Substitute `{name}` placeholders in one message.
- * @param template - message text carrying placeholders.
- * @param values - replacement values by name.
- * @returns the filled message.
- */
-export function formatMessage(template: string, values: Record<string, string | number>): string {
-  return template.replace(/\{(\w+)\}/gu, (match, name: string) => (name in values ? String(values[name]) : match));
 }

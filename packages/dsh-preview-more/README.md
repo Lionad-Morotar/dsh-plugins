@@ -45,10 +45,11 @@ Loader row 由包内 `cordis.patch.yml` 注入，不需要手工改 profile 配�
 
 ## 实现约定
 
+- 渲染器本身不在这里：格式目录、三个引擎与三个 React 面都在共享源码包 `dsh-preview-viewers`（`packages/dsh-preview-viewers`），本包的 `src/client/chunks/*.tsx` 只是 re-export 它的 chunk 源码，构建期由 esbuild 内联进本包的产物。抽出去的理由是同一套渲染器还要服务工作台的文件面，而两个消费者各留一份格式目录迟早会对「谁接管哪个后缀」产生分歧。
 - 引擎按需加载，一个渲染器一个 chunk，体积按 gzip 计（构建会在超预算时失败）：入口 `lib/client.js` 约 3KB；3D 引擎 three.js 在 `lib/client.scene3d.js` 约 265KB；TIFF 解码器 utif 在 `lib/client.raster.js` 约 30KB；CAD 渲染器（dxf-viewer 含自带的 three）在 `lib/client.cad.js` 约 340KB。三者都只在真的打开对应文件时下载。
-- 格式目录是唯一的事实源：`src/client/formats.ts` 决定谁接管哪些后缀、归哪个渲染器、chunk 叫什么名，注册循环从它派生，新增格式只动这个文件。
+- 格式目录是唯一的事实源：共享包的 `src/formats.ts` 决定谁接管哪些后缀、归哪个渲染器、chunk 叫什么名，本包的注册循环与 better-sidebar 适配器都从它派生，新增格式只动那个文件（构建会校验目录里的每个 family 都有对应 chunk）。
 - 一个 chunk 只产出一个文件：chunk 由带版本号的路由整体下发，运行期再分裂出的子文件没有可访问的地址，所以 chunk 内部的 import 一律静态。
-- Draco 解码器内联进 chunk，不走网络。three 的 `DRACOLoader` 用 `new URL(..., import.meta.url)` 找解码器，而插件 chunk 由带版本号的路由提供，没有可解析的文件布局，所以构建期把 `draco_wasm_wrapper.js` 与 `draco_decoder.wasm` 嵌进虚拟模块，再通过 `_loadLibrary` 从内存回给加载器。
+- Draco 解码器内联进 chunk，不走网络。three 的 `DRACOLoader` 用 `new URL(..., import.meta.url)` 找解码器，而插件 chunk 由带版本号的路由提供，没有可解析的文件布局，所以构建期把 `draco_wasm_wrapper.js` 与 `draco_decoder.wasm` 嵌进虚拟模块，再通过 `_loadLibrary` 从内存回给加载器。内联逻辑在共享包的 `build/draco-plugin.mjs`，解码器按本包解析到的 three 版本读取，保证与打包进来的加载器同版。
 - 字节一律经 `ctx.remote.workspaceFiles.readBytes` 读取，沿用会话授权，不绕开权限面。
 - 分离式 `.gltf`（buffer 与纹理是同级文件）的外部资源也走同一个读取器，按文档声明的相对 uri 预读后经 URL 修饰器从内存回给加载器。加载器自己解析相对 uri 会落到站点根，插件里那是个 404。
 - `dxf-viewer` 只接受 URL 并自己发起请求，所以字节被包成 blob URL 传入，解析落定即刻释放；整条链路仍然零外部网络。

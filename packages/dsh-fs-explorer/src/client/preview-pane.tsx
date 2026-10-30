@@ -7,6 +7,12 @@
  * preview chunk; until it arrives (or if it never does) Markdown renders through
  * the dependency-free tree in `markdown.ts` and source files fall back to a
  * plain `<pre>`, so selecting a file always paints something.
+ *
+ * A file the shared format catalogue claims takes the other path: it is handed
+ * whole to its family's renderer, in a chunk that carries that family's engine
+ * and nothing else. The two paths share the toolbar, the loading state and the
+ * failure block, and differ only in what draws the body — the text pager never
+ * sees a binary file, and a family renderer never sees a page.
  */
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 
@@ -14,8 +20,10 @@ import { writeClipboard } from "./clipboard.ts";
 import type { Translate } from "./copy.ts";
 import { renderMarkdown } from "./markdown.ts";
 import {
+  classifyPreviewFailure,
   createPreviewLoader,
   describePage,
+  familyOf,
   IDLE_PREVIEW,
   isMarkdownFile,
   languageFor,
@@ -24,8 +32,15 @@ import {
   type PreviewLoader,
   type PreviewSnapshot,
 } from "./preview.ts";
-import { loadPreviewChunk, type CodePreviewHandle, type PreviewChunkModule } from "./preview-chunk.ts";
-import { createPreviewReader, type WorkspaceFilesFace } from "./wire.ts";
+import {
+  loadFamilyChunk,
+  loadPreviewChunk,
+  type CodePreviewHandle,
+  type FamilyChunkModule,
+  type PreviewChunkModule,
+} from "./preview-chunk.ts";
+import { PreviewFailureView, PreviewLoadingView } from "./preview-failure.tsx";
+import { createByteReader, createPreviewReader, type WorkspaceFilesFace } from "./wire.ts";
 
 /** Props the view hands the preview pane. */
 export interface PreviewPaneProps {
@@ -33,47 +48,17 @@ export interface PreviewPaneProps {
   readonly files?: WorkspaceFilesFace;
   readonly path?: string;
   readonly t: Translate;
+  /**
+   * Whether this panel is the active one.
+   *
+   * The view keeps a pane mounted per open panel and hides the inactive ones, so
+   * the pane is the first place that knows a renderer is drawing for nobody.
+   * Absent means visible.
+   */
+  readonly visible?: boolean;
 }
 
 type PreviewMode = "reading" | "source";
-
-function failureTitle(failure: PreviewFailure, t: Translate): string {
-  switch (failure.kind) {
-    case "deleted":
-      return t("preview.deleted.title");
-    case "denied":
-      return t("preview.denied.title");
-    case "symlink":
-      return t("preview.symlink.title");
-    case "binary":
-      return t("preview.binary.title");
-    case "too-large":
-      return t("preview.tooLarge.title");
-    case "unavailable":
-      return t("preview.unavailable.title");
-    default:
-      return t("preview.unknown.title");
-  }
-}
-
-function failureDescription(failure: PreviewFailure, t: Translate): string {
-  switch (failure.kind) {
-    case "deleted":
-      return t("preview.deleted.description");
-    case "denied":
-      return t("preview.denied.description");
-    case "symlink":
-      return t("preview.symlink.description");
-    case "binary":
-      return t("preview.binary.description");
-    case "too-large":
-      return t("preview.tooLarge.description");
-    case "unavailable":
-      return t("preview.unavailable.description");
-    default:
-      return t("preview.unknown.description");
-  }
-}
 
 /**
  * Mount one read-only editor and keep it across page changes.
@@ -141,11 +126,18 @@ function CodeSurface({
  * @param props - session, file face, selected path and translator.
  * @returns the preview column.
  */
-export function PreviewPane({ sessionId, files, path, t }: PreviewPaneProps) {
+export function PreviewPane({ sessionId, files, path, t, visible = true }: PreviewPaneProps) {
   const reader = useMemo(() => createPreviewReader(files, sessionId), [files, sessionId]);
+  const byteReader = useMemo(() => createByteReader(files), [files]);
+  // Resolved once per mount: the pane is created per open file, so the family
+  // cannot change under a mounted loader.
+  const family = path === undefined ? null : familyOf(path);
   const [loader, setLoader] = useState<PreviewLoader | null>(null);
   const [snapshot, setSnapshot] = useState<PreviewSnapshot>(IDLE_PREVIEW);
   const [chunk, setChunk] = useState<PreviewChunkModule | null>(null);
+  const [familyChunk, setFamilyChunk] = useState<FamilyChunkModule | null>(null);
+  const [familyFailure, setFamilyFailure] = useState<PreviewFailure | null>(null);
+  const [familyAttempt, setFamilyAttempt] = useState(0);
   const [mode, setMode] = useState<PreviewMode>("reading");
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -170,9 +162,11 @@ export function PreviewPane({ sessionId, files, path, t }: PreviewPaneProps) {
   }, [loader]);
 
   useEffect(() => {
-    if (loader === null || path === undefined) return;
+    // A family file is read as bytes by its own renderer; asking the pager for
+    // pages of it would spend a read to reach the host's binary refusal.
+    if (loader === null || path === undefined || family !== null) return;
     void loader.open(path);
-  }, [loader, path]);
+  }, [loader, path, family]);
 
   useEffect(() => {
     setMode("reading");
@@ -186,10 +180,10 @@ export function PreviewPane({ sessionId, files, path, t }: PreviewPaneProps) {
     [],
   );
 
-  // The chunk is fetched only when a file is actually selected: a reader who
-  // never opens the preview pays nothing beyond the entry image.
+  // The text chunk is fetched only when a text file is actually selected: a
+  // reader who never opens the preview pays nothing beyond the entry image.
   useEffect(() => {
-    if (path === undefined) return;
+    if (path === undefined || family !== null) return;
     let alive = true;
     loadPreviewChunk()
       .then(module => {
@@ -201,7 +195,27 @@ export function PreviewPane({ sessionId, files, path, t }: PreviewPaneProps) {
     return () => {
       alive = false;
     };
-  }, [path]);
+  }, [path, family]);
+
+  // One family chunk, fetched the first time a file of that family is opened
+  // and never before. The engine is the whole point of the split: a reader who
+  // opens a .txt must not download three.js.
+  useEffect(() => {
+    if (family === null) return;
+    let alive = true;
+    setFamilyChunk(null);
+    setFamilyFailure(null);
+    loadFamilyChunk(family)
+      .then(module => {
+        if (alive) setFamilyChunk(module);
+      })
+      .catch((error: unknown) => {
+        if (alive) setFamilyFailure(classifyPreviewFailure(error));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [family, familyAttempt]);
 
   if (path === undefined) {
     return (
@@ -214,11 +228,31 @@ export function PreviewPane({ sessionId, files, path, t }: PreviewPaneProps) {
     );
   }
 
+  const binary = family !== null;
+  // A family file needs the byte read; the text pager needs the page read. The
+  // two are separate optional methods, so the unavailable state is decided per
+  // path rather than once for the pane. The pair travels together because a
+  // renderer cannot read without a session to resolve the path against.
+  const byteSource =
+    sessionId !== undefined && byteReader !== undefined ? { sessionId, readFile: byteReader } : null;
+  const binaryUnavailable = binary && byteSource === null;
   const page = describePage(snapshot);
-  const markdown = isMarkdownFile(path);
-  const busy = snapshot.status === "loading";
-  const ready = snapshot.status === "ready";
+  const markdown = !binary && isMarkdownFile(path);
+  const busy = binary
+    ? !binaryUnavailable && familyChunk === null && familyFailure === null
+    : snapshot.status === "loading";
+  // The page gestures exist only on the text path, so this answers for it alone.
+  const textReady = snapshot.status === "ready";
   const reading = markdown && mode === "reading";
+  const state = binary
+    ? binaryUnavailable
+      ? "unavailable"
+      : familyFailure !== null
+        ? "failed"
+        : familyChunk === null
+          ? "loading"
+          : "ready"
+    : snapshot.status;
 
   const copyPath = (): void => {
     void writeClipboard(path).then(ok => {
@@ -230,7 +264,27 @@ export function PreviewPane({ sessionId, files, path, t }: PreviewPaneProps) {
   };
 
   let body: ReactElement;
-  if (reader === undefined) {
+  if (binary) {
+    body =
+      byteSource === null ? (
+        <div className="fx-empty" data-testid="fs-preview-unavailable">
+          <strong>{t("preview.unavailable.title")}</strong>
+          <span>{t("preview.unavailable.description")}</span>
+        </div>
+      ) : familyFailure !== null ? (
+        <PreviewFailureView failure={familyFailure} t={t} onRetry={() => setFamilyAttempt(value => value + 1)} />
+      ) : familyChunk === null ? (
+        <PreviewLoadingView t={t} />
+      ) : (
+        <familyChunk.FamilyView
+          path={path}
+          sessionId={byteSource.sessionId}
+          readFile={byteSource.readFile}
+          t={t}
+          visible={visible}
+        />
+      );
+  } else if (reader === undefined) {
     body = (
       <div className="fx-empty" data-testid="fs-preview-unavailable">
         <strong>{t("preview.unavailable.title")}</strong>
@@ -238,24 +292,15 @@ export function PreviewPane({ sessionId, files, path, t }: PreviewPaneProps) {
       </div>
     );
   } else if (snapshot.status === "failed") {
-    const failure = snapshot.failure ?? { kind: "unknown", code: "", message: "" };
     body = (
-      <div className="fx-empty" data-state="failed" data-testid="fs-preview-failed" data-kind={failure.kind}>
-        <strong>{failureTitle(failure, t)}</strong>
-        <span>{failureDescription(failure, t)}</span>
-        {failure.message === "" ? null : <code className="fx-preview-hint">{failure.message}</code>}
-        <button type="button" className="fx-btn" onClick={() => void loader?.retry()} data-testid="fs-preview-retry">
-          {t("preview.retry")}
-        </button>
-      </div>
+      <PreviewFailureView
+        failure={snapshot.failure ?? { kind: "unknown", code: "", message: "" }}
+        t={t}
+        onRetry={() => void loader?.retry()}
+      />
     );
-  } else if (!ready) {
-    body = (
-      <div className="fx-loading" data-testid="fs-preview-loading">
-        <span className="fx-spinner" aria-hidden="true" />
-        {t("preview.loading")}
-      </div>
-    );
+  } else if (!textReady) {
+    body = <PreviewLoadingView t={t} />;
   } else if (reading) {
     body =
       chunk === null ? (
@@ -275,24 +320,34 @@ export function PreviewPane({ sessionId, files, path, t }: PreviewPaneProps) {
     <section
       className="fx-preview"
       data-testid="fs-preview"
-      data-state={snapshot.status}
-      data-mode={reading ? "reading" : "code"}
-      data-renderer={reading ? (chunk === null ? "fallback" : "gfm") : (chunk?.renderer ?? "plain")}
+      data-state={state}
+      data-mode={binary ? "binary" : reading ? "reading" : "code"}
+      data-renderer={
+        binary
+          ? (familyChunk?.renderer ?? "pending")
+          : reading
+            ? chunk === null
+              ? "fallback"
+              : "gfm"
+            : (chunk?.renderer ?? "plain")
+      }
     >
       <header className="fx-preview-bar">
         <span className="fx-preview-path" title={path} data-testid="fs-preview-path">
           {path}
         </span>
-        <span className="fx-preview-range" data-testid="fs-preview-range" title={t("preview.range")}>
-          {page.range}
-          {page.range === "—" ? null : <> {t("preview.lines")}</>}
-          {page.total === undefined ? null : (
-            <span className="fx-preview-total">
-              {" / "}
-              {page.total} {t("preview.lines")}
-            </span>
-          )}
-        </span>
+        {binary ? null : (
+          <span className="fx-preview-range" data-testid="fs-preview-range" title={t("preview.range")}>
+            {page.range}
+            {page.range === "—" ? null : <> {t("preview.lines")}</>}
+            {page.total === undefined ? null : (
+              <span className="fx-preview-total">
+                {" / "}
+                {page.total} {t("preview.lines")}
+              </span>
+            )}
+          </span>
+        )}
         <div className="fx-preview-actions">
           {markdown ? (
             <button
@@ -304,24 +359,28 @@ export function PreviewPane({ sessionId, files, path, t }: PreviewPaneProps) {
               {mode === "reading" ? t("preview.source") : t("preview.reading")}
             </button>
           ) : null}
-          <button
-            type="button"
-            className="fx-pbtn"
-            disabled={!ready || busy || snapshot.offset <= 1}
-            onClick={() => void loader?.prev()}
-            data-testid="fs-preview-prev"
-          >
-            {t("preview.prev")}
-          </button>
-          <button
-            type="button"
-            className="fx-pbtn"
-            disabled={!ready || busy || snapshot.eof}
-            onClick={() => void loader?.next()}
-            data-testid="fs-preview-next"
-          >
-            {t("preview.next")}
-          </button>
+          {binary ? null : (
+            <>
+              <button
+                type="button"
+                className="fx-pbtn"
+                disabled={!textReady || busy || snapshot.offset <= 1}
+                onClick={() => void loader?.prev()}
+                data-testid="fs-preview-prev"
+              >
+                {t("preview.prev")}
+              </button>
+              <button
+                type="button"
+                className="fx-pbtn"
+                disabled={!textReady || busy || snapshot.eof}
+                onClick={() => void loader?.next()}
+                data-testid="fs-preview-next"
+              >
+                {t("preview.next")}
+              </button>
+            </>
+          )}
           <button type="button" className="fx-pbtn" onClick={copyPath} data-testid="fs-preview-copy">
             {copied ? t("preview.copied") : t("preview.copyPath")}
           </button>

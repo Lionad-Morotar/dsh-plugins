@@ -1,6 +1,6 @@
 # dsh-fs-explorer
 
-工作台的文件面板：左边是懒加载的工作区目录树（带 Git 状态着色），右边是多标签的按页预览。它以 `conversation.view` 的「文件」标签挂进会话视图行，标签名跟随宿主语言（中文「文件」、英文「Files」）。
+工作台的文件面板：左边是懒加载的工作区目录树（带 Git 状态着色），右边是多标签预览——文本按页读，3D 模型、CAD 图纸与高位深图片交给对应家族的渲染器。它以 `conversation.view` 的「文件」标签挂进会话视图行，标签名跟随宿主语言（中文「文件」、英文「Files」）。
 
 ## 安装
 
@@ -33,11 +33,13 @@
 - 截断提示：宿主返回 `truncated` 时，目录下多一行"目录过大，仅显示前 N 项"。`workspaceFiles.list` 没有分页参数，所以这里只陈述事实，不画一个点了没用的"继续加载"。
 - 状态着色：从 Git 面板的 `remote.gitExplorer.snapshot` 里取原始 `git status --porcelain=v2 -z`，折叠成六类（修改 / 新增 / 删除 / 重命名 / 未跟踪 / 冲突），文件行给字母徽标，目录行给变更计数，头部给总数。Git 面板没装时降级为无色，不是错误态。
 - 按页预览：每次只读一页、默认最多 200 行，带当前页范围、上一页 / 下一页、复制路径与重试。源码页由 CodeMirror 6 只读高亮，Markdown 默认进阅读态、可切回源码；两者都在 `client.preview.js` 这个懒 chunk 里，选中文件时才取，且只取一次。
+- 二进制家族：后缀落在共享格式目录里的文件不走分页，整份字节交给对应家族的渲染器——`scene3d`（glb / gltf / obj / stl / 3mf）、`raster`（tif / tiff / avif）、`cad`（dxf）。每个家族一个懒 chunk（`client.scene3d.js` / `client.raster.js` / `client.cad.js`），只在打开该家族文件时才取；入口 bundle 里没有任何引擎符号，构建会断言这一点以及每个 chunk 的 gzip 体积上限。渲染器来自 `dsh-preview-viewers`，本包只做 props 适配（见 `src/client/chunks/`）。
 - Markdown 安全：首帧用零依赖的元素树渲染器画出标题、列表、引用、代码块与链接，chunk 到达后升级为 `react-markdown` + `remark-gfm`。两条路径都不拼 HTML 字符串，没有 `dangerouslySetInnerHTML`，文档里的原始 HTML 只是文本。
-- 多面板：一个会话一套标签栈。打开去重、新标签插在当前标签之后、关闭后回落到相邻标签；切去 Git 或聊天再回来，标签还在。
+- 多面板：一个会话一套标签栈。打开去重、新标签插在当前标签之后、关闭后回落到相邻标签；切去 Git 或聊天再回来，标签还在。未激活的面板不卸载，只隐藏并给渲染器 `visible=false`：`scene3d` 跳过每帧绘制（rAF 链不断，切回来不重建上下文），`cad` 本就没有每帧循环，切回时补一帧重绘。
 - 错误态：未选会话、文件服务不可用、工作区为空、目录读失败、预览的删除 / 无权限 / 符号链接 / 非文本 / 超上限各有文案与恢复动作。
-- 跨面板跳转：接受 `openView("fs-explorer", "path:<工作区相对路径>:<行号>")`，Git 变更面板点文件即按这个格式跳过来并打开对应行。
-- 焦点有两个来源：宿主经 `openView` 交下来的 `viewRequest`，以及 `workbench.viewFocus` 队列。后者给"宿主没交出 focus 能力"的调用方（如命令面板 `⌘↵`）用：视图挂载时取走等待的请求，挂载后收到新请求也立刻消费，所以懒挂载不会丢目标。
+- 跨面板跳转：接受 `openView("fs-explorer", "path:<工作区相对路径>:<行号>")`，Git 变更面板点文件即按这个格式跳过来并打开对应行。工作区外的文件走 `abs:<绝对路径>:<行号>`：绝对路径不剥前导 `/`，树里没有对应行所以跳过 reveal，读取仍交给 `workspaceFiles.read(sessionId, 绝对路径)`（宿主明确接受绝对路径）。
+- 地址桥：宿主原生打开面（聊天里的文件链接、工具行的 `file:line`、`@` 引用、present 卡片）都经 `ctx.sidebarRight.openResource(address)` 落到右侧栏 tab。本包在 `sidebarRightTabs` 注册一个「转发 tab」（`dsh-fs-explorer:bridge`，`dsh-resource://file/**`，extension 档），正文把 `dsh-resource://file/session/<sid>/<path>` 转成上面的 focus、切到本视图并自关，所以这些入口最终落在同一套树、标签栈与家族渲染器里。认领范围是允许清单：共享格式目录的家族后缀 + 文本后缀 + 无后缀白名单（Makefile / Dockerfile / LICENSE / README / CHANGELOG），宿主更强的后缀（pdf、Office、图片、csv 等）即使出现在清单里也不认领，留给内置预览。会话不一致时保留 tab 并打一条诊断，绝不把别的会话的文件开进当前视图。
+- 焦点有两个来源：宿主经 `openView` 交下来的 `viewRequest`，以及 `workbench.viewFocus` 队列。后者给"宿主没交出 focus 能力"的调用方（如命令面板 `⌘↵` 与地址桥）用：视图挂载时取走等待的请求，挂载后收到新请求也立刻消费，所以懒挂载不会丢目标。地址桥先入队再切换：宿主回退到自己的视图切换器时不携带 focus，队列是那条路上唯一的通道。
 
 ## 快捷键
 
@@ -54,9 +56,11 @@
 
 - 目录列表由宿主按 `maxEntries` 截断，DSH 默认 2000 项（profile 可调，调到 4000 就按 4000 截断）。面板显示宿主回报的实际截断数，不写死数字，也不提供"继续加载"。
 - 标签栈没有淘汰、也没有上限：打开过的文件会一直留在标签栏，直到手动关闭或换会话。
-- 预览只读文本。二进制、非 UTF-8、符号链接、超出单页字节上限、无权限、文件已删除都会落到对应错误态，不会尝试渲染。
-- 部署只挂了 `workspaceFiles.list` 而没有 `read` 时，树正常、预览显示"预览不可用"。
+- 文本按页读，家族文件整份读。家族文件超过宿主的 `maxFileBytes` 时按"超上限"失败，不会拿到半份字节去解码；不属于三个家族、又不是 UTF-8 文本的文件仍落到"不是文本文件"，符号链接、无权限、文件已删除同样落到对应错误态。
+- 部署只挂了 `workspaceFiles.list` 而没有 `read` 时，树正常、文本预览显示"预览不可用"；没有 `readBytes` 时家族文件显示同一句，文本预览不受影响。两者是各自独立的可选方法。
 - 状态着色依赖 `remote.gitExplorer`；没有它时整棵树无颜色、头部显示"无状态"，不影响浏览。
+- 每个打开的 3D / CAD 面板各持有一个 WebGL 上下文，隐藏只暂停绘制、不释放上下文。浏览器对同时存在的上下文有上限（常见约 16 个，超了丢最旧的），本包不做淘汰，所以同时开很多模型面板仍可能把更早的面板顶掉。
+- `workbench.viewFocus` 队列按视图 id 存一条请求，没有会话维度：请求入队后、目标视图挂载前若切换了会话，这条 focus 会被新会话的视图取走。目前只在切视图与切会话几乎同时发生时可见。
 - 需要一个已选择的会话；没有会话时显示"请先选择会话"。
 
 ## 验证
@@ -70,8 +74,10 @@ node .nsl/chain/accept-s6-fs-preview.mjs  # 分页 offset/limit、Markdown 无 r
 node .nsl/chain/accept-s7-fs-panels.mjs   # 面板状态机、键位表、Esc 交还焦点、viewRequest
 ```
 
-单包：`pnpm --filter dsh-fs-explorer test`（78 用例）、`typecheck`、`build`。
+单包：`pnpm --filter dsh-fs-explorer test`（143 用例）、`typecheck`、`build`。
+
+`lib/` 是提交进仓库的构建产物，profile 安装态不跑构建，所以改源码后必须重跑 `build`。陈旧的 `lib/` 会让插件在宿主里激活失败，而单插件激活失败会连带整个 Web 端启动中断。`pnpm --filter dsh-fs-explorer check:lib` 把这件事变成可自动判定的门（构建到内存后与磁盘 `lib/` 逐文件比对字节，不一致即失败，且不会删除 `lib/`），`test` 已经前置调用它。
 
 ## 结构
 
-`model.ts`（树、排序、图标、行窗口）、`panels.ts`（标签栈与会话注册表）、`preview.ts`（分页与失败归类）、`status.ts`（porcelain 解析）都是无 DOM 的纯逻辑，判据脚本直接在 Node 里驱动；`view.tsx` 只做装配与宿主 seam；`wire.ts` 把直接服务与 Remote 载体两种数据面收窄成同一张脸。
+`model.ts`（树、排序、图标、行窗口）、`panels.ts`（标签栈与会话注册表）、`preview.ts`（分页、家族判定与失败归类）、`status.ts`（porcelain 解析）都是无 DOM 的纯逻辑，判据脚本直接在 Node 里驱动；`view.tsx` 只做装配与宿主 seam；`wire.ts` 把直接服务与 Remote 载体两种数据面收窄成同一张脸（分页的 `read` 与整份的 `readBytes`）；`preview-chunk.ts` 是两条懒路由的唯一名字表，`chunks/` 下的三个入口只做共享渲染器的 props 适配。

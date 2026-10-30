@@ -39,10 +39,15 @@ import {
 } from "three";
 
 /**
- * Draco decoder sources, inlined at build time (see scripts/build.mjs).
+ * Draco decoder sources, inlined at build time by the consuming package.
+ *
+ * The payloads reach the bundle through `virtual:draco-assets`, which the
+ * consumer's build serves from build/draco-plugin.mjs: the decoder has to come
+ * from the same three version that build bundles, so the inlining cannot live
+ * here where it would pin whichever three this package resolves.
  *
  * Only the wasm pair ships. The pure-JS decoder is another 512 KiB of text for
- * hosts that predate WebAssembly, and every target this plugin runs in (the
+ * hosts that predate WebAssembly, and every target these surfaces run in (the
  * Electron desktop app and current browsers) has it; a host without it gets the
  * named unsupported error instead of a silent heavy fallback download.
  */
@@ -65,6 +70,14 @@ export interface SceneHandle {
   resetView(): void;
   /** Toggle wireframe on every mesh in the content root. */
   setWireframe(on: boolean): void;
+  /**
+   * Pause or resume drawing without tearing the viewport down.
+   *
+   * A host that hides a mounted panel (a background tab, an inactive column)
+   * keeps its canvas in the DOM, so the alternative to this flag is a renderer
+   * that draws an invisible scene every frame for as long as the panel exists.
+   */
+  setVisible(on: boolean): void;
   /** Release GPU resources, listeners and the WebGL context. */
   dispose(): void;
 }
@@ -90,7 +103,7 @@ export function createDracoLoader(sources: DecoderSources): DRACOLoader {
     if (url.endsWith("draco_wasm_wrapper.js"))
       return Promise.resolve(sources.wasmWrapper);
     return Promise.reject(
-      new Error("dsh-preview-more: unexpected Draco library " + url),
+      new Error("dsh-preview-viewers: unexpected Draco library " + url),
     );
   };
   // three keeps this seam private, so overwriting it is a bet on a name that a
@@ -100,7 +113,7 @@ export function createDracoLoader(sources: DecoderSources): DRACOLoader {
   const seam = loader as unknown as { _loadLibrary?: unknown };
   if (typeof seam._loadLibrary !== "function") {
     throw new Error(
-      "dsh-preview-more: this three version has no DRACOLoader._loadLibrary, so the embedded decoder cannot be installed",
+      "dsh-preview-viewers: this three version has no DRACOLoader._loadLibrary, so the embedded decoder cannot be installed",
     );
   }
   seam._loadLibrary = loadLibrary;
@@ -317,7 +330,7 @@ export function loaderFor(
   }
   return {
     load: async () => {
-      throw new Error("dsh-preview-more: no mesh loader for " + path);
+      throw new Error("dsh-preview-viewers: no mesh loader for " + path);
     },
   };
 }
@@ -359,7 +372,7 @@ export function rootOf(parsed: unknown): Group {
       return holder;
     }
   }
-  throw new Error("dsh-preview-more: the loader returned no scene");
+  throw new Error("dsh-preview-viewers: the loader returned no scene");
 }
 
 /**
@@ -422,6 +435,7 @@ async function readSiblings(
  * @param path - decoded file path, used only to pick the loader.
  * @param sources - embedded Draco decoder payloads.
  * @param readSibling - reads a file referenced by a .gltf, relative to the model.
+ * @param options - `visible` starts the loop paused for a panel that mounts hidden.
  * @returns the live handle plus the measured facts.
  */
 export async function mountScene(
@@ -430,6 +444,7 @@ export async function mountScene(
   path: string,
   sources: DecoderSources,
   readSibling?: (relative: string) => Promise<Uint8Array>,
+  options?: { readonly visible?: boolean },
 ): Promise<{ handle: SceneHandle; facts: SceneFacts }> {
   const width = Math.max(container.clientWidth, 1);
   const height = Math.max(container.clientHeight, 1);
@@ -491,8 +506,19 @@ export async function mountScene(
     resetView();
 
     let frame = 0;
+    /**
+     * Whether the loop should draw this frame.
+     *
+     * A hidden panel is still in the DOM — the host hides it with `hidden`, it
+     * does not unmount it — so stopping the rAF chain would mean rebuilding the
+     * viewport (and its GL context) on every tab switch. The chain keeps
+     * running; what the flag skips is the per-frame draw, which is the part
+     * that costs GPU time for a scene nobody can see.
+     */
+    let visible = options?.visible ?? true;
     const renderFrame = (): void => {
       frame = requestAnimationFrame(renderFrame);
+      if (!visible) return;
       controls.update();
       renderer.render(scene, camera);
     };
@@ -515,6 +541,9 @@ export async function mountScene(
           const material = object.material;
           if (material instanceof MeshStandardMaterial) material.wireframe = on;
         });
+      },
+      setVisible(on: boolean): void {
+        visible = on;
       },
       dispose(): void {
         cancelAnimationFrame(frame);

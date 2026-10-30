@@ -7,7 +7,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { insertStyles } from "../src/client/styles.ts";
+import { insertStyles } from "../src/styles.ts";
 
 /**
  * The stylesheet text a document received.

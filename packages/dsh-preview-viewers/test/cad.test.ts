@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { mountDrawing, type DxfViewerConstructor, type DxfViewerFace } from "../src/client/cad.ts";
+import { mountDrawing, type DxfViewerConstructor, type DxfViewerFace } from "../src/cad.ts";
 
 /** Everything the fake viewer was asked to do, in order. */
 type Call =
   | { readonly kind: "load"; readonly url: string }
   | { readonly kind: "fit"; readonly args: readonly number[] }
+  | { readonly kind: "render" }
   | { readonly kind: "destroy" };
 
 /**
@@ -60,6 +61,9 @@ function fakeViewer(
     }
     Destroy(): void {
       calls.push({ kind: "destroy" });
+    }
+    Render(): void {
+      calls.push({ kind: "render" });
     }
     GetCanvas(): HTMLCanvasElement {
       return { parentElement: null } as unknown as HTMLCanvasElement;
@@ -123,5 +127,30 @@ describe("mountDrawing", () => {
     const handle = await mountDrawing({} as HTMLElement, new Uint8Array([1]), fakeViewer(calls));
     handle.dispose();
     expect(calls.filter((call) => call.kind === "destroy")).toHaveLength(1);
+  });
+
+  it("repaints once when a hidden drawing becomes visible again", async () => {
+    stubBlobUrls();
+    const calls: Call[] = [];
+    const handle = await mountDrawing({} as HTMLElement, new Uint8Array([1]), fakeViewer(calls));
+
+    // This engine draws on demand rather than in a rAF loop, so hiding costs no
+    // frames and the flag's only job is the repaint on the way back: a resize
+    // that landed while the panel was hidden must not leave a stale canvas.
+    handle.setVisible(false);
+    expect(calls.some((call) => call.kind === "render")).toBe(false);
+    handle.setVisible(true);
+    expect(calls.filter((call) => call.kind === "render")).toHaveLength(1);
+    // Already visible: a second report is not a transition and draws nothing.
+    handle.setVisible(true);
+    expect(calls.filter((call) => call.kind === "render")).toHaveLength(1);
+  });
+
+  it("repaints when a drawing mounted hidden is shown", async () => {
+    stubBlobUrls();
+    const calls: Call[] = [];
+    const handle = await mountDrawing({} as HTMLElement, new Uint8Array([1]), fakeViewer(calls), { visible: false });
+    handle.setVisible(true);
+    expect(calls.filter((call) => call.kind === "render")).toHaveLength(1);
   });
 });

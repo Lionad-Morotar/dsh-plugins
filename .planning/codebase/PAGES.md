@@ -2,15 +2,15 @@
 
 <!-- refreshed: 261030 -->
 
-数据来源：本仓没有前端路由体系（web 客户端半边以 ModuleLoader 工厂挂载，不是页面路由），页面族不适用；命令族取自根 `package.json` 的 scripts 与十六个包各自的 scripts，静态提取。另附两张本仓真正对外的入口表：插件挂载入口（profile 里的 Loader row 由哪个 patch 文件提供、带哪份清单）与客户端半边入口（`src/client/entry.ts` 对应哪个产物、注册在哪个 slot）。市场分发产物（`market/`）单列一节，它是本仓对外承诺安装形态的那一面。
+数据来源：本仓没有前端路由体系（web 客户端半边以 ModuleLoader 工厂挂载，不是页面路由），页面族不适用；命令族取自根 `package.json` 的 scripts 与十七个包各自的 scripts，静态提取。另附两张本仓真正对外的入口表：插件挂载入口（profile 里的 Loader row 由哪个 patch 文件提供、带哪份清单）与客户端半边入口（`src/client/entry.ts` 对应哪个产物、注册在哪个 slot，文件面板的地址桥另列两条登记）。市场分发产物（`market/`）单列一节，它是本仓对外承诺安装形态的那一面。
 
 ## 命令总览
 
 | 命令 | 实现文件 | 子命令数 | 说明 |
 | ---- | -------- | -------- | ---- |
-| `pnpm build` | `pnpm -r build` | 16 | 递归十六个包：十五个包出 `lib/`，`ascii-rest-scenes` 出 `src/catalog.generated.ts` |
-| `pnpm test` | `pnpm -r test` | 16 | 递归十六个包的 `vitest run`，实测 130 文件 1329 用例 |
-| `pnpm typecheck` | `pnpm -r typecheck` | 16 | 递归 `tsc -p tsconfig.json`，`noEmit` |
+| `pnpm build` | `pnpm -r build` | 16 | 递归十七个包，其中十六个有 `build` 脚本：十五个出 `lib/`，`ascii-rest-scenes` 出 `src/catalog.generated.ts`；`dsh-preview-viewers` 只有 test 与 typecheck |
+| `pnpm test` | `pnpm -r test` | 17 | 递归十七个包的 `vitest run`，实测 135 个测试文件 |
+| `pnpm typecheck` | `pnpm -r typecheck` | 17 | 递归十七个包的 `tsc -p tsconfig.json`，`noEmit` |
 | `pnpm check:market` | `scripts/check-market-manifest.mjs` | 1 | 断言可投稿包面向市场索引的暴露面（宿主真正读取的字段），并断言七个自用包保持 `private: true` |
 | `pnpm build:market` | `scripts/build-market-index.mjs` | 1 | 从包自身元数据派生 `market/index.json`（format 1，git source） |
 | `pnpm check:market-index` | `scripts/build-market-index.mjs --check` | 1 | 只校验不写盘，输出每个包的安装 spec |
@@ -32,14 +32,15 @@
 
 | 包 | 脚本 | 命令 | 说明 |
 | -- | ---- | ---- | ---- |
-| 十六个包 | `build` | `node scripts/build.mjs`（`ascii-rest-scenes` 为 `node scripts/generate-catalog.mjs`） | 唯一的产物生成入口，`lib/` 只允许被它写 |
-| 十六个包 | `test` | `vitest run` | 单包测试 |
-| 十六个包 | `typecheck` | `tsc -p tsconfig.json` | 单包类型检查 |
+| 除 `dsh-preview-viewers` 外的十六个包 | `build` | `node scripts/build.mjs`（`ascii-rest-scenes` 为 `node scripts/generate-catalog.mjs`） | 唯一的产物生成入口，`lib/` 只允许被它写 |
+| 十七个包 | `test` | `vitest run` | 单包测试；`dsh-preview-more` 与 `dsh-fs-explorer` 另带 `build.mjs --check` 前置 |
+| 十七个包 | `typecheck` | `tsc -p tsconfig.json` | 单包类型检查 |
+| `dsh-preview-more`、`dsh-fs-explorer` | `check:lib` | `node scripts/build.mjs --check` | 构建到内存后与磁盘 `lib/` 逐文件比对，不一致即失败（不删 `lib/`）；两者的 `test` 已前置调用 |
 | `ascii-rest-scenes` | `build:catalog` | `node scripts/generate-catalog.mjs` | 与 `build` 同一条命令，语义化别名：升级上游 ascii.rest commit 后重跑它 |
 
 ## 插件挂载入口
 
-本仓的对外入口不是路由也不是子命令，而是 profile 里的一条 Loader row：`cordis.patch.yml` 以 `insert` 方式注入，`id` 为短名、`name` 为包名。`ascii-rest-scenes` 没有被依赖以外的入口（`exports` 指向源码，被皮肤以 `workspace:*` 消费，没有 Loader row、没有产物）。
+本仓的对外入口不是路由也不是子命令，而是 profile 里的一条 Loader row：`cordis.patch.yml` 以 `insert` 方式注入，`id` 为短名、`name` 为包名。`ascii-rest-scenes` 没有被依赖以外的入口（`exports` 指向源码，被皮肤以 `workspace:*` 消费，没有 Loader row、没有产物）。`dsh-preview-viewers` 同样没有 Loader row：源码包，被 `dsh-preview-more` 与 `dsh-fs-explorer` 以 `workspace:*` 消费，产物落在两个消费者的 `lib/` 里。
 
 | 包 | Loader row `id` | `name` | patch 文件 | 附加清单 |
 | -- | ---------------- | ------ | ---------- | -------- |
@@ -76,9 +77,18 @@
 | `dsh-session-interruption` | `src/client/entry.ts` | `lib/client.js` | `sidebar.session.row.leading` 红点、`sidebar.session.row.hover` 中断说明与 `sidebar.workspaces.session.menu.item` 忽略项三座共享一个读数面；`inject = ["slots", "locale", "sessions"]`，投影值走列表快照 `projectionsBySession` 并按 `running` 排除进行中会话 |
 | `dsh-command-panel` | `src/client/entry.ts` → `createRuntime` | `lib/client.js` | `slots.register({ name: "shell.overlay", id: "command-panel.palette", order: 50 })` 承载面板（组件内 portal 到 body），另在 `conversation.input.overlay` 挂 `id: command-panel.bridge` 的隐形会话桥以取当前会话与 `inputActions`；`inject = ["slots", "shortcuts", "sessions", "workspaces", "uiWorkspace", "conversation", "remote", "remote.fileReferences", "remote.commands", "locale"]`（Remote 命名空间是独立的点号服务） |
 | `dsh-workbench-core` | `src/client/entry.ts` | `lib/client.js` | `provide("workbench")` 后再注册 `slots.register({ name: "settings.section", id: "workbench", order: 60 })` 与 `conversation.session.header.views.actions`（id `workbench.return-to-chat`）；`inject = ["slots", "locale", "shortcuts"]` |
-| `dsh-fs-explorer` | `src/client/entry.ts` | `lib/client.js` + `lib/client.preview.js` | `slots.register({ name: "conversation.view", id: "fs-explorer", order: 100 })`；`inject = ["slots", "locale", "workbench", "remote"]`；CodeMirror 与 Markdown 渲染器在懒 chunk |
+| `dsh-fs-explorer` | `src/client/entry.ts` | `lib/client.js` + `lib/client.preview.js` + 三个家族 chunk（`lib/client.scene3d.js` / `lib/client.raster.js` / `lib/client.cad.js`） | `slots.register({ name: "conversation.view", id: "fs-explorer", order: 100 })`；另有可选地址桥（见下）；`inject = ["slots", "locale", "workbench", "remote"]`；CodeMirror 与 Markdown 渲染器在懒 chunk，二进制家族渲染器按家族懒加载 |
 | `dsh-git-explorer` | `src/client/entry.ts` | `lib/client.js`（宿主半 `lib/index.js`） | `slots.register({ name: "conversation.view", id: "git-explorer", order: 110 })`；`inject` 同文件面板，数据走 `remote.gitExplorer` 的 snapshot / query / commit |
 | `dsh-term-dock` | `src/client/entry.ts` | `lib/client.js` + `lib/client.terminal.js` | `slots.register({ name: "shell.bottom", id: "term-dock" })`，仅在 core 的 `dockVisible` 为真时注册；`inject = ["slots", "locale", "workbench"]`；xterm 在懒 chunk |
+
+### 右栏地址桥（`dsh-fs-explorer`，可选）
+
+宿主原生打开面（聊天里的文件链接、工具行的 `file:line`、`@` 引用、present 卡片）都经 `ctx.sidebarRight.openResource(address)` 落到右侧栏 tab。本包注册一个转发 tab 认领会话文件地址，把地址转成工作台视图的 focus；切到视图后自关，切换失败或会话不一致时保留 tab 并打一条诊断，不把别的会话的文件开进当前视图。没有右侧栏的宿主不注册，文件面板本身不受影响。
+
+| 入口 | 标识 | 说明 |
+| ---- | ---- | ---- |
+| slot `sidebar.right.pane.tab` | key `dsh-fs-explorer:bridge` | 转发 tab 的正文注册位；宿主经 `useTabInfo` 交出当前 tab 与地址，正文在挂载与关闭之间不画东西 |
+| 类型注册表 `sidebarRightTabs` | id `dsh-fs-explorer:bridge`，kind `fs-explorer-bridge`，patterns `dsh-resource://file/**`，priority `extension` | `canOpen` 走允许清单（共享格式目录的家族后缀 + 文本后缀 + 无后缀白名单），宿主更强的后缀不认领；命中后按 `abs:<绝对路径>:<行号>`（相对路径用 `path:`，行号缺省 1）交给 `workbench` |
 
 ## 市场分发产物
 

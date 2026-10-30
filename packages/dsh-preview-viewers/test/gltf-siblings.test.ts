@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeUriPath, externalUris, gltfDocument } from "../src/client/scene3d.ts";
+import { decodeUriPath, externalUris, gltfDocument } from "../src/scene3d.ts";
 
 /**
  * Build the bytes of a glTF document.

@@ -7,6 +7,8 @@
  * lets the acceptance probe drive the built bundle in plain Node and compare
  * `buildTree` against the real directory listing.
  */
+import { baseName } from "dsh-preview-viewers/address.ts";
+
 import { LISTING_TRUNCATED_LABEL } from "../shared.ts";
 import { indexDirectoryChanges, statusOf, type FsChangeStatus, type StatusMap, type StatusTone } from "./status.ts";
 
@@ -116,10 +118,19 @@ const CONFIG_NAMES: ReadonlySet<string> = new Set([
   "go.mod", "go.sum", "requirements.txt", "pyproject.toml", "gemfile", "rakefile",
 ]);
 
+/**
+ * The suffix of one basename, lowercased, without its dot.
+ *
+ * The basename is taken first because the same helper serves tree rows (which
+ * pass a name) and panel tabs (which pass a path), and a dotted directory such
+ * as `v1.2` would otherwise read as the file's extension.
+ * @param name - basename or path.
+ * @returns the suffix, or an empty string for a name without one.
+ */
 function extensionOf(name: string): string {
-  const lower = name.toLowerCase();
-  const dot = lower.lastIndexOf(".");
-  return dot <= 0 ? "" : lower.slice(dot + 1);
+  const base = baseName(name.toLowerCase());
+  const dot = base.lastIndexOf(".");
+  return dot <= 0 ? "" : base.slice(dot + 1);
 }
 
 /**
@@ -130,10 +141,10 @@ function extensionOf(name: string): string {
  */
 export function iconFor(name: string, kind: TreeKind = "file"): IconKind {
   if (kind === "directory") return "folder";
-  const lower = name.toLowerCase();
-  if (CONFIG_NAMES.has(lower) || lower.startsWith(".env")) return "config";
-  if (lower === "readme" || lower === "changelog" || lower === "license") return "markdown";
-  const extension = extensionOf(lower);
+  const base = baseName(name.toLowerCase());
+  if (CONFIG_NAMES.has(base) || base.startsWith(".env")) return "config";
+  if (base === "readme" || base === "changelog" || base === "license") return "markdown";
+  const extension = extensionOf(base);
   if (extension === "") return "file";
   if (CODE_EXTENSIONS.has(extension)) return "code";
   if (MARKDOWN_EXTENSIONS.has(extension)) return "markdown";
@@ -202,14 +213,14 @@ const EXTENSION_BADGES: Readonly<Record<string, string>> = {
  * @returns a short uppercase label, never empty.
  */
 export function badgeFor(name: string): string {
-  const lower = name.toLowerCase();
-  const special = SPECIAL_BADGES[lower];
+  const base = baseName(name.toLowerCase());
+  const special = SPECIAL_BADGES[base];
   if (special !== undefined) return special;
-  const extension = extensionOf(lower);
+  const extension = extensionOf(base);
   const badge = EXTENSION_BADGES[extension];
   if (badge !== undefined) return badge;
   if (extension !== "") return extension.slice(0, 3).toUpperCase();
-  const letters = name.replace(/[^A-Za-z0-9]/gu, "");
+  const letters = base.replace(/[^A-Za-z0-9]/gu, "");
   return (letters.slice(0, 2) || "?").toUpperCase();
 }
 
@@ -294,6 +305,19 @@ export function listingPath(path: string): string {
   return path === "" ? "." : path;
 }
 
+/**
+ * Whether a path names an absolute filesystem location.
+ *
+ * The host accepts three spellings, so all three are absolute here: POSIX, a
+ * Windows drive and a UNC share. Everything else is resolved against the
+ * session's workspace root.
+ * @param path - a path or a bare name.
+ * @returns true for a path that does not need a workspace root.
+ */
+export function isAbsolutePath(path: string): boolean {
+  return path.startsWith("/") || /^[A-Za-z]:[/\\]/u.test(path) || path.startsWith("\\\\");
+}
+
 /** Join a parent workspace path and a child basename with the host's separator. */
 export function joinPath(parent: string, name: string): string {
   const clean = parent.replace(/\/+$/u, "");
@@ -304,26 +328,53 @@ export function joinPath(parent: string, name: string): string {
 export interface FocusTarget {
   readonly path: string;
   readonly line: number;
+  /**
+   * Whether {@link path} is a filesystem path rather than a workspace one.
+   *
+   * An absolute target skips the tree reveal (no row can match a path outside
+   * the workspace) and is handed to the file service unchanged; a relative one
+   * resolves against the session's workspace root as it always has.
+   */
+  readonly absolute: boolean;
+}
+
+/** Parse the optional `:<line>` suffix; a missing or bad value reads as line 1. */
+function lineOf(raw: string | undefined): number {
+  return raw === undefined ? 1 : Math.max(1, Number.parseInt(raw, 10));
 }
 
 /**
- * Parse the focus string the Git panel hands to this view.
+ * Parse the focus string a caller hands this view.
  *
- * The path is workspace-relative and may contain dots and slashes; the line
- * suffix is optional. Backslashes are normalized because the same jump is
- * produced on Windows hosts.
+ * Two spellings travel. `path:<workspace path>[:<line>]` comes from the Git
+ * panel and the command palette and stays relative to the session's workspace
+ * root. `abs:<filesystem path>[:<line>]` comes from the address bridge, which
+ * forwards files that may sit outside that root — its leading `/` is the
+ * difference between `/Users/x/a.ts` and a workspace-relative `Users/x/a.ts`,
+ * so unlike `path:` it must survive.
+ *
+ * The line suffix is optional in both. Backslashes are normalized because the
+ * same jump is produced on Windows hosts.
  * @param focus - the raw focus string, or undefined when the tab was opened directly.
  * @returns the normalized target, or undefined when the focus is not a path.
  */
 export function parseFocus(focus: string | undefined): FocusTarget | undefined {
   if (typeof focus !== "string") return undefined;
-  const match = /^path:(.+?)(?::(\d+))?$/u.exec(focus.trim());
+  const trimmed = focus.trim();
+
+  const absoluteMatch = /^abs:(.+?)(?::(\d+))?$/u.exec(trimmed);
+  if (absoluteMatch !== null) {
+    const path = (absoluteMatch[1] ?? "").replace(/\\/gu, "/").replace(/^(?:\.\/)+/u, "");
+    if (path === "") return undefined;
+    return { path, line: lineOf(absoluteMatch[2]), absolute: true };
+  }
+
+  const match = /^path:(.+?)(?::(\d+))?$/u.exec(trimmed);
   if (match === null) return undefined;
   const raw = match[1] ?? "";
   const path = raw.replace(/\\/gu, "/").replace(/^\.\//u, "").replace(/^\/+/u, "");
   if (path === "") return undefined;
-  const line = match[2] === undefined ? 1 : Math.max(1, Number.parseInt(match[2], 10));
-  return { path, line };
+  return { path, line: lineOf(match[2]), absolute: false };
 }
 
 /** One loaded directory level as the view stores it. */

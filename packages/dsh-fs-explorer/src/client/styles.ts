@@ -564,6 +564,10 @@ export const FS_STYLES = `
 .fx-code-host { height: 100%; min-height: 0; }
 .fx-code-host .cm-editor { height: 100%; }
 .fx-code-host .cm-editor .cm-line { padding-left: 4px; }
+/* The family renderers size themselves against a parent with a definite height,
+   and their own stylesheet (claimed by the chunk) only gives the surface
+   height: 100% — so this box is what turns the preview body into that height. */
+.fx-family { height: 100%; min-height: 0; display: flex; flex-direction: column; }
 .fx-pre {
   margin: 0;
   height: 100%;

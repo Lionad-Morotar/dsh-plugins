@@ -1,6 +1,36 @@
 import { describe, expect, it } from "vitest";
 
-import { dictionaries, formatMessage } from "../src/client/locale.ts";
+import { LOCALE_NAMESPACE, dictionaries } from "../src/client/locale.ts";
+
+/**
+ * The keys the shared surfaces ask their translator for.
+ *
+ * Kept here rather than in the shared package: the surfaces call `t("…")` with
+ * these ids, and the plugin that registers the dictionary is the party that has
+ * to keep every one of them translated. A surface that grows a new message
+ * therefore fails this test instead of rendering a raw key in the panel.
+ */
+const SURFACE_KEYS = [
+  "scene3d.title",
+  "raster.title",
+  "cad.title",
+  "state.loading",
+  "state.decoding",
+  "state.failed",
+  "state.retry",
+  "state.unsupported",
+  "raster.noPages",
+  "raster.pageMissing",
+  "raster.emptyPage",
+  "scene3d.reset",
+  "scene3d.wireframe",
+  "scene3d.facts",
+  "raster.page",
+  "raster.previous",
+  "raster.next",
+  "cad.fit",
+  "cad.layers",
+];
 
 describe("locale", () => {
   it("carries both languages for every key", () => {
@@ -13,8 +43,15 @@ describe("locale", () => {
     }
   });
 
-  it("fills placeholders and leaves unknown ones alone", () => {
-    expect(formatMessage("Page {current} of {total}", { current: 2, total: 5 })).toBe("Page 2 of 5");
-    expect(formatMessage("Page {current} of {missing}", { current: 2 })).toBe("Page 2 of {missing}");
+  it("translates every message the shared surfaces ask for", () => {
+    const { zh, en } = dictionaries();
+    for (const key of SURFACE_KEYS) {
+      expect(zh[key], "zh is missing " + key).toBeTypeOf("string");
+      expect(en[key], "en is missing " + key).toBeTypeOf("string");
+    }
+  });
+
+  it("registers under the namespace the slot body names", () => {
+    expect(LOCALE_NAMESPACE).toBe("previewMore");
   });
 });

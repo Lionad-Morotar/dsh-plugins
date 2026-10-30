@@ -1,0 +1,44 @@
+{
+  "name": "dsh-preview-viewers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared preview renderers for DeepSeek Harness file surfaces: format catalogue, 3D / CAD / raster engines and the React bodies that mount them",
+  "license": "MIT",
+  "author": "Lionad <1806234223@qq.com>",
+  "exports": {
+    "./formats.ts": "./src/formats.ts",
+    "./address.ts": "./src/address.ts",
+    "./locale.ts": "./src/locale.ts",
+    "./mount.ts": "./src/mount.ts",
+    "./styles.ts": "./src/styles.ts",
+    "./contracts.ts": "./src/contracts.ts",
+    "./scene3d.ts": "./src/scene3d.ts",
+    "./cad.ts": "./src/cad.ts",
+    "./raster.ts": "./src/raster.ts",
+    "./chunks/scene3d.tsx": "./src/chunks/scene3d.tsx",
+    "./chunks/cad.tsx": "./src/chunks/cad.tsx",
+    "./chunks/raster.tsx": "./src/chunks/raster.tsx",
+    "./build/draco-plugin.mjs": "./build/draco-plugin.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "build"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "dxf-viewer": "^1.0.50",
+    "three": "^0.186.1",
+    "utif": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^27.0.0",
+    "@types/three": "^0.186.0",
+    "jsdom": "^30.1.3",
+    "vitest": "^3.2.0"
+  }
+}

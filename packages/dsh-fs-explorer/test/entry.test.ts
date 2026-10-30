@@ -131,12 +131,45 @@ describe("fs explorer client entry", () => {
   it("builds a component for one mount", () => {
     const t = (key: string) => key;
     const view = createFsExplorerView({
-      workbench: { version: 1, currentSessionId: () => undefined },
+      workbench: {
+        version: 1,
+        currentSessionId: () => undefined,
+        openViewOrSwitch: () => ({ opened: false, focused: false }),
+      },
       version: 1,
       t,
       files: () => undefined,
       status: () => undefined,
     });
     expect(typeof view).toBe("function");
+  });
+
+  it("registers the address bridge when the host has a right sidebar", () => {
+    const registered: string[] = [];
+    const { ctx } = createContext();
+    const tabs = {
+      register(definition: { id: string }) {
+        registered.push(definition.id);
+        return () => {
+          registered.splice(registered.indexOf(definition.id), 1);
+        };
+      },
+    };
+    const withSidebar = { ...ctx, sidebarRightTabs: tabs, sidebarRight: { close: () => {} } };
+
+    const dispose = apply(withSidebar as never);
+
+    expect(registered).toEqual(["dsh-fs-explorer:bridge"]);
+    dispose();
+    expect(registered).toEqual([]);
+  });
+
+  it("keeps the view registered on a host without a right sidebar", () => {
+    const { ctx, calls } = createContext();
+    // No sidebarRightTabs, no sidebarRight and no `inject`: the bridge must not
+    // take the conversation view down with it.
+    const dispose = apply(ctx as never);
+    expect(calls.some(call => call.type === "slots.register" && call.name === "conversation.view")).toBe(true);
+    expect(() => dispose()).not.toThrow();
   });
 });

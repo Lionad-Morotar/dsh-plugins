@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { baseName, parseSessionFileAddress } from "../src/client/address.ts";
+import { baseName, parseSessionFileAddress } from "../src/address.ts";
 
 describe("session file address", () => {
   it("decodes the session and the absolute path", () => {

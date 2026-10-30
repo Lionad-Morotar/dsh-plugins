@@ -10,7 +10,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 
-import { loaderFor, measure, meshKindOf, rootOf } from "../src/client/scene3d.ts";
+import { loaderFor, measure, meshKindOf, rootOf } from "../src/scene3d.ts";
 import { triangleArchive } from "./support/three-mf.ts";
 
 /** Nothing here decodes Draco; the loader just needs a non-null seam. */

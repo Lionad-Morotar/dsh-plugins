@@ -213,10 +213,42 @@ describe("paths, focus and size", () => {
   });
 
   it("parses the Git panel's focus string", () => {
-    expect(parseFocus("path:src/client/view.tsx:42")).toEqual({ path: "src/client/view.tsx", line: 42 });
-    expect(parseFocus("path:./src\\main.ts")).toEqual({ path: "src/main.ts", line: 1 });
+    expect(parseFocus("path:src/client/view.tsx:42")).toEqual({
+      path: "src/client/view.tsx",
+      line: 42,
+      absolute: false,
+    });
+    expect(parseFocus("path:./src\\main.ts")).toEqual({ path: "src/main.ts", line: 1, absolute: false });
+    // `path:` keeps stripping the leading slash: it addresses the workspace.
+    expect(parseFocus("path:/src/main.ts")).toEqual({ path: "src/main.ts", line: 1, absolute: false });
     expect(parseFocus("")).toBeUndefined();
     expect(parseFocus("lines:1")).toBeUndefined();
+  });
+
+  it("parses an absolute focus without eating its leading slash", () => {
+    expect(parseFocus("abs:/Users/x/project/src/a.ts:12")).toEqual({
+      path: "/Users/x/project/src/a.ts",
+      line: 12,
+      absolute: true,
+    });
+    expect(parseFocus("abs:/Users/x/project/src/a.ts")).toEqual({
+      path: "/Users/x/project/src/a.ts",
+      line: 1,
+      absolute: true,
+    });
+    // A Windows absolute path travels with forward slashes after normalization.
+    expect(parseFocus("abs:C:\\work\\a.ts:3")).toEqual({ path: "C:/work/a.ts", line: 3, absolute: true });
+    expect(parseFocus("abs:")).toBeUndefined();
+    expect(parseFocus("  abs:/a/b.ts:9  ")).toEqual({ path: "/a/b.ts", line: 9, absolute: true });
+    // A line suffix of zero or a non-numeric tail is not a line.
+    expect(parseFocus("abs:/a/b.ts:0")).toEqual({ path: "/a/b.ts", line: 1, absolute: true });
+    expect(parseFocus("abs:/a/b.ts:x")).toEqual({ path: "/a/b.ts:x", line: 1, absolute: true });
+  });
+
+  it("reads the badge from the basename, not from a dotted directory", () => {
+    expect(badgeFor("notes.txt.d/a.ts")).toBe("TS");
+    expect(iconFor("v1.2/Makefile")).toBe("config");
+    expect(badgeFor("/Users/x/.config/Makefile")).toBe("MK");
   });
 
   it("formats sizes for the right-aligned column", () => {

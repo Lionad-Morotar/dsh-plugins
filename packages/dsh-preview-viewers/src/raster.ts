@@ -1,3 +1,4 @@
+/// <reference path="./utif.d.ts" />
 /**
  * TIFF decoding: bytes in, RGBA pages out.
  *
@@ -12,6 +13,11 @@
  * Page-at-a-time decoding would need the count to come from somewhere other than
  * a full pass, and it is the reason this module is a candidate for lazy loading
  * if large scans show up in practice.
+ *
+ * The reference directive is what makes the utif declaration travel with this
+ * module: utif ships no types, and this file is compiled both by this package's
+ * typecheck and by the typecheck of every consumer that re-exports a chunk
+ * importing it.
  */
 
 import type * as UtifModule from "utif";

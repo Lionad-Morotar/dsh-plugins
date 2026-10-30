@@ -39,6 +39,8 @@ import { VIEW_ID } from "../shared.ts";
 /** The pending-focus queue the core carries, as this view consumes it. */
 export interface ViewFocusFace {
   take(view: string): string | undefined;
+  /** Replace the pending request; the bridge and the command palette leave one here. */
+  request?(view: string, focus: string): void;
   subscribe(listener: () => void): () => void;
 }
 
@@ -46,6 +48,10 @@ export interface ViewFocusFace {
 export interface WorkbenchFace {
   readonly version: number;
   currentSessionId(): string | undefined;
+  /** Switch to a view and deliver `focus` when the host's seam allows it. */
+  openViewOrSwitch(id: string, focus?: string): { readonly opened: boolean; readonly focused: boolean };
+  /** The older seam, kept because a host may expose only this one. */
+  openView?(id: string, focus?: string): boolean;
   /** Absent on cores older than the focus hand-off. */
   readonly viewFocus?: ViewFocusFace;
 }
@@ -147,6 +153,21 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     const [reveal, setReveal] = useState<FocusTarget | undefined>(undefined);
     const controllers = useRef<Map<string, AbortController>>(new Map());
     const handledRequest = useRef<string | undefined>(undefined);
+
+    /**
+     * Open one focus request's target.
+     *
+     * A workspace-relative target also asks the tree to reveal it, which expands
+     * its ancestors on the way. An absolute one has no row to reveal — the tree
+     * only lists the workspace — so it opens the panel and nothing else.
+     */
+    const openRequest = useCallback(
+      (path: string, line: number, absolute: boolean): void => {
+        stack.open(path, line, absolute);
+        if (!absolute) setReveal({ path, line, absolute });
+      },
+      [stack],
+    );
 
     /**
      * Read one directory level and write it into the ledger.
@@ -251,24 +272,20 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       };
     }, [sessionId, statusFace, reloadToken]);
 
-    // The Git panel jumps with `path:<workspace path>:<line>`; consume that
-    // request once, open the panel, and remember the target until the root
-    // level can expand its ancestors. The host clears its request only after
-    // this callback, so a failed parse still completes the hand-over.
+    // The Git panel jumps with `path:<workspace path>:<line>` and the address
+    // bridge with `abs:<filesystem path>:<line>`; consume that request once,
+    // open the panel, and remember a relative target until the root level can
+    // expand its ancestors. The host clears its request only after this
+    // callback, so a failed parse still completes the hand-over.
     useEffect(() => {
       const request = props.viewRequest;
       if (request === null || request === undefined || request.view !== VIEW_ID) return;
       const key = `${request.view}:${request.focus}`;
       if (handledRequest.current === key) return;
       handledRequest.current = key;
-      consumeViewRequest(request.focus, {
-        open: (path, line) => {
-          stack.open(path, line);
-          setReveal({ path, line });
-        },
-      });
+      consumeViewRequest(request.focus, { open: openRequest });
       props.completeViewRequest?.();
-    }, [props.viewRequest, props.completeViewRequest, stack]);
+    }, [props.viewRequest, props.completeViewRequest, openRequest]);
 
     // A caller outside the View More menu cannot hand the host's focus to this
     // view, so it leaves one in the core's queue instead. Take whatever is
@@ -280,16 +297,11 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       const consume = (): void => {
         const focus = queue.take(VIEW_ID);
         if (focus === undefined) return;
-        consumeViewRequest(focus, {
-          open: (path, line) => {
-            stack.open(path, line);
-            setReveal({ path, line });
-          },
-        });
+        consumeViewRequest(focus, { open: openRequest });
       };
       consume();
       return queue.subscribe(consume);
-    }, [workbench, sessionId, stack]);
+    }, [workbench, sessionId, openRequest]);
 
     const rootLevel = levels.get("");
     const rootReady = rootLevel?.status === "ready";
@@ -316,7 +328,7 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
           if (!alive || !ok) return;
         }
         if (!alive) return;
-        stack.open(reveal.path, reveal.line);
+        stack.open(reveal.path, reveal.line, reveal.absolute);
         setReveal(undefined);
       };
       void run();
@@ -526,20 +538,26 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                   {panels.panels.length === 0 ? (
                     <PanelEmpty t={t} />
                   ) : (
-                    panels.panels.map((panel, index) => (
-                      <div
-                        key={panel.path}
-                        className="fx-panel"
-                        id={`fx-panel-${index}`}
-                        role="tabpanel"
-                        aria-labelledby={`fx-tab-${index}`}
-                        hidden={panel.path !== panels.active}
-                        data-line={panel.line}
-                        data-testid="fs-panel"
-                      >
-                        <PreviewPane sessionId={sessionId} files={files} path={panel.path} t={t} />
-                      </div>
-                    ))
+                    panels.panels.map((panel, index) => {
+                      // One pane stays mounted per open file; the inactive ones
+                      // are hidden, not unmounted, so the renderer needs to be
+                      // told which panel is actually on screen.
+                      const isActive = panel.path === panels.active;
+                      return (
+                        <div
+                          key={panel.path}
+                          className="fx-panel"
+                          id={`fx-panel-${index}`}
+                          role="tabpanel"
+                          aria-labelledby={`fx-tab-${index}`}
+                          hidden={!isActive}
+                          data-line={panel.line}
+                          data-testid="fs-panel"
+                        >
+                          <PreviewPane sessionId={sessionId} files={files} path={panel.path} t={t} visible={isActive} />
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </div>

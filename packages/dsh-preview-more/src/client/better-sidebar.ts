@@ -14,8 +14,9 @@
  */
 import type { ComponentType } from "react";
 
+import { extensionsOf, type PreviewFamily } from "dsh-preview-viewers/formats.ts";
+
 import type { ChunkModule, ReactFace, ReadFile } from "./entry.ts";
-import { extensionsOf, type PreviewFamily } from "./formats.ts";
 import type { InjectionScope, PreviewContext } from "./runtime.ts";
 
 /** What one better-sidebar viewer component is handed. */

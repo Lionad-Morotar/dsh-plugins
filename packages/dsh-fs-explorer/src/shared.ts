@@ -1,3 +1,5 @@
+import type { PreviewFamily } from "dsh-preview-viewers/formats.ts";
+
 /** Values both halves of the package agree on. */
 export const PACKAGE_NAME = "dsh-fs-explorer";
 
@@ -31,3 +33,17 @@ export const LISTING_TRUNCATED_LABEL = "目录过大，仅显示前";
  * fails the build when the entry no longer names the file it emitted.
  */
 export const PREVIEW_CHUNK = { chunk: "client.preview.js" } as const;
+
+/**
+ * One lazy chunk per binary renderer family.
+ *
+ * The family names come from the shared format catalogue, which is what makes
+ * the keys checkable: a family the catalogue gains without a chunk here is a
+ * compile error rather than a preview that loads a file nobody built. The file
+ * names repeat the same three-way agreement {@link PREVIEW_CHUNK} documents.
+ */
+export const FAMILY_CHUNKS = {
+  scene3d: "client.scene3d.js",
+  raster: "client.raster.js",
+  cad: "client.cad.js",
+} as const satisfies Record<PreviewFamily, string>;

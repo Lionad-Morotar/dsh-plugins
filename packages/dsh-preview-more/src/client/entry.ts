@@ -1,12 +1,14 @@
 /**
  * Browser-half entry: register the preview renderers, then get out of the way.
  *
- * Everything heavy lives in a lazy chunk. The entry is parsed on every page boot
- * whether or not a 3D model is ever opened, so it carries only registry
- * metadata, locale dictionaries and a lazy pointer at each chunk. A chunk is
- * fetched through the loader's `require.async`, which is the only way a plugin
- * may pull a sibling file: a chunk has no synchronous access to its siblings and
- * the entry has no other handle on the loader.
+ * Everything heavy lives in a lazy chunk, and the chunk sources live in
+ * `dsh-preview-viewers`: this entry only decides which families to register and
+ * how to reach them. The entry is parsed on every page boot whether or not a 3D
+ * model is ever opened, so it carries only registry metadata, locale
+ * dictionaries and a lazy pointer at each chunk. A chunk is fetched through the
+ * loader's `require.async`, which is the only way a plugin may pull a sibling
+ * file: a chunk has no synchronous access to its siblings and the entry has no
+ * other handle on the loader.
  *
  * Registration has two faces because the host has two:
  *
@@ -20,11 +22,21 @@
  */
 import type { ComponentType, ReactElement } from "react";
 
+import { claimedExtensions, families, familyOf, type PreviewFamily } from "dsh-preview-viewers/formats.ts";
+import { insertStyles } from "dsh-preview-viewers/styles.ts";
+
 import { registerBetterSidebarViewers } from "./better-sidebar.ts";
-import { claimedExtensions, families, familyOf, type PreviewFamily } from "./formats.ts";
 import { dictionaries, LOCALE_NAMESPACE } from "./locale.ts";
-import type { PreviewContext } from "./runtime.ts";
-import { insertStyles } from "./styles.ts";
+import type { PreviewContext, ReadFile } from "./runtime.ts";
+
+/**
+ * The reader this entry hands the bodies.
+ *
+ * Re-exported for the adapter and the tests: the entry is where a plugin's
+ * client surface is assembled, so its neighbours import the seam from here
+ * rather than from the shared package's internals.
+ */
+export type { ReadFile } from "./runtime.ts";
 
 /** The factory's `require`; the only handle on `require.async` and platform modules. */
 interface LoaderRequire {
@@ -95,9 +107,6 @@ function resolveReact(): ReactFace {
 
 /** Definition id prefix, so a duplicate registration names the offending family. */
 const ID_PREFIX = "dsh-preview-more/";
-
-/** Read a file's complete bytes through the host workspace service. */
-export type ReadFile = (sessionId: string, path: string, signal: AbortSignal) => Promise<Uint8Array>;
 
 /**
  * Build the reader the bodies receive.
@@ -180,7 +189,7 @@ export const clientPlugin = {
     });
 
     // Derived from the catalogue rather than listed here, so adding a format
-    // touches formats.ts and nothing else.
+    // touches the shared formats.ts and nothing else.
     for (const family of families()) {
       const extensions = claimedExtensions().filter((suffix) => familyOf("x." + suffix) === family);
       if (extensions.length === 0) continue;

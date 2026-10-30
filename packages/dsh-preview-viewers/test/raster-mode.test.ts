@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { decodeMode } from "../src/client/raster.ts";
+import { decodeMode } from "../src/raster.ts";
 
 describe("decodeMode", () => {
   it("decodes TIFF suffixes itself", () => {

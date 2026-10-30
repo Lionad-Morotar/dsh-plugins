@@ -6,6 +6,8 @@
  * back `useSyncExternalStore` in the view, be driven by unit tests, and be
  * asserted by the acceptance probe without a renderer.
  */
+import { baseName } from "dsh-preview-viewers/address.ts";
+
 import { parseFocus } from "./model.ts";
 
 /** One open file panel. */
@@ -13,6 +15,8 @@ export interface PanelEntry {
   readonly path: string;
   /** The 1-based line the opener asked for; the tab keeps it for later jumps. */
   readonly line: number;
+  /** Whether {@link path} is a filesystem path outside the workspace root. */
+  readonly absolute: boolean;
 }
 
 /** One immutable view of the stack. */
@@ -23,8 +27,13 @@ export interface PanelSnapshot {
 
 /** The panel ledger the view and the probe share. */
 export interface PanelStack {
-  /** Open a file, or activate it when it is already a panel. */
-  open(path: string, line?: number): void;
+  /**
+   * Open a file, or activate it when it is already a panel.
+   * @param path - workspace-relative path, or a filesystem path when `absolute`.
+   * @param line - the 1-based line to show.
+   * @param absolute - keep the leading `/` and hand the path to the file service unchanged.
+   */
+  open(path: string, line?: number, absolute?: boolean): void;
   /** Close one panel, or the active one; the neighbour takes over. */
   close(path?: string): void;
   /** Make an open panel active; unknown paths are ignored. */
@@ -44,13 +53,25 @@ export interface PanelStack {
 
 /** The tab caption for a workspace path: its basename. */
 export function panelTitle(path: string): string {
-  const base = path.slice(path.lastIndexOf("/") + 1);
+  const base = baseName(path);
   return base === "" ? path : base;
 }
 
-function normalizePath(path: string): string | undefined {
+/**
+ * Normalize one opener's path.
+ *
+ * A relative path loses its leading slashes because the host resolves it
+ * against the session workspace root, which is the tree's own key space. An
+ * absolute path keeps them: stripping `/Users/x/a.ts` to `Users/x/a.ts` would
+ * silently address a different file inside the workspace.
+ * @param path - the raw path from a focus string or a tree row.
+ * @param absolute - whether the path is a filesystem path.
+ * @returns the path to key the panel by, or undefined for an empty one.
+ */
+function normalizePath(path: string, absolute: boolean): string | undefined {
   if (typeof path !== "string") return undefined;
-  const clean = path.trim().replace(/\\/gu, "/").replace(/^\.\//u, "").replace(/^\/+/u, "");
+  const slashed = path.trim().replace(/\\/gu, "/").replace(/^(?:\.\/)+/u, "");
+  const clean = absolute ? slashed : slashed.replace(/^\/+/u, "");
   return clean === "" ? undefined : clean;
 }
 
@@ -73,6 +94,32 @@ export function createPanelStack(): PanelStack {
 
   const indexOf = (path: string): number => rows.findIndex(row => row.path === path);
 
+  /**
+   * Resolve one caller-supplied path to the key the ledger stores.
+   *
+   * A stored key is already normalized, and an absolute one keeps its leading
+   * slash, so the exact form is tried first. The workspace-relative reading is a
+   * second lookup, not a second normalization: it only answers when that key is
+   * actually open, which is what makes it reachable at all — a caller spelling a
+   * relative path as `/src/a.ts` has to find the `src/a.ts` row.
+   *
+   * The two readings are genuinely ambiguous (a path starting with `/` may be a
+   * filesystem path, or a workspace path written with a leading slash), so the
+   * order is the rule: an absolute panel of that name wins, and only its absence
+   * lets the relative row answer. A caller that knows which one it means opens
+   * with `absolute` and gets the exact key back.
+   * @param path - path as the caller spells it.
+   * @returns the key of an open row, or undefined when neither reading is open.
+   */
+  const keyOf = (path: string): string | undefined => {
+    const exact = normalizePath(path, true);
+    if (exact === undefined) return undefined;
+    if (indexOf(exact) >= 0) return exact;
+    const relative = normalizePath(path, false);
+    if (relative === undefined || relative === exact) return undefined;
+    return indexOf(relative) >= 0 ? relative : undefined;
+  };
+
   const step = (delta: 1 | -1): void => {
     if (rows.length === 0) return;
     const current = active === null ? -1 : indexOf(active);
@@ -83,18 +130,19 @@ export function createPanelStack(): PanelStack {
   };
 
   return {
-    open(path, line = 1) {
-      const clean = normalizePath(path);
+    open(path, line = 1, absolute = false) {
+      const clean = normalizePath(path, absolute);
       if (clean === undefined) return;
       const nextLine = Number.isFinite(line) && line > 0 ? Math.trunc(line) : 1;
       const index = indexOf(clean);
       if (index >= 0) {
         const current = rows[index];
-        if (current !== undefined && current.line !== nextLine) {
-          rows = rows.map((row, at) => (at === index ? { path: clean, line: nextLine } : row));
+        const changed = current !== undefined && (current.line !== nextLine || current.absolute !== absolute);
+        if (changed) {
+          rows = rows.map((row, at) => (at === index ? { path: clean, line: nextLine, absolute } : row));
         }
         if (active === clean) {
-          if (current !== undefined && current.line !== nextLine) publish();
+          if (changed) publish();
           return;
         }
         active = clean;
@@ -104,12 +152,12 @@ export function createPanelStack(): PanelStack {
       // A fresh tab joins the active one, the way an editor inserts beside the
       // file the reader is looking at instead of at the far end of the strip.
       const insertAt = active === null ? rows.length : indexOf(active) + 1;
-      rows = [...rows.slice(0, insertAt), { path: clean, line: nextLine }, ...rows.slice(insertAt)];
+      rows = [...rows.slice(0, insertAt), { path: clean, line: nextLine, absolute }, ...rows.slice(insertAt)];
       active = clean;
       publish();
     },
     close(path) {
-      const target = path ?? active;
+      const target = path === undefined ? active : keyOf(path) ?? null;
       if (target === null) return;
       const index = indexOf(target);
       if (index < 0) return;
@@ -121,7 +169,7 @@ export function createPanelStack(): PanelStack {
       publish();
     },
     activate(path) {
-      const clean = normalizePath(path);
+      const clean = keyOf(path);
       if (clean === undefined || indexOf(clean) < 0 || active === clean) return;
       active = clean;
       publish();
@@ -139,7 +187,7 @@ export function createPanelStack(): PanelStack {
       publish();
     },
     isOpen(path) {
-      const clean = normalizePath(path);
+      const clean = keyOf(path);
       return clean !== undefined && indexOf(clean) >= 0;
     },
     activeEntry() {
@@ -157,7 +205,13 @@ export function createPanelStack(): PanelStack {
 
 /** The surface a view request opens panels through. */
 export interface ViewRequestSink {
-  open(path: string, line: number): void;
+  /**
+   * Open one requested file.
+   * @param path - normalized target path.
+   * @param line - the 1-based line to show.
+   * @param absolute - whether the path is a filesystem path outside the workspace.
+   */
+  open(path: string, line: number, absolute: boolean): void;
 }
 
 /** One stack per conversation, owned by the view factory that mounts them. */
@@ -192,9 +246,10 @@ export function createPanelStackRegistry(): PanelStackRegistry {
 /**
  * Parse and consume one `openView("fs-explorer", focus)` request.
  *
- * The Git panel hands over `path:<workspace path>:<line>`; anything else is
- * left alone. The caller owns `completeViewRequest()` because only the host
- * knows when the request has been painted.
+ * Callers hand over `path:<workspace path>:<line>` (the Git panel, the command
+ * palette) or `abs:<filesystem path>:<line>` (the address bridge); anything
+ * else is left alone. The caller owns `completeViewRequest()` because only the
+ * host knows when the request has been painted.
  * @param focus - the request payload, or undefined when the tab was opened directly.
  * @param sink - opens the parsed path at the parsed line.
  * @returns whether the focus was a path request.
@@ -202,6 +257,6 @@ export function createPanelStackRegistry(): PanelStackRegistry {
 export function consumeViewRequest(focus: string | undefined, sink: ViewRequestSink): boolean {
   const target = parseFocus(focus);
   if (target === undefined) return false;
-  sink.open(target.path, target.line);
+  sink.open(target.path, target.line, target.absolute);
   return true;
 }
