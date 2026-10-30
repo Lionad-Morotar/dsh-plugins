@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 
+import { families } from "dsh-preview-viewers/formats.ts";
+
 import { renderMarkdown } from "../src/client/markdown.ts";
 import {
   classifyPreviewFailure,
   createPreviewLoader,
   describePage,
+  extensionsOfFamily,
+  familyOf,
   IDLE_PREVIEW,
+  isBinaryFamily,
   isMarkdownFile,
   languageFor,
   normalizePreviewPage,
@@ -52,8 +57,48 @@ describe("languageFor", () => {
   });
 });
 
-describe("createPreviewLoader", () => {
-  it("reads one page, advances the offset and stops at eof", async () => {
+describe("family routing", () => {
+  it("maps every catalogued suffix to its family", () => {
+    expect(familyOf("model.glb")).toBe("scene3d");
+    expect(familyOf("model.gltf")).toBe("scene3d");
+    expect(familyOf("model.obj")).toBe("scene3d");
+    expect(familyOf("model.stl")).toBe("scene3d");
+    expect(familyOf("model.3mf")).toBe("scene3d");
+    expect(familyOf("scan.tif")).toBe("raster");
+    expect(familyOf("scan.tiff")).toBe("raster");
+    expect(familyOf("photo.avif")).toBe("raster");
+    expect(familyOf("drawing.dxf")).toBe("cad");
+  });
+
+  it("reads the suffix from the basename, whatever its case", () => {
+    expect(familyOf("assets/deep/MODEL.GLB")).toBe("scene3d");
+    expect(familyOf("a.b/scan.TIFF")).toBe("raster");
+    expect(familyOf("drawing.DXF")).toBe("cad");
+  });
+
+  it("claims nothing for a name it does not own", () => {
+    expect(familyOf("a.ts")).toBeNull();
+    expect(familyOf("README")).toBeNull();
+    expect(familyOf("archive.glb.bak")).toBeNull();
+    expect(familyOf(".glb")).toBeNull();
+  });
+
+  it("routes exactly the family suffixes and leaves the text mapping alone", () => {
+    for (const family of families()) {
+      for (const suffix of extensionsOfFamily(family)) {
+        expect(familyOf(`x.${suffix}`)).toBe(family);
+        expect(isBinaryFamily(`x.${suffix}`)).toBe(true);
+        // The text pager's table never claimed these; if it started to, the
+        // binary branch would be shadowed by a language id nobody can render.
+        expect(languageFor(`x.${suffix}`)).toBe("plaintext");
+      }
+    }
+    expect(isBinaryFamily("a.ts")).toBe(false);
+    expect(isBinaryFamily("a.md")).toBe(false);
+  });
+});
+
+describe("createPreviewLoader", () => {  it("reads one page, advances the offset and stops at eof", async () => {
     const files = reader([
       { text: "l1\nl2", lines: 2, totalLines: 4, eof: false },
       { text: "l3\nl4", lines: 2, totalLines: 4, eof: true },

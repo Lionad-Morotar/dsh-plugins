@@ -72,6 +72,23 @@ export const ZH: Record<string, string> = {
   "preview.unavailable.description": "当前部署的 workspaceFiles 服务没有提供读取能力。",
   "preview.unknown.title": "无法预览这个文件",
   "preview.unknown.description": "读取文件时出错，可以重试或选择其它文件。",
+  "preview.surface.state.loading": "正在读取…",
+  "preview.surface.state.decoding": "正在解码…",
+  "preview.surface.state.failed": "无法预览该文件",
+  "preview.surface.state.retry": "重试",
+  "preview.surface.state.unsupported": "该格式暂不支持",
+  "preview.surface.raster.title": "图片",
+  "preview.surface.raster.noPages": "这个文件里没有页面",
+  "preview.surface.raster.pageMissing": "这一页在文件里找不到",
+  "preview.surface.raster.emptyPage": "这一页没有像素",
+  "preview.surface.raster.page": "第 {current} / {total} 页",
+  "preview.surface.raster.previous": "上一页",
+  "preview.surface.raster.next": "下一页",
+  "preview.surface.scene3d.reset": "重置视角",
+  "preview.surface.scene3d.wireframe": "线框",
+  "preview.surface.scene3d.facts": "网格数 {meshes} · 三角面 {triangles}",
+  "preview.surface.cad.fit": "适应窗口",
+  "preview.surface.cad.layers": "图层 {count}",
 };
 
 export const EN: Record<string, string> = {
@@ -147,10 +164,48 @@ export const EN: Record<string, string> = {
   "preview.unavailable.description": "This deployment's workspaceFiles service exposes no read method.",
   "preview.unknown.title": "Cannot preview this file",
   "preview.unknown.description": "Reading the file failed. Retry or pick another file.",
+  "preview.surface.state.loading": "Reading…",
+  "preview.surface.state.decoding": "Decoding…",
+  "preview.surface.state.failed": "This file cannot be previewed",
+  "preview.surface.state.retry": "Retry",
+  "preview.surface.state.unsupported": "This format is not supported yet",
+  "preview.surface.raster.title": "Image",
+  "preview.surface.raster.noPages": "This file has no pages",
+  "preview.surface.raster.pageMissing": "That page is not in this file",
+  "preview.surface.raster.emptyPage": "That page has no pixels",
+  "preview.surface.raster.page": "Page {current} of {total}",
+  "preview.surface.raster.previous": "Previous page",
+  "preview.surface.raster.next": "Next page",
+  "preview.surface.scene3d.reset": "Reset view",
+  "preview.surface.scene3d.wireframe": "Wireframe",
+  "preview.surface.scene3d.facts": "{meshes} meshes · {triangles} triangles",
+  "preview.surface.cad.fit": "Fit view",
+  "preview.surface.cad.layers": "{count} layers",
 };
 
 /** A translate seat over this package's dictionary. */
 export type Translate = (key: string) => string;
+
+/**
+ * Prefix for the message keys the shared renderers ask for.
+ *
+ * Those surfaces render translated text but do not own it: the plugin that
+ * mounts one ships its dictionary. Their keys are unprefixed (`state.loading`,
+ * `raster.page`), and `state.loading` already means the workspace tree in this
+ * package, so the shared block is namespaced instead of merged. Keeping the
+ * rebinding here — rather than in the chunk — means the whole vocabulary this
+ * package answers for is readable in one file.
+ */
+export const SURFACE_KEY_PREFIX = "preview.surface.";
+
+/**
+ * Rebind this package's translator onto the shared surfaces' vocabulary.
+ * @param t - translator bound to this package's namespace.
+ * @returns a translator answering the keys a shared renderer asks for.
+ */
+export function surfaceTranslator(t: Translate): Translate {
+  return key => t(SURFACE_KEY_PREFIX + key);
+}
 
 /**
  * The tab caption for one host locale.

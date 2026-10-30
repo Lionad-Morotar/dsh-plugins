@@ -5,17 +5,32 @@
  * runs a build step, so `lib/` is a committed product and this script is the
  * only thing that writes it.
  *
- *   lib/index.js          Host half, plain ESM (Node imports it directly).
- *   lib/client.js         Browser half: registration, tree, paging, first paint.
- *   lib/client.preview.js Lazy chunk: CodeMirror, its language packages, GFM.
+ *   lib/index.js            Host half, plain ESM (Node imports it directly).
+ *   lib/client.js           Browser half: registration, tree, paging, first paint.
+ *   lib/client.preview.js   Lazy chunk: CodeMirror, its language packages, GFM.
+ *   lib/client.<family>.js  Lazy chunk: one binary renderer family's engine.
  *
  * The split is the preview's cost model. `client.js` is parsed on every page
- * boot whether or not a file is ever selected, so it may not carry the editor;
- * the chunk is fetched through the loader's `require.async` the first time a
- * file is selected. The loader only accepts a package-local chunk that declares
- * its own file name in a `chunk:` field, and it keys the chunk as
- * `<package>/<file>`; a chunk that registers under the package id alone would be
- * rejected as a duplicate factory.
+ * boot whether or not a file is ever selected, so it may not carry an editor or
+ * an engine; a chunk is fetched through the loader's `require.async` the first
+ * time a file of its kind is selected. The loader only accepts a package-local
+ * chunk that declares its own file name in a `chunk:` field, and it keys the
+ * chunk as `<package>/<file>`; a chunk that registers under the package id alone
+ * would be rejected as a duplicate factory.
+ *
+ * The family renderers are not in this package: `src/client/chunks/*.tsx`
+ * re-export surfaces from `dsh-preview-viewers`, and esbuild inlines them here.
+ * What stays this script's job is the artifact names, the size budgets, the
+ * engine boundary and the licence banner: they describe the files this package
+ * ships, not the sources they were assembled from.
+ *
+ * The Draco decoder is embedded in the scene3d chunk, not fetched at runtime:
+ * three's DRACOLoader resolves it through `new URL(..., import.meta.url)`, which
+ * cannot work in a plugin served from a versioned asset route. The inlining
+ * itself lives in the shared package's build helper, so every package that
+ * bundles a Draco-capable chunk gets the same treatment; what stays here is the
+ * payload resolution, which must use the three version the shared package
+ * resolves, because that is the one esbuild puts in the chunk.
  */
 import { build } from "esbuild";
 import { createRequire } from "node:module";
@@ -24,14 +39,45 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { dracoDefines, dracoPlugin, loadDracoPayloads } from "dsh-preview-viewers/build/draco-plugin.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "..");
 const libRoot = join(packageRoot, "lib");
 const require = createRequire(join(packageRoot, "package.json"));
 const manifest = require(join(packageRoot, "package.json"));
 
-/** The package-local chunk name; must match `PREVIEW_CHUNK.chunk` in src/shared.ts. */
+/** The text chunk's name; must match `PREVIEW_CHUNK.chunk` in src/shared.ts. */
 const PREVIEW_CHUNK = "client.preview.js";
+
+/**
+ * One lazy chunk per binary family; must match `FAMILY_CHUNKS` in src/shared.ts.
+ *
+ * The family names are also the renderer marker each chunk exports, so a chunk
+ * loaded under the wrong name is caught at runtime as well as here.
+ */
+const FAMILY_CHUNKS = {
+  scene3d: "client.scene3d.js",
+  raster: "client.raster.js",
+  cad: "client.cad.js",
+};
+
+/**
+ * The stable symbol each family's engine leaves in a minified bundle.
+ *
+ * They serve two assertions at once: a family chunk must contain its own marker
+ * (an empty stub would otherwise pass every other check), and the startup bundle
+ * must contain none of them. Each is a string literal or a property name the
+ * library itself writes — three's error prefix, utif's UMD global, a dxf-viewer
+ * class method, which esbuild does not mangle — so minification cannot erase
+ * them. A bare suffix such as `dxf` would not do: the format catalogue is data
+ * in the entry, so every claimed extension appears there by design.
+ */
+const ENGINE_MARKERS = {
+  scene3d: "THREE.WebGLRenderer",
+  raster: "UTIF",
+  cad: "_ProcessDxfEntity",
+};
 
 /**
  * Platform modules the host seeds for a third-party client bundle: React itself
@@ -44,13 +90,80 @@ const CLIENT_EXTERNALS = ["react", "react/jsx-runtime", "react-dom", "@deepseek-
 const STARTUP_BANNED = ["@codemirror", "codemirror", "react-markdown", "remark-gfm", "marked"];
 
 /**
- * Marks that must be present in the chunk for it to be the renderer it claims.
- *
- * The first is the diagnostic marker the chunk exports (`renderer`); the second
- * is the GFM pipeline's own vocabulary, which survives minification in its
- * node-type strings.
+ * Marks that must be present in the text chunk for it to be the renderer it
+ * claims. The first is the diagnostic marker the chunk exports (`renderer`); the
+ * second is the GFM pipeline's own vocabulary, which survives minification in
+ * its node-type strings.
  */
 const CHUNK_MARKERS = [/codemirror/iu, /remark|markdown/iu];
+
+/**
+ * Gzipped size ceilings per emitted family chunk.
+ *
+ * The route transfers these gzipped, so that is what a reader pays. The ceiling
+ * keeps "add one format" from quietly turning every model preview into a
+ * multi-megabyte download. The numbers are the ones `dsh-preview-more` ships
+ * under: the same engines, bundled from the same shared sources.
+ */
+const SIZE_BUDGETS = {
+  "client.scene3d.js": 520 * 1024,
+  "client.raster.js": 40 * 1024,
+  "client.cad.js": 560 * 1024,
+};
+
+/**
+ * Attribution appended to every emitted family chunk.
+ *
+ * esbuild's legalComments only carries comments a library marked and placed in
+ * the code it ships; several dependencies keep their licence in a sibling file
+ * instead, which would leave the artifact silent about them. These chunks are
+ * the first artifacts in this package that carry third-party engines, so they
+ * name every component that can end up inside one.
+ */
+const ENGINE_BANNER = [
+  "/*! dsh-fs-explorer | MIT",
+  " * Bundles third-party code through dsh-preview-viewers: three.js and utif (MIT),",
+  " * dxf-viewer (MPL-2.0), Google Draco (Apache-2.0).",
+  " * Full license texts: see THIRD-PARTY-NOTICES.md in this package.",
+  " */",
+].join("\n");
+
+/**
+ * Reserved URL the never-fetched Draco decoder paths resolve against.
+ *
+ * three's DRACOLoader builds those URLs at module scope; a CJS bundle has no
+ * import.meta, so they only have to be constructible. The host is `.invalid` by
+ * convention: it can never resolve, which is the point.
+ */
+const DRACO_RESERVED_URL = "https://dsh-fs-explorer.invalid/client.js";
+
+/**
+ * Assert the chunk table still covers every family the catalogue declares.
+ *
+ * The catalogue decides the families and the entry derives its routes from it,
+ * so a family added there but not here would fetch a file nobody built and the
+ * preview would sit on its loading state forever. `src/shared.ts` already fails
+ * typecheck for that case; the build does not run typecheck, so it repeats the
+ * check by reading the catalogue.
+ *
+ * The catalogue is read out of the shared package rather than imported: this is
+ * a plain Node script, and importing a TypeScript module here would need a loader
+ * the build does not otherwise have.
+ * @throws when the two disagree.
+ */
+async function assertChunksCoverCatalogue() {
+  const source = await readFile(require.resolve("dsh-preview-viewers/formats.ts"), "utf8");
+  const declared = [...new Set([...source.matchAll(/family:\s*"([a-zA-Z0-9]+)"/gu)].map(match => match[1]))];
+  const built = Object.keys(FAMILY_CHUNKS);
+  const missing = declared.filter(family => !built.includes(family));
+  const extra = built.filter(family => !declared.includes(family));
+  if (missing.length === 0 && extra.length === 0) return;
+  const problems = [
+    ...missing.map(family => `formats.ts declares ${family} but FAMILY_CHUNKS does not build it`),
+    ...extra.map(family => `FAMILY_CHUNKS builds ${family} but formats.ts declares no such family`),
+  ];
+  throw new Error(`chunk list and format catalogue disagree:\n  ${problems.join("\n  ")}`);
+}
 
 /**
  * The ModuleLoader wrapper for one client artifact.
@@ -63,7 +176,7 @@ const CHUNK_MARKERS = [/codemirror/iu, /remark|markdown/iu];
  * The bundle text is inserted verbatim and deliberately not re-indented: the
  * minified code may contain multi-line template literals, and padding every
  * line would inject that padding into the string itself.
- * @param id - module-table id (the package name for both artifacts).
+ * @param id - module-table id (the package name for every artifact here).
  * @param code - bundled CJS text.
  * @param options - `boot` adds the require hand-over, `chunk` marks a lazy chunk.
  * @returns the script text the browser evaluates.
@@ -86,7 +199,7 @@ ${code}${handover}
 /**
  * Bundle one entry.
  * @param entry - entry file path.
- * @param options - format, externals and minification.
+ * @param options - format, externals, minification, licence handling, plugins, defines.
  * @returns the bundled text.
  */
 async function bundle(entry, options = {}) {
@@ -98,8 +211,15 @@ async function bundle(entry, options = {}) {
     target: "es2022",
     minify: options.minify === true,
     write: false,
-    legalComments: "none",
+    // "eof" keeps the @license blocks third-party code ships, collected at the
+    // end of the file. Stripping them would redistribute MIT, Apache-2.0 and
+    // MPL-2.0 code with the notices removed, which is not ours to do; the banner
+    // beside them covers the libraries that keep their licence in a sibling file.
+    legalComments: options.legalComments ?? "none",
+    ...(options.banner === undefined ? {} : { banner: { js: options.banner } }),
     external: options.external ?? [],
+    plugins: options.plugins ?? [],
+    define: options.define ?? {},
     jsx: "automatic",
     logLevel: "silent",
   });
@@ -109,29 +229,44 @@ async function bundle(entry, options = {}) {
 }
 
 /**
- * Fail the build when the two client artifacts drift apart.
+ * Fail the build when the artifacts drift apart.
  *
- * Three names have to agree and live in three files that cannot import each
- * other: the route table the entry fetches through, the `chunk:` field the
- * chunk script registers with, and the file this script emitted. The startup
- * bundle also may not contain a single editor or Markdown-renderer symbol,
- * because that is the split's entire cost model.
+ * Every chunk name has to agree across three files that cannot import each
+ * other: the route table the entry fetches through, the `chunk:` field the chunk
+ * script registers with, and the file this script emitted. The startup bundle
+ * also may not contain a single engine or editor symbol, because that is the
+ * split's entire cost model — and each family chunk must still contain its own
+ * engine, or the split would have succeeded by shipping nothing.
  * @param entryText - built `client.js`.
- * @param chunkText - built `client.preview.js`.
- * @throws when a name or a boundary is wrong.
+ * @param texts - built chunk text by file name.
+ * @throws when a name, a boundary or an engine is wrong.
  */
-function assertArtifacts(entryText, chunkText) {
-  if (!entryText.includes(`chunk:"${PREVIEW_CHUNK}"`) && !entryText.includes(`chunk: "${PREVIEW_CHUNK}"`)) {
-    throw new Error(`client.js no longer names its lazy chunk ${PREVIEW_CHUNK}; the preview would fetch a file nobody built`);
+function assertArtifacts(entryText, texts) {
+  const names = [PREVIEW_CHUNK, ...Object.values(FAMILY_CHUNKS)];
+  for (const name of names) {
+    if (!entryText.includes(`"${name}"`)) {
+      throw new Error(`client.js no longer names its lazy chunk ${name}; the preview would fetch a file nobody built`);
+    }
   }
   for (const symbol of STARTUP_BANNED) {
-    if (entryText.includes(symbol)) throw new Error(`client.js contains ${symbol}; it must stay in ${PREVIEW_CHUNK}`);
+    if (entryText.includes(symbol)) throw new Error(`client.js contains ${symbol}; it must stay in a lazy chunk`);
   }
+  for (const marker of Object.values(ENGINE_MARKERS)) {
+    if (entryText.includes(marker)) throw new Error(`client.js contains ${marker}; it belongs to a family chunk`);
+  }
+  const previewText = texts[PREVIEW_CHUNK] ?? "";
   for (const marker of CHUNK_MARKERS) {
-    if (!marker.test(chunkText)) throw new Error(`${PREVIEW_CHUNK} does not look like the preview renderer (${String(marker)})`);
+    if (!marker.test(previewText)) throw new Error(`${PREVIEW_CHUNK} does not look like the preview renderer (${String(marker)})`);
+  }
+  for (const [family, file] of Object.entries(FAMILY_CHUNKS)) {
+    const marker = ENGINE_MARKERS[family];
+    if (!(texts[file] ?? "").includes(marker)) {
+      throw new Error(`${file} does not carry ${marker}; it is not the ${family} renderer`);
+    }
   }
 }
 
+await assertChunksCoverCatalogue();
 await rm(libRoot, { recursive: true, force: true });
 await mkdir(libRoot, { recursive: true });
 
@@ -151,9 +286,51 @@ const preview = await bundle(join(packageRoot, "src", "client", "chunk", "previe
 const chunkText = wrap(manifest.name, preview, { chunk: PREVIEW_CHUNK });
 await writeFile(join(libRoot, PREVIEW_CHUNK), chunkText, "utf8");
 
-assertArtifacts(entryText, chunkText);
+// The payloads are resolved through the shared package so the inlined decoder
+// matches the three version esbuild inlines from those same sources. A payload
+// resolved from this package would need a second three dependency here, and the
+// wrapper and the wasm binary would be free to disagree with the loader calling
+// them at the next three upgrade.
+const viewersRequire = createRequire(require.resolve("dsh-preview-viewers/package.json"));
+const dracoPayloads = await loadDracoPayloads(specifier => viewersRequire.resolve(specifier));
 
+const texts = { [PREVIEW_CHUNK]: chunkText };
 const written = ["index.js", "client.js", PREVIEW_CHUNK];
+for (const [family, file] of Object.entries(FAMILY_CHUNKS)) {
+  const code = await bundle(join(packageRoot, "src", "client", "chunks", `${family}.tsx`), {
+    external: CLIENT_EXTERNALS,
+    minify: true,
+    legalComments: "eof",
+    banner: ENGINE_BANNER,
+    plugins: family === "scene3d" ? [dracoPlugin(dracoPayloads)] : [],
+    define: dracoDefines(DRACO_RESERVED_URL),
+  });
+  const text = wrap(manifest.name, code, { chunk: file });
+  texts[file] = text;
+  await writeFile(join(libRoot, file), text, "utf8");
+  written.push(file);
+}
+
+assertArtifacts(entryText, texts);
+
+/**
+ * Compare each family chunk's gzipped size against its ceiling.
+ *
+ * A chunk that grows past its ceiling means a reader who opens one model
+ * downloads something nobody asked for. Gzipped, because that is what the route
+ * actually transfers.
+ * @returns one message per file over budget.
+ */
+async function overBudget() {
+  const over = [];
+  for (const [file, budget] of Object.entries(SIZE_BUDGETS)) {
+    const bytes = await readFile(join(libRoot, file));
+    const gzipped = gzipSync(bytes).length;
+    if (gzipped > budget) over.push(`${file}: ${String(gzipped)} B gzipped, budget ${String(budget)} B`);
+  }
+  return over;
+}
+
 const sizes = await Promise.all(
   written.map(async file => {
     const bytes = await readFile(join(libRoot, file));
@@ -161,3 +338,9 @@ const sizes = await Promise.all(
   }),
 );
 process.stdout.write(`${written.length} files\n${sizes.join("\n")}\n`);
+
+const over = await overBudget();
+if (over.length > 0) {
+  process.stderr.write(`over size budget:\n  ${over.join("\n  ")}\n`);
+  process.exitCode = 1;
+}

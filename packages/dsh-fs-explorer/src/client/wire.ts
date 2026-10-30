@@ -11,9 +11,15 @@
  * take the conversation row down. The same file also folds the Git panel's
  * snapshot response down to its raw `git status` text, because status colouring
  * reuses that endpoint instead of spawning a second git reader.
+ *
+ * The preview has two reads over the same face: `read` pages text and `readBytes`
+ * hands a family renderer the whole file. Both are optional and both fold the
+ * transport envelope here, so no surface above this module sees a `RemoteResult`.
  */
+import type { ReadFile } from "dsh-preview-viewers/contracts.ts";
+
 import type { FsEntryLike } from "./model.ts";
-import type { PreviewFiles } from "./preview.ts";
+import { PreviewReadError, type PreviewFiles } from "./preview.ts";
 
 /** One directory listing as the host wire carries it. */
 export interface WorkspaceDirectoryListingLike {
@@ -33,6 +39,9 @@ export type RemoteResult<T> =
  * `list` drives the tree and is required; `read` drives the preview and is
  * optional because a host build that only lists directories may still be a
  * legal deployment. The preview paints its "read unavailable" state then.
+ * `readBytes` is the same optional seam for the binary families: a host that
+ * predates it leaves those files on their "unavailable" state rather than
+ * failing the panel.
  */
 export interface WorkspaceFilesFace {
   list(sessionId: string, path: string, signal?: AbortSignal): Promise<unknown> | unknown;
@@ -42,6 +51,25 @@ export interface WorkspaceFilesFace {
     range: { readonly offset?: number; readonly limit?: number },
     signal?: AbortSignal,
   ): Promise<unknown> | unknown;
+  readBytes?(
+    sessionId: string,
+    path: string,
+    options: ByteReadOptions,
+    signal?: AbortSignal,
+  ): Promise<unknown> | unknown;
+}
+
+/**
+ * The byte window a `readBytes` call may ask for.
+ *
+ * Empty means "the complete file, under the host's own size cap": a family
+ * renderer needs whole bytes to decode a mesh or a drawing, so this package
+ * never pages through them.
+ */
+export interface ByteReadOptions {
+  readonly range?: { readonly offset?: number; readonly length?: number };
+  /** Base file the path resolves against; unused here, kept for the host's shape. */
+  readonly baseFile?: string;
 }
 
 /** Read the optional service on every call so a late mount starts working. */
@@ -116,6 +144,80 @@ export function createPreviewReader(
     read(path, range, signal) {
       return read.call(files, sessionId, path, range, signal);
     },
+  };
+}
+
+/** One complete file's bytes after both transport and business envelopes. */
+export type NormalizedBytes =
+  | { readonly ok: true; readonly value: { readonly data: Uint8Array } }
+  | { readonly ok: false; readonly error: unknown };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+/**
+ * Fold one `readBytes` answer down to its bytes.
+ *
+ * The generated Remote wraps the file in `{ok, value}`, and the Host method
+ * answers `WorkspaceFileBytes` whose `data` is the decoded `Uint8Array`; a test
+ * double or an older host may answer the file itself. Both layers are checked
+ * by shape, and a payload without a `Uint8Array` is a failure rather than an
+ * empty buffer — a renderer handed zero bytes would report a decode error about
+ * a file that was never read.
+ * @param response - whatever `workspaceFiles.readBytes` resolved to.
+ * @returns the bytes, or the host's error payload.
+ */
+export function normalizeBytes(response: unknown): NormalizedBytes {
+  if (!isRecord(response)) {
+    return { ok: false, error: { code: "preview/unknown", message: "文件服务返回了无效响应" } };
+  }
+  if (response.ok === false) return { ok: false, error: response.error };
+  const value = response.ok === true ? response.value : response;
+  const data = isRecord(value) ? value.data : undefined;
+  if (data instanceof Uint8Array) return { ok: true, value: { data } };
+  return { ok: false, error: { code: "preview/unknown", message: "字节读取缺少 data" } };
+}
+
+/**
+ * Turn one wire error payload into the preview's own error vocabulary.
+ *
+ * `classifyPreviewFailure` reads `code`, `detail` and `message` off whatever
+ * was thrown, so the host's refusal has to survive the trip as those three
+ * fields; the `details.kind` the filesystem layer attaches (a symlink, a
+ * directory) is what tells a symlink refusal from a permissions one.
+ * @param error - the `error` member of a failed `readBytes` envelope.
+ * @returns the error the preview will classify.
+ */
+function byteReadError(error: unknown): PreviewReadError {
+  const record = isRecord(error) ? error : {};
+  const code = typeof record.code === "string" ? record.code : "preview/unknown";
+  const message = typeof record.message === "string" && record.message !== "" ? record.message : "读取文件失败";
+  const details = isRecord(record.details) ? record.details : {};
+  const kind = typeof details.kind === "string" ? details.kind : "";
+  return new PreviewReadError(code, message, kind);
+}
+
+/**
+ * Bind the binary families' byte reader to the file face.
+ *
+ * The returned reader keeps the shared surfaces' `ReadFile` shape rather than a
+ * session-bound one, because a glTF document names its buffers and textures
+ * relative to itself and the surface reaches those through the same reader. The
+ * session therefore travels with each call instead of being closed over here.
+ * @param files - the resolved file face, if any.
+ * @returns a reader, or undefined when the face cannot read bytes.
+ */
+export function createByteReader(files: WorkspaceFilesFace | undefined): ReadFile | undefined {
+  if (files === undefined) return undefined;
+  const readBytes = files.readBytes;
+  if (typeof readBytes !== "function") return undefined;
+  return async (sessionId, path, signal) => {
+    // No range: a renderer decodes the whole file, and the host refuses one
+    // above its complete-file cap instead of handing back a truncated mesh.
+    const normalized = normalizeBytes(await readBytes.call(files, sessionId, path, {}, signal));
+    if (!normalized.ok) throw byteReadError(normalized.error);
+    return normalized.value.data;
   };
 }
 

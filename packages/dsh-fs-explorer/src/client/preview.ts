@@ -7,8 +7,15 @@
  * on `next()`. The same module owns the only mapping from a file name to a
  * language id, so the chunk's highlighter and the toolbar agree without either
  * importing the other.
+ *
+ * It also owns the split between the two preview paths: a name the shared
+ * format catalogue claims is a binary family file and never reaches the pager,
+ * so every decision about which renderer draws a file is answerable here
+ * without loading a chunk.
  */
 import type { ReactElement } from "react";
+
+import { extensionsOf, familyOf, type PreviewFamily } from "dsh-preview-viewers/formats.ts";
 
 /** Default page size; the host accepts at most its configured `maxLines`. */
 export const PREVIEW_MAX_LINES = 200;
@@ -67,6 +74,37 @@ export function languageFor(name: string): LanguageId {
 /** Whether a file should open in the Markdown reading mode. */
 export function isMarkdownFile(name: string): boolean {
   return languageFor(name) === "markdown";
+}
+
+/**
+ * Which renderer family owns one file, from the shared catalogue.
+ *
+ * Re-exported rather than re-implemented: two catalogues would disagree about
+ * who claims what, and this package's chunk table is keyed by the same names.
+ */
+export { familyOf };
+export type { PreviewFamily };
+
+/**
+ * The suffixes one binary renderer family owns.
+ * @param family - renderer family from the shared catalogue.
+ * @returns the suffixes, empty for a family the catalogue does not declare.
+ */
+export function extensionsOfFamily(family: PreviewFamily): readonly string[] {
+  return extensionsOf(family);
+}
+
+/**
+ * Whether a file opens in a binary family viewer instead of the text pager.
+ *
+ * The text pager asks the host for lines and refuses anything that is not
+ * UTF-8, so a family file has to be routed before the loader ever runs: asking
+ * for pages of a .glb would spend a read to reach the host's binary refusal.
+ * @param path - workspace path or basename.
+ * @returns true when the shared catalogue claims the file.
+ */
+export function isBinaryFamily(path: string): boolean {
+  return familyOf(path) !== null;
 }
 
 /** One page request as the host's `workspaceFiles.read` takes it. */

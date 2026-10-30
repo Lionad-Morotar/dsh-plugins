@@ -169,6 +169,9 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.5
         version: 1.2.5
+      dsh-preview-viewers:
+        specifier: workspace:*
+        version: link:../dsh-preview-viewers
       dsh-workbench-core:
         specifier: workspace:*
         version: link:../dsh-workbench-core
