@@ -14,6 +14,7 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 | [`dsh-better-keybindings`](packages/dsh-better-keybindings) | 键盘修正，web 与 desktop profile 共用：输入框聚焦时 Home/End 把光标移到行首行尾，不再把聊天区滚到顶或底 |
 | [`dsh-slash-commands`](packages/dsh-slash-commands) | 三端 slash 命令：tui 的 `/copy` 把最近 n 轮最终回复放进系统剪贴板（`--all` 连你的发言一起带），web 与 desktop 的 `/rename` 改当前会话标题、`/resume` 切换到另一个会话 |
 | [`dsh-preview-more`](packages/dsh-preview-more) | 右侧栏文件预览补全：3D 模型、CAD 图纸与高位深图片，宿主内置预览管不了的那几类 |
+| [`dsh-preview-viewers`](packages/dsh-preview-viewers) | 上面那个预览包与工作台文件面板共用的渲染器源码包：格式目录唯一事实源、地址解析、3D / CAD / 高位深图片三个引擎与三个同时导出 `Body` 与 `Viewer` 的 React 预览面。内部源码包，无 `lib`、不挂 Loader、不发行 |
 | [`dsh-session-timing`](packages/dsh-session-timing) | 会话统计的计时口径修正：模型用时只计最后成功的那次尝试，重试用时单独成行，TTFT 与 TPS 随之回到真实值 |
 | [`dsh-better`](packages/dsh-better) | 原生能力增强：`/model` 选择器支持按供应商搜索（模型名搜索语义不变），输入框的模型触发器接到同一个选择器并在模型名左侧带 provider 名，推理等级也在那里选 |
 | [`dsh-command-panel`](packages/dsh-command-panel) | 命令面板：`⌘P` 搜文件并把绝对路径写进输入框、`⌘⇧P` 搜并执行宿主注册的指令、`⌘O` 先选工作区再选会话切换 |
@@ -62,13 +63,15 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 git clone --recurse-submodules <repo>   # 或在已克隆的仓库里跑 git submodule update --init
 pnpm install
 pnpm build      # 产出 lib/（包内分块 + 主入口），lib 是要提交的，profile 直接读它
-pnpm test       # 十六个包递归
+pnpm test       # 十七个包递归
 pnpm typecheck
 ```
 
 `packages/dsh-jump` 是独立仓库 [`Lionad-Morotar/dsh-jump`](https://github.com/Lionad-Morotar/dsh-jump) 的 submodule。没初始化时那个目录是空的，`pnpm build` 与 `pnpm test` 会跳过它；要改这个包，先 `git submodule update --init`，提交进它自己的仓库，再回本仓库更新 submodule 指针。
 
 `packages/*/lib/` 提交进仓库是刻意的：harness 的 profile 直接从安装包读 `lib/`，不会替你跑构建。改了 `src/` 就必须重新 build 再提交，否则安装态跑的是旧代码。
+
+`packages/ascii-rest-scenes` 与 `packages/dsh-preview-viewers` 都没有提交入库的 `lib/`：两者 `exports` 直指 `src/` 下的 TS 源。`dsh-preview-viewers` 连 `build` 脚本也没有，产物由 `dsh-preview-more` 与 `dsh-fs-explorer` 在构建期各自打进 chunk，不挂 Loader、不进市场索引。
 
 ## 市场分发
 
