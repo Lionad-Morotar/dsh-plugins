@@ -16,17 +16,19 @@
  *   - the label the trigger shows normally comes from the shell's own inline
  *     child slot (`conversation.input.model.label`). Only the entry that declared
  *     that slot may render it, and a second declaration throws, so this component
- *     renders the model name directly. That matches the shell's own behaviour in
- *     the absence of a contributor, which is the state both profiles are in;
- *   - the shell's trigger is restyled by another plugin in the wild (a provider
- *     prefix). This component therefore keeps the shell's class names and markup
- *     shape, so such a stylesheet still applies even though the text is drawn
- *     here.
+ *     draws the caption itself: the provider's display name in front of the
+ *     model name, which is what the slot's contributor used to add. The shell's
+ *     own behaviour without a contributor is the bare model name, which cannot
+ *     tell two providers with the same catalog apart;
+ *   - the trigger keeps the shell's class names and markup shape, so the shell's
+ *     stylesheet still applies and the button stays indistinguishable from the
+ *     native one apart from its text.
  */
 import { useCallback, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 
 import { resolvePrimitives } from "./primitives.ts";
+import { triggerCaption } from "./caption.ts";
 
 /** Props the shell's seat receives; this shadow reads the same share. */
 export interface SeatProps {
@@ -192,7 +194,7 @@ function Trigger({ props, primitives, openPicker, translate, classes }: TriggerP
   const waiting = current === null && state?.status === "loading";
   const found = findModel(state, current);
 
-  const modelLabel = waiting ? (tr?.("trigger.loading") ?? "") : (found?.model.name ?? tr?.("trigger.fallback") ?? "");
+  const modelLabel = waiting ? (tr?.("trigger.loading") ?? "") : triggerCaption(found, tr?.("trigger.fallback") ?? "");
   const effortLabel = effortCaption(state, current, found, tr);
   const triggerLabel = effortLabel === undefined ? modelLabel : `${modelLabel} · ${effortLabel}`;
   const aria = waiting

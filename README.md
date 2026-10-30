@@ -15,7 +15,7 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 | [`dsh-slash-commands`](packages/dsh-slash-commands) | 三端 slash 命令：tui 的 `/copy` 把最近 n 轮最终回复放进系统剪贴板（`--all` 连你的发言一起带），web 与 desktop 的 `/rename` 改当前会话标题、`/resume` 切换到另一个会话 |
 | [`dsh-preview-more`](packages/dsh-preview-more) | 右侧栏文件预览补全：3D 模型、CAD 图纸与高位深图片，宿主内置预览管不了的那几类 |
 | [`dsh-session-timing`](packages/dsh-session-timing) | 会话统计的计时口径修正：模型用时只计最后成功的那次尝试，重试用时单独成行，TTFT 与 TPS 随之回到真实值 |
-| [`dsh-better`](packages/dsh-better) | 原生能力增强：`/model` 选择器支持按供应商搜索（模型名搜索语义不变），输入框的模型触发器接到同一个选择器，模型名与推理等级都在那里选 |
+| [`dsh-better`](packages/dsh-better) | 原生能力增强：`/model` 选择器支持按供应商搜索（模型名搜索语义不变），输入框的模型触发器接到同一个选择器并在模型名左侧带 provider 名，推理等级也在那里选 |
 | [`dsh-command-panel`](packages/dsh-command-panel) | 命令面板：`⌘P` 搜文件并把绝对路径写进输入框、`⌘⇧P` 搜并执行宿主注册的指令、`⌘O` 先选工作区再选会话切换 |
 
 ## 安装皮肤
