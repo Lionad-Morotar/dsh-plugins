@@ -1,0 +1,4 @@
+# Mount the repository harness: merge-steer is the first repo-level automation.
+- insert:
+    - id: repo-harness
+      name: 'dsh-repo-harness'

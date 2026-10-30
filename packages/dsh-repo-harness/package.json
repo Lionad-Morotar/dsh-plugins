@@ -1,0 +1,59 @@
+{
+  "name": "dsh-repo-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness repository automation and governance harness: merge-steer notifications and future repo-level policies",
+  "license": "MIT",
+  "author": "Lionad <1806234223@qq.com>",
+  "homepage": "https://github.com/Lionad-Morotar/dsh-plugins/tree/main/packages/dsh-repo-harness#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lionad-Morotar/dsh-plugins",
+    "directory": "packages/dsh-repo-harness"
+  },
+  "bugs": {
+    "url": "https://github.com/Lionad-Morotar/dsh-plugins/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "repository",
+    "harness",
+    "merge",
+    "steer",
+    "governance"
+  ],
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.3 <0.3.0-0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "vitest": "^3.2.0"
+  }
+}

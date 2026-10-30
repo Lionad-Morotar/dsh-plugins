@@ -40,7 +40,7 @@ function skillVersion() {
 
 function usage(message) {
   process.stderr.write(
-    "usage: node ~/.claude/skills/dsh-plugin-submission/scripts/preflight.mjs --mode check --package <dir> " +
+    "usage: node ~/.claude/skills/post-dsh-plugin/scripts/preflight.mjs --mode check --package <dir> " +
       "[--repo-created <iso>] [--target <hub|awesome|index|all>] [--json]\n" +
       "       node ... --version\n" +
       (message === undefined ? "" : "error: " + message + "\n"),
@@ -53,7 +53,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--version" || arg === "-v") {
-      process.stdout.write("dsh-plugin-submission " + skillVersion() + "\n");
+      process.stdout.write("post-dsh-plugin " + skillVersion() + "\n");
       process.exit(0);
     } else if (arg === "--mode") out.mode = argv[++i];
     else if (arg === "--package") out.pkg = argv[++i];
