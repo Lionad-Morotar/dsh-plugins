@@ -83,7 +83,14 @@ function foldLeadingComma(doc: Document, event: Event): void {
   } catch {
     folded = false;
   }
-  if (folded) event.preventDefault();
+  if (folded) {
+    // 斜杠已经进了编辑器（走的嵌套事件路径），原事件必须对宿主隐身：
+    // preventDefault 挡原生顿号插入，stopPropagation 挡 Lexical 挂在 composer
+    // 上的 beforeinput 处理器——它不检查 defaultPrevented，看到就会把顿号
+    // 再插一遍，真机首验的「、/」双字正是这么来的。
+    event.preventDefault();
+    event.stopPropagation();
+  }
 }
 
 /**

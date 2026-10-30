@@ -1,6 +1,6 @@
 {
   "name": "dsh-slash-commands",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "DeepSeek Harness slash-command plugin: /copy on TUI, /rename and /resume on web and desktop",

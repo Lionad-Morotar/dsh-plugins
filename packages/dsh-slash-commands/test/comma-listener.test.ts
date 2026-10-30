@@ -158,6 +158,40 @@ describe("installCommaFold", () => {
     expect(write).not.toHaveBeenCalled();
   });
 
+  it("hides the folded event from listeners sitting on the composer", () => {
+    // Lexical 的 beforeinput 处理器就挂在 composer 上且不检查 defaultPrevented；
+    // 折叠后原事件必须停止传播，否则顿号会被宿主再插一遍（真机首验的「、/」）。
+    const { doc, write } = surface();
+    installCommaFold(doc);
+    const el = composer(doc);
+    const seen: InputEvent[] = [];
+    el.addEventListener("beforeinput", event => seen.push(event as InputEvent));
+    el.focus();
+    caretAtEnd(doc, el);
+
+    const event = typeComma(el);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("keeps the event flowing to the composer when the write fails", () => {
+    const { doc, write } = surface();
+    write.mockReturnValue(false);
+    installCommaFold(doc);
+    const el = composer(doc);
+    const seen: InputEvent[] = [];
+    el.addEventListener("beforeinput", event => seen.push(event as InputEvent));
+    el.focus();
+    caretAtEnd(doc, el);
+
+    const event = typeComma(el);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(seen).toHaveLength(1);
+  });
+
   it("survives a throwing writer by letting the 顿号 pass through", () => {
     const { doc } = surface();
     const doc2 = doc as Document & { execCommand: unknown };
