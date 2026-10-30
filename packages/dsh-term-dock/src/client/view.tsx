@@ -68,7 +68,7 @@ function useDockVisible(visibility: DockVisibilitySource): boolean {
  * still offers at the dock's flow position. No CSS expression reaches that
  * number reliably through the host's sticky composer seat, so the mount
  * measures it: distance from the dock root's top to the viewport bottom,
- * clamped to the 140px..280px usability band. The composer card and the
+ * clamped to the 120px..280px usability band. The composer card and the
  * column are observed because they move the dock without a window resize;
  * the dock itself is excluded to keep the loop acyclic.
  * @returns the height in px the dock may occupy.
@@ -81,7 +81,7 @@ function useDockRestHeight(ref: RefObject<HTMLDivElement | null>): number {
     const update = (): void => {
       const top = el.getBoundingClientRect().top;
       const available = window.innerHeight - top - 12;
-      setRest(Math.max(140, Math.min(280, Math.round(available))));
+      setRest(Math.max(120, Math.min(280, Math.round(available))));
     };
     update();
     const frame = requestAnimationFrame(update);
