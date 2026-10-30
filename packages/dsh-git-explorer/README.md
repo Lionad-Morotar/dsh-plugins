@@ -29,6 +29,7 @@
 ## 核心能力
 
 - 宿主服务 `GitExplorerService`：Typert Remote 服务，服务名与线命名空间都是 `gitExplorer`，向客户端暴露 `snapshot` / `query` / `commit` / `run` 四个端点。`run` 是类型化占位，当前一律回 `not-implemented`——数据层是只读的。
+- 客户端传输走连接服务的原生 RPC：`ctx.get("connection").rpc.call(rpc, "/api", "gitExplorer/<method>", { args: { request } }, signal)`，返回值是 `{ ok, value }` 传输封套。之所以不用 `ctx.remote.gitExplorer`：那个类型化命名空间只存在于「用 `ctx.remote.$mount()` 挂载了生成贡献物」的包里，第三方包没有生成物；宿主侧的 `typertRemote` 绑定会被网关的 source-mode 发现枚举，路由 `/api/gitExplorer/<method>` 因此开箱可用。
 - 只走 argv：所有 git 调用都是数组，从 `git` 开始，不拼 shell；每条命令 20s 超时、4MB 输出预算，超出走 spill 回读，stdout 有损时明确失败而不是交出半页数据。
 - 仓库快照：仓库根、当前分支与 HEAD（含游离 HEAD、领先 / 落后）、按 hash 分组的引用、工作区变更、逐文件增删行数、首页提交与泳道、原始 `git status --porcelain=v2 -z` 文本（供文件树着色复用）。
 - 提交查询：`git log --topo-order --parents`，多取一条判断 `hasMore` 后丢掉。查询端点支持 `skip` / `limit`、`--grep` 与 `--author`（面板本身只用分页）；ref 只接受分支、标签或提交名，带修订语法或 `..` 的一律拒绝。
@@ -53,7 +54,7 @@
 - 单条命令 20s 超时、4MB 单流预算。超大仓库的第一次 `git log` 可能先撞超时；stdout 被截断时查询整体失败，不会拿半页数据画一张缺边的图。
 - 首屏只取 400 条提交；更早的历史要点"加载更多"，按 100 条递增，单次请求硬上限 5000，`skip` 上限 1000000。
 - ref 过滤是白名单：分支、标签、提交名可用，`HEAD~3` 这类修订语法与 `..` 范围不进来。
-- 宿主半需要 `subprocess` 与 `workingDirectory` 两个服务；缺 `subprocess` 时服务构造即失败，客户端会显示"Git 服务不可用"。
+- 宿主半需要 `subprocess`、`sessions`、`sessionPersistence` 三个服务；缺 `subprocess` 时服务构造即失败，客户端会显示"Git 服务不可用"。
 - 提交详情里的文件清单是信息展示，不可点；只有左侧工作区变更能跳到文件面板。
 - 仓库目录取自会话的工作目录，会话没绑定目录时回落到宿主默认目录；不是仓库就给空态，不猜父目录。
 

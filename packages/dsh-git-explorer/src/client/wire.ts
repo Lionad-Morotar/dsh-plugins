@@ -33,6 +33,43 @@ export interface GitRemoteFace {
 /** Read the optional service on each call so a late mount starts working. */
 export type RemoteResolver = () => GitRemoteFace | undefined;
 
+/**
+ * One unary call on the host's API gateway.
+ *
+ * Third-party host halves publish their typert routes at runtime, but the typed
+ * `remote.<namespace>` face only exists when a *generated* client contribution
+ * was mounted with `ctx.remote.$mount()`. Packages without that artifact (this
+ * one, and the reference Git panel on the same host) reach the same routes
+ * through the connection service's raw RPC instead.
+ */
+export interface RpcCall {
+  (endpoint: string, payload: { readonly args: { readonly request: unknown } }, signal?: AbortSignal): Promise<unknown>;
+}
+
+/** Methods this panel calls, in the order the RPC face exposes them. */
+const RPC_METHODS = ["snapshot", "query", "commit"] as const;
+
+/**
+ * Build the Git face over the raw gateway channel.
+ *
+ * The request travels as `{ args: { request } }` because the host methods take
+ * one request object; the gateway reads session identity from that payload.
+ * @param call - unary caller bound to `/api` and the Git namespace.
+ * @returns a face with the same method surface the typed namespace would have.
+ */
+export function createRpcRemoteFace(call: RpcCall): GitRemoteFace {
+  const invoke = (method: string) =>
+    (request: unknown, signal?: AbortSignal): Promise<unknown> => call(method, { args: { request } }, signal);
+  return {
+    snapshot: invoke("snapshot") as GitRemoteFace["snapshot"],
+    query: invoke("query") as GitRemoteFace["query"],
+    commit: invoke("commit") as GitRemoteFace["commit"],
+  };
+}
+
+/** The methods the RPC face covers; kept exported so a test can assert the surface. */
+export const GIT_RPC_METHODS = RPC_METHODS;
+
 /** A transport envelope after its two shapes have been folded into one. */
 export type Unwrapped<T> =
   | { readonly ok: true; readonly result: T }

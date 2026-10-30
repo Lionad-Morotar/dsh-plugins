@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { apply, clientPlugin, createRemoteResolver, inject, __test } from "../src/client/entry.ts";
+import { apply, clientPlugin, createRemoteResolver, inject, __test, createRpcCall } from "../src/client/entry.ts";
+import { createRpcRemoteFace } from "../src/client/wire.ts";
 import { ZH } from "../src/client/copy.ts";
 import { initialViewState } from "../src/client/view.tsx";
 
@@ -125,5 +126,55 @@ describe("git explorer client entry", () => {
     expect(initialViewState("s1", false)).toBe("no-service");
     expect(initialViewState("s1", true)).toBe("loading");
     expect(ZH["state.noService.title"]).toBe("Git 服务不可用");
+  });
+});
+
+describe("connection RPC transport", () => {
+  it("binds the gateway caller to the package namespace", async () => {
+    const calls: { scope: string; endpoint: string; payload: unknown; self: unknown }[] = [];
+    const rpc = {
+      call(this: unknown, scope: string, endpoint: string, payload: unknown) {
+        calls.push({ scope, endpoint, payload, self: this });
+        return Promise.resolve({ ok: true, value: { ok: true, snapshot: null } });
+      },
+    };
+    const ctx = { get: (name: string) => (name === "connection" ? { rpc } : undefined) };
+    const call = createRpcCall(ctx as never);
+    expect(call).toBeDefined();
+
+    await call?.("snapshot", { args: { request: { sessionId: "s1" } } });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.scope).toBe("/api");
+    expect(calls[0]?.endpoint).toBe("gitExplorer/snapshot");
+    expect(calls[0]?.payload).toEqual({ args: { request: { sessionId: "s1" } } });
+    // 方法式调用保住了接收者，连接服务内部状态不会丢
+    expect(calls[0]?.self).toBe(rpc);
+  });
+
+  it("offers the three methods the panel consumes", async () => {
+    const endpoints: string[] = [];
+    const face = createRpcRemoteFace((endpoint) => {
+      endpoints.push(endpoint);
+      return Promise.resolve({ ok: true, value: { ok: true } });
+    });
+    await face.snapshot({ sessionId: "s1" });
+    await face.query({ sessionId: "s1", skip: 0, limit: 10 });
+    await face.commit({ sessionId: "s1", hash: "abc" });
+    expect(endpoints).toEqual(["snapshot", "query", "commit"]);
+  });
+
+  it("resolves to the RPC face when no generated contribution is mounted", () => {
+    const rpc = { call: () => Promise.resolve({ ok: true, value: {} }) };
+    const ctx = { get: (name: string) => (name === "connection" ? { rpc } : undefined) };
+    const face = createRemoteResolver(ctx as never)();
+    expect(face).toBeDefined();
+    expect(typeof face?.snapshot).toBe("function");
+  });
+
+  it("still answers undefined when neither transport is readable", () => {
+    const ctx = { get: () => undefined };
+    expect(createRemoteResolver(ctx as never)()).toBeUndefined();
+    expect(createRpcCall(ctx as never)).toBeUndefined();
   });
 });

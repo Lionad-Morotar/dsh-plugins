@@ -3,15 +3,15 @@
  *
  * Registers the Git conversation view. The core service arrives through
  * `inject`, never through a cross-package module import; the Git data service
- * is read lazily from `ctx.remote.gitExplorer` so an unloaded host half renders
- * the panel's "service unavailable" state instead of keeping the tab hidden.
+ * is read lazily over the connection RPC so an unloaded host half renders the
+ * panel's "service unavailable" state instead of keeping the tab hidden.
  */
 import { EN, ZH } from "./copy.ts";
-import { LOCALE_NAMESPACE, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
+import { GIT_SERVICE, LOCALE_NAMESPACE, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
 import { computeWindow, createJump, formatCommitDetail, groupChanges } from "./model.ts";
 import { insertStyles } from "./styles.ts";
 import { createGitExplorerView, type WorkbenchFace } from "./view.tsx";
-import type { GitRemoteFace, RemoteResolver } from "./wire.ts";
+import { createRpcRemoteFace, type GitRemoteFace, type RemoteResolver, type RpcCall } from "./wire.ts";
 
 /** The slice of the client context this entry uses. */
 export interface ClientContextLike {
@@ -47,12 +47,15 @@ function isGitRemote(value: unknown): value is GitRemoteFace {
 }
 
 /**
- * Read the optional Git namespace on every call.
+ * Read the Git face on every call, in the order the host makes it available.
  *
- * The documented path is `ctx.remote.gitExplorer`. A host that enforces the
- * inject whitelist throws when that nested service was not declared, and the
- * page needs an empty state instead of an exception, so the non-throwing
- * resolver is the second probe.
+ * 1. `ctx.remote.gitExplorer` is the documented typed path, but it only exists
+ *    when a generated client contribution was mounted with `ctx.remote.$mount()`.
+ *    A third-party package ships no such artifact, so this branch is a courtesy
+ *    for hosts that do mount one.
+ * 2. The raw connection RPC is what reaches a hand-published host half: the same
+ *    `/api/<namespace>/<method>` route the reference Git panel on this host uses.
+ * 3. Nothing readable means the panel's empty state, never an exception.
  */
 export function createRemoteResolver(ctx: ClientContextLike): RemoteResolver {
   return () => {
@@ -60,7 +63,7 @@ export function createRemoteResolver(ctx: ClientContextLike): RemoteResolver {
       const direct = ctx.remote?.gitExplorer;
       if (isGitRemote(direct)) return direct;
     } catch {
-      // Namespace not injected or not mounted yet; fall through to the resolver.
+      // Namespace not injected or not mounted yet; fall through to the next probe.
     }
     try {
       const viaGet = ctx.get?.("remote.gitExplorer");
@@ -68,8 +71,34 @@ export function createRemoteResolver(ctx: ClientContextLike): RemoteResolver {
     } catch {
       // A resolver that rejects an unknown name is the same as an absent face.
     }
-    return undefined;
+    const call = createRpcCall(ctx);
+    return call === undefined ? undefined : createRpcRemoteFace(call);
   };
+}
+
+/** The gateway's unary caller, as the connection service exposes it. */
+interface GatewayRpc {
+  call(scope: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<unknown>;
+}
+
+/** The slice of the connection service this transport needs. */
+interface ConnectionFace {
+  readonly rpc?: GatewayRpc;
+}
+
+/**
+ * Bind the gateway's unary caller to this package's namespace.
+ *
+ * `call` is invoked with the rpc object as its receiver: the connection service
+ * exposes it as a method, so an unbound reference would lose `this`.
+ * @param ctx - client context, read through the non-throwing resolver.
+ * @returns the caller, or undefined on a host without the connection service.
+ */
+export function createRpcCall(ctx: ClientContextLike): RpcCall | undefined {
+  const connection = ctx.get?.("connection") as ConnectionFace | undefined;
+  const rpc = connection?.rpc;
+  if (rpc === undefined || typeof rpc.call !== "function") return undefined;
+  return (endpoint, payload, signal) => rpc.call("/api", `${GIT_SERVICE}/${endpoint}`, payload, signal);
 }
 
 /** Mount the Git workbench view. */
