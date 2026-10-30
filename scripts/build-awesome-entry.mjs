@@ -16,8 +16,6 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..");
-const OWNER = "Lionad-Morotar";
-const REPO = "dsh-plugins";
 /** awesome-dsh-plugin is a separate project; point at a checkout to run its validator. */
 const CATALOG_ROOT = process.env.AWESOME_DSH_PLUGIN_ROOT ?? "/tmp/awesome-check";
 
@@ -45,10 +43,28 @@ if (pkg.private === true) {
   process.exit(1);
 }
 
-/** The catalog folds the URL into a filename: owner__repo--sub-dir. */
-const url = "https://github.com/" + OWNER + "/" + REPO + "/tree/main/packages/" + name;
-const fileName = OWNER + "__" + REPO + "--packages-" + name + ".yml";
-const iconUrl = "https://raw.githubusercontent.com/" + OWNER + "/" + REPO + "/main/packages/" + name + "/assets/icon-180.png";
+/**
+ * Catalog coordinates come from the package's own repository field, so a package
+ * that moved to a repository of its own keeps working without an edit here. The
+ * catalog folds the URL into a filename: owner__repo, plus --sub-dir segments
+ * only when the entry points below the repository root.
+ */
+const repoUrl = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
+if (typeof repoUrl !== "string") {
+  console.error("error: " + name + " declares no repository.url, so the catalog cannot point at it");
+  process.exit(1);
+}
+const slug = /github\.com[/:]([^/]+)\/([^/#.]+?)(?:\.git)?(?:#.*)?$/u.exec(repoUrl.trim());
+if (slug === null) {
+  console.error("error: " + name + " repository.url is not github.com/owner/repo, saw " + repoUrl);
+  process.exit(1);
+}
+const [, owner, repo] = slug;
+/** Empty when the package is its own repository root; "packages/<name>" in a monorepo. */
+const subPath = pkg.repository?.directory ?? "";
+const url = "https://github.com/" + owner + "/" + repo + (subPath === "" ? "" : "/tree/main/" + subPath);
+const fileName = owner + "__" + repo + (subPath === "" ? "" : "--" + subPath.replaceAll("/", "-")) + ".yml";
+const iconUrl = "https://raw.githubusercontent.com/" + owner + "/" + repo + "/main/" + (subPath === "" ? "" : subPath + "/") + "assets/icon-180.png";
 
 if (!existsSync(join(packageRoot, "assets", "icon-180.png"))) {
   console.error("error: " + name + " has no assets/icon-180.png; the catalog rejects SVG and needs a GitHub-hosted raster");
@@ -60,7 +76,7 @@ const quote = (value) => "'" + value.replaceAll("'", "''") + "'";
 
 const entry = [
   "url: " + url,
-  "name: " + OWNER + "/" + REPO + "#" + name,
+  "name: " + owner + "/" + repo + (subPath === "" ? "" : "#" + name),
   "category: " + (CATEGORY[name] ?? "ui"),
   "icon: " + iconUrl,
   "description:",

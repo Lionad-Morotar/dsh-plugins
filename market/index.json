@@ -46,10 +46,9 @@
       },
       "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4IiByb2xlPSJpbWciIGFyaWEtbGFiZWxsZWRieT0ianVtcC10aXRsZSI+CiAgPHRpdGxlIGlkPSJqdW1wLXRpdGxlIj5kc2gtanVtcDwvdGl0bGU+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9Imp1bXAtYmciIHgxPSI4IiB5MT0iNiIgeDI9IjQwIiB5Mj0iNDQiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj4KICAgICAgPHN0b3Agc3RvcC1jb2xvcj0iIzVDN0JGRiIgLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMkIzOURCIiAvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTMiIGZpbGw9InVybCgjanVtcC1iZykiIC8+CiAgPHJlY3QgeD0iMTAiIHk9IjI1IiB3aWR0aD0iMjEiIGhlaWdodD0iMTMiIHJ4PSI0IiBmaWxsPSIjRkZGRkZGIiBmaWxsLW9wYWNpdHk9IjAuNDUiIC8+CiAgPGcgZmlsbD0iI0ZGRkZGRiI+CiAgICA8Y2lyY2xlIGN4PSI1LjUiIGN5PSI2IiByPSIxLjUiIC8+CiAgICA8Y2lyY2xlIGN4PSIxMCIgY3k9IjkiIHI9IjEuNSIgLz4KICAgIDxjaXJjbGUgY3g9IjEzLjciIGN5PSIxMi40IiByPSIxLjYiIC8+CiAgICA8Y2lyY2xlIGN4PSIxNy4xIiBjeT0iMTYuOSIgcj0iMS41IiAvPgogIDwvZz4KICA8ZyBmaWxsPSIjRkZGRkZGIiBmaWxsLW9wYWNpdHk9IjAuODgiPgogICAgPGNpcmNsZSBjeD0iMjEiIGN5PSIxNi41IiByPSIxIiAvPgogICAgPGNpcmNsZSBjeD0iMjUuNSIgY3k9IjEzIiByPSIxIiAvPgogIDwvZz4KICA8cmVjdCB4PSI5IiB5PSIyMS41IiB3aWR0aD0iMjEiIGhlaWdodD0iMTMiIHJ4PSI0IiBmaWxsPSIjRkZGRkZGIiAvPgogIDxjaXJjbGUgY3g9IjM2LjUiIGN5PSIxMyIgcj0iNSIgZmlsbD0iI0ZGRkZGRiIgLz4KPC9zdmc+Cg==",
       "author": "Lionad <1806234223@qq.com>",
-      "homepage": "https://github.com/Lionad-Morotar/dsh-plugins/tree/main/packages/dsh-jump#readme",
+      "homepage": "https://github.com/Lionad-Morotar/dsh-jump#readme",
       "repository": {
-        "url": "https://github.com/Lionad-Morotar/dsh-plugins",
-        "directory": "packages/dsh-jump"
+        "url": "https://github.com/Lionad-Morotar/dsh-jump"
       },
       "metadata": {
         "category": "ui",

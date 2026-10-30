@@ -65,8 +65,16 @@ function checkRepository(pkg, root) {
     const slug = /github\.com[/:]([^/]+)\/([^/#.]+?)(?:\.git)?(?:#.*)?$/u.exec(url.trim());
     if (slug === null) fail(root, "repository.url must normalize to github.com/owner/repo, saw " + url);
   }
-  if (typeof repo === "object" && repo !== null && repo.directory !== "packages/" + pkg.name) {
-    fail(root, "repository.directory must be packages/" + pkg.name + " in this monorepo, saw " + JSON.stringify(repo.directory));
+  // A package that is its own repository declares no directory, and an index
+  // entry for it must not carry one either. A package that still lives inside a
+  // monorepo declares the subdirectory, which has to be where it actually sits.
+  // Either way the two halves have to agree: a stale directory would send an
+  // install to a path that no longer holds the package.
+  if (typeof repo === "object" && repo !== null && repo.directory !== undefined) {
+    const actual = relative(repoRoot, root).split("\\").join("/");
+    if (repo.directory !== actual) {
+      fail(root, "repository.directory is " + JSON.stringify(repo.directory) + " but the package sits at " + JSON.stringify(actual));
+    }
   }
   if (typeof pkg.homepage !== "string" || !pkg.homepage.startsWith("https://")) fail(root, "homepage must be an https URL");
   if (!Array.isArray(pkg.keywords) || pkg.keywords.length === 0) fail(root, "keywords must be a non-empty array");

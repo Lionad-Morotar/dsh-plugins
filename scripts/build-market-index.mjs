@@ -26,7 +26,6 @@ const repoRoot = join(here, "..");
 const OUTPUT = join(repoRoot, "market", "index.json");
 /** The URL the index is meant to be served from; relative icon references resolve against it. */
 const INDEX_URL = "https://raw.githubusercontent.com/Lionad-Morotar/dsh-plugins/main/market/index.json";
-const REPO_URL = "https://github.com/Lionad-Morotar/dsh-plugins";
 
 /**
  * Packages the index offers. Only dsh-jump ships for now; the other two are
@@ -113,9 +112,17 @@ function entryFor({ directory, category, keywords, labels }) {
   for (const label of labels ?? []) {
     if (LABELS[label] === undefined) throw new Error(directory + " asks for label \"" + label + "\" which LABELS does not declare");
   }
+  // Coordinates come from the package, not from this monorepo: a package that
+  // lives in a repository of its own (as a submodule here) must be described by
+  // its own URL, or the index would promise an install from the wrong place.
+  const repoUrl = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
+  const slug = typeof repoUrl === "string" ? /github\.com[/:]([^/]+)\/([^/#.]+?)(?:\.git)?(?:#.*)?$/u.exec(repoUrl.trim()) : null;
+  if (slug === null) throw new Error(directory + " declares no github.com/owner/repo in repository.url");
+  const repositoryUrl = "https://github.com/" + slug[1] + "/" + slug[2];
+  const repositoryDirectory = pkg.repository?.directory;
   const source = sourceMode === "npm"
     ? { type: "npm" }
-    : { type: "git", url: REPO_URL, commit: headCommit, path: "packages/" + directory };
+    : { type: "git", url: repositoryUrl, commit: headCommit, ...(repositoryDirectory === undefined ? {} : { path: repositoryDirectory }) };
   // In npm mode the version's publish time is whatever the registry recorded, not
   // whenever this checkout happened to commit. A git timestamp here would be a
   // plausible-looking lie: the field means "when did this version reach users".
@@ -127,7 +134,7 @@ function entryFor({ directory, category, keywords, labels }) {
     icon: inlineIcon(packageRoot, iconRelative),
     author: pkg.author,
     homepage: pkg.homepage,
-    repository: { url: REPO_URL, directory: "packages/" + directory },
+    repository: { url: repositoryUrl, ...(repositoryDirectory === undefined ? {} : { directory: repositoryDirectory }) },
     metadata: { category, keywords, labels: labels ?? [], sortKeys: {} },
     versions: [
       {
