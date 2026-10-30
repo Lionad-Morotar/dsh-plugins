@@ -33,7 +33,6 @@ const UNPUBLISHED = [
   "dsh-slash-commands",
   "dsh-session-timing",
   "dsh-session-interruption",
-  "dsh-model-provider-label",
   "dsh-better",
   "dsh-more-config",
 ];
