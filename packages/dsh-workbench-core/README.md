@@ -36,6 +36,7 @@
 - 焦点队列 `viewFocus`：宿主没交出 `openView` 时，调用方（例如命令面板的 `⌘↵`）把 `path:<相对路径>` 放进队列再切视图；文件视图挂载时取走等待中的那条，并订阅后续请求。每个视图只保留一条，后到覆盖，避免读者已经走开之后旧目标被重放。
 - 宿主适配层：`files`（`workspaceFiles` 的 list / read / stat / changes）、`subprocess`、`terminals`（`webTerminals` 的 view / close / recover）、`composerOverlay`（`data-conversation-composer-overlay` 锚点）。全部按名软探测，服务缺失回报 absent 而不是抛错，宿主升级最多打断一个文件。
 - 设置分区「工作台」：文件 / Git / 终端三组，行来自宿主 `ctx.shortcuts.catalog` 的真实快照——没挂载的命令所在组显示"未安装"，不会渲染一张空表。点"修改"进入录制，先 `describeBinding` 查 issue 与冲突，再带 revision 写 `shortcuts.edit`；被拒时把原因写在行下。
+- 录制时先过一遍宿主支持的键码集（`src/client/keycode.ts` 镜像 `Key*` / `Digit*` / `F1-24` 与固定名表）：宿主 `normalizeBinding` 对表外键码直接抛错，而面板捕获的是原始 `keydown`，Insert / End / Home 这类键以前会把异常漏到控制台，现在换成一句"宿主不支持这个键"。`describeBinding` 本身也包了兜底。
 - 命令注册：三条全局命令经 `ctx.shortcuts.register` 注册，desktop 的 macOS / Windows / Linux 三套平台 profile 写同一条声明。单条注册失败只记一条 warn，不连累设置页——设置页正是解释冲突的地方。
 - 会话头「返回对话」行：注册进 `conversation.session.header.views.actions`，把 owner 的 `onOpen` 绑进 views seam，是 root 侧唯一的切视图通道。
 

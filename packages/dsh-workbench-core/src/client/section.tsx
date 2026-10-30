@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type CSSProperties } from "react";
 
 import { bindingCaps, detectPlatform, type BindingPlatform, type KeyBinding } from "./keymap.ts";
+import { isSupportedShortcutCode } from "./keycode.ts";
 import { buildSettingsGroups, checkBindings, RESERVED_BINDINGS, type ShortcutCatalogEntryLike, type SettingsRow } from "./settings.ts";
 import type { WorkbenchService } from "./service.ts";
 
@@ -220,7 +221,19 @@ export function createWorkbenchSection({ service, t, shortcuts }: SectionWiring)
             ...(event.metaKey ? (["meta"] as const) : []),
           ],
         };
-        const described = shortcuts.describeBinding?.(binding);
+        // 宿主只认 Key*/Digit*/F1-24 与固定名表，其它键码会让 describeBinding 抛错。
+        // 面板捕获的是原始 keydown，Insert / End 这类键必须在这里换成一句提示。
+        if (!isSupportedShortcutCode(event.code)) {
+          setNotice(t("edit.unsupported"));
+          return;
+        }
+        let described: ReturnType<NonNullable<typeof shortcuts.describeBinding>> | undefined;
+        try {
+          described = shortcuts.describeBinding?.(binding);
+        } catch {
+          setNotice(t("edit.unsupported"));
+          return;
+        }
         const conflicts = (described?.conflicts ?? []).filter(id => id !== editing);
         if (described?.issue || conflicts.length > 0) {
           const reason = described?.issue === null || described?.issue === undefined
