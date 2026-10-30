@@ -538,20 +538,26 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                   {panels.panels.length === 0 ? (
                     <PanelEmpty t={t} />
                   ) : (
-                    panels.panels.map((panel, index) => (
-                      <div
-                        key={panel.path}
-                        className="fx-panel"
-                        id={`fx-panel-${index}`}
-                        role="tabpanel"
-                        aria-labelledby={`fx-tab-${index}`}
-                        hidden={panel.path !== panels.active}
-                        data-line={panel.line}
-                        data-testid="fs-panel"
-                      >
-                        <PreviewPane sessionId={sessionId} files={files} path={panel.path} t={t} />
-                      </div>
-                    ))
+                    panels.panels.map((panel, index) => {
+                      // One pane stays mounted per open file; the inactive ones
+                      // are hidden, not unmounted, so the renderer needs to be
+                      // told which panel is actually on screen.
+                      const isActive = panel.path === panels.active;
+                      return (
+                        <div
+                          key={panel.path}
+                          className="fx-panel"
+                          id={`fx-panel-${index}`}
+                          role="tabpanel"
+                          aria-labelledby={`fx-tab-${index}`}
+                          hidden={!isActive}
+                          data-line={panel.line}
+                          data-testid="fs-panel"
+                        >
+                          <PreviewPane sessionId={sessionId} files={files} path={panel.path} t={t} visible={isActive} />
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </div>

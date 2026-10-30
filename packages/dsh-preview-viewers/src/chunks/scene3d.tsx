@@ -51,8 +51,9 @@ function SceneSurface(props: {
   readonly t: (key: string, values?: Record<string, string | number>) => string;
   readonly onSettled?: (ok: boolean, attempt: number) => void;
   readonly readSibling?: (relative: string) => Promise<Uint8Array>;
+  readonly visible?: boolean;
 }): React.ReactElement {
-  const { bytes, path, t, onSettled, readSibling } = props;
+  const { bytes, path, t, onSettled, readSibling, visible = true } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<SceneHandle | null>(null);
   const [state, setState] = useState<ViewState>({ kind: "loading" });
@@ -60,6 +61,12 @@ function SceneSurface(props: {
   const [wireframe, setWireframe] = useState(false);
   const settledRef = useRef(onSettled);
   settledRef.current = onSettled;
+  // Read by the mount effect, never a dependency of it: visibility changes on
+  // every tab switch, and rebuilding the viewport for that would throw away the
+  // GL context and re-decode the model. The effect below forwards changes
+  // instead, and this ref carries the value across the async mount window.
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -70,12 +77,21 @@ function SceneSurface(props: {
 
     void (async () => {
       try {
-        const { handle, facts } = await mountScene(container, bytes, path, { wasmWrapper, wasmBinary }, readSibling);
+        const { handle, facts } = await mountScene(
+          container,
+          bytes,
+          path,
+          { wasmWrapper, wasmBinary },
+          readSibling,
+          { visible: visibleRef.current },
+        );
         if (disposed) {
           handle.dispose();
           return;
         }
         handleRef.current = handle;
+        // The panel may have been hidden or shown while the model was decoding.
+        handle.setVisible(visibleRef.current);
         setState({ kind: "ready", facts });
         settledRef.current?.(true, attempt);
       } catch (error) {
@@ -95,6 +111,12 @@ function SceneSurface(props: {
   useEffect(() => {
     handleRef.current?.setWireframe(wireframe);
   }, [wireframe, state.kind]);
+
+  // The hidden panel stays mounted, so the gate has to be a flag the loop reads
+  // rather than an unmount: this effect only toggles it.
+  useEffect(() => {
+    handleRef.current?.setVisible(visible);
+  }, [visible, state.kind]);
 
   // The canvas host stays mounted even on failure: the retry effect resolves it
   // through the ref, so unmounting it here would leave the button with nothing
@@ -141,7 +163,7 @@ function SceneSurface(props: {
  * @returns the viewport, or a status line while it settles.
  */
 export function Body(props: NativeBodyProps): React.ReactElement {
-  const { content, resourceAddress, t, readFile, useResource, useTabInfo } = props;
+  const { content, resourceAddress, t, readFile, useResource, useTabInfo, visible = true } = props;
   const { tab } = useTabInfo();
   const resource = useResource(resourceAddress);
   const absolutePath = resource.value?.absolutePath;
@@ -152,6 +174,19 @@ export function Body(props: NativeBodyProps): React.ReactElement {
   const [failure, setFailure] = useState<string | null>(null);
   const settled = useRef<ReportMark>(UNREPORTED);
   const target = useMemo(() => parseSessionFileAddress(resourceAddress), [resourceAddress]);
+  // Memoized on the values it closes over: a new identity per render would sit in
+  // the mount effect's dependency list and tear down the WebGL context (and
+  // re-read every sibling) on every unrelated re-render of this body.
+  //
+  // It sits above every early return on purpose. The first render happens before
+  // the bytes arrive and returns the loading line; a hook below that line is
+  // skipped on render one and called on render two, which React rejects as
+  // "Rendered more hooks than during the previous render" and the preview face
+  // crashes instead of drawing the model.
+  const readSibling = useMemo(
+    () => (absolutePath === undefined ? undefined : siblingReader(readFile, target?.sessionId, absolutePath, tab.signal)),
+    [readFile, target?.sessionId, absolutePath, tab.signal],
+  );
 
   useEffect(() => {
     if (target === null || absolutePath === undefined) return;
@@ -205,14 +240,7 @@ export function Body(props: NativeBodyProps): React.ReactElement {
   if (bytes === null || absolutePath === undefined) {
     return <p className="preview-more-status">{t("state.loading")}</p>;
   }
-  // Memoized on the values it closes over: a new identity per render would sit in
-  // the mount effect's dependency list and tear down the WebGL context (and
-  // re-read every sibling) on every unrelated re-render of this body.
-  const readSibling = useMemo(
-    () => siblingReader(readFile, target?.sessionId, absolutePath, tab.signal),
-    [readFile, target?.sessionId, absolutePath, tab.signal],
-  );
-  return <SceneSurface bytes={bytes} path={absolutePath} t={t} onSettled={settle} readSibling={readSibling} />;
+  return <SceneSurface bytes={bytes} path={absolutePath} t={t} onSettled={settle} readSibling={readSibling} visible={visible} />;
 }
 
 /**
@@ -245,7 +273,7 @@ function siblingReader(
  * @returns the viewport.
  */
 export function Viewer(props: SidebarViewerProps): React.ReactElement {
-  const { t, customData, path, readFile, scope } = props;
+  const { t, customData, path, readFile, scope, visible = true } = props;
   const bytes = customData?.bytes;
   const filePath = customData?.path ?? path;
   // One controller for the life of the viewer, aborted on unmount. Creating it
@@ -263,5 +291,5 @@ export function Viewer(props: SidebarViewerProps): React.ReactElement {
   if (bytes === undefined) {
     return <p className="preview-more-status">{t("state.loading")}</p>;
   }
-  return <SceneSurface bytes={bytes} path={filePath} t={t} readSibling={readSibling} />;
+  return <SceneSurface bytes={bytes} path={filePath} t={t} readSibling={readSibling} visible={visible} />;
 }

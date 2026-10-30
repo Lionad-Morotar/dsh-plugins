@@ -8,7 +8,7 @@
  */
 import { baseName } from "dsh-preview-viewers/address.ts";
 
-import { parseFocus, isAbsolutePath } from "./model.ts";
+import { parseFocus } from "./model.ts";
 
 /** One open file panel. */
 export interface PanelEntry {
@@ -98,17 +98,26 @@ export function createPanelStack(): PanelStack {
    * Resolve one caller-supplied path to the key the ledger stores.
    *
    * A stored key is already normalized, and an absolute one keeps its leading
-   * slash, so the exact form is tried first. The workspace-relative reading is
-   * only a fallback for a caller that spells a relative path with a leading
-   * slash; an absolute path never falls back, because the same name can be open
-   * both inside and outside the workspace and the two are different files.
+   * slash, so the exact form is tried first. The workspace-relative reading is a
+   * second lookup, not a second normalization: it only answers when that key is
+   * actually open, which is what makes it reachable at all — a caller spelling a
+   * relative path as `/src/a.ts` has to find the `src/a.ts` row.
+   *
+   * The two readings are genuinely ambiguous (a path starting with `/` may be a
+   * filesystem path, or a workspace path written with a leading slash), so the
+   * order is the rule: an absolute panel of that name wins, and only its absence
+   * lets the relative row answer. A caller that knows which one it means opens
+   * with `absolute` and gets the exact key back.
+   * @param path - path as the caller spells it.
+   * @returns the key of an open row, or undefined when neither reading is open.
    */
   const keyOf = (path: string): string | undefined => {
     const exact = normalizePath(path, true);
     if (exact === undefined) return undefined;
     if (indexOf(exact) >= 0) return exact;
-    if (isAbsolutePath(exact)) return undefined;
-    return normalizePath(path, false);
+    const relative = normalizePath(path, false);
+    if (relative === undefined || relative === exact) return undefined;
+    return indexOf(relative) >= 0 ? relative : undefined;
   };
 
   const step = (delta: 1 | -1): void => {

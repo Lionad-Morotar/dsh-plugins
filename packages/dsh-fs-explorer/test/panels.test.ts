@@ -82,8 +82,39 @@ describe("panel stack", () => {
     expect(stack.snapshot().active).toBe("/Users/x/project/a.ts");
     expect(stack.isOpen("/Users/x/project/a.ts")).toBe(true);
     stack.close("/Users/x/project/a.ts");
-    expect(stack.isOpen("/Users/x/project/a.ts")).toBe(false);
     expect(stack.isOpen("Users/x/project/a.ts")).toBe(true);
+    // With the absolute row gone, the same spelling now falls through to the
+    // workspace row of that name. A leading slash alone does not say which of
+    // the two the caller means, so the ledger resolves it in the documented
+    // order: the exact key first, the relative reading second.
+    expect(stack.isOpen("/Users/x/project/a.ts")).toBe(true);
+    stack.close("/Users/x/project/a.ts");
+    expect(stack.snapshot().panels).toHaveLength(0);
+  });
+
+  it("finds a workspace panel through a path spelled with a leading slash", () => {
+    const stack = createPanelStack();
+    stack.open("src/a.ts");
+
+    // A caller that only has a leading-slash spelling (a URL path, a link the
+    // host did not tag as absolute) still reaches the workspace row.
+    expect(stack.isOpen("/src/a.ts")).toBe(true);
+    stack.activate("/src/a.ts");
+    expect(stack.snapshot().active).toBe("src/a.ts");
+    stack.close("/src/a.ts");
+    expect(stack.isOpen("src/a.ts")).toBe(false);
+    expect(stack.snapshot().panels).toHaveLength(0);
+  });
+
+  it("prefers the absolute row when both readings are open", () => {
+    const stack = createPanelStack();
+    stack.open("src/a.ts");
+    stack.open("/src/a.ts", 9, true);
+
+    stack.activate("/src/a.ts");
+    expect(stack.snapshot().active).toBe("/src/a.ts");
+    stack.close("/src/a.ts");
+    expect(stack.isOpen("src/a.ts")).toBe(true);
   });
 
   it("keeps one stack per conversation", () => {

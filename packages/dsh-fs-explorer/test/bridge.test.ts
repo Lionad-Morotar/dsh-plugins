@@ -356,4 +356,29 @@ describe("registerAddressBridge", () => {
     expect(h.bodies).toHaveLength(0);
     warn.mockRestore();
   });
+
+  it("withdraws the tab type when the body slot refuses it", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = harness();
+    const ctx = {
+      ...h.ctx,
+      slots: {
+        inject: () => {
+          throw new Error("the sidebar is not ready for pane bodies");
+        },
+        register: h.ctx.slots.register,
+      },
+    };
+
+    const dispose = registerAddressBridge(ctx, h.workbench);
+
+    // The type was registered before the slot threw, so leaving it behind would
+    // claim every file address with a body that cannot mount.
+    expect(h.types).toHaveLength(1);
+    expect(h.disposals).toEqual(["type"]);
+    expect(h.bodies).toHaveLength(0);
+    expect(() => dispose()).not.toThrow();
+    expect(String(warn.mock.calls[0]?.[0])).toContain("refused the address bridge body");
+    warn.mockRestore();
+  });
 });

@@ -39,8 +39,9 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json"
+    "test": "node scripts/build.mjs --check && vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "check:lib": "node scripts/build.mjs --check"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",

@@ -549,11 +549,22 @@ export function registerAddressBridge(ctx: BridgeContextLike, workbench: BridgeW
       return undefined;
     }
     const Body = createBridgeBody(workbench, navigation);
-    const offBody = asDisposer(
-      ctx.slots.inject(SIDEBAR_TAB_SLOT, () =>
-        ctx.slots.register({ name: SIDEBAR_TAB_SLOT, key: BRIDGE_TYPE_ID }, Body),
-      ),
-    );
+    let offBody: () => void;
+    try {
+      offBody = asDisposer(
+        ctx.slots.inject(SIDEBAR_TAB_SLOT, () =>
+          ctx.slots.register({ name: SIDEBAR_TAB_SLOT, key: BRIDGE_TYPE_ID }, Body),
+        ),
+      );
+    } catch (error) {
+      // The tab type is already in the registry here, and a half registration is
+      // worse than none: the type would claim every file address while nothing
+      // can mount its body, and the next apply would meet it as a duplicate id.
+      // Withdraw the type before giving up so the failure leaves no trace.
+      offType();
+      warn("the sidebar right refused the address bridge body", error);
+      return undefined;
+    }
     return () => {
       offBody();
       offType();

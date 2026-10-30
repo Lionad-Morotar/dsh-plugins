@@ -28,6 +28,8 @@ export interface DxfViewerFace {
   GetCanvas(): HTMLCanvasElement;
   GetBounds(): DrawingBounds | null;
   GetOrigin(): { x: number; y: number };
+  /** Draw the current scene once; the library otherwise renders on its own events. */
+  Render(): void;
 }
 
 /** The DxfViewer constructor, as this module calls it. */
@@ -64,6 +66,16 @@ export interface DxfHandle {
   readonly layers: number;
   /** Re-fit the drawing after the panel changed size. */
   fit(): void;
+  /**
+   * Report that the panel holding this drawing was hidden or shown.
+   *
+   * `dxf-viewer` draws on demand — a load, a resize, a control gesture — and its
+   * resize handler already ignores a zero-sized container, so a hidden panel
+   * costs nothing per frame and there is no loop to pause. What this flag buys is
+   * the other half: a repaint when the panel comes back, so a canvas that missed
+   * a resize while hidden cannot be shown stale.
+   */
+  setVisible(on: boolean): void;
   /** Tear the viewer down and release its WebGL context. */
   dispose(): void;
 }
@@ -87,9 +99,16 @@ function countLayers(viewer: DxfViewerFace): number {
  * @param container - element the canvas is appended to.
  * @param bytes - the DXF file content.
  * @param Viewer - the DxfViewer constructor, imported by the chunk.
+ * @param options - `visible` starts the handle in the hidden state, so the first
+ *   transition back to visible repaints even if nothing changed meanwhile.
  * @returns the mounted drawing.
  */
-export async function mountDrawing(container: HTMLElement, bytes: Uint8Array, Viewer: DxfViewerConstructor): Promise<DxfHandle> {
+export async function mountDrawing(
+  container: HTMLElement,
+  bytes: Uint8Array,
+  Viewer: DxfViewerConstructor,
+  options?: { readonly visible?: boolean },
+): Promise<DxfHandle> {
   const viewer = new Viewer(container, viewerOptions());
   // The library fetches the file itself, so the bytes travel as a URL. A blob
   // URL pins the whole file in memory, so it is revoked as soon as the load
@@ -109,12 +128,20 @@ export async function mountDrawing(container: HTMLElement, bytes: Uint8Array, Vi
   // own coordinates shifted by its origin.
   const bounds = viewer.GetBounds();
   const origin = viewer.GetOrigin();
+  let visible = options?.visible ?? true;
 
   return {
     layers: countLayers(viewer),
     fit: () => {
       if (bounds === null) return;
       viewer.FitView(bounds.minX - origin.x, bounds.maxX - origin.x, bounds.minY - origin.y, bounds.maxY - origin.y);
+    },
+    setVisible: (on: boolean) => {
+      // Only the transition to visible draws: hiding has nothing to undo, and
+      // the library's own resize handler skips a zero-sized container instead of
+      // collapsing the camera, so a hidden drawing keeps its framing.
+      if (on && !visible) viewer.Render();
+      visible = on;
     },
     dispose: () => viewer.Destroy(),
   };

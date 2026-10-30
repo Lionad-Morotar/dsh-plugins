@@ -31,11 +31,17 @@
  * bundles a Draco-capable chunk gets the same treatment; what stays here is the
  * payload resolution, which must use the three version the shared package
  * resolves, because that is the one esbuild puts in the chunk.
+ *
+ * With `--check` nothing is written: the build runs into memory and the script
+ * exits non-zero when the committed `lib/` differs from what `src/` produces.
+ * That flag is the only defence against a stale committed product, which is a
+ * real failure mode here because profiles never rebuild: a plugin installed from
+ * a commit whose `lib/` lags its `src/` activates the old code.
  */
 import { build } from "esbuild";
 import { createRequire } from "node:module";
 import { gzipSync } from "node:zlib";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -266,81 +272,148 @@ function assertArtifacts(entryText, texts) {
   }
 }
 
-await assertChunksCoverCatalogue();
-await rm(libRoot, { recursive: true, force: true });
-await mkdir(libRoot, { recursive: true });
+/**
+ * Build every artifact and report sizes.
+ *
+ * With `--check` nothing is written and `lib/` is never deleted: the build runs
+ * into memory and the script exits non-zero when the committed tree differs
+ * byte-for-byte from what `src/` produces. The write path still starts from an
+ * empty directory, because an artifact `src/` no longer produces would otherwise
+ * survive forever; the check path reaches the same guarantee by comparing the
+ * other direction too — every file in `lib/` must be one this run produced.
+ * @param checkOnly - compare against the committed tree instead of writing it.
+ */
+async function main(checkOnly) {
+  await assertChunksCoverCatalogue();
+  if (!checkOnly) {
+    await rm(libRoot, { recursive: true, force: true });
+    await mkdir(libRoot, { recursive: true });
+  }
 
-await writeFile(join(libRoot, "index.js"), await bundle(join(packageRoot, "src", "index.ts"), { format: "esm" }), "utf8");
+  /** Artifacts held in memory while only comparing. */
+  const produced = new Map();
 
-const client = await bundle(join(packageRoot, "src", "client", "entry.ts"), {
-  external: CLIENT_EXTERNALS,
-  minify: true,
-});
-const entryText = wrap(manifest.name, client, { boot: true });
-await writeFile(join(libRoot, "client.js"), entryText, "utf8");
+  /** Write one artifact, or keep it in memory when only comparing. */
+  const emit = async (file, text) => {
+    if (checkOnly) {
+      produced.set(file, text);
+      return;
+    }
+    await writeFile(join(libRoot, file), text, "utf8");
+  };
 
-const preview = await bundle(join(packageRoot, "src", "client", "chunk", "preview.tsx"), {
-  external: CLIENT_EXTERNALS,
-  minify: true,
-});
-const chunkText = wrap(manifest.name, preview, { chunk: PREVIEW_CHUNK });
-await writeFile(join(libRoot, PREVIEW_CHUNK), chunkText, "utf8");
+  await emit("index.js", await bundle(join(packageRoot, "src", "index.ts"), { format: "esm" }));
 
-// The payloads are resolved through the shared package so the inlined decoder
-// matches the three version esbuild inlines from those same sources. A payload
-// resolved from this package would need a second three dependency here, and the
-// wrapper and the wasm binary would be free to disagree with the loader calling
-// them at the next three upgrade.
-const viewersRequire = createRequire(require.resolve("dsh-preview-viewers/package.json"));
-const dracoPayloads = await loadDracoPayloads(specifier => viewersRequire.resolve(specifier));
-
-const texts = { [PREVIEW_CHUNK]: chunkText };
-const written = ["index.js", "client.js", PREVIEW_CHUNK];
-for (const [family, file] of Object.entries(FAMILY_CHUNKS)) {
-  const code = await bundle(join(packageRoot, "src", "client", "chunks", `${family}.tsx`), {
+  const client = await bundle(join(packageRoot, "src", "client", "entry.ts"), {
     external: CLIENT_EXTERNALS,
     minify: true,
-    legalComments: "eof",
-    banner: ENGINE_BANNER,
-    plugins: family === "scene3d" ? [dracoPlugin(dracoPayloads)] : [],
-    define: dracoDefines(DRACO_RESERVED_URL),
   });
-  const text = wrap(manifest.name, code, { chunk: file });
-  texts[file] = text;
-  await writeFile(join(libRoot, file), text, "utf8");
-  written.push(file);
-}
+  const entryText = wrap(manifest.name, client, { boot: true });
+  await emit("client.js", entryText);
 
-assertArtifacts(entryText, texts);
+  const preview = await bundle(join(packageRoot, "src", "client", "chunk", "preview.tsx"), {
+    external: CLIENT_EXTERNALS,
+    minify: true,
+  });
+  const chunkText = wrap(manifest.name, preview, { chunk: PREVIEW_CHUNK });
+  await emit(PREVIEW_CHUNK, chunkText);
 
-/**
- * Compare each family chunk's gzipped size against its ceiling.
- *
- * A chunk that grows past its ceiling means a reader who opens one model
- * downloads something nobody asked for. Gzipped, because that is what the route
- * actually transfers.
- * @returns one message per file over budget.
- */
-async function overBudget() {
-  const over = [];
-  for (const [file, budget] of Object.entries(SIZE_BUDGETS)) {
-    const bytes = await readFile(join(libRoot, file));
-    const gzipped = gzipSync(bytes).length;
-    if (gzipped > budget) over.push(`${file}: ${String(gzipped)} B gzipped, budget ${String(budget)} B`);
+  // The payloads are resolved through the shared package so the inlined decoder
+  // matches the three version esbuild inlines from those same sources. A payload
+  // resolved from this package would need a second three dependency here, and the
+  // wrapper and the wasm binary would be free to disagree with the loader calling
+  // them at the next three upgrade.
+  const viewersRequire = createRequire(require.resolve("dsh-preview-viewers/package.json"));
+  const dracoPayloads = await loadDracoPayloads(specifier => viewersRequire.resolve(specifier));
+
+  const texts = { [PREVIEW_CHUNK]: chunkText };
+  const written = ["index.js", "client.js", PREVIEW_CHUNK];
+  for (const [family, file] of Object.entries(FAMILY_CHUNKS)) {
+    const code = await bundle(join(packageRoot, "src", "client", "chunks", `${family}.tsx`), {
+      external: CLIENT_EXTERNALS,
+      minify: true,
+      legalComments: "eof",
+      banner: ENGINE_BANNER,
+      plugins: family === "scene3d" ? [dracoPlugin(dracoPayloads)] : [],
+      define: dracoDefines(DRACO_RESERVED_URL),
+    });
+    const text = wrap(manifest.name, code, { chunk: file });
+    texts[file] = text;
+    await emit(file, text);
+    written.push(file);
   }
-  return over;
+
+  assertArtifacts(entryText, texts);
+
+  /**
+   * The bytes of one artifact: the built text, or the committed file when the
+   * build wrote it. Reading the produced text first keeps the check path
+   * independent of what happens to be on disk.
+   * @param file - artifact name inside lib/.
+   * @returns the bytes the size budget is measured over.
+   */
+  const bytesOf = async (file) => {
+    const text = produced.get(file);
+    return text === undefined ? readFile(join(libRoot, file)) : Buffer.from(text, "utf8");
+  };
+
+  /**
+   * Compare each family chunk's gzipped size against its ceiling.
+   *
+   * A chunk that grows past its ceiling means a reader who opens one model
+   * downloads something nobody asked for. Gzipped, because that is what the route
+   * actually transfers.
+   * @returns one message per file over budget.
+   */
+  const overBudget = async () => {
+    const over = [];
+    for (const [file, budget] of Object.entries(SIZE_BUDGETS)) {
+      const gzipped = gzipSync(await bytesOf(file)).length;
+      if (gzipped > budget) over.push(`${file}: ${String(gzipped)} B gzipped, budget ${String(budget)} B`);
+    }
+    return over;
+  };
+
+  if (checkOnly) {
+    const stale = [];
+    for (const file of written) {
+      const next = Buffer.from(produced.get(file) ?? "", "utf8");
+      const committed = await readFile(join(libRoot, file)).catch(() => null);
+      if (committed === null || !committed.equals(next)) stale.push(file);
+    }
+    // The reverse direction matters as much: a chunk src/ no longer produces
+    // stays in the package forever if only the produced files are compared.
+    for (const entry of await readdir(libRoot).catch(() => [])) {
+      if (!written.includes(entry)) stale.push(`${entry} (present in lib/, not produced by src/)`);
+    }
+    if (stale.length > 0) {
+      process.stderr.write(`lib/ is stale for: ${stale.join(", ")}\ncommit the rebuilt lib/ or the installed plugin runs the old code\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const over = await overBudget();
+    if (over.length > 0) {
+      process.stderr.write(`over size budget:\n  ${over.join("\n  ")}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    process.stdout.write(`lib/ matches src/ (${String(written.length)} files), every file within budget\n`);
+    return;
+  }
+
+  const sizes = await Promise.all(
+    written.map(async file => {
+      const bytes = await readFile(join(libRoot, file));
+      return `${file.padEnd(22)} ${String(bytes.length).padStart(9)} B  ${(gzipSync(bytes).length / 1024).toFixed(1)} KB gzip`;
+    }),
+  );
+  process.stdout.write(`${written.length} files\n${sizes.join("\n")}\n`);
+
+  const over = await overBudget();
+  if (over.length > 0) {
+    process.stderr.write(`over size budget:\n  ${over.join("\n  ")}\n`);
+    process.exitCode = 1;
+  }
 }
 
-const sizes = await Promise.all(
-  written.map(async file => {
-    const bytes = await readFile(join(libRoot, file));
-    return `${file.padEnd(22)} ${String(bytes.length).padStart(9)} B  ${(gzipSync(bytes).length / 1024).toFixed(1)} KB gzip`;
-  }),
-);
-process.stdout.write(`${written.length} files\n${sizes.join("\n")}\n`);
-
-const over = await overBudget();
-if (over.length > 0) {
-  process.stderr.write(`over size budget:\n  ${over.join("\n  ")}\n`);
-  process.exitCode = 1;
-}
+await main(process.argv.includes("--check"));

@@ -68,6 +68,15 @@ export interface FamilyViewProps {
   readonly sessionId: string;
   readonly readFile: ReadFile;
   readonly t: Translate;
+  /**
+   * Whether this panel is the active one.
+   *
+   * The workbench keeps every open panel mounted and hides the inactive ones, so
+   * a renderer cannot tell from its own box that nobody is looking at it; the
+   * flag is what lets it stop drawing. Absent means visible, which is what a
+   * host with a single always-on panel provides.
+   */
+  readonly visible?: boolean;
 }
 
 /** Everything one family chunk exports. */

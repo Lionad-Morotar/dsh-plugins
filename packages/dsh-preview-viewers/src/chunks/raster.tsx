@@ -61,10 +61,13 @@ function RasterSurface(props: {
   settledRef.current = onSettled;
 
   const native = useMemo(() => decodeMode(path) === "native", [path]);
+  // `attempt` is a dependency on purpose: a retry must hand the browser a fresh
+  // object URL, otherwise the image element keeps the URL that already failed
+  // and the retry button would be inert on the native decode path.
   const blobUrl = useMemo(() => {
     if (!native) return null;
     return URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: "image/avif" }));
-  }, [native, bytes]);
+  }, [native, bytes, attempt]);
 
   useEffect(() => {
     return () => {
@@ -116,7 +119,17 @@ function RasterSurface(props: {
       <div className="preview-more-status" role="alert" data-testid="preview-more-raster-failed">
         <p>{t("state.failed")}</p>
         <p className="preview-more-detail">{state.message}</p>
-        <button type="button" className="preview-more-action" onClick={() => setAttempt((value) => value + 1)}>
+        <button
+          type="button"
+          className="preview-more-action"
+          onClick={() => {
+            // The TIFF effect re-decodes on its own; the native path only
+            // re-attempts if the state leaves `failed`, so reset it here for
+            // both paths rather than branching on which decoder is in play.
+            setState({ kind: "loading" });
+            setAttempt((value) => value + 1);
+          }}
+        >
           {t("state.retry")}
         </button>
       </div>
@@ -127,6 +140,7 @@ function RasterSurface(props: {
     return (
       <div className="preview-more-raster" data-testid="preview-more-raster">
         <img
+          key={attempt}
           className="preview-more-image"
           src={blobUrl}
           alt={t("raster.title")}

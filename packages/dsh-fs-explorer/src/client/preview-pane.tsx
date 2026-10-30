@@ -48,6 +48,14 @@ export interface PreviewPaneProps {
   readonly files?: WorkspaceFilesFace;
   readonly path?: string;
   readonly t: Translate;
+  /**
+   * Whether this panel is the active one.
+   *
+   * The view keeps a pane mounted per open panel and hides the inactive ones, so
+   * the pane is the first place that knows a renderer is drawing for nobody.
+   * Absent means visible.
+   */
+  readonly visible?: boolean;
 }
 
 type PreviewMode = "reading" | "source";
@@ -118,7 +126,7 @@ function CodeSurface({
  * @param props - session, file face, selected path and translator.
  * @returns the preview column.
  */
-export function PreviewPane({ sessionId, files, path, t }: PreviewPaneProps) {
+export function PreviewPane({ sessionId, files, path, t, visible = true }: PreviewPaneProps) {
   const reader = useMemo(() => createPreviewReader(files, sessionId), [files, sessionId]);
   const byteReader = useMemo(() => createByteReader(files), [files]);
   // Resolved once per mount: the pane is created per open file, so the family
@@ -268,7 +276,13 @@ export function PreviewPane({ sessionId, files, path, t }: PreviewPaneProps) {
       ) : familyChunk === null ? (
         <PreviewLoadingView t={t} />
       ) : (
-        <familyChunk.FamilyView path={path} sessionId={byteSource.sessionId} readFile={byteSource.readFile} t={t} />
+        <familyChunk.FamilyView
+          path={path}
+          sessionId={byteSource.sessionId}
+          readFile={byteSource.readFile}
+          t={t}
+          visible={visible}
+        />
       );
   } else if (reader === undefined) {
     body = (

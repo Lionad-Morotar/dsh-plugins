@@ -34,14 +34,20 @@ function CadSurface(props: {
   readonly bytes: Uint8Array;
   readonly t: (key: string, values?: Record<string, string | number>) => string;
   readonly onSettled?: (ok: boolean, attempt: number) => void;
+  readonly visible?: boolean;
 }): React.ReactElement {
-  const { bytes, t, onSettled } = props;
+  const { bytes, t, onSettled, visible = true } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<DxfHandle | null>(null);
   const [state, setState] = useState<CadState>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   const settledRef = useRef(onSettled);
   settledRef.current = onSettled;
+  // Read by the mount effect without joining its dependencies: a tab switch
+  // flips visibility, and remounting the viewer for that would destroy and
+  // recreate its WebGL context. The effect below forwards the change instead.
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -52,12 +58,14 @@ function CadSurface(props: {
 
     void (async () => {
       try {
-        const drawing = await mountDrawing(container, bytes, DxfViewer);
+        const drawing = await mountDrawing(container, bytes, DxfViewer, { visible: visibleRef.current });
         if (disposed) {
           drawing.dispose();
           return;
         }
         handleRef.current = drawing;
+        // The panel may have been hidden or shown while the file was parsing.
+        drawing.setVisible(visibleRef.current);
         setState({ kind: "ready", layers: drawing.layers });
         settledRef.current?.(true, attempt);
       } catch (error) {
@@ -73,6 +81,13 @@ function CadSurface(props: {
       handleRef.current = null;
     };
   }, [bytes, attempt]);
+
+  // The hidden panel stays mounted, so this is a flag on the live handle rather
+  // than an unmount: the engine has no per-frame loop to pause, but it repaints
+  // when the panel comes back.
+  useEffect(() => {
+    handleRef.current?.setVisible(visible);
+  }, [visible, state.kind]);
 
   // The canvas host stays mounted even on failure: the retry effect resolves it
   // through the ref, so unmounting it here would leave the button with nothing
@@ -114,7 +129,7 @@ function CadSurface(props: {
  * @returns the drawing, or a status line while it settles.
  */
 export function Body(props: NativeBodyProps): React.ReactElement {
-  const { content, resourceAddress, t, readFile, useResource, useTabInfo } = props;
+  const { content, resourceAddress, t, readFile, useResource, useTabInfo, visible = true } = props;
   const { tab } = useTabInfo();
   const resource = useResource(resourceAddress);
   const absolutePath = resource.value?.absolutePath;
@@ -178,7 +193,7 @@ export function Body(props: NativeBodyProps): React.ReactElement {
   if (bytes === null || absolutePath === undefined) {
     return <p className="preview-more-status">{t("state.loading")}</p>;
   }
-  return <CadSurface bytes={bytes} t={t} onSettled={settle} />;
+  return <CadSurface bytes={bytes} t={t} onSettled={settle} visible={visible} />;
 }
 
 /**
@@ -187,10 +202,10 @@ export function Body(props: NativeBodyProps): React.ReactElement {
  * @returns the drawing.
  */
 export function Viewer(props: SidebarViewerProps): React.ReactElement {
-  const { t, customData } = props;
+  const { t, customData, visible = true } = props;
   const bytes = customData?.bytes;
   if (bytes === undefined) {
     return <p className="preview-more-status">{t("state.loading")}</p>;
   }
-  return <CadSurface bytes={bytes} t={t} />;
+  return <CadSurface bytes={bytes} t={t} visible={visible} />;
 }

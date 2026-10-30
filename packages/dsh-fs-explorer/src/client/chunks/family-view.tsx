@@ -37,7 +37,7 @@ export type FamilyViewer = ComponentType<SidebarViewerProps>;
  * @returns the component this package's chunk exports.
  */
 export function createFamilyView(family: PreviewFamily, Viewer: FamilyViewer): ComponentType<FamilyViewProps> {
-  function FamilyView({ path, sessionId, readFile, t }: FamilyViewProps): ReactElement {
+  function FamilyView({ path, sessionId, readFile, t, visible = true }: FamilyViewProps): ReactElement {
     const [bytes, setBytes] = useState<Uint8Array | null>(null);
     const [failure, setFailure] = useState<PreviewFailure | null>(null);
     const [attempt, setAttempt] = useState(0);
@@ -94,7 +94,15 @@ export function createFamilyView(family: PreviewFamily, Viewer: FamilyViewer): C
     }
     return (
       <div className="fx-family" data-testid="fs-preview-family" data-family={family} data-state="ready">
-        <Viewer path={path} title={path} scope={{ sessionId }} customData={{ bytes }} t={surfaceT} readFile={readFile} />
+        <Viewer
+          path={path}
+          title={path}
+          scope={{ sessionId }}
+          customData={{ bytes }}
+          t={surfaceT}
+          readFile={readFile}
+          visible={visible}
+        />
       </div>
     );
   }

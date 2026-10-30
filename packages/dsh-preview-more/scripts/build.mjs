@@ -27,7 +27,8 @@
  * work in a plugin served from a versioned asset route. The inlining itself
  * lives in the shared package's build helper (build/draco-plugin.mjs), so every
  * package that bundles a Draco-capable chunk gets the same treatment; what stays
- * here is the payload resolution, which must use this package's `three`.
+ * here is the payload resolution, which must read the same `three` esbuild
+ * inlines — the shared package's, since that is where the sources live.
  */
 import { build } from "esbuild";
 import { createRequire } from "node:module";
@@ -230,11 +231,14 @@ async function main(checkOnly) {
   await emit("client.js", wrap(manifest.name, client, { boot: true }));
   written.push("client.js");
 
-  // The payloads are resolved through this package's `three` so the inlined
-  // decoder matches the loader that will call it. A hand-copied payload, or one
-  // resolved from the shared package's own dependency, would drift silently at
-  // the next three upgrade.
-  const payloads = await loadDracoPayloads((specifier) => require.resolve(specifier));
+  // The payloads are resolved from the shared package, because that is where
+  // esbuild resolves `three` for these chunks: the sources live in
+  // dsh-preview-viewers, so its `three` is what gets inlined. Resolving through
+  // this package's own `require` would work only while both declare the same
+  // range, and would silently embed a decoder from a different three than the
+  // loader calling it the first time they drift.
+  const viewersRequire = createRequire(require.resolve("dsh-preview-viewers/package.json"));
+  const payloads = await loadDracoPayloads((specifier) => viewersRequire.resolve(specifier));
   for (const family of CHUNKS) {
     const code = await bundle(join(packageRoot, "src", "client", "chunks", `${family}.tsx`), "cjs", {
       external: ["react", "react/jsx-runtime"],

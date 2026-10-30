@@ -39,6 +39,15 @@ export interface NativeBodyProps {
   };
   /** `dsh-resource://file/session/<id>/<path>` address of the file. */
   readonly resourceAddress: string;
+  /**
+   * Whether the panel holding this body is the one on screen.
+   *
+   * A host that keeps several previews mounted at once hides the inactive ones
+   * instead of unmounting them, so a surface cannot infer this from its own
+   * element: `clientWidth` is zero either way. Absent means visible, which is
+   * what a single-panel host that never learned about this flag gets.
+   */
+  readonly visible?: boolean;
   /** Translator already bound to the registering plugin's namespace. */
   readonly t: (key: string, values?: Record<string, string | number>) => string;
   /** Byte reader injected by the registering plugin. */
@@ -65,6 +74,14 @@ export interface SidebarViewerProps {
   readonly scope: { readonly sessionId: string };
   /** Value the descriptor's `load` returned. */
   readonly customData?: { readonly bytes?: Uint8Array; readonly path?: string };
+  /**
+   * Whether the panel holding this viewer is the one on screen.
+   *
+   * Same contract as {@link NativeBodyProps.visible}: a host with several
+   * mounted viewers hides the inactive ones, and a renderer that keeps drawing
+   * them pays for scenes nobody sees. Absent means visible.
+   */
+  readonly visible?: boolean;
   /** Translator already bound to the registering plugin's namespace. */
   readonly t: (key: string, values?: Record<string, string | number>) => string;
   /** Byte reader, for surfaces that follow references into sibling files. */
