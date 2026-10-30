@@ -18,8 +18,8 @@
  * scene's own palette so the interface's accent belongs to the picture rather
  * than sitting on top of it as an unrelated hue.
  */
-import type { PaperifyOptions, SceneEntry } from "ascii-rest-scenes";
-import { contrastRatio, parseHex, sceneGround, scenePalette } from "ascii-rest-scenes";
+import type { LightMode, SceneEntry } from "ascii-rest-scenes";
+import { contrastRatio, parseHex, sceneColors } from "ascii-rest-scenes";
 
 /**
  * How much of the surface the picture's own ground paints over.
@@ -32,9 +32,10 @@ import { contrastRatio, parseHex, sceneGround, scenePalette } from "ascii-rest-s
  *     opaque hides the picture, and one too sheer makes the whole workspace
  *     inherit the scene's contrast range, which fights body text. 0.58 keeps a
  *     legible field while the picture stays recognisably there.
- *   - Light: the scene is paperified into a pale wash, so the same alpha would
- *     show almost nothing. Light needs a slightly heavier surface for the same
- *     perceived effect, and 0.66 is where the two schemes read alike.
+ *   - Light: the scene is turned into ink on paper, so its marks are dark rather
+ *     than pale and the picture reads as a print. Light still needs a slightly
+ *     heavier surface than dark for the two schemes to read alike, because paper
+ *     is a lower-contrast field than a black one: 0.66 is where they match.
  */
 const SURFACE_ALPHA_DARK = 0.58;
 const SURFACE_ALPHA_LIGHT = 0.66;
@@ -55,7 +56,8 @@ export interface TokenOptions {
    * calibrated value; 0 seals the surfaces and hides the picture entirely.
    */
   surfaceOpacity: number;
-  paper: PaperifyOptions;
+  /** Which treatment the light theme uses; the dark theme always uses the scene's own. */
+  lightMode: LightMode;
 }
 
 /** One region's alpha in each scheme, as a multiplier over the calibrated value. */
@@ -89,15 +91,16 @@ export type RegionColors = Record<string, { light: string; dark: string }>;
  * mirror.
  */
 export function buildTokens(options: TokenOptions): SkinTokens {
-  const darkGround = sceneGround(options.scene.ground, "dark");
-  const lightGround = sceneGround(options.scene.ground, "light", options.paper);
+  const darkGround = options.scene.ground;
+  const light = sceneColors(options.scene, "light", options.lightMode);
+  const lightGround = light.ground;
 
   // The alpha a surface gets, given how much further from the picture it sits.
   const darkAlpha = (extra = 0): number => Math.min(1, SURFACE_ALPHA_DARK * options.surfaceOpacity + extra);
   const lightAlpha = (extra = 0): number => Math.min(1, SURFACE_ALPHA_LIGHT * options.surfaceOpacity + extra);
 
   const darkAccent = pickAccent(options.scene.palette, "dark");
-  const lightAccent = pickAccent(scenePalette(options.scene.palette, "light", options.paper), "light");
+  const lightAccent = pickAccent(light.palette, "light");
 
   return {
     // The base is what the shell's frame, centre column and bottom row paint, so
@@ -159,8 +162,8 @@ export function buildTokens(options: TokenOptions): SkinTokens {
  * at all, and a reader who has not touched the region controls never pays for them.
  */
 export function buildRegionColors(options: TokenOptions, reveal: RegionReveal): RegionColors {
-  const darkGround = sceneGround(options.scene.ground, "dark");
-  const lightGround = sceneGround(options.scene.ground, "light", options.paper);
+  const darkGround = options.scene.ground;
+  const lightGround = sceneColors(options.scene, "light", options.lightMode).ground;
   const colors: RegionColors = {};
   for (const key of ["sidebar", "main", "rightbar", "bottom"] as const) {
     const multiplier = reveal[key];

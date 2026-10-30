@@ -31,7 +31,7 @@ const module: SceneModule = {
     cols: 200,
     rows: 100,
     fps: 15,
-    options: { softness: 0.55, mirror: true },
+    options: { grain: 0.55, mirror: true },
   },
   default: () => () => "",
 };
@@ -64,7 +64,7 @@ function build() {
     scene,
     settings: {
       scene: "salt-flat",
-      options: { softness: 0.55, saturation: 0.5, fit: "cover", anchor: "center", zoom: 1 },
+      options: { lightMode: "ink", fit: "cover", anchor: "center", zoom: 1 },
       appearance: {
         opacity: 1,
         surface: 1,
@@ -104,6 +104,12 @@ describe("the tuning panel", () => {
 
     close?.click();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers the light-theme treatment as one named control", () => {
+    const { host } = build();
+    const names = [...host.querySelectorAll(".lil-controller .lil-name")].map((el) => el.textContent ?? "");
+    expect(names).toContain("亮色主题");
   });
 
   it("closes on Escape", () => {

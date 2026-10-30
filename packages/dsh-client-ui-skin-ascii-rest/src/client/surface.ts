@@ -13,13 +13,12 @@
  *      `../mount.ts`) rather than reimplemented: it already owns the glyph
  *      atlas, the per-cell dirty check, the IntersectionObserver, tab visibility
  *      and reduced motion.
- *   3. Turning the piece's palette into the active scheme's palette. The
- *      renderer reads the palette off the piece at mount time, so a scheme
- *      change re-mounts with a themed piece instead of mutating one.
+ *   3. Turning the piece into the active scheme's colours. The renderer reads the
+ *      palette and the ground off the piece at mount time, so a scheme change
+ *      re-mounts with a themed piece instead of mutating one.
  */
-import { fitCover } from "ascii-rest-scenes";
-import { sceneGround, scenePalette, type PaperifyOptions } from "ascii-rest-scenes";
-import type { Anchor, FitMode, SceneEntry, SceneModule } from "ascii-rest-scenes";
+import { fitCover, sceneColors } from "ascii-rest-scenes";
+import type { Anchor, FitMode, LightMode, SceneEntry, SceneModule } from "ascii-rest-scenes";
 
 import { mount, type MountHandle, type Piece } from "../mount.ts";
 
@@ -77,8 +76,8 @@ export interface Presentation {
   fps: number;
   /** Device pixels per CSS pixel for the canvas backing store. */
   resolution: number;
-  /** The colour treatment for the light scheme. */
-  paper: PaperifyOptions;
+  /** Which colour treatment the light scheme uses. */
+  lightMode: LightMode;
   geometry: Geometry;
   /** Called once with the first failure; the layer is gone by then. */
   onError?: (error: unknown) => void;
@@ -158,7 +157,10 @@ export function presentScene(presentation: Presentation, doc: Document = documen
 
   layer.append(canvas, veil, scrim);
 
-  const ground = (): string => sceneGround(scene.ground, scheme, presentation.paper);
+  /** The scheme's colours for this scene: the ground under the picture and the marks on it. */
+  const colors = (): ReturnType<typeof sceneColors> => sceneColors(scene, scheme, presentation.lightMode);
+
+  const ground = (): string => colors().ground;
 
   const paintChrome = (): void => {
     layer.style.backgroundColor = ground();
@@ -186,13 +188,16 @@ export function presentScene(presentation: Presentation, doc: Document = documen
     stop?.();
     stop = null;
     currentFps = presentation.still ? 0 : presentation.fps;
-    // The renderer reads the palette from the piece once, so the themed piece
-    // carries the scheme's palette rather than the module's own.
+    // The renderer reads the palette and the ground from the piece once, and it
+    // fills the whole canvas with the ground before drawing a single glyph, so
+    // both have to carry the scheme rather than the module's own: a palette
+    // turned into ink onto a ground left dark is a black slab under pale marks.
+    const schemeColors = colors();
     const themed: Piece = {
       meta: {
         ...presentation.module.meta,
-        palette: scenePalette(scene.palette, scheme, presentation.paper),
-        ground: scene.ground,
+        palette: schemeColors.palette,
+        ground: schemeColors.ground,
       },
       default: presentation.module.default,
     };

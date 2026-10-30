@@ -25,7 +25,7 @@
 import GUI from "lil-gui";
 
 import { ANCHORS, FIT_MODES, REGION_KEYS } from "ascii-rest-scenes";
-import type { Anchor, FitMode, RegionKey, SceneEntry, SceneModule, Settings } from "ascii-rest-scenes";
+import type { Anchor, FitMode, LightMode, RegionKey, SceneEntry, SceneModule, Settings } from "ascii-rest-scenes";
 
 import lilGuiCss from "../../vendor/lil-gui.css";
 import { PACKAGE_ID } from "./constants.ts";
@@ -95,6 +95,11 @@ const FIT_LABELS: Record<FitMode, string> = {
   contain: "完整留白",
 };
 
+const LIGHT_LABELS: Record<LightMode, string> = {
+  ink: "墨色",
+  duotone: "双色调",
+};
+
 const REGION_LABELS: Record<RegionKey, string> = {
   sidebar: "侧边栏",
   main: "主面板",
@@ -145,6 +150,22 @@ function addPlacementFolder(gui: GUI, options: Settings["options"], callbacks: G
     .add(state, "zoom", 0.5, 3, 0.01)
     .name("缩放")
     .onChange((zoom: number) => callbacks.onPlacement({ zoom }));
+}
+
+/**
+ * The light theme's colour treatment.
+ *
+ * A dropdown rather than two switches: the two treatments are alternatives, not
+ * flags, and a reader comparing them wants to flip one control and watch the
+ * picture change behind the panel.
+ */
+function addLightFolder(gui: GUI, options: Settings["options"], callbacks: GuiCallbacks): void {
+  const folder = gui.addFolder("亮色配色");
+  const state = { lightMode: options.lightMode };
+  folder
+    .add(state, "lightMode", lilOptions(LIGHT_LABELS))
+    .name("亮色主题")
+    .onChange((lightMode: LightMode) => callbacks.onPlacement({ lightMode }));
 }
 
 /** The four surfaces, on one slider each. */
@@ -291,6 +312,7 @@ export function createGui(host: HTMLElement, options: GuiOptions): GuiHandle {
   document.addEventListener("keydown", onKeyDown);
 
   addPlacementFolder(gui, settings.options, callbacks);
+  addLightFolder(gui, settings.options, callbacks);
   addAppearanceFolder(gui, settings.appearance, callbacks);
   addScrimFolder(gui, settings.appearance, callbacks);
   addRegionFolder(gui, settings.regions, callbacks);

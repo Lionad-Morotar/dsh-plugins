@@ -117,7 +117,12 @@ function makeContext(dom: JSDOM) {
   const { window } = dom;
   const effects: (() => void)[] = [];
   const tokens: Record<string, unknown>[] = [];
-  const registrations: { id: string; label?: string | (() => string) }[] = [];
+  const registrations: {
+    id: string;
+    label?: string | (() => string);
+    /** The component the skin handed the slot, so the page itself can be rendered. */
+    component?: (props?: unknown) => unknown;
+  }[] = [];
   const injections: string[] = [];
 
   const ctx = {
@@ -151,8 +156,13 @@ function makeContext(dom: JSDOM) {
             const dispose = callback();
             return typeof dispose === "function" ? dispose : () => {};
           },
-          register: (registration: { id: string; label?: string | (() => string) }) => {
-            registrations.push(registration);
+          // The host takes the registration and the component as two arguments,
+          // and the component is what a slot actually renders.
+          register: (
+            registration: { id: string; label?: string | (() => string) },
+            component?: (props?: unknown) => unknown,
+          ) => {
+            registrations.push({ ...registration, component });
             return () => {};
           },
         };
@@ -178,6 +188,31 @@ function materialize(dom: JSDOM): Record<string, unknown> {
   const exports = registration.factory(makeRequire(modules));
   (exports.boot as (req: unknown) => void)(makeRequire(modules));
   return exports;
+}
+
+/** The shape the fake React builds: an element is a type, its props, and its children. */
+interface TreeNode {
+  type: unknown;
+  props?: Record<string, unknown>;
+  children: unknown[];
+}
+
+/** Every element in a rendered tree that matches, depth first. */
+function collectBy(node: unknown, match: (node: TreeNode) => boolean): TreeNode[] {
+  const found: TreeNode[] = [];
+  const walk = (current: unknown): void => {
+    if (Array.isArray(current)) {
+      for (const child of current) walk(child);
+      return;
+    }
+    if (typeof current !== "object" || current === null) return;
+    const element = current as TreeNode;
+    if (!Array.isArray(element.children)) return;
+    if (match(element)) found.push(element);
+    for (const child of element.children) walk(child);
+  };
+  walk(node);
+  return found;
 }
 
 describe("the built client bundle", () => {
@@ -256,6 +291,37 @@ describe("the built client bundle", () => {
     expect(registrations[0]?.id).toBe("ascii-rest");
     const label = registrations[0]?.label;
     expect(typeof label === "function" ? label() : label).toBeTruthy();
+  });
+
+  it("offers both light-mode treatments and remembers the one chosen", () => {
+    // The two treatments are the whole point of the light theme, so the control
+    // has to exist on the page and has to persist: a switch that only repaints
+    // would be lost on the next reload.
+    const dom = makeDom();
+    const exports = materialize(dom);
+    const { ctx, registrations, window } = makeContext(dom);
+
+    (exports.apply as (ctx: unknown) => void)(ctx);
+
+    const page = registrations[0]?.component;
+    expect(typeof page, "the settings section registers a component").toBe("function");
+    const tree = (page as () => unknown)();
+
+    const chips = collectBy(tree, (node) => node.type === "button" && node.props?.["aria-pressed"] !== undefined);
+    const labelOf = (node: TreeNode): string => node.children.filter((child) => typeof child === "string").join("");
+    const ink = chips.find((node) => labelOf(node) === "墨色");
+    const duotone = chips.find((node) => labelOf(node) === "双色调");
+
+    expect(ink, "the ink treatment is offered").toBeDefined();
+    expect(duotone, "the duotone treatment is offered").toBeDefined();
+    expect(ink?.props?.["aria-pressed"], "ink is the default").toBe(true);
+    expect(duotone?.props?.["aria-pressed"]).toBe(false);
+
+    (duotone?.props?.onClick as () => void)();
+    const stored = JSON.parse(window.localStorage.getItem("dsh-skin:ascii-rest:settings") ?? "{}") as {
+      options?: { lightMode?: string };
+    };
+    expect(stored.options?.lightMode).toBe("duotone");
   });
 
   it("keeps a stored document instead of consuming it as a migration", () => {

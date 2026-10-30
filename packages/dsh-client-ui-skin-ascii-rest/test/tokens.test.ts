@@ -17,7 +17,7 @@ const saltFlatPalette = [
 const tokens = buildTokens({
   scene: { ground: "#000000", palette: saltFlatPalette },
   surfaceOpacity: 1,
-  paper: {},
+  lightMode: "ink",
 });
 
 describe("withAlpha", () => {
@@ -109,7 +109,7 @@ describe("buildTokens", () => {
     const clear = buildTokens({
       scene: { ground: "#000000", palette: saltFlatPalette },
       surfaceOpacity: 0.2,
-      paper: {},
+      lightMode: "ink",
     });
     const alphaOf = (value: string): number => Number.parseInt(value.slice(7, 9), 16);
     expect(alphaOf(clear["--dsw-alias-bg-base"]!.dark)).toBeLessThan(
@@ -121,7 +121,7 @@ describe("buildTokens", () => {
     const grey = buildTokens({
       scene: { ground: "#000000", palette: ["#000000", "#111111", "#222222"] },
       surfaceOpacity: 1,
-      paper: {},
+      lightMode: "ink",
     });
     expect(grey["--dsw-alias-brand-primary"]!.dark).toMatch(/^#[0-9a-f]{6}$/i);
   });

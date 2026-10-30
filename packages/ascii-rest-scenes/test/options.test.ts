@@ -51,13 +51,17 @@ describe("normalizeSceneOptions", () => {
   });
 
   it("clamps a hand-edited value into its documented range", () => {
-    const read = normalizeSceneOptions({ softness: 9, saturation: -4, zoom: 100, fit: "stretch", anchor: "middle" });
-    expect(read.softness).toBe(1);
-    expect(read.saturation).toBe(0);
+    const read = normalizeSceneOptions({ zoom: 100, fit: "stretch", anchor: "middle", lightMode: "sepia" });
     expect(read.zoom).toBe(4);
-    // An unknown fit or anchor is not a new mode: it falls back to the default.
+    // An unknown fit, anchor or light treatment is not a new mode: it falls back.
     expect(read.fit).toBe(DEFAULT_SCENE_OPTIONS.fit);
     expect(read.anchor).toBe(DEFAULT_SCENE_OPTIONS.anchor);
+    expect(read.lightMode).toBe(DEFAULT_SCENE_OPTIONS.lightMode);
+  });
+
+  it("keeps a light treatment this build knows", () => {
+    expect(normalizeSceneOptions({ lightMode: "duotone" }).lightMode).toBe("duotone");
+    expect(normalizeSceneOptions({ lightMode: "ink" }).lightMode).toBe("ink");
   });
 
   it("reads a fit mode and an anchor", () => {
@@ -76,8 +80,8 @@ describe("normalizeSceneOptions", () => {
   });
 
   it("falls back per field, so one bad value does not reset the rest", () => {
-    const read = normalizeSceneOptions({ softness: 0.8, zoom: Number.NaN });
-    expect(read.softness).toBe(0.8);
+    const read = normalizeSceneOptions({ lightMode: "duotone", zoom: Number.NaN });
+    expect(read.lightMode).toBe("duotone");
     expect(read.zoom).toBe(DEFAULT_SCENE_OPTIONS.zoom);
   });
 });
@@ -146,11 +150,11 @@ describe("the scrim and focus settings", () => {
 describe("normalizeSettings", () => {
   it("reads a document this build wrote", () => {
     const settings = normalizeSettings(
-      { scene: "kyoto-dusk", options: { softness: 0.3 }, appearance: { veil: 0.4 } },
+      { scene: "kyoto-dusk", options: { lightMode: "duotone" }, appearance: { veil: 0.4 } },
       catalog,
     );
     expect(settings.scene).toBe("kyoto-dusk");
-    expect(settings.options.softness).toBe(0.3);
+    expect(settings.options.lightMode).toBe("duotone");
     expect(settings.appearance.veil).toBe(0.4);
   });
 

@@ -1,6 +1,6 @@
 /**
  * The pure half of the ascii.rest background skin: catalog reading, cover
- * geometry, light-mode colour maths, and settings normalization.
+ * geometry, the two light-mode treatments, and settings normalization.
  *
  * Nothing here touches the DOM, so the build script, the tests, and the browser
  * all share one implementation of the rules that decide what the reader sees.
@@ -12,17 +12,28 @@ export {
   contrastRatio,
   formatHex,
   fromHsl,
-  paperifyColor,
-  paperifyPalette,
+  PAPER_BAND,
   parseHex,
   relativeLuminance,
-  sceneGround,
-  scenePalette,
   toHsl,
   type Hsl,
-  type PaperifyOptions,
   type Rgb,
 } from "./palette.ts";
+export {
+  DEFAULT_LIGHT_MODE,
+  DUOTONE_INK,
+  DUOTONE_PAPER,
+  duotoneColor,
+  inkColor,
+  isLightMode,
+  LIGHT_MODES,
+  lightPalette,
+  lightScene,
+  paperOf,
+  sceneColors,
+  type LightColors,
+  type LightMode,
+} from "./light.ts";
 export {
   ANCHORS,
   anchorOffsets,

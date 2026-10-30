@@ -13,8 +13,8 @@
  */
 import type { ReactNode } from "react";
 
-import type { Anchor, FitMode, RegionKey, SceneEntry, SceneModule, Settings } from "ascii-rest-scenes";
-import { ANCHORS, FIT_MODES, REGION_KEYS, fitCover, sceneGround, scenePalette } from "ascii-rest-scenes";
+import type { Anchor, FitMode, LightMode, RegionKey, SceneEntry, SceneModule, Settings } from "ascii-rest-scenes";
+import { ANCHORS, FIT_MODES, LIGHT_MODES, REGION_KEYS, fitCover, sceneColors } from "ascii-rest-scenes";
 
 import { mount } from "../mount.ts";
 
@@ -55,6 +55,10 @@ export interface PageCopy {
   regionMain: string;
   regionRightbar: string;
   regionBottom: string;
+  lightMode: string;
+  lightModeNote: string;
+  lightInk: string;
+  lightDuotone: string;
   scrim: string;
   scrimNote: string;
   scrimStrength: string;
@@ -159,6 +163,7 @@ function Preview(props: {
       .then((module) => {
         if (cancelled) return;
         const scheme: "light" | "dark" = dark ? "dark" : "light";
+        const colors = sceneColors(scene, scheme, options.lightMode);
         // A still frame is enough here: the preview's job is to show what the
         // picture looks like, not to compete with the background for frames.
         stop = mount(
@@ -166,11 +171,11 @@ function Preview(props: {
           {
             meta: {
               ...module.meta,
-              palette: scenePalette(scene.palette, scheme, options),
+              palette: colors.palette,
               // The ground is a colour, not a variable: the renderer fills the
               // canvas with it before drawing, so a scene mounted with the dark
               // ground on a light page paints a black tile.
-              ground: sceneGround(scene.ground, scheme, options),
+              ground: colors.ground,
             },
             default: module.default,
           },
@@ -188,7 +193,7 @@ function Preview(props: {
     };
     // `options` is a flat record of primitives, so its fields are the identity
     // that matters; comparing the object would remount on every unrelated change.
-  }, [scene.id, dark, options.softness, options.saturation, loadPreview]);
+  }, [scene.id, dark, options.lightMode, loadPreview]);
 
   return React.createElement(
     "div",
@@ -249,7 +254,7 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
           "aria-pressed": scene.id === settings.scene,
           onClick: () => props.onScene(scene.id),
         },
-        React.createElement(Swatch, { palette: scenePalette(scene.palette, "dark"), React }),
+        React.createElement(Swatch, { palette: scene.palette, React }),
         React.createElement("span", { className: "ascii-rest-card__name" }, scene.name),
         React.createElement("span", { className: "ascii-rest-card__note" }, scene.note),
       ),
@@ -376,8 +381,8 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
             // than as an empty diagram. The scheme is passed through for the same
             // reason the preview does it: a dark palette against a dark theme
             // draws a frame with nothing in it.
-            backgroundImage: `linear-gradient(105deg, ${scenePalette(current.palette, dark ? "dark" : "light", settings.options)
-              .slice(0, 12)
+            backgroundImage: `linear-gradient(105deg, ${sceneColors(current, dark ? "dark" : "light", settings.options.lightMode)
+              .palette.slice(0, 12)
               .map((colour, index, all) => `${colour} ${String((index / all.length) * 100)}%`)
               .join(", ")})`,
           },
@@ -399,6 +404,20 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
           },
           React.createElement("span", { className: "ascii-rest-anchor__dot" }),
         ),
+      ),
+    ),
+  );
+
+  const lightLabels: Record<string, string> = { ink: copy.lightInk, duotone: copy.lightDuotone };
+  const light = React.createElement(
+    "section",
+    { className: "ascii-rest-section" },
+    React.createElement("h4", { className: "ascii-rest-section__title" }, copy.lightMode),
+    React.createElement("p", { className: "ascii-rest-section__note" }, copy.lightModeNote),
+    field(
+      copy.lightMode,
+      pick(copy.lightMode, LIGHT_MODES, lightLabels, settings.options.lightMode, (value) =>
+        props.onPlacement({ lightMode: value as LightMode }),
       ),
     ),
   );
@@ -471,6 +490,7 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
       ? null
       : React.createElement(Preview, { scene: current, options: settings.options, loadPreview: props.loadPreview, copy, React }),
     actions,
+    light,
     placement,
     regions,
     grid,

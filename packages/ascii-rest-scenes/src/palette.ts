@@ -1,17 +1,10 @@
 /**
- * Colour maths for a scene used as a page background.
+ * Colour maths, and nothing about what a colour is used for.
  *
- * Every ascii.rest scene declares a dark `ground` and a palette built to read
- * against it. That is the right picture for a dark UI, and the wrong one behind
- * a light UI: a black slab under white chrome. The site itself only draws a
- * `paper` variant for pieces that have *no* ground, so a grounded scene has no
- * light version upstream.
- *
- * `paperify` supplies one, generically, for every scene: it mirrors each
- * colour's lightness so ink and highlight swap places, then maps the result
- * into a band that a background can occupy. The composition survives (the
- * triangle stays a triangle, the rays stay rays), while the picture turns into
- * a pale wash that dark UI text still reads over.
+ * Every function here is a pure conversion between representations: hex, RGB,
+ * HSL, WCAG luminance, contrast. The decision of how a dark scene becomes a
+ * light one lives in `light.ts`, so this file stays the part that is arithmetic
+ * and cannot be argued with.
  */
 
 export interface Rgb {
@@ -21,11 +14,12 @@ export interface Rgb {
 }
 
 /**
- * The lightness band a mirrored colour may occupy.
+ * The lightness band paper and marks occupy in the light scheme.
  *
  * Below `min` a mark is as dark as body text and competes with it; above `max`
- * a mark disappears into the paper behind it. Grounds and marks both live here,
- * which is what keeps a light-mode scene readable at every softness.
+ * a mark disappears into the paper behind it. Both ends are used: `paperOf`
+ * places the page at the top of the band, so a scene's marks always land on a
+ * page light enough to read dark text over.
  */
 export const PAPER_BAND = { min: 0.3, max: 0.92 } as const;
 
@@ -125,73 +119,4 @@ export function fromHsl({ h, s, l }: Hsl): Rgb {
     return p;
   };
   return { r: channel(hue + 120) * 255, g: channel(hue) * 255, b: channel(hue - 120) * 255 };
-}
-
-export interface PaperifyOptions {
-  /**
-   * How much of the band the picture may use. 1 spreads ink and highlight to
-   * the band's edges (a background that fights the text in front of it), 0
-   * flattens the scene to one tone. Backgrounds want something in between.
-   */
-  softness?: number;
-  /** How much saturation survives the flip. Paper is not newsprint-free, but it is quiet. */
-  saturation?: number;
-}
-
-export const DEFAULT_SOFTNESS = 0.7;
-export const DEFAULT_SATURATION = 0.5;
-
-const clamp01 = (value: number): number => (value < 0 ? 0 : value > 1 ? 1 : value);
-
-/**
- * Flip one colour from ink-on-dark to wash-on-paper.
- *
- * Lightness is mirrored (`1 - l`) so the darkest ink becomes the palest wash and
- * the brightest highlight becomes the deepest mark, then placed in the band and
- * pulled toward the band's middle by `softness`. Hue is preserved, so a sunset
- * stays recognisably warm and a reef recognisably green.
- */
-export function paperifyColor(input: string, options: PaperifyOptions = {}): string {
-  const rgb = parseHex(input);
-  if (rgb === null) return input;
-
-  const softness = clamp01(options.softness ?? DEFAULT_SOFTNESS);
-  const saturation = clamp01(options.saturation ?? DEFAULT_SATURATION);
-  const { h, s, l } = toHsl(rgb);
-
-  // Mirror first: black ink is the palest wash, a white highlight the darkest mark.
-  const mirrored = 1 - l;
-  const spread = PAPER_BAND.min + mirrored * (PAPER_BAND.max - PAPER_BAND.min);
-  // Softness pulls toward the middle of the band rather than toward a colour,
-  // so the picture keeps its shape and loses only its contrast.
-  const middle = (PAPER_BAND.min + PAPER_BAND.max) / 2;
-  const lightness = middle + (spread - middle) * softness;
-
-  return formatHex(fromHsl({ h, s: s * saturation, l: lightness }));
-}
-
-/** Paperify a whole palette, keeping every entry aligned with its index. */
-export function paperifyPalette(palette: readonly string[], options: PaperifyOptions = {}): string[] {
-  return palette.map((colour) => paperifyColor(colour, options));
-}
-
-/**
- * The ground a scene should paint on the page background for a given scheme.
- *
- * Dark keeps the piece's own ground: that is the picture it was drawn for.
- * Light replaces it with paper. A ground is not a mark, so it gets full
- * softness and no saturation: a black sky becomes a near-white page, not a
- * mid-grey one, which is what a light UI needs behind it.
- */
-export function sceneGround(ground: string, scheme: "light" | "dark", options: PaperifyOptions = {}): string {
-  return scheme === "dark" ? ground : paperifyColor(ground, { softness: 1, saturation: 0, ...options });
-}
-
-/** The palette a scene should draw with for a given scheme. */
-export function scenePalette(
-  palette: readonly string[],
-  scheme: "light" | "dark",
-  options: PaperifyOptions = {},
-): readonly string[] {
-  return scheme === "dark" ? palette : paperifyPalette(palette, options);
 }

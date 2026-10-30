@@ -188,7 +188,11 @@ export function apply(ctx: ClientContext): void {
       clearRegionPaint(regions);
       return;
     }
-    const tokenOptions = { scene, surfaceOpacity: settings.appearance.surface, paper: settings.options };
+    const tokenOptions = {
+      scene,
+      surfaceOpacity: settings.appearance.surface,
+      lightMode: settings.options.lightMode,
+    };
     const colors = buildRegionColors(tokenOptions, reveal);
     const scheme = currentScheme(doc);
     const paint = {} as Record<RegionKey, string>;
@@ -201,7 +205,11 @@ export function apply(ctx: ClientContext): void {
     releaseTokens?.();
     releaseTokens = null;
     if (theme === undefined || scene === undefined) return;
-    const tokenOptions = { scene, surfaceOpacity: settings.appearance.surface, paper: settings.options };
+    const tokenOptions = {
+      scene,
+      surfaceOpacity: settings.appearance.surface,
+      lightMode: settings.options.lightMode,
+    };
     releaseTokens = theme.overrideTokens(PACKAGE_ID, buildTokens(tokenOptions));
     paintRegionColors(scene);
   };
@@ -247,7 +255,7 @@ export function apply(ctx: ClientContext): void {
       scrim: next.appearance.scrim,
       scrimAngle: next.appearance.scrimAngle,
       pauseOnBlur: next.appearance.pauseOnBlur,
-      paper: next.options,
+      lightMode: next.options.lightMode,
       geometry: { fit: next.options.fit, anchor: next.options.anchor, zoom: next.options.zoom },
       onError: (error) => {
         warn("ascii-rest: the scene stopped drawing", error);

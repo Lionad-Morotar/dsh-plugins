@@ -51,7 +51,7 @@ function presentation(overrides: Partial<Presentation> = {}): Presentation {
     still: false,
     fps: 0,
     resolution: 1,
-    paper: { softness: 0.55, saturation: 0.5 },
+    lightMode: "ink",
     pauseOnBlur: true,
     geometry: { fit: "cover", anchor: "center", zoom: 1 },
     ...overrides,

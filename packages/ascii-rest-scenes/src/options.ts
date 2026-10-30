@@ -6,13 +6,16 @@
  * and a read path that survives a document written by an older build.
  */
 import { isAnchor, isFitMode, type Anchor, type FitMode } from "./cover.ts";
+import { DEFAULT_LIGHT_MODE, isLightMode, type LightMode } from "./light.ts";
 import type { SceneEntry } from "./types.ts";
 
 export interface SceneOptions {
-  /** How far toward the middle the light-mode palette is pulled. 0 is flat, 1 is full contrast. */
-  softness: number;
-  /** How much of each colour survives the light-mode flip. */
-  saturation: number;
+  /**
+   * How the scene is recoloured for the light theme. The dark theme always uses
+   * the scene's own palette, so this is the one choice a reader makes about what
+   * the light background looks like.
+   */
+  lightMode: LightMode;
   /** What happens to the overflow when the picture and the window disagree. */
   fit: FitMode;
   /** Which edge of the picture survives the crop. */
@@ -86,8 +89,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SCENE_OPTIONS: SceneOptions = {
-  softness: 0.55,
-  saturation: 0.5,
+  lightMode: DEFAULT_LIGHT_MODE,
   fit: "cover",
   anchor: "center",
   zoom: 1,
@@ -154,8 +156,7 @@ function readBoolean(input: unknown, fallback: boolean): boolean {
 export function normalizeSceneOptions(input: unknown): SceneOptions {
   const raw = (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>;
   return {
-    softness: readNumber(raw.softness, DEFAULT_SCENE_OPTIONS.softness, 0, 1),
-    saturation: readNumber(raw.saturation, DEFAULT_SCENE_OPTIONS.saturation, 0, 1),
+    lightMode: isLightMode(raw.lightMode) ? raw.lightMode : DEFAULT_SCENE_OPTIONS.lightMode,
     fit: isFitMode(raw.fit) ? raw.fit : DEFAULT_SCENE_OPTIONS.fit,
     anchor: isAnchor(raw.anchor) ? raw.anchor : readAnchorFromOffsets(raw) ?? DEFAULT_SCENE_OPTIONS.anchor,
     zoom: readNumber(raw.zoom, DEFAULT_SCENE_OPTIONS.zoom, 0.25, 4),
@@ -272,8 +273,7 @@ export function pieceOptionsFor(settings: Settings, sceneId: string): Record<str
 export function settingsEqual(a: Settings, b: Settings): boolean {
   return (
     a.scene === b.scene &&
-    a.options.softness === b.options.softness &&
-    a.options.saturation === b.options.saturation &&
+    a.options.lightMode === b.options.lightMode &&
     a.options.fit === b.options.fit &&
     a.options.anchor === b.options.anchor &&
     a.options.zoom === b.options.zoom &&
