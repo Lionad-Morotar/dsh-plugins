@@ -266,6 +266,7 @@ export const FS_STYLES = `
   cursor: pointer;
 }
 .fx-row:hover { background: var(--fx-hover); }
+.fx-row[data-cursor="true"] { outline: 1.5px solid var(--fx-accent); outline-offset: -1.5px; z-index: 1; }
 .fx-row:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -2px; z-index: 1; }
 .fx-row[data-selected="true"] {
   background: var(--fx-active);

@@ -7,7 +7,7 @@
  * or directory) and a status row for loading, failure, emptiness and host-side
  * truncation.
  */
-import { useEffect, useRef, useState, type CSSProperties, type UIEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type UIEvent } from "react";
 
 import type { Translate } from "./copy.ts";
 import {
@@ -98,10 +98,14 @@ export function FileBadge({ name }: { readonly name: string }) {
 export interface TreeRowViewProps {
   readonly row: EntryRow;
   readonly selected: boolean;
+  /** Whether the keyboard cursor rests on this row, regardless of open tabs. */
+  readonly cursor: boolean;
   readonly top: number;
   readonly t: Translate;
   readonly onToggle: (path: string) => void;
   readonly onSelect: (path: string) => void;
+  /** Announced on every row activation so the tree cursor follows the mouse. */
+  readonly onRowActivate: (path: string) => void;
 }
 
 /**
@@ -109,7 +113,7 @@ export interface TreeRowViewProps {
  * @param props - the row, its selected state and the two tree gestures.
  * @returns the row element.
  */
-export function TreeRowView({ row, selected, top, t, onToggle, onSelect }: TreeRowViewProps) {
+export function TreeRowView({ row, selected, cursor, top, t, onToggle, onSelect, onRowActivate }: TreeRowViewProps) {
   const directory = row.kind === "directory";
   const style: CSSProperties = { top, paddingLeft: 8 + row.depth * 12 };
   return (
@@ -122,12 +126,14 @@ export function TreeRowView({ row, selected, top, t, onToggle, onSelect }: TreeR
       {...(directory ? { "aria-expanded": row.expanded } : {})}
       data-kind={row.kind}
       data-selected={selected ? "true" : "false"}
+      data-cursor={cursor ? "true" : "false"}
       data-expanded={directory ? (row.expanded ? "true" : "false") : undefined}
       data-status={row.status}
       data-testid="fx-row"
       title={row.path}
       style={style}
       onClick={() => {
+        onRowActivate(row.path);
         if (directory) onToggle(row.path);
         else onSelect(row.path);
       }}
@@ -237,6 +243,117 @@ export function TreeBody({ rows, selectedPath, t, onToggle, onSelect, onRetry }:
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
+  // The keyboard cursor is an index into `rows` and only ever rests on entry
+  // rows; status placeholders (loading, failed, truncated) are skipped.
+  const [cursor, setCursor] = useState<number | undefined>(undefined);
+  const entryIndexes = useMemo(
+    () => rows.flatMap((row, index) => (row.type === "entry" ? [index] : [])),
+    [rows],
+  );
+
+  // A click or an outside jump keeps the cursor honest so the very first arrow
+  // key press continues from where the user is looking.
+  useEffect(() => {
+    if (selectedPath === undefined) return;
+    const index = rows.findIndex(row => row.type === "entry" && row.path === selectedPath);
+    if (index >= 0) setCursor(index);
+  }, [selectedPath, rows]);
+
+  // Discard a cursor that pointed into a row the outside world removed (a
+  // directory collapse from a cross-panel jump, a refreshed listing).
+  useEffect(() => {
+    if (cursor !== undefined && rows[cursor]?.type !== "entry") setCursor(undefined);
+  }, [rows, cursor]);
+
+  // Keep the cursor visible with minimum scrolling, unlike the centered reveal
+  // a cross-panel jump performs.
+  useEffect(() => {
+    const element = scroller.current;
+    if (cursor === undefined || element === null) return;
+    const top = cursor * TREE_ROW_HEIGHT;
+    if (top < element.scrollTop) element.scrollTop = top;
+    else if (top + TREE_ROW_HEIGHT > element.scrollTop + element.clientHeight) {
+      element.scrollTop = top + TREE_ROW_HEIGHT - element.clientHeight;
+    }
+  }, [cursor]);
+
+  const moveCursor = useCallback(
+    (index: number): void => {
+      setCursor(index);
+      scroller.current?.focus({ preventScroll: true });
+    },
+    [],
+  );
+
+  const handleRowActivate = useCallback((path: string): void => {
+    const index = rows.findIndex(row => row.type === "entry" && row.path === path);
+    if (index >= 0) setCursor(index);
+  }, [rows]);
+
+  const handleTreeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+      if (event.nativeEvent.isComposing || event.altKey || event.metaKey || event.ctrlKey) return;
+      const last = entryIndexes.at(-1);
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        if (cursor === undefined) {
+          if (entryIndexes[0] !== undefined) moveCursor(entryIndexes[0]);
+          return;
+        }
+        const next = entryIndexes.find(index => index > cursor);
+        if (next !== undefined) moveCursor(next);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        if (cursor === undefined) {
+          if (last !== undefined) moveCursor(last);
+          return;
+        }
+        const previous = [...entryIndexes].reverse().find(index => index < cursor);
+        if (previous !== undefined) moveCursor(previous);
+        return;
+      }
+      if (cursor === undefined) return;
+      const row = rows[cursor];
+      if (row === undefined || row.type !== "entry") return;
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        if (row.kind === "directory" && !row.expanded) onToggle(row.path);
+        else {
+          const next = entryIndexes.find(index => index > cursor);
+          if (next !== undefined && rows[next]?.depth === row.depth + 1) moveCursor(next);
+        }
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        if (row.kind === "directory" && row.expanded) onToggle(row.path);
+        else {
+          const parent = [...entryIndexes]
+            .reverse()
+            .find(index => index < cursor && rows[index]?.type === "entry" && rows[index].depth < row.depth);
+          if (parent !== undefined) moveCursor(parent);
+        }
+        return;
+      }
+      if (event.key === "Enter" && row.kind !== "directory") {
+        event.preventDefault();
+        onSelect(row.path);
+        return;
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        if (entryIndexes[0] !== undefined) moveCursor(entryIndexes[0]);
+        return;
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        if (last !== undefined) moveCursor(last);
+      }
+    },
+    [cursor, entryIndexes, moveCursor, onToggle, onSelect, rows],
+  );
 
   useEffect(() => {
     const element = scroller.current;
@@ -274,7 +391,16 @@ export function TreeBody({ rows, selectedPath, t, onToggle, onSelect, onRetry }:
   });
 
   return (
-    <div className="fx-scroll" ref={scroller} onScroll={handleScroll} data-testid="fs-tree-scroll" role="tree" aria-label={t("view.tree")}>
+    <div
+      className="fx-scroll"
+      ref={scroller}
+      onScroll={handleScroll}
+      onKeyDown={handleTreeKeyDown}
+      tabIndex={0}
+      data-testid="fs-tree-scroll"
+      role="tree"
+      aria-label={t("view.tree")}
+    >
       <div className="fx-vlist" style={{ height: rows.length * TREE_ROW_HEIGHT }}>
         {window.rows.map((row, offset) => {
           const top = (window.startIndex + offset) * TREE_ROW_HEIGHT;
@@ -284,9 +410,11 @@ export function TreeBody({ rows, selectedPath, t, onToggle, onSelect, onRetry }:
               row={row}
               top={top}
               selected={row.path === selectedPath}
+              cursor={cursor === window.startIndex + offset}
               t={t}
               onToggle={onToggle}
               onSelect={onSelect}
+              onRowActivate={handleRowActivate}
             />
           ) : (
             <StatusRowView key={row.key} row={row} top={top} t={t} onRetry={onRetry} />
