@@ -102,8 +102,11 @@ const rootStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   // The dock hangs below the composer card inside the conversation column, and
-  // the spec keeps it 1.5em clear of that input box.
+  // the spec keeps it 1.5em clear of that input box. Full block width matters:
+  // the host's usage meter next in line is an inline element and would share
+  // the row with anything narrower.
   marginTop: "1.5em",
+  width: "100%",
   borderTop: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
   background: "color-mix(in srgb, currentColor 3%, transparent)",
   boxSizing: "border-box",
