@@ -2,7 +2,7 @@
 
 Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 
-![dsh-jump：按下组合键后，侧栏与输入框上浮出字母标签](./packages/dsh-jump/assets/jump-active.png)
+![dsh-jump：按下组合键后，侧栏与输入框上浮出字母标签](https://raw.githubusercontent.com/Lionad-Morotar/dsh-jump/main/assets/jump-active.png)
 
 ## 包
 
@@ -10,7 +10,7 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 | --- | --- |
 | [`dsh-client-ui-skin-ascii-rest`](packages/dsh-client-ui-skin-ascii-rest) | 以 ascii.rest 场景作工作区背景的皮肤，随亮暗主题换配色，可在设置页切换 34 个场景并用 lil-gui 调参 |
 | [`ascii-rest-scenes`](packages/ascii-rest-scenes) | 上面那个皮肤用到的纯逻辑层：场景目录、cover 取景、调色板与纸色转换、设置归一化 |
-| [`dsh-jump`](packages/dsh-jump) | 键盘跳跃导航，web profile 专用：组合键（默认 Cmd+H / Cmd+U，可在设置里录制改键）给可点击元素打 label，按键即点或即聚焦，Esc 退出 |
+| [`dsh-jump`](https://github.com/Lionad-Morotar/dsh-jump) | 键盘跳跃导航，web profile 专用：组合键（默认 Cmd+H / Cmd+U，可在设置里录制改键）给可点击元素打 label，按键即点或即聚焦，Esc 退出。已独立成仓（本仓库以 submodule 挂在 `packages/dsh-jump`），并在 npm 上发布 |
 | [`dsh-better-keybindings`](packages/dsh-better-keybindings) | 键盘修正，web 与 desktop profile 共用：输入框聚焦时 Home/End 把光标移到行首行尾，不再把聊天区滚到顶或底 |
 | [`dsh-slash-commands`](packages/dsh-slash-commands) | 三端 slash 命令：tui 的 `/copy` 把最近 n 轮最终回复放进系统剪贴板（`--all` 连你的发言一起带），web 与 desktop 的 `/rename` 改当前会话标题、`/resume` 切换到另一个会话 |
 | [`dsh-preview-more`](packages/dsh-preview-more) | 右侧栏文件预览补全：3D 模型、CAD 图纸与高位深图片，宿主内置预览管不了的那几类 |
@@ -58,11 +58,14 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 ## 开发
 
 ```sh
+git clone --recurse-submodules <repo>   # 或在已克隆的仓库里跑 git submodule update --init
 pnpm install
 pnpm build      # 产出 lib/（包内分块 + 主入口），lib 是要提交的，profile 直接读它
-pnpm test       # 十五个包递归，122 文件 1266 用例
+pnpm test       # 十五个包递归
 pnpm typecheck
 ```
+
+`packages/dsh-jump` 是独立仓库 [`Lionad-Morotar/dsh-jump`](https://github.com/Lionad-Morotar/dsh-jump) 的 submodule。没初始化时那个目录是空的，`pnpm build` 与 `pnpm test` 会跳过它；要改这个包，先 `git submodule update --init`，提交进它自己的仓库，再回本仓库更新 submodule 指针。
 
 `packages/*/lib/` 提交进仓库是刻意的：harness 的 profile 直接从安装包读 `lib/`，不会替你跑构建。改了 `src/` 就必须重新 build 再提交，否则安装态跑的是旧代码。
 
