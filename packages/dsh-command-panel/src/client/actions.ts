@@ -17,6 +17,7 @@ import type {
   PluginNavigationService,
   RemoteResult,
   SessionsService,
+  ShortcutsService,
   SidebarRightService,
   SlotSeatActions,
   SlotService,
@@ -39,6 +40,7 @@ export interface ActionDeps {
   readonly pluginNavigation: () => PluginNavigationService | undefined;
   readonly sidebarRight: () => SidebarRightService | undefined;
   readonly slots: () => SlotService | undefined;
+  readonly shortcuts: () => ShortcutsService | undefined;
   readonly currentSessionId: () => string | null;
   /** Write into the composer through the panel's existing insertion path. */
   readonly insert: (text: string) => "ok" | "no-session" | "failed";
@@ -316,6 +318,28 @@ function insertCommand(name: string, deps: ActionDeps): void {
 }
 
 /**
+ * Run one shortcuts-catalog command.
+ *
+ * Palette execution is a menu selection: `invoke` resolves the command with a
+ * page-level context and runs it when the command accepts. `invoke` skips the
+ * regions filter by design, so a terminal-scoped binding still runs from the
+ * palette — the reader's intent is the click, not the chord.
+ */
+function invokeShortcut(id: string, deps: ActionDeps): void {
+  const registry = deps.shortcuts()?.registry;
+  if (registry === undefined) {
+    fail(deps, id, undefined);
+    return;
+  }
+  try {
+    registry.invoke(id, { region: "page", modal: null, target: null });
+    deps.close();
+  } catch (error) {
+    fail(deps, id, failureCode(error));
+  }
+}
+
+/**
  * Run one catalogue action.
  *
  * @param action - the row's serializable action.
@@ -338,6 +362,9 @@ export async function runCatalogAction(action: RowAction, deps: ActionDeps): Pro
       return true;
     case "toggle-theme":
       toggleTheme(deps);
+      return true;
+    case "invoke-shortcut":
+      invokeShortcut(action.id, deps);
       return true;
     default:
       return false;

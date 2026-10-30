@@ -257,6 +257,8 @@ export interface NormalizedBinding {
 export interface ShortcutCatalogEntry {
   readonly id: string;
   readonly label: string;
+  /** Search aliases the owning command declared, such as `devtools`. */
+  readonly aliases?: readonly string[];
   readonly keys: readonly string[];
   readonly binding: NormalizedBinding | null;
   readonly modified: boolean;
@@ -306,6 +308,14 @@ export interface ShortcutCommand {
 export interface ShortcutsService {
   readonly catalog: Snapshot<readonly ShortcutCatalogEntry[]>;
   readonly config: Snapshot<ShortcutConfigSnapshot>;
+  /**
+   * Programmatic command execution. The service itself publishes no `invoke`;
+   * the desktop menu bridge calls `registry.invoke` with the same context, so
+   * that member is the supported seam for palette execution too.
+   */
+  readonly registry?: {
+    invoke(id: string, context: ShortcutContext): void;
+  };
   register(command: ShortcutCommand): Unsubscribe;
   describeBinding(binding: ShortcutBinding | null): {
     readonly binding: NormalizedBinding | null;

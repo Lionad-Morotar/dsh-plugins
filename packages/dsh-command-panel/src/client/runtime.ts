@@ -64,7 +64,7 @@ import {
 import { composeInsertion } from "./paths.ts";
 import { rankRows } from "./ranking.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
-import { catalogRows, type PanelRow } from "./rows.ts";
+import { catalogRows, shortcutRows, type PanelRow } from "./rows.ts";
 import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from "./sources.ts";
 import { createPanelStore } from "./store.ts";
 import { directoryQuery, focusPath, parentQuery } from "./tree.ts";
@@ -318,14 +318,24 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
    * The panel's own rows, ahead of the host's slash commands.
    *
    * Built synchronously so the command mode can show content on the very first
-   * frame, before the host catalogue round trip settles.
+   * frame, before the host catalogue round trip settles. The shortcuts
+   * catalogue rides the same composition so commands registered late (the
+   * inspector mounts only after its debug backend accepts the connection)
+   * appear the next time the panel opens.
    */
   function composeCommandRows(hostRows: readonly PanelRow[]): PanelRow[] {
     const entries = availableCatalog(actionContext(), {
       seatSurfaces: deps.config?.seatSurfaces !== false,
       hostCommands: knownHostCommands,
     });
-    return [...catalogRows(copy(), entries, keycapHints()), ...hostRows];
+    const shortcuts = services.shortcuts();
+    const covered = new Set(
+      entries.flatMap(entry => (entry.shortcutId === undefined ? [] : [entry.shortcutId])),
+    );
+    const keyRows = shortcuts === undefined
+      ? []
+      : shortcutRows(shortcuts.catalog.getSnapshot(), copy(), covered);
+    return [...catalogRows(copy(), entries, keycapHints()), ...keyRows, ...hostRows];
   }
 
   /** What the executors may call; one object per dispatch keeps them pure of globals. */
@@ -339,6 +349,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       pluginNavigation: () => refs.pluginNavigation,
       sidebarRight: () => refs.sidebarRight,
       slots: () => refs.slots,
+      shortcuts: () => refs.shortcuts,
       currentSessionId,
       insert,
       close,

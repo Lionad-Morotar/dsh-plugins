@@ -7,10 +7,12 @@ import {
   commandRows,
   fileRows,
   sessionRows,
+  shortcutRows,
   visibleSessions,
   workspaceRows,
   type PanelRow,
 } from "../src/client/rows.ts";
+import type { ShortcutCatalogEntry } from "../src/client/dsh.ts";
 import {
   SESSION_A,
   SESSION_ARCHIVED,
@@ -120,6 +122,60 @@ describe("catalogRows", () => {
   it("leaves the hint empty for an action with no host shortcut", () => {
     const [row] = catalogRows(copy, CATALOG.filter(entry => entry.id === "view.theme"), new Map());
     expect(row?.hint).toBeUndefined();
+  });
+});
+
+describe("shortcutRows", () => {
+  const entries: readonly ShortcutCatalogEntry[] = [
+    {
+      id: "inspector.toggle",
+      label: "展开或收起 NodeJS 诊断",
+      aliases: ["inspector", "nodejs", "devtools"],
+      keys: ["⌘", "⇧", "."],
+      binding: { code: "Period", modifiers: ["meta", "shift"] },
+      modified: false,
+      conflicts: [],
+      issue: null,
+    },
+    {
+      id: "sidebar.left.toggle",
+      label: "切换侧栏",
+      keys: ["⌘", "B"],
+      binding: { code: "KeyB", modifiers: ["meta"] },
+      modified: false,
+      conflicts: [],
+      issue: null,
+    },
+    {
+      id: "workbench.terminal",
+      label: "聚焦终端 dock",
+      aliases: ["term"],
+      keys: [],
+      binding: null,
+      modified: false,
+      conflicts: [],
+      issue: null,
+    },
+  ];
+
+  it("lists uncovered commands with their keycap and aliases", () => {
+    const rows = shortcutRows(entries, copy, new Set());
+    expect(labels(rows)).toEqual(["展开或收起 NodeJS 诊断", "切换侧栏", "聚焦终端 dock"]);
+    expect(rows[0]?.alias).toBe("inspector nodejs devtools");
+    expect(rows[0]?.hint).toBe("⌘ ⇧ .");
+    expect(rows[0]?.group).toBe(copy.groupShortcuts);
+    expect(rows[0]?.action).toEqual({ kind: "invoke-shortcut", id: "inspector.toggle" });
+  });
+
+  it("drops ids the default catalogue already renders", () => {
+    const rows = shortcutRows(entries, copy, new Set(["sidebar.left.toggle"]));
+    expect(labels(rows)).toEqual(["展开或收起 NodeJS 诊断", "聚焦终端 dock"]);
+  });
+
+  it("keeps unbound commands runnable without a keycap", () => {
+    const rows = shortcutRows(entries, copy, new Set(["sidebar.left.toggle"]));
+    expect(rows[1]?.hint).toBeUndefined();
+    expect(rows[1]?.action).toEqual({ kind: "invoke-shortcut", id: "workbench.terminal" });
   });
 });
 

@@ -32,6 +32,7 @@ export interface Copy {
   readonly directory: string;
   readonly groupBuiltin: string;
   readonly groupCommands: string;
+  readonly groupShortcuts: string;
   readonly groupWorkspaces: string;
   readonly groupSessions: string;
   readonly allSessions: string;
@@ -88,6 +89,7 @@ const ZH: Copy = {
   directory: "目录",
   groupBuiltin: "面板",
   groupCommands: "指令",
+  groupShortcuts: "快捷键",
   groupWorkspaces: "工作区",
   groupSessions: "会话",
   allSessions: "全部会话",
@@ -177,6 +179,7 @@ const EN: Copy = {
   directory: "dir",
   groupBuiltin: "Panel",
   groupCommands: "Commands",
+  groupShortcuts: "Shortcuts",
   groupWorkspaces: "Workspaces",
   groupSessions: "Sessions",
   allSessions: "All sessions",

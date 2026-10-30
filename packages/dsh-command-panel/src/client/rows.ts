@@ -18,6 +18,7 @@ import type {
   FileReferenceCandidate,
   SessionListState,
   SessionSummary,
+  ShortcutCatalogEntry,
   WorkspaceSnapshot,
   WorkspaceView,
 } from "./dsh.ts";
@@ -39,7 +40,9 @@ export type RowAction =
       readonly kind: "open-surface";
       readonly surface: "plugins" | "settings" | "shortcuts" | "sidebar" | "files" | "terminal" | "browser";
     }
-  | { readonly kind: "toggle-theme" };
+  | { readonly kind: "toggle-theme" }
+  /** Run one shortcuts-catalog command the default catalogue does not cover. */
+  | { readonly kind: "invoke-shortcut"; readonly id: string };
 
 /** The default catalogue's domain, re-exported so callers keep one import. */
 export type { ActionCategory, CatalogEntry } from "./catalog.ts";
@@ -100,6 +103,41 @@ export function commandRows(commands: readonly CommandDescriptor[], copy: Copy):
     group: copy.groupCommands,
     action: { kind: "execute-command", name: command.name, needsInput: command.input !== undefined },
   }));
+}
+
+/**
+ * Project the shortcuts catalogue into rows.
+ *
+ * These are the client product commands any mounted plugin registered — the
+ * inspector's NodeJS diagnostics, the workbench's panel jumps — which have no
+ * host slash command and would otherwise be unreachable except through their
+ * key bindings. Entries the default catalogue already covers (via
+ * `shortcutId`) are skipped so no action appears twice.
+ *
+ * @param entries - the shortcuts catalogue snapshot.
+ * @param copy - active locale.
+ * @param covered - shortcut ids already rendered by the default catalogue.
+ * @returns one row per uncovered command, in catalogue order.
+ */
+export function shortcutRows(
+  entries: readonly ShortcutCatalogEntry[],
+  copy: Copy,
+  covered: ReadonlySet<string>,
+): PanelRow[] {
+  const rows: PanelRow[] = [];
+  for (const entry of entries) {
+    if (covered.has(entry.id)) continue;
+    const aliases = entry.aliases ?? [];
+    rows.push({
+      key: `shortcut:${entry.id}`,
+      label: entry.label,
+      alias: aliases.length > 0 ? aliases.join(" ") : undefined,
+      hint: entry.keys.length > 0 ? entry.keys.join(" ") : undefined,
+      group: copy.groupShortcuts,
+      action: { kind: "invoke-shortcut", id: entry.id },
+    });
+  }
+  return rows;
 }
 
 /**

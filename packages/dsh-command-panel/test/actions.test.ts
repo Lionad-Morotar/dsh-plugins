@@ -21,6 +21,7 @@ interface Harness {
   readonly notices: { readonly text: string; readonly tone: string }[];
   readonly closed: () => number;
   readonly inserted: () => readonly string[];
+  readonly shortcutInvoke: ReturnType<typeof vi.fn>;
 }
 
 interface HarnessOptions {
@@ -34,7 +35,8 @@ interface HarnessOptions {
   readonly archiveThrows?: unknown;
   readonly openTabThrows?: unknown;
   readonly colorScheme?: "light" | "dark";
-  readonly absent?: readonly ("uiWorkspace" | "layout" | "theme" | "pluginNavigation" | "sidebarRight" | "slots" | "workspaces" | "sessions")[];
+  readonly absent?: readonly ("uiWorkspace" | "layout" | "theme" | "pluginNavigation" | "sidebarRight" | "slots" | "workspaces" | "sessions" | "shortcuts")[];
+  readonly invokeThrows?: unknown;
 }
 
 function harness(options: HarnessOptions = {}): Harness {
@@ -88,6 +90,12 @@ function harness(options: HarnessOptions = {}): Harness {
               ? (options.overlayEntries ?? [])
               : [],
       };
+  const shortcutInvoke = vi.fn(() => {
+    if (options.invokeThrows !== undefined) throw options.invokeThrows;
+  });
+  const shortcuts = absent.has("shortcuts")
+    ? undefined
+    : { registry: { invoke: shortcutInvoke as (id: string, context: unknown) => void } };
 
   const uiWorkspace = {
     openSession: vi.fn(),
@@ -109,6 +117,7 @@ function harness(options: HarnessOptions = {}): Harness {
     pluginNavigation: () => pluginNavigation,
     sidebarRight: () => sidebarRight,
     slots: () => slots,
+    shortcuts: () => shortcuts as never,
     currentSessionId: () => options.currentSessionId === undefined ? SESSION_A.id : options.currentSessionId,
     insert: text => {
       inserted.push(text);
@@ -123,7 +132,7 @@ function harness(options: HarnessOptions = {}): Harness {
     copy: () => copy,
   };
 
-  return { deps, notices, closed: () => closedCount, inserted: () => inserted };
+  return { deps, notices, closed: () => closedCount, inserted: () => inserted, shortcutInvoke };
 }
 
 /** A seat whose `create()` returns the given actions. */
@@ -276,6 +285,35 @@ describe("dispatch", () => {
     expect(await runCatalogAction({ kind: "open-mode", mode: "navigate" }, h.deps)).toBe(false);
     expect(await runCatalogAction({ kind: "open-session", sessionId: "sess-a" }, h.deps)).toBe(false);
     expect(h.closed()).toBe(0);
+  });
+});
+
+describe("invoke-shortcut", () => {
+  it("runs the command as a menu selection and closes the panel", async () => {
+    const h = harness();
+    await runCatalogAction({ kind: "invoke-shortcut", id: "inspector.toggle" }, h.deps);
+    expect(h.shortcutInvoke).toHaveBeenCalledWith("inspector.toggle", {
+      region: "page",
+      modal: null,
+      target: null,
+    });
+    expect(h.closed()).toBe(1);
+    expect(h.notices).toEqual([]);
+  });
+
+  it("reports a missing registry instead of failing silently", async () => {
+    const h = harness({ absent: ["shortcuts"] });
+    await runCatalogAction({ kind: "invoke-shortcut", id: "inspector.toggle" }, h.deps);
+    expect(h.shortcutInvoke).not.toHaveBeenCalled();
+    expect(h.closed()).toBe(0);
+    expect(h.notices).toEqual([{ text: copy.actions.failed("inspector.toggle", undefined), tone: "error" }]);
+  });
+
+  it("surfaces a thrown code and keeps the panel open", async () => {
+    const h = harness({ invokeThrows: Object.assign(new Error("x"), { code: "shortcuts/boom" }) });
+    await runCatalogAction({ kind: "invoke-shortcut", id: "inspector.toggle" }, h.deps);
+    expect(h.closed()).toBe(0);
+    expect(h.notices).toEqual([{ text: copy.actions.failed("inspector.toggle", "shortcuts/boom"), tone: "error" }]);
   });
 });
 
