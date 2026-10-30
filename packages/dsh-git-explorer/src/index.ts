@@ -151,14 +151,6 @@ export class GitExplorerService extends TypertRemoteService {
     // Activation observability: a silent pending fiber is indistinguishable
     // from a missing module from the outside, and both have bitten already.
     console.info(`[dsh-git-explorer] activating; services=${JSON.stringify(observed)}`);
-    void (async (): Promise<void> => {
-      try {
-        const { appendFile } = await import("node:fs/promises");
-        await appendFile("/tmp/dsh-git-diag.log", `activating ${JSON.stringify(observed)} ${new Date().toISOString()}\n`);
-      } catch {
-        // diagnostics are best effort
-      }
-    })();
     if (subprocess === undefined) {
       throw new Error("dsh-git-explorer: subprocess service is unavailable");
     }

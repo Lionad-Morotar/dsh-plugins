@@ -846,14 +846,6 @@ var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec 
       sessionPersistence: read("sessionPersistence") !== void 0
     };
     console.info(`[dsh-git-explorer] activating; services=${JSON.stringify(observed)}`);
-    void (async () => {
-      try {
-        const { appendFile } = await import("node:fs/promises");
-        await appendFile("/tmp/dsh-git-diag.log", `activating ${JSON.stringify(observed)} ${(/* @__PURE__ */ new Date()).toISOString()}
-`);
-      } catch {
-      }
-    })();
     if (subprocess === void 0) {
       throw new Error("dsh-git-explorer: subprocess service is unavailable");
     }
