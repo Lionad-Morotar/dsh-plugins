@@ -138,7 +138,11 @@ export function registerWorkbenchCommands(
           label: () => label(spec.labelKey),
           aliases: [],
           defaults: desktopDefaults(spec.desktop),
-          regions: ["page"],
+          // Terminal focus reports region "terminal" and an editor caret
+          // reports "editable"; a workbench chord must fire from every input
+          // owner, not just the bare page, or the terminal dock steals the
+          // shortcuts exactly when terminals are the user's focus.
+          regions: ["page", "editable", "terminal"],
           modals: [],
           resolve: resolverFor(spec, service),
         }),

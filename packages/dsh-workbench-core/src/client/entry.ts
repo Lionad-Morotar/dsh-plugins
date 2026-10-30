@@ -143,12 +143,18 @@ export function apply(ctx: ClientContextLike): () => void {
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
   const shortcuts = readShortcutService(ctx);
+  console.info(
+    `[dsh-workbench-core] shortcuts service ${shortcuts === undefined ? "absent" : `present (runtime=${shortcuts.runtime ?? "unknown"})`}`,
+  );
   // The global commands are registered before the section renders: the section
   // reads the host catalog, so a command registered after the first paint would
   // appear only on the next catalog push.
-  const offCommands = registerWorkbenchCommands(shortcuts, service, t, message =>
-    ctx.logger?.warn?.(`${LOCALE_NAMESPACE}: ${message}`),
-  );
+  const offCommands = registerWorkbenchCommands(shortcuts, service, t, message => {
+    // The host logger sink is invisible in a browser DevTools session; a
+    // console twin keeps shortcut registration diagnosable on real machines.
+    console.warn(`[dsh-workbench-core] ${message}`);
+    ctx.logger?.warn?.(`${LOCALE_NAMESPACE}: ${message}`);
+  });
   // Web only: the host refuses these three chords, so the bundle listens for
   // them itself in the capture phase. Registering the host defaults stays
   // desktop-only either way.
