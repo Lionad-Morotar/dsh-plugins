@@ -64,6 +64,11 @@ export interface PopupStoreLike {
   getSnapshot(): PopupStateLike;
 }
 
+/** The open-time binding whose token segment is consumed after settlement. */
+export interface PopupBindingLike {
+  readonly segment: unknown;
+}
+
 /** The controller methods this plugin calls. */
 export interface PopupControllerLike {
   readonly state: PopupStoreLike;
@@ -74,7 +79,9 @@ export interface PopupControllerLike {
    * caller passes the token it currently holds, which is how a late settlement
    * loses its write rights.
    */
-  readonly binding: unknown;
+  readonly binding: PopupBindingLike | null;
+  /** Native session wiring, including the guarded command-token consumer. */
+  readonly deps?: { readonly consume?: ((segment: unknown) => unknown) | undefined } | undefined;
   /**
    * Settle an already-admitted row.
    *
@@ -90,4 +97,28 @@ export interface PopupControllerLike {
   settle?(binding: unknown, option: PopupOptionLike): Promise<void> | void;
   setSearch(search: string): void;
   dismiss(options?: { focusComposer?: boolean }): void;
+}
+
+/**
+ * Settle a selection outside the controller's `onSelect`, then close natively.
+ *
+ * Direct directory submission preserves the chosen reasoning effort, but it
+ * bypasses the controller's usual token-consumption step. Reuse that same
+ * guarded consumer after business success so a typed `/model` token leaves the
+ * composer exactly as it does through native settlement.
+ * @param popup - controller that opened the picker.
+ * @param select - direct business submission.
+ */
+export async function settleDirectSelection(
+  popup: Pick<PopupControllerLike, "binding" | "deps" | "dismiss">,
+  select: () => Promise<unknown> | undefined,
+): Promise<void> {
+  const binding = popup.binding;
+  try {
+    await select();
+    if (binding !== null && popup.binding === binding) popup.deps?.consume?.(binding.segment);
+  } finally {
+    // A superseded binding owns neither the old token nor the replacement popup.
+    if (binding !== null && popup.binding === binding) popup.dismiss({ focusComposer: true });
+  }
 }

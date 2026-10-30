@@ -31,7 +31,7 @@ import { readPopupClasses } from "./classes.ts";
 import { reasoningMetaOf, rowPointedEffort, type CatalogGroupLike } from "./effort.ts";
 import { ModelRow, modelRefOf } from "./row.tsx";
 import { groupOptions } from "./groups.ts";
-import type { PopupControllerLike, PopupOptionLike, PopupStateLike } from "./popup.ts";
+import { settleDirectSelection, type PopupControllerLike, type PopupOptionLike, type PopupStateLike } from "./popup.ts";
 import { resolvePrimitives, type KeyboardEventLike, type Primitives } from "./primitives.ts";
 import { rankByProvider, type SearchMode } from "./search.ts";
 
@@ -275,9 +275,7 @@ function ModelPicker({ popup, state, t, primitives, doc, catalog, current, selec
         void popup.settle?.(popup.binding, option);
         return;
       }
-      void Promise.resolve(selectModel({ ...ref, reasoningEffort: effort })).finally(() => {
-        popup.dismiss({ focusComposer: true });
-      });
+      void settleDirectSelection(popup, () => selectModel({ ...ref, reasoningEffort: effort }));
     },
     [popup, selectModel],
   );
