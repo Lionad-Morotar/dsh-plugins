@@ -167,6 +167,8 @@
 - 事实：`agent.steer(message)` 与 `session.append("user/message", data)` 都把调用方对象原样落盘；宿主 append 只校验 JSON 可序列化与 seq 连续（`dsh-session-persistence` 的 `materializeAppendBatch` / `assertContiguous`），消息身份（非空 `id`、`role`、`source.kind`、`content` 数组）要到 `adoptSessionEvent` 回放时才校验。形状错了不会当场报错，而是让该会话日志之后每次加载都失败：`stored session ... failed validation: session event at seq N lacks an identified message`
 - 实例：`dsh-repo-harness` 的 merge-steer 曾用裸 `{ content, source }` 调 `agent.steer()`，落盘 5 条坏事件、3 个会话无法加载（261030 修复，投递改为自带 UUID `id` 与 `role: "user"` 的 identified message）
 - 安全修改：任何写 `user/message` 的代码都要构造完整 identified message，并在测试里断言形状；改了投递形状后用真实 `adoptSessionEvent`（`@deepseek-ai/dsh-session` 具名导出）验一条样本，别只信 fake agent
+- 同源第二条约束：`sourceEventSeqs` 在 v4 日志里必须是扁平、严格递增的非负安全整数数组；迁移层的区间编码形态 `[[15,20],26,...]` 会被读取路径拒绝（`session event "user/message" sourceEventSeqs must densely contain non-negative safe integers`）。`encodeSeqRanges` / `decodeSeqRanges` 只被 v0→v1、v1→v2 迁移包调用，v4 读写路径都不用它，别把它当存储形态
+- 同源实例：261030 事故里 29 个会话、39 条 rewind 事件的 `sourceEventSeqs` 是区间编码，写入方是当时长期驻留内存的旧宿主构建（磁盘上已无对应代码）；修复按 `decodeSeqRanges` 语义展开成扁平数组即可，扁平形态 rc.3 与 rc.5 读取器都接受
 
 ## 规模上限
 
