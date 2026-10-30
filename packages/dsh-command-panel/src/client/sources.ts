@@ -17,14 +17,23 @@ import type { Copy } from "./copy.ts";
 import type {
   CommandsRemote,
   FileReferencesRemote,
+  GitExplorerRemote,
   PathExplorerRemote,
   SessionListState,
   SessionsService,
   WorkspacesService,
 } from "./dsh.ts";
 import type { PanelLevel, PanelMode, SessionScope } from "./panel-state.ts";
-import { isTypedAbsolutePath } from "./paths.ts";
-import { commandRows, fileRows, filesystemRows, sessionRows, workspaceRows, type PanelRow } from "./rows.ts";
+import { hexRefQuery, isTypedAbsolutePath } from "./paths.ts";
+import {
+  commandRows,
+  commitRows,
+  fileRows,
+  filesystemRows,
+  sessionRows,
+  workspaceRows,
+  type PanelRow,
+} from "./rows.ts";
 
 /** Reference source name used while holding a session for discovery. */
 export const PANEL_SOURCE = "commandPanel";
@@ -34,6 +43,8 @@ export interface SourceServices {
   readonly fileReferences: () => FileReferencesRemote | undefined;
   readonly commands: () => CommandsRemote | undefined;
   readonly pathExplorer: () => PathExplorerRemote | undefined;
+  /** Another package's namespace; absent by design wherever it is not loaded. */
+  readonly gitExplorer?: () => GitExplorerRemote | undefined;
   readonly sessions: () => SessionsService | undefined;
   readonly workspaces: () => WorkspacesService | undefined;
   readonly now: () => number;
@@ -127,15 +138,59 @@ async function loadFiles(services: SourceServices, request: LoadRequest): Promis
   }
 
   const cwd = cwdOf(sessions.list.getSnapshot(), sessionId);
+  // A hex query names commits as well as files; the two planes answer in
+  // parallel, and the commit rows come back ahead of the workspace's.
+  const commits = hexRefQuery(query);
+  const commitPlane =
+    commits === undefined
+      ? undefined
+      : loadCommits(services, sessionId, commits, request.signal, copy);
   try {
-    const result = await withSession(sessions, sessionId, request.signal, () =>
-      fileReferences.list(sessionId, query, request.signal),
-    );
+    const [result, commitPlaneRows] = await Promise.all([
+      withSession(sessions, sessionId, request.signal, () =>
+        fileReferences.list(sessionId, query, request.signal),
+      ),
+      commitPlane ?? Promise.resolve(undefined),
+    ]);
     if (!result.ok) return { rows: [], status: "error", message: result.error.code };
-    return { rows: fileRows({ candidates: result.value, cwd }, copy), status: "ready" };
+    const rows = fileRows({ candidates: result.value, cwd }, copy);
+    return {
+      rows: commitPlaneRows === undefined ? rows : [...commitPlaneRows, ...rows],
+      status: "ready",
+    };
   } catch (error) {
     if (isAbort(error)) return { rows: [], status: "ready" };
     return { rows: [], status: "error", message: messageOf(error, copy.failed) };
+  }
+}
+
+/**
+ * The commit plane of a hex query.
+ *
+ * Every way this can answer "no" — no reachable face, a transport failure, or
+ * a business refusal such as an ambiguous or unknown prefix — folds into
+ * undefined: the hex plane is an addition to the workspace's files, never a
+ * reason to show the panel's error state.
+ */
+async function loadCommits(
+  services: SourceServices,
+  sessionId: string,
+  ref: string,
+  signal: AbortSignal,
+  copy: Copy,
+): Promise<PanelRow[] | undefined> {
+  const gitExplorer = services.gitExplorer?.();
+  if (gitExplorer === undefined) return undefined;
+  try {
+    const transport = await gitExplorer.query({ sessionId, ref, limit: 5 }, signal);
+    if (!transport.ok) return undefined;
+    const result = transport.value;
+    if (!result.ok) return undefined;
+    return commitRows({ commits: result.page.commits, now: services.now() }, copy);
+  } catch {
+    // A rejected transport is the same silence as an absent one; an abort lands
+    // here too, and the workspace plane reports it on the panel's behalf.
+    return undefined;
   }
 }
 

@@ -16,6 +16,7 @@ import type { Copy } from "./copy.ts";
 import type {
   CommandDescriptor,
   FileReferenceCandidate,
+  GitCommitSummary,
   SessionListState,
   SessionSummary,
   ShortcutCatalogEntry,
@@ -43,7 +44,9 @@ export type RowAction =
     }
   | { readonly kind: "toggle-theme" }
   /** Run one shortcuts-catalog command the default catalogue does not cover. */
-  | { readonly kind: "invoke-shortcut"; readonly id: string };
+  | { readonly kind: "invoke-shortcut"; readonly id: string }
+  /** Open the git workbench on one commit's detail (`commit:<hash>` focus). */
+  | { readonly kind: "open-commit"; readonly hash: string };
 
 /** The default catalogue's domain, re-exported so callers keep one import. */
 export type { ActionCategory, CatalogEntry } from "./catalog.ts";
@@ -81,6 +84,31 @@ export interface FileRowInput {
 export interface FilesystemRowInput {
   readonly home: string;
   readonly entries: readonly PathEntry[];
+}
+
+/** Commits plus the clock their relative ages are measured against. */
+export interface CommitRowInput {
+  readonly commits: readonly GitCommitSummary[];
+  readonly now: number;
+}
+
+/**
+ * Project commits into rows.
+ *
+ * The label is the subject, because that is what a reader recognises; the full
+ * hash rides along as the alias (an unrendered match surface) so refining the
+ * typed prefix keeps matching — a seven-digit abbreviation would stop on the
+ * eighth keystroke, exactly when the reader is closing in on one commit.
+ */
+export function commitRows(input: CommitRowInput, copy: Copy): PanelRow[] {
+  return input.commits.map(commit => ({
+    key: `commit:${commit.hash}`,
+    label: commit.subject,
+    alias: commit.hash,
+    detail: `${commit.author} · ${copy.age(input.now - commit.time * 1000)}`,
+    group: copy.groupCommits,
+    action: { kind: "open-commit", hash: commit.hash },
+  }));
 }
 
 /**

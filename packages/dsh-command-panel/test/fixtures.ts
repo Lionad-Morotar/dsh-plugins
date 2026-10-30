@@ -12,6 +12,8 @@ import type {
   CommandsRemote,
   FileReferenceCandidate,
   FileReferencesRemote,
+  GitCommitSummary,
+  GitExplorerRemote,
   PathExplorerRemote,
   SessionListState,
   SessionOpenFace,
@@ -203,5 +205,29 @@ export function fakeCommands(script: RemoteScript = {}): CommandsRemote {
         ? { ok: true, value: script.commands ?? [] }
         : { ok: false, error: { code: script.commandError } },
     execute: async () => ({ ok: true, value: undefined }),
+  };
+}
+
+/** One history commit the way `git log` spells it, at a fixed point in time. */
+export const COMMIT_FOCUS: GitCommitSummary = {
+  hash: "9393130e5f1ad2c61b8e04ff9cf01a53d1c7b6e2",
+  author: "Lionad",
+  time: 4_000,
+  subject: "视图消费 commit:<hash> 焦点",
+};
+
+export interface GitScript {
+  readonly commits?: readonly GitCommitSummary[];
+  /** Business failure code the git host half would answer with. */
+  readonly error?: string;
+}
+
+/** The `remote.gitExplorer` query face dsh-git-explorer's host half publishes. */
+export function fakeGitExplorer(script: GitScript = {}): GitExplorerRemote {
+  return {
+    query: async () =>
+      script.error === undefined
+        ? { ok: true as const, value: { ok: true as const, page: { commits: script.commits ?? [] } } }
+        : { ok: true as const, value: { ok: false as const, error: { code: script.error } } },
   };
 }

@@ -10,7 +10,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { GatewayRpc } from "../src/client/wire.ts";
-import { createPathExplorerFace, createSessionOpenFace, foldTransport, gatewayRpcOf } from "../src/client/wire.ts";
+import {
+  createGitExplorerFace,
+  createPathExplorerFace,
+  createSessionOpenFace,
+  foldTransport,
+  gatewayRpcOf,
+} from "../src/client/wire.ts";
 
 function rpcOf(respond: (endpoint: string, payload: unknown) => unknown): GatewayRpc {
   return {
@@ -72,6 +78,36 @@ describe("createPathExplorerFace", () => {
     await expect(face.resolve({ query: "/h" })).resolves.toMatchObject({
       ok: false,
       error: { message: "socket closed" },
+    });
+  });
+});
+
+describe("createGitExplorerFace", () => {
+  it("routes query onto the gitExplorer namespace with the request envelope", async () => {
+    const calls: Array<{ endpoint: string; payload: unknown }> = [];
+    const face = createGitExplorerFace(
+      rpcOf((endpoint, payload) => {
+        calls.push({ endpoint, payload });
+        return { ok: true, value: { ok: true, page: { commits: [] } } };
+      }),
+    );
+
+    const result = await face.query({ sessionId: "sess-a", ref: "9393130", limit: 5 });
+
+    expect(calls).toEqual([
+      {
+        endpoint: "gitExplorer/query",
+        payload: { args: { request: { sessionId: "sess-a", ref: "9393130", limit: 5 } } },
+      },
+    ]);
+    expect(result).toEqual({ ok: true, value: { ok: true, page: { commits: [] } } });
+  });
+
+  it("keeps a gateway rejection in the result union", async () => {
+    const face = createGitExplorerFace(rpcOf(() => ({ ok: false, error: { code: "gateway/not-found" } })));
+    await expect(face.query({ sessionId: "sess-a", ref: "9393130" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "gateway/not-found" },
     });
   });
 });

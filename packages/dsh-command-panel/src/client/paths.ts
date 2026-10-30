@@ -32,6 +32,19 @@ export function isTypedAbsolutePath(target: string): boolean {
 }
 
 /**
+ * The commit a hex query names, or undefined when it does not name one.
+ *
+ * Four digits is where a hex prefix becomes unambiguous enough to be worth a
+ * git round trip; forty is the full SHA-1 spelling. The answer is lowercased
+ * because that is the form git answers with, so the returned ref matches the
+ * hash the results carry.
+ */
+export function hexRefQuery(query: string): string | undefined {
+  const trimmed = query.trim();
+  return /^[0-9a-f]{4,40}$/i.test(trimmed) ? trimmed.toLowerCase() : undefined;
+}
+
+/**
  * The tilde spelling of a path under home, or undefined outside it.
  *
  * Filesystem rows carry the expanded path as their label; the tilde form rides

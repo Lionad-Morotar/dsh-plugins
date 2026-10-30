@@ -22,6 +22,7 @@ import type {
   CommandsRemote,
   ConversationService,
   FileReferencesRemote,
+  GitExplorerRemote,
   InputActions,
   LayoutService,
   LocaleService,
@@ -39,7 +40,7 @@ import type {
   Unsubscribe,
   WorkspacesService,
 } from "./dsh.ts";
-import { isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
+import { isGitExplorerFace, isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
 import { runCatalogAction, type ActionDeps } from "./actions.ts";
 import { createBridgeView, type BridgeState } from "./bridge.ts";
 import { planClaim, type ClaimProbe, type ClaimTarget } from "./claims.ts";
@@ -71,7 +72,7 @@ import { catalogRows, shortcutRows, type PanelRow } from "./rows.ts";
 import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from "./sources.ts";
 import { createPanelStore } from "./store.ts";
 import { directoryQuery, focusPath, parentQuery } from "./tree.ts";
-import { createPathExplorerFace, createSessionOpenFace, gatewayRpcOf } from "./wire.ts";
+import { createPathExplorerFace, createGitExplorerFace, createSessionOpenFace, gatewayRpcOf } from "./wire.ts";
 import { insertPanelStyles } from "./styles.ts";
 
 /** The three command ids; also the settings rows the reader can rebind. */
@@ -190,6 +191,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     fileReferences?: FileReferencesRemote;
     commands?: CommandsRemote;
     pathExplorer?: PathExplorerRemote;
+    gitExplorer?: GitExplorerRemote;
     sessionOpen?: SessionOpenFace;
     sessions?: SessionsService;
     workspaces?: WorkspacesService;
@@ -216,6 +218,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
    */
   let rpcPathExplorer: PathExplorerRemote | null | undefined;
   let rpcSessionOpen: SessionOpenFace | null | undefined;
+  let rpcGitExplorer: GitExplorerRemote | null | undefined;
 
   function pathExplorerFace(): PathExplorerRemote | undefined {
     if (isPathExplorerFace(refs.pathExplorer)) return refs.pathExplorer;
@@ -224,6 +227,34 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       rpcPathExplorer = rpc === undefined ? null : createPathExplorerFace(rpc);
     }
     return rpcPathExplorer ?? undefined;
+  }
+
+  /**
+   * The git data face, in the order the host makes it available.
+   *
+   * The injected namespace first (it keeps working as it comes and goes), then
+   * a soft `ctx.get` probe, then the raw gateway caller — dsh-git-explorer
+   * publishes its half at runtime, so every tier here degrades to "no commit
+   * plane" rather than to an error. The fallback answer is cached once; a
+   * namespace that arrives later announces itself through the injection.
+   */
+  function gitExplorerFace(): GitExplorerRemote | undefined {
+    if (isGitExplorerFace(refs.gitExplorer)) return refs.gitExplorer;
+    if (rpcGitExplorer === undefined) {
+      let face: GitExplorerRemote | undefined;
+      try {
+        const viaGet = deps.ctx.get("remote.gitExplorer");
+        if (isGitExplorerFace(viaGet)) face = viaGet;
+      } catch {
+        // A resolver that rejects an unknown name is an absent face.
+      }
+      if (face === undefined) {
+        const rpc = gatewayRpcOf(deps.ctx);
+        face = rpc === undefined ? undefined : createGitExplorerFace(rpc);
+      }
+      rpcGitExplorer = face ?? null;
+    }
+    return rpcGitExplorer ?? undefined;
   }
 
   function sessionOpenFace(): SessionOpenFace | undefined {
@@ -245,6 +276,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     fileReferences: () => refs.fileReferences,
     commands: () => refs.commands,
     pathExplorer: pathExplorerFace,
+    gitExplorer: gitExplorerFace,
     sessions: () => refs.sessions,
     workspaces: () => refs.workspaces,
     shortcuts: () => refs.shortcuts,
@@ -710,6 +742,9 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       case "insert-path":
         acceptPath(row.action.absolutePath);
         return;
+      case "open-commit":
+        openCommit(row.action.hash);
+        return;
       case "execute-command":
         if (row.action.needsInput) acceptCommandToken(row.action.name);
         else void acceptCommand(row.action.name);
@@ -848,6 +883,12 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     if (!treeActive()) return;
     const snapshot = store.getSnapshot();
     const row = snapshot.rows[clampHighlight(snapshot.model.highlight, snapshot.rows.length)];
+    // A commit row's accelerated destination is the git workbench, not the
+    // file one; the jump is the same one Enter takes, by design.
+    if (row?.action.kind === "open-commit") {
+      openCommit(row.action.hash);
+      return;
+    }
     const target = revealTarget(row);
     if (target === undefined) return;
     const workbench = refs.workbench;
@@ -888,6 +929,47 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     const snapshot = store.getSnapshot();
     const row = snapshot.rows[snapshot.model.highlight];
     if (row !== undefined) accept(row);
+  }
+
+  /**
+   * Hand a commit to the git workbench.
+   *
+   * The same queue-then-switch shape as the file reveal: the focus goes into
+   * the `viewFocus` queue before the switch so a view that mounts on it cannot
+   * miss the moment, and a host that delivered the focus itself has the queued
+   * copy dropped again. A view that never opened leaves nothing to take it, so
+   * the queue is cleared and the reader is told why, not left in silence.
+   */
+  function openCommit(hash: string): void {
+    const workbench = refs.workbench;
+    const focus = `commit:${hash}`;
+    if (workbench === undefined) {
+      notice(copy().noticeGitPanelMissing, "error");
+      return;
+    }
+    if (workbench.openViewOrSwitch !== undefined) {
+      workbench.viewFocus?.request("git-explorer", focus);
+      const result = workbench.openViewOrSwitch("git-explorer", focus);
+      if (result.focused) {
+        workbench.viewFocus?.take("git-explorer");
+        close();
+        return;
+      }
+      if (result.opened) {
+        // The view switched and takes its focus on screen, through its own
+        // request handling; there is nothing left to explain.
+        close();
+        return;
+      }
+      workbench.viewFocus?.take("git-explorer");
+      notice(copy().noticeGitPanelMissing, "error");
+      return;
+    }
+    if (workbench.openView("git-explorer", focus)) {
+      close();
+      return;
+    }
+    notice(copy().noticeGitPanelMissing, "error");
   }
 
   function goBack(): void {
@@ -1168,6 +1250,18 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       if (isPathExplorerFace(face)) refs.pathExplorer = face;
       return () => {
         refs.pathExplorer = undefined;
+      };
+    }),
+  );
+  // The git data namespace belongs to dsh-git-explorer; a profile without it
+  // simply flies without the commit plane, so this injection is an upgrade
+  // path rather than a requirement.
+  disposers.push(
+    deps.ctx.inject(["remote.gitExplorer"], scope => {
+      const face = scope.get("remote.gitExplorer");
+      if (isGitExplorerFace(face)) refs.gitExplorer = face;
+      return () => {
+        refs.gitExplorer = undefined;
       };
     }),
   );

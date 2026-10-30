@@ -34,6 +34,7 @@ export interface Copy {
   readonly groupCommands: string;
   readonly groupShortcuts: string;
   readonly groupFilesystem: string;
+  readonly groupCommits: string;
   readonly groupWorkspaces: string;
   readonly groupSessions: string;
   readonly allSessions: string;
@@ -48,6 +49,7 @@ export interface Copy {
   readonly noticeRevealUnfocused: string;
   readonly noticeOpenedBySystem: string;
   readonly noticeOpenUnavailable: string;
+  readonly noticeGitPanelMissing: string;
   readonly noticeNoSession: string;
   readonly noticeInsertFailed: string;
   readonly noticeExecuted: (name: string, text: string | undefined) => string;
@@ -93,6 +95,7 @@ const ZH: Copy = {
   groupCommands: "指令",
   groupShortcuts: "快捷键",
   groupFilesystem: "文件系统",
+  groupCommits: "提交",
   groupWorkspaces: "工作区",
   groupSessions: "会话",
   allSessions: "全部会话",
@@ -118,6 +121,7 @@ const ZH: Copy = {
   noticeRevealUnfocused: "已切到文件面板；这个宿主没把定位能力交给插件，请手动打开该文件",
   noticeOpenedBySystem: "已用系统默认应用打开",
   noticeOpenUnavailable: "文件面板不可用，也无法用系统默认应用打开（web 端或宿主未提供该能力）",
+  noticeGitPanelMissing: "Git 面板未安装，无法查看提交详情",
   noticeNoSession: "当前没有打开的会话，无法写入输入框",
   noticeInsertFailed: "输入框正忙，稍后重试",
   noticeExecuted: (name, text) => (text === undefined || text === "" ? `已执行 /${name}` : `/${name}：${text}`),
@@ -185,6 +189,7 @@ const EN: Copy = {
   groupCommands: "Commands",
   groupShortcuts: "Shortcuts",
   groupFilesystem: "Filesystem",
+  groupCommits: "Commits",
   groupWorkspaces: "Workspaces",
   groupSessions: "Sessions",
   allSessions: "All sessions",
@@ -210,6 +215,7 @@ const EN: Copy = {
   noticeRevealUnfocused: "Switched to the file panel; this host hands out no focus capability, so open the file there",
   noticeOpenedBySystem: "Opened with the system default application",
   noticeOpenUnavailable: "No file panel, and this environment cannot open files with a system application",
+  noticeGitPanelMissing: "The Git panel is not installed, so the commit cannot be shown",
   noticeNoSession: "No open session, so there is no composer to write to",
   noticeInsertFailed: "The composer is busy; try again",
   noticeExecuted: (name, text) => (text === undefined || text === "" ? `Ran /${name}` : `/${name}: ${text}`),

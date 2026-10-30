@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   composeInsertion,
   displayPath,
+  hexRefQuery,
   isAbsolutePath,
   isTypedAbsolutePath,
   separatorOf,
@@ -81,6 +82,23 @@ describe("isTypedAbsolutePath", () => {
     expect(isTypedAbsolutePath("\\\\server\\share")).toBe(true);
     expect(isTypedAbsolutePath("src/client/panel.ts")).toBe(false);
     expect(isTypedAbsolutePath("panel")).toBe(false);
+  });
+});
+
+describe("hexRefQuery", () => {
+  it("accepts a bare hex spelling of four or more digits, case-folded", () => {
+    expect(hexRefQuery("face")).toBe("face");
+    expect(hexRefQuery("9393130AB")).toBe("9393130ab");
+    expect(hexRefQuery(`  ${"f".repeat(40)}`)).toBe("f".repeat(40));
+  });
+
+  it("rejects anything that could still be a word or a path", () => {
+    expect(hexRefQuery("abc")).toBeUndefined();
+    expect(hexRefQuery("faces")).toBeUndefined();
+    expect(hexRefQuery("face/off")).toBeUndefined();
+    expect(hexRefQuery("face off")).toBeUndefined();
+    expect(hexRefQuery("f".repeat(41))).toBeUndefined();
+    expect(hexRefQuery("")).toBeUndefined();
   });
 });
 

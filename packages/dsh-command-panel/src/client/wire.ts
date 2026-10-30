@@ -11,7 +11,13 @@
  * precedent this follows).
  */
 
-import type { PathExplorerRemote, RemoteResult, SessionOpenFace } from "./dsh.ts";
+import type {
+  GitExplorerRemote,
+  GitQueryOutcome,
+  PathExplorerRemote,
+  RemoteResult,
+  SessionOpenFace,
+} from "./dsh.ts";
 import type { PathResolveResult } from "../shared.ts";
 import { PATH_SERVICE } from "../shared.ts";
 
@@ -95,6 +101,14 @@ export function createPathExplorerFace(rpc: GatewayRpc): PathExplorerRemote {
   return {
     resolve: (request, signal) =>
       invoke(rpc, PATH_SERVICE, "resolve", { request }, signal) as Promise<RemoteResult<PathResolveResult>>,
+  };
+}
+
+/** The gitExplorer query face over the raw channel (dsh-git-explorer's half). */
+export function createGitExplorerFace(rpc: GatewayRpc): GitExplorerRemote {
+  return {
+    query: (request, signal) =>
+      invoke(rpc, "gitExplorer", "query", { request }, signal) as Promise<RemoteResult<GitQueryOutcome>>,
   };
 }
 

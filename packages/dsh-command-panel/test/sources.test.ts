@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { copyFor } from "../src/client/copy.ts";
 import { loadRows, type LoadRequest, type SourceServices } from "../src/client/sources.ts";
+import type { GitExplorerRemote } from "../src/client/dsh.ts";
 import {
+  COMMIT_FOCUS,
   SESSION_A,
   SESSION_ARCHIVED,
   SESSION_B,
@@ -11,6 +13,7 @@ import {
   SESSION_SUBAGENT,
   fakeCommands,
   fakeFileReferences,
+  fakeGitExplorer,
   fakePathExplorer,
   fakeSessions,
   fakeWorkspaces,
@@ -140,6 +143,63 @@ describe("loadRows: navigate with an absolute query", () => {
       request({ query: "/tmp/" }),
     );
     expect(result).toMatchObject({ status: "error", message: "gateway/not-found" });
+  });
+});
+
+describe("loadRows: navigate with a hex query", () => {
+  it("attaches the commit group ahead of the workspace files", async () => {
+    const query = vi.fn(async () => ({
+      ok: true as const,
+      value: { ok: true as const, page: { commits: [COMMIT_FOCUS] } },
+    }));
+    const result = await loadRows(
+      services({
+        fileReferences: () => fakeFileReferences({ files: [{ path: "src/panel.ts", kind: "file" }] }),
+        gitExplorer: () => ({ query } satisfies GitExplorerRemote),
+      }),
+      request({ query: "  9393130AB " }),
+    );
+
+    expect(query).toHaveBeenCalledWith(
+      { sessionId: SESSION_A.id, ref: "9393130ab", limit: 5 },
+      expect.anything(),
+    );
+    expect(result.status).toBe("ready");
+    expect(result.rows[0]?.group).toBe(copy.groupCommits);
+    expect(result.rows[0]?.label).toBe(COMMIT_FOCUS.subject);
+    expect(result.rows.some(row => row.group !== copy.groupCommits)).toBe(true);
+  });
+
+  it("issues no commit query when no gitExplorer face answers, and shows no error", async () => {
+    const result = await loadRows(services({ gitExplorer: () => undefined }), request({ query: "9393130" }));
+
+    expect(result.status).toBe("ready");
+    expect(result.rows.some(row => row.group === copy.groupCommits)).toBe(false);
+    expect(result.message).toBeUndefined();
+  });
+
+  it("degrades a refused prefix and a failed transport to no commit rows, silently", async () => {
+    for (const gitExplorer of [
+      fakeGitExplorer({ error: "git-failed" }),
+      { query: async () => ({ ok: false as const, error: { code: "rpc-error" } }) } satisfies GitExplorerRemote,
+    ]) {
+      const result = await loadRows(
+        services({ gitExplorer: () => gitExplorer }),
+        request({ query: "9393130" }),
+      );
+      expect(result.status).toBe("ready");
+      expect(result.rows.some(row => row.group === copy.groupCommits)).toBe(false);
+      expect(result.message).toBeUndefined();
+    }
+  });
+
+  it("keeps a non-hex query on the workspace plane alone", async () => {
+    const query = vi.fn();
+    await loadRows(
+      services({ gitExplorer: () => ({ query } as unknown as GitExplorerRemote) }),
+      request({ query: "panel" }),
+    );
+    expect(query).not.toHaveBeenCalled();
   });
 });
 

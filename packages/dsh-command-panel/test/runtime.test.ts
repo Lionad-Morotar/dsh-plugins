@@ -20,6 +20,7 @@ import type {
   ClientContext,
   CommandDescriptor,
   FileReferenceCandidate,
+  GitExplorerRemote,
   PathExplorerRemote,
   SessionInput,
   SessionOpenFace,
@@ -27,8 +28,10 @@ import type {
   ShortcutConfigSnapshot,
 } from "../src/client/dsh.ts";
 import {
+  COMMIT_FOCUS,
   SESSION_A,
   SESSION_B,
+  fakeGitExplorer,
   fakePathExplorer,
   fakeSessionOpen,
   fakeWorkspaces,
@@ -75,6 +78,8 @@ interface HarnessOptions {
   readonly pathExplorer?: PathExplorerRemote | null;
   /** The session open remote for the reveal fallback; null keeps it out. */
   readonly sessionOpen?: SessionOpenFace | null;
+  /** The gitExplorer remote the hex commit plane reads; absent keeps it out. */
+  readonly gitExplorer?: GitExplorerRemote;
 }
 
 interface Harness {
@@ -191,6 +196,7 @@ function harness(options: HarnessOptions = {}): Harness {
     ...(options.sessionOpen === undefined || options.sessionOpen === null
       ? {}
       : { "remote.session": options.sessionOpen }),
+    ...(options.gitExplorer === undefined ? {} : { "remote.gitExplorer": options.gitExplorer }),
   };
 
   const ctx = {
@@ -597,5 +603,89 @@ describe("accept", () => {
       `${SESSION_A.cwd}/packages/dsh-command-panel/src/client/panel.ts`,
     );
     expect(h.store.getSnapshot().open).toBe(false);
+  });
+});
+
+describe("commit matching", () => {
+  /** Open the panel, type the hex prefix, and wait for the commit row. */
+  async function panelWithCommit(h: Harness): Promise<void> {
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    h.verbs.setQuery(COMMIT_FOCUS.hash.slice(0, 7));
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.action.kind === "open-commit")).toBe(true),
+    );
+  }
+
+  it("lists the commit group first for a hex query", async () => {
+    const h = harness({ gitExplorer: fakeGitExplorer({ commits: [COMMIT_FOCUS] }) });
+    await panelWithCommit(h);
+
+    const rows = h.store.getSnapshot().rows;
+    expect(rows[0]?.group).toBe("提交");
+    expect(rows[0]?.label).toBe(COMMIT_FOCUS.subject);
+  });
+
+  it("stays silent with no commit plane behind a hex query", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery(COMMIT_FOCUS.hash.slice(0, 7));
+    // The workspace plane still answers, which is the load having settled.
+    await vi.waitFor(() =>
+      expect(h.files.list).toHaveBeenCalledWith(SESSION_A.id, COMMIT_FOCUS.hash.slice(0, 7), expect.anything()),
+    );
+
+    const snapshot = h.store.getSnapshot();
+    expect(snapshot.rows.some(row => row.group === "提交")).toBe(false);
+    expect(snapshot.message).toBeNull();
+  });
+
+  it("jumps to the git explorer with the commit focus and closes", async () => {
+    const h = harness({
+      gitExplorer: fakeGitExplorer({ commits: [COMMIT_FOCUS] }),
+      openViewResult: { opened: true, focused: true },
+    });
+    await panelWithCommit(h);
+
+    const row = h.store.getSnapshot().rows.find(entry => entry.action.kind === "open-commit");
+    h.verbs.accept(row!);
+
+    expect(h.workbench.viewFocus.request).toHaveBeenCalledWith("git-explorer", `commit:${COMMIT_FOCUS.hash}`);
+    expect(h.workbench.openViewOrSwitch).toHaveBeenCalledWith("git-explorer", `commit:${COMMIT_FOCUS.hash}`);
+    expect(h.workbench.viewFocus.take).toHaveBeenCalledWith("git-explorer");
+    expect(h.store.getSnapshot().open).toBe(false);
+  });
+
+  it("routes the reveal accelerator through the same jump for a commit row", async () => {
+    const h = harness({
+      gitExplorer: fakeGitExplorer({ commits: [COMMIT_FOCUS] }),
+      openViewResult: { opened: true, focused: true },
+    });
+    await panelWithCommit(h);
+
+    h.verbs.highlight(0);
+    h.verbs.revealActive();
+
+    expect(h.workbench.viewFocus.request).toHaveBeenCalledWith("git-explorer", `commit:${COMMIT_FOCUS.hash}`);
+    expect(h.inserted).toEqual([]);
+  });
+
+  it("says the git panel is missing when the view is not registered", async () => {
+    const h = harness({
+      gitExplorer: fakeGitExplorer({ commits: [COMMIT_FOCUS] }),
+      openViewResult: { opened: false, focused: false },
+    });
+    await panelWithCommit(h);
+
+    const row = h.store.getSnapshot().rows.find(entry => entry.action.kind === "open-commit");
+    h.verbs.accept(row!);
+
+    const snapshot = h.store.getSnapshot();
+    expect(snapshot.open).toBe(true);
+    expect(snapshot.notice).toContain("Git 面板未安装");
+    // The queued focus must not replay into a view that never opened.
+    expect(h.workbench.viewFocus.take).toHaveBeenCalledWith("git-explorer");
   });
 });

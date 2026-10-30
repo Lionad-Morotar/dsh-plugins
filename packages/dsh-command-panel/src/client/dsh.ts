@@ -130,6 +130,40 @@ export function isSessionOpenFace(value: unknown): value is SessionOpenFace {
   return typeof record.canOpenWorkspacePath === "function" && typeof record.openWorkspacePath === "function";
 }
 
+// ── Git commit lookup (dsh-git-explorer's namespace) ───────────────────────
+
+/** One history commit the way `git log` spells it; `time` is Unix seconds. */
+export interface GitCommitSummary {
+  readonly hash: string;
+  readonly author: string;
+  readonly time: number;
+  readonly subject: string;
+}
+
+/** The query answer narrowed to what a commit-matching surface reads. */
+export type GitQueryOutcome =
+  | { readonly ok: true; readonly page: { readonly commits: readonly GitCommitSummary[] } }
+  | { readonly ok: false; readonly error: RemoteFailure };
+
+/**
+ * The one endpoint of `remote.gitExplorer` this panel consumes.
+ *
+ * The namespace belongs to another package, so only the structural surface is
+ * declared here — same stance as the other cross-package faces above.
+ */
+export interface GitExplorerRemote {
+  query(
+    request: { readonly sessionId: string; readonly ref?: string; readonly limit?: number },
+    signal?: AbortSignal,
+  ): Promise<RemoteResult<GitQueryOutcome>>;
+}
+
+/** Whether a value structurally answers the gitExplorer query face. */
+export function isGitExplorerFace(value: unknown): value is GitExplorerRemote {
+  if (value === null || typeof value !== "object") return false;
+  return typeof (value as Record<string, unknown>).query === "function";
+}
+
 // ── Session catalogue ──────────────────────────────────────────────────────
 
 /** One catalogue row, projected for navigation surfaces. */

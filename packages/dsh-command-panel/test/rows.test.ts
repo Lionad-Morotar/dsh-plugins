@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { scoreText } from "../src/client/ranking.ts";
 import { copyFor } from "../src/client/copy.ts";
 import { CATALOG } from "../src/client/catalog.ts";
 import {
   catalogRows,
   commandRows,
+  commitRows,
   fileRows,
   filesystemRows,
   sessionRows,
@@ -15,6 +17,7 @@ import {
 } from "../src/client/rows.ts";
 import type { ShortcutCatalogEntry } from "../src/client/dsh.ts";
 import {
+  COMMIT_FOCUS,
   SESSION_A,
   SESSION_ARCHIVED,
   SESSION_B,
@@ -125,6 +128,28 @@ describe("filesystemRows", () => {
       "fsys:file:/opt/tool/bin/run",
     ]);
     expect(rows[0]?.alias).toBeUndefined();
+  });
+});
+
+describe("commitRows", () => {
+  it("labels with the subject and jumps with the full hash", () => {
+    const rows = commitRows({ commits: [COMMIT_FOCUS], now }, copy);
+
+    expect(rows[0]).toMatchObject({
+      key: `commit:${COMMIT_FOCUS.hash}`,
+      label: COMMIT_FOCUS.subject,
+      group: copy.groupCommits,
+      action: { kind: "open-commit", hash: COMMIT_FOCUS.hash },
+    });
+    expect(rows[0]?.detail).toBe(`${COMMIT_FOCUS.author} · ${copy.age(now - COMMIT_FOCUS.time * 1000)}`);
+  });
+
+  it("matches the hash itself, so refining the prefix past seven digits keeps the row", () => {
+    const rows = commitRows({ commits: [COMMIT_FOCUS], now }, copy);
+    // The alias is the full hash: a 7-character abbreviation would stop
+    // matching on the 8th keystroke, exactly when the reader is closing in.
+    expect(rows[0]?.alias).toBe(COMMIT_FOCUS.hash);
+    expect(scoreText(COMMIT_FOCUS.hash.slice(0, 12), rows[0]?.alias ?? "")).not.toBeNull();
   });
 });
 
