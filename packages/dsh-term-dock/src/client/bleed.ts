@@ -20,19 +20,31 @@ export interface Box {
   readonly right: number;
 }
 
+/** No correction applied yet; the shape a fresh row reports. */
+export const NO_BLEED: Bleed = { left: 0, right: 0 };
+
 /**
- * Distance from the dock row's box out to the column's box, per side.
+ * Distance from the dock row's natural box out to the column's box, per side.
  *
- * Only positive gaps become overflow: a row that is already wider than the
+ * The row's box already contains whatever bleed is currently applied, so the
+ * applied value is added back before comparing: measuring the widened row
+ * against the column answers zero, which would collapse the row and make the
+ * next measurement answer the full gap again. Feeding the applied bleed in keeps
+ * this idempotent, so a resize observer can re-run it as often as it likes.
+ *
+ * Only positive gaps become overflow: a row that is naturally wider than the
  * column must not be pulled inwards, because that would clip the terminal.
- * @param wrap - the composer dock row.
+ * @param wrap - the composer dock row as laid out right now.
  * @param column - the ancestor standing for the conversation column.
+ * @param applied - the bleed currently in force on the row.
  * @returns rounded pixel gaps; `0` on a side that needs nothing.
  */
-export function bleedBetween(wrap: Box, column: Box): Bleed {
+export function bleedBetween(wrap: Box, column: Box, applied: Bleed = NO_BLEED): Bleed {
+  const naturalLeft = wrap.left + applied.left;
+  const naturalRight = wrap.right - applied.right;
   return {
-    left: Math.max(0, Math.round(wrap.left - column.left)),
-    right: Math.max(0, Math.round(column.right - wrap.right)),
+    left: Math.max(0, Math.round(naturalLeft - column.left)),
+    right: Math.max(0, Math.round(column.right - naturalRight)),
   };
 }
 

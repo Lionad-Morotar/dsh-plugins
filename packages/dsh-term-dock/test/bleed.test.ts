@@ -10,6 +10,20 @@ describe("bleedBetween", () => {
   it("never pulls an already wider row inwards", () => {
     expect(bleedBetween({ left: 200, right: 1600 }, { left: 280, right: 1512 })).toEqual({ left: 0, right: 0 });
   });
+
+  it("answers the same gap when the row already carries that bleed", () => {
+    const column = { left: 280, right: 1512 };
+    const natural = { left: 482, right: 1302 };
+    const applied = bleedBetween(natural, column);
+    // 修正生效后，行的盒子已经变宽；再测一次必须仍答同一个值，否则会来回振荡
+    const widened = { left: natural.left - applied.left, right: natural.right + applied.right };
+    expect(bleedBetween(widened, column, applied)).toEqual(applied);
+  });
+
+  it("keeps answering the gap when the row is wider than the column", () => {
+    const column = { left: 280, right: 1512 };
+    expect(bleedBetween({ left: 200, right: 1600 }, column, { left: 0, right: 0 })).toEqual({ left: 0, right: 0 });
+  });
 });
 
 describe("pickColumn", () => {

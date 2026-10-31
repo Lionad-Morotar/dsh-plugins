@@ -78,49 +78,78 @@ const DOCK_REST_HEIGHT = "clamp(120px, 32dvh, 300px)";
 const BLEED_LEFT = "--dsh-dock-bleed-left";
 const BLEED_RIGHT = "--dsh-dock-bleed-right";
 
+/** Read one custom property as a pixel count; unset or garbage reads as zero. */
+function readBleed(wrap: HTMLElement, property: string): number {
+  const value = Number.parseFloat(wrap.style.getPropertyValue(property));
+  return Number.isFinite(value) ? value : 0;
+}
+
 /**
  * Widen the dock row out to the conversation column's edges.
  *
  * The row lives inside the composer's centred max-width stack, so it inherits
  * that stack's width and stops short of the column on both sides. CSS cannot
- * reference an ancestor's width, so this measures the gap once per layout and
- * publishes it on the row; the injected rule turns it into negative margins.
+ * reference an ancestor's width, so this measures the gap and publishes it on
+ * the row; the injected rule turns it into negative margins.
+ *
+ * The measurement has to be idempotent: the row it reads already carries the
+ * correction it wrote last time, so the applied bleed is added back before
+ * comparing (see `bleedBetween`). Without that, a resize observer re-measures
+ * the widened row, answers zero, collapses it, and the dock flips between wide
+ * and narrow on whatever event happens last.
  * @param ref - the dock root, used to find the row it was placed in.
+ * @param visible - whether the dock is on screen; a hidden row has no width.
  */
-function useDockBleed(ref: RefObject<HTMLDivElement | null>): void {
+function useDockBleed(ref: RefObject<HTMLDivElement | null>, visible: boolean): void {
   useEffect(() => {
+    if (!visible) return;
     const element = ref.current;
     const wrap = element?.closest("[data-composer-dock]");
     if (!(wrap instanceof HTMLElement)) return;
 
+    const ancestors: Element[] = [];
+    let node: Element | null = wrap.parentElement;
+    for (let hop = 0; hop < 8 && node !== null; hop += 1) {
+      ancestors.push(node);
+      node = node.parentElement;
+    }
+
     const measure = (): void => {
       const row = wrap.getBoundingClientRect();
       if (row.width === 0) return;
-      const candidates: { box: Box; isDocument: boolean }[] = [];
-      let node: Element | null = wrap.parentElement;
-      for (let hop = 0; hop < 8 && node !== null; hop += 1) {
-        const box = node.getBoundingClientRect();
-        const tag = node.tagName;
-        candidates.push({ box, isDocument: tag === "BODY" || tag === "HTML" });
-        node = node.parentElement;
-      }
+      const candidates = ancestors.map(ancestor => ({
+        box: ancestor.getBoundingClientRect(),
+        isDocument: ancestor.tagName === "BODY" || ancestor.tagName === "HTML",
+      }));
       const column = pickColumn(candidates);
       if (column === undefined) return;
-      const bleed = bleedBetween(row, column);
-      wrap.style.setProperty(BLEED_LEFT, `${String(bleed.left)}px`);
-      wrap.style.setProperty(BLEED_RIGHT, `${String(bleed.right)}px`);
+      const applied = { left: readBleed(wrap, BLEED_LEFT), right: readBleed(wrap, BLEED_RIGHT) };
+      const bleed = bleedBetween(row, column, applied);
+      const left = `${String(bleed.left)}px`;
+      const right = `${String(bleed.right)}px`;
+      if (wrap.style.getPropertyValue(BLEED_LEFT) !== left) wrap.style.setProperty(BLEED_LEFT, left);
+      if (wrap.style.getPropertyValue(BLEED_RIGHT) !== right) wrap.style.setProperty(BLEED_RIGHT, right);
     };
 
+    // The first frames are worth re-reading: the dock mounts while the session
+    // view is still settling, and a single early reading can catch a column that
+    // has not finished sizing.
     measure();
-    const observer = new ResizeObserver(measure);
-    const parent = wrap.parentElement;
-    if (parent !== null) observer.observe(parent);
+    const frames: number[] = [];
+    if (typeof requestAnimationFrame === "function") {
+      for (let index = 0; index < 3; index += 1) frames.push(requestAnimationFrame(measure));
+    }
+
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : undefined;
+    observer?.observe(wrap);
+    for (const ancestor of ancestors) observer?.observe(ancestor);
     window.addEventListener("resize", measure);
     return () => {
-      observer.disconnect();
+      for (const frame of frames) cancelAnimationFrame(frame);
+      observer?.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [ref]);
+  }, [ref, visible]);
 }
 
 const rootStyle: CSSProperties = {
@@ -284,7 +313,7 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
     };
 
     const rootRef = useRef<HTMLDivElement | null>(null);
-    useDockBleed(rootRef);
+    useDockBleed(rootRef, visible);
     const height = snapshot.mode === "minimized" ? "auto" : snapshot.mode === "fullscreen" ? "min(72vh, 900px)" : DOCK_REST_HEIGHT;
     const activeId = snapshot.activeId;
     const minimized = snapshot.mode === "minimized";
