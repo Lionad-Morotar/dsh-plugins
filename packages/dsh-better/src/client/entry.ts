@@ -20,6 +20,15 @@
 import type { ReactNode } from "react";
 
 import { createOverlay, type OverlayDeps, type OverlayProps } from "./overlay.tsx";
+import { DICTIONARIES } from "./dictionaries.ts";
+import {
+  composerMounted,
+  focusComposerFor,
+  FOCUS_LABEL_KEY,
+  readCurrentSessionId,
+  registerFocusCommand,
+  type ShortcutRegistryLike,
+} from "./focus.ts";
 import { insertStyles } from "./styles.ts";
 import { createSeat, type SeatDeps, type SeatProps } from "./seat.tsx";
 import { modelPopupSpec, openContext, openSegment, type PopupOpenerLike } from "./trigger.ts";
@@ -61,44 +70,6 @@ const SHADOW_PRIORITY = -100;
 
 /** Locale namespace of the strings this surface shows. */
 const NS = "better";
-
-/**
- * Fallback strings for the keys this surface reads.
- *
- * Deliberately tiny: the shell publishes the model picker's real copy through
- * `searchLabels`, and this surface prefers it whenever it is present. These are
- * what remains legible when it is not.
- */
-const DICTIONARIES: Record<string, Record<string, string>> = {
-  zh: {
-    "overlay.aria": "选择模型",
-    "listbox.aria": "模型匹配项",
-    "search.aria": "搜索供应商或模型",
-    "search.placeholder": "搜索供应商或模型…",
-    "status.empty": "没有可用的模型。",
-    "status.applying": "正在切换…",
-    "retry": "重试",
-    "trigger.selectAria": "选择模型",
-    "trigger.aria": "当前模型 {model}，点击切换",
-    "trigger.ariaEffort": "当前模型 {model}，推理等级 {effort}，点击切换",
-    "trigger.fallback": "选择模型",
-    "trigger.loading": "加载模型…",
-  },
-  en: {
-    "overlay.aria": "Select a model",
-    "listbox.aria": "Matching models",
-    "search.aria": "Search providers or models",
-    "search.placeholder": "Search providers or models…",
-    "status.empty": "No models available.",
-    "status.applying": "Switching…",
-    "retry": "Retry",
-    "trigger.selectAria": "Select model",
-    "trigger.aria": "Current model {model}, click to change",
-    "trigger.ariaEffort": "Current model {model}, reasoning effort {effort}, click to change",
-    "trigger.fallback": "Select model",
-    "trigger.loading": "Loading models…",
-  },
-};
 
 /** The loader `require`, handed over by the build's `boot` call. */
 let loaderRequire: LoaderRequire | null = null;
@@ -184,6 +155,15 @@ export interface ClientContextLike {
   readonly locale: {
     /** Register a namespace's dictionaries, keyed by BCP 47-style locale tag. */
     register(namespace: string, dictionaries: Readonly<Record<string, Readonly<Record<string, string>>>>): () => void;
+    /**
+     * The namespace's translator.
+     *
+     * Read lazily on every call rather than captured: the command label is
+     * re-resolved by the shortcut catalog whenever the locale or the bindings
+     * change, so a captured translator would freeze the language of a row that
+     * outlives the setting.
+     */
+    bind?(namespace: string): (key: string) => string;
   };
   /**
    * The shared per-session model directory service.
@@ -192,6 +172,20 @@ export interface ClientContextLike {
    * effort ladders shown here are the same ones a selection is resolved against.
    */
   readonly modelDirectories?: ModelDirectoriesLike | undefined;
+  effect(callback: () => () => void, label?: string): void;
+  /**
+   * Run a callback once the named services are mounted.
+   *
+   * A soft probe rather than an `inject` declaration on the plugin object: the
+   * shortcut service is the only thing this adds, and a host that never mounts
+   * it must still get the provider-search picker this package exists for.
+   */
+  inject?<T>(dependencies: readonly string[], callback: (scope: T) => void): () => void;
+}
+
+/** The scope the `shortcuts` soft probe hands back. */
+export interface ShortcutsScopeLike {
+  readonly shortcuts: ShortcutRegistryLike;
   effect(callback: () => () => void, label?: string): void;
 }
 
@@ -339,6 +333,30 @@ export const clientPlugin = {
         }),
       "dsh-better: composer model trigger",
     );
+
+    // The focus chord: one host-registered command, so it appears in 设置 →
+    // 快捷键 next to the built-in bindings and is rebound there. `inject` is the
+    // soft probe, not a plugin-level dependency — see ClientContextLike.inject.
+    ctx.inject?.<ShortcutsScopeLike>(["shortcuts"], scope => {
+      scope.effect(
+        () =>
+          registerFocusCommand(
+            scope.shortcuts,
+            {
+              currentSessionId: () => readCurrentSessionId(ctx),
+              composerMounted: () => composerMounted(doc),
+              focusComposer: sessionId => focusComposerFor(ctx, sessionId),
+            },
+            // A missing translator would otherwise surface the raw key in the
+            // settings dialog, which reads worse than English.
+            () => ctx.locale.bind?.(NS)?.(FOCUS_LABEL_KEY) ?? "Focus message input",
+            // Silence here would be indistinguishable from a working chord: the
+            // settings dialog only lists what the host accepted.
+            message => console.warn(`dsh-better: focus command not registered (${message})`),
+          ),
+        "dsh-better: focus composer shortcut",
+      );
+    });
   },
 };
 
