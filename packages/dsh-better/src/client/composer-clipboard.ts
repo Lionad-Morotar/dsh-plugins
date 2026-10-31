@@ -196,6 +196,18 @@ function pathOfLine(line: string): string | undefined {
   if (!isAbsolutePath(candidate)) return undefined;
   // A control character cannot survive as a filename, so the line is not a path.
   if (/[\u0000-\u001f\u007f]/u.test(candidate)) return undefined;
+  // Spaces belong to a filename (`notes with space.pdf`). Sentence punctuation,
+  // an interior quote, or a shell flag do not: the line is then prose that only
+  // starts like a path, and consuming it would drop the text. ASCII `:` stays
+  // legal so a drive path (`C:\...`) is still one path.
+  if (
+    /["\u2018\u2019\u201c\u201d\u300c\u300d\u300e\u300f\u3002\uff01\uff1f\uff1b\uff1a\uff0c\u3001\u2026*?;<>|&$`!#=]/u.test(
+      candidate,
+    )
+  ) {
+    return undefined;
+  }
+  if (/(?:^|\s)-{1,2}\S/u.test(candidate)) return undefined;
   return candidate;
 }
 

@@ -126,6 +126,13 @@ describe("reading a path list back", () => {
   it("leaves prose that merely mentions a path alone", () => {
     expect(parsePathList(`把 ${IMAGE.path} 里的图改一下`)).toBeUndefined();
     expect(parsePathList(`看下这个文件\n它很重要`)).toBeUndefined();
+    // A sentence that itself starts with `/` is still prose. The whole line is
+    // not a path, so the paste must stay text.
+    expect(
+      parsePathList(
+        '/flow-workflow dev：之前迁移了 flow-polaris 和 flow-dev。现在迁移 flow-release 到 flow-workflow --create "release"。',
+      ),
+    ).toBeUndefined();
   });
 
   it("does not treat a relative path as one", () => {
@@ -146,6 +153,23 @@ describe("reading a path list back", () => {
     expect(isAbsolutePath("\\\\server\\share\\a.png")).toBe(true);
     expect(isAbsolutePath("./a.png")).toBe(false);
     expect(isAbsolutePath("a.png")).toBe(false);
+  });
+
+  it("reads a drive path, a share path, and a hyphenated name as paths", () => {
+    // The prose filter keeps ASCII ":" and a hyphen inside a name. A drive
+    // path, a UNC share, and `foo-bar` are still one path each.
+    expect(parsePathList("C:\\Users\\lionad\\a.png")).toEqual({
+      text: "",
+      paths: ["C:\\Users\\lionad\\a.png"],
+    });
+    expect(parsePathList("\\\\server\\share\\a.png")).toEqual({
+      text: "",
+      paths: ["\\\\server\\share\\a.png"],
+    });
+    expect(parsePathList("/tmp/foo-bar.txt")).toEqual({
+      text: "",
+      paths: ["/tmp/foo-bar.txt"],
+    });
   });
 });
 
