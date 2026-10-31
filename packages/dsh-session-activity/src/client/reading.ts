@@ -22,7 +22,7 @@ const DAY_MS = 86_400_000;
 /** One session's projection cell as the host list state carries it. */
 export interface ProjectionSnapshotWire {
   /** The projected values by key; absent while the host has not produced them yet. */
-  readonly values?: Readonly<Record<string, unknown>>;
+  readonly values?: Readonly<Record<string, unknown>> | null;
   /** The host's settlement state; only `ready` means the cell can be trusted. */
   readonly state: string;
 }
@@ -33,13 +33,20 @@ export interface SessionSummaryWire {
   /** The host's own freshness fact, `max(createdAt, lastPromptAt)`; the fallback clock. */
   readonly updatedAt?: number;
   /** Per-session projection values carried by the object layer; the fallback cell. */
-  readonly projectionValues?: Readonly<Record<string, unknown>>;
+  readonly projectionValues?: Readonly<Record<string, unknown>> | null;
 }
 
-/** The session list snapshot this plugin reads. */
+/**
+ * The session list snapshot this plugin reads.
+ *
+ * Both containers are optional because the shape is the host's, not this half's: a
+ * host upgrade may re-home or rename them, and a cell may be null while a
+ * projection is swapped. Reading either absence as silence is what keeps the tint
+ * from taking the page's notification loop down with it.
+ */
 export interface SessionListWire {
-  readonly byId: Readonly<Record<string, SessionSummaryWire>>;
-  readonly projectionsBySession: Readonly<Record<string, ProjectionSnapshotWire>>;
+  readonly byId?: Readonly<Record<string, SessionSummaryWire | null>>;
+  readonly projectionsBySession?: Readonly<Record<string, ProjectionSnapshotWire | null>>;
 }
 
 /**
@@ -127,6 +134,22 @@ function isCount(value: unknown): value is number {
 }
 
 /**
+ * Narrow an untrusted value into a plain record.
+ *
+ * Every hop below reads the host's snapshot, whose shape this half does not own.
+ * A container can disappear when a host upgrade re-homes it and a cell can be null
+ * while a projection is swapped, so each one is checked before it is indexed. A
+ * throw here would land inside the entry's notification microtask, where it
+ * becomes an uncaught error and leaves the table frozen for every row.
+ * @param value - any value read out of the snapshot.
+ * @returns the value as a record, or undefined when it cannot be read as one.
+ */
+export function readableRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+/**
  * Narrow one projected value into a reading.
  *
  * The host validates the view against the registered schema before shipping it,
@@ -136,8 +159,8 @@ function isCount(value: unknown): value is number {
  * @returns the reading, or undefined when any field is missing or malformed.
  */
 export function narrowView(raw: unknown): ActivityReading | undefined {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-  const record = raw as Record<string, unknown>;
+  const record = readableRecord(raw);
+  if (record === undefined) return undefined;
   const lastActivityAt = record.lastActivityAt;
   if (lastActivityAt !== null && !isInstant(lastActivityAt)) return undefined;
   const { promptCount, turnCount, toolCallCount } = record;
@@ -152,18 +175,23 @@ export function narrowView(raw: unknown): ActivityReading | undefined {
  * opened, and the object layer is the fallback for a session whose shared cell is
  * still loading. A cell that is `ready` but carries no view yet also falls
  * through: that means the host has not produced this session's value, not that
- * the session is inactive.
+ * the session is inactive. A missing container or a null cell reads as an absent
+ * one rather than as an error.
  * @param list - the session list snapshot.
  * @param sessionId - the row's session.
  * @returns the reading, or undefined when neither layer carries a readable view.
  */
 export function selectActivity(list: SessionListWire, sessionId: string): ActivityReading | undefined {
-  const shared = list.projectionsBySession[sessionId];
-  if (shared !== undefined && shared.state === "ready") {
-    const view = narrowView(shared.values?.[PROJECTION_KEY]);
+  const snapshot = readableRecord(list);
+  const cells = readableRecord(snapshot?.projectionsBySession);
+  const cell = readableRecord(cells?.[sessionId]);
+  if (cell?.state === "ready") {
+    const view = narrowView(readableRecord(cell.values)?.[PROJECTION_KEY]);
     if (view !== undefined) return view;
   }
-  return narrowView(list.byId[sessionId]?.projectionValues?.[PROJECTION_KEY]);
+  const summaries = readableRecord(snapshot?.byId);
+  const summary = readableRecord(summaries?.[sessionId]);
+  return narrowView(readableRecord(summary?.projectionValues)?.[PROJECTION_KEY]);
 }
 
 /** The clocks one row is decided from. */

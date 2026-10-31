@@ -233,6 +233,54 @@ describe("apply", () => {
     dispose();
   });
 
+  it("leaves the table at the invariants when the snapshot has no byId", async () => {
+    const host = fakeHost({ projectionsBySession: {} } as unknown as SessionListWire);
+    const dispose = apply(host.ctx);
+    await flush();
+    expect(css(host.head)).toBe(BASE);
+    dispose();
+  });
+
+  it("reads a null values record as silence and keeps painting the rest", async () => {
+    const host = fakeHost(
+      snapshot(
+        { s1: session(NOW - 4 * DAY_MS), s2: session(null, { running: true }) },
+        { s1: { state: "ready", values: null } },
+      ),
+    );
+    const dispose = apply(host.ctx);
+    await flush();
+    expect(css(host.head)).toBe(
+      ['[data-row-key="session:s1"]{opacity:0.55}', '[data-row-key="session:s2"]{color:var(--dsw-alias-brand-primary);font-weight:600}', BASE].join("\n"),
+    );
+    dispose();
+  });
+
+  it("survives a null shared cell and repaints on the next readable snapshot", async () => {
+    const host = fakeHost(snapshot({ s1: session(NOW - 4 * DAY_MS) }));
+    const dispose = apply(host.ctx);
+    await flush();
+    expect(css(host.head)).toBe(['[data-row-key="session:s1"]{opacity:0.55}', BASE].join("\n"));
+
+    host.setList({ byId: { s1: session(NOW - 4 * DAY_MS) }, projectionsBySession: { s1: null } } as unknown as SessionListWire);
+    host.notify();
+    await flush();
+    expect(css(host.head)).toBe(['[data-row-key="session:s1"]{opacity:0.55}', BASE].join("\n"));
+
+    host.setList({ projectionsBySession: { s1: null } } as unknown as SessionListWire);
+    host.notify();
+    await flush();
+    expect(css(host.head)).toBe(BASE);
+
+    host.setList(snapshot({ s1: session(null, { running: true }) }));
+    host.notify();
+    await flush();
+    expect(css(host.head)).toBe(
+      ['[data-row-key="session:s1"]{color:var(--dsw-alias-brand-primary);font-weight:600}', BASE].join("\n"),
+    );
+    dispose();
+  });
+
   it("repaints when the host notifies, coalescing one burst into one write", async () => {
     const host = fakeHost(snapshot({ s1: session(null, { running: true }) }));
     const dispose = apply(host.ctx);

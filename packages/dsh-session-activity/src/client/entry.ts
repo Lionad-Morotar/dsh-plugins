@@ -18,6 +18,7 @@
 import {
   ageOf,
   opacityFor,
+  readableRecord,
   resolveConfig,
   selectActivity,
   tierOf,
@@ -106,11 +107,15 @@ export function apply(ctx: ClientContextLike, config?: Partial<ActivityConfig>):
     const archived = archivedSessionIds(ctx.workspaces);
     const now = Date.now();
     const rows: RowRule[] = [];
-    for (const sessionId of Object.keys(list.byId)) {
-      const summary = list.byId[sessionId];
+    // A snapshot whose rows cannot be read paints nothing rather than throwing:
+    // this runs in a microtask, where a throw would become an uncaught error and
+    // leave the table frozen for every session.
+    const summaries = readableRecord(readableRecord(list)?.byId);
+    for (const sessionId of Object.keys(summaries ?? {})) {
+      const summary = readableRecord(summaries?.[sessionId]);
       if (summary === undefined) continue;
       const reading = selectActivity(list, sessionId);
-      const updatedAt = summary.updatedAt;
+      const updatedAt = typeof summary.updatedAt === "number" ? summary.updatedAt : undefined;
       const tier = tierOf({ reading, running: summary.running === true, updatedAt, now, config: resolved });
       if (tier === "none") continue;
       const age = ageOf({ reading, updatedAt, now });

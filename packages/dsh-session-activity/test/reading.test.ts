@@ -121,6 +121,42 @@ describe("selectActivity", () => {
   it("reads nothing for a session the snapshot does not list", () => {
     expect(selectActivity(listWith({ summary: { running: false } }), "s2")).toBeUndefined();
   });
+
+  it("reads nothing and throws nothing when the shared container is missing", () => {
+    const list = { byId: {} } as unknown as SessionListWire;
+    expect(() => selectActivity(list, "s1")).not.toThrow();
+    expect(selectActivity(list, "s1")).toBeUndefined();
+  });
+
+  it("reads nothing when a shared cell is null", () => {
+    const list = { byId: {}, projectionsBySession: { s1: null } } as unknown as SessionListWire;
+    expect(() => selectActivity(list, "s1")).not.toThrow();
+    expect(selectActivity(list, "s1")).toBeUndefined();
+  });
+
+  it("reads nothing when a ready cell carries no values record", () => {
+    const list = { byId: {}, projectionsBySession: { s1: { state: "ready", values: null } } } as unknown as SessionListWire;
+    expect(() => selectActivity(list, "s1")).not.toThrow();
+    expect(selectActivity(list, "s1")).toBeUndefined();
+  });
+
+  it("falls through a null shared cell to the object layer", () => {
+    const list = {
+      byId: { s1: { projectionValues: { sessionActivity: view(100) } } },
+      projectionsBySession: { s1: null },
+    } as unknown as SessionListWire;
+    expect(selectActivity(list, "s1")?.lastActivityAt).toBe(100);
+  });
+
+  it("reads nothing for a null summary or a null object-layer cell", () => {
+    const nullSummary = { byId: { s1: null }, projectionsBySession: {} } as unknown as SessionListWire;
+    expect(() => selectActivity(nullSummary, "s1")).not.toThrow();
+    expect(selectActivity(nullSummary, "s1")).toBeUndefined();
+
+    const nullValues = { byId: { s1: { projectionValues: null } }, projectionsBySession: {} } as unknown as SessionListWire;
+    expect(() => selectActivity(nullValues, "s1")).not.toThrow();
+    expect(selectActivity(nullValues, "s1")).toBeUndefined();
+  });
 });
 
 describe("tierOf", () => {
