@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
+import { scoreText } from "../src/client/ranking.ts";
 import { copyFor } from "../src/client/copy.ts";
 import { CATALOG } from "../src/client/catalog.ts";
 import {
   catalogRows,
   commandRows,
+  commitRows,
   fileRows,
+  filesystemRows,
   sessionRows,
   shortcutRows,
   visibleSessions,
@@ -14,6 +17,7 @@ import {
 } from "../src/client/rows.ts";
 import type { ShortcutCatalogEntry } from "../src/client/dsh.ts";
 import {
+  COMMIT_FOCUS,
   SESSION_A,
   SESSION_ARCHIVED,
   SESSION_B,
@@ -80,6 +84,72 @@ describe("fileRows", () => {
       kind: "insert-path",
       absolutePath: `${cwd}/src/client/panel.ts`,
     });
+  });
+});
+
+describe("filesystemRows", () => {
+  it("labels with the expanded absolute path and carries the tilde alias under home", () => {
+    const rows = filesystemRows(
+      {
+        home: "/Users/lionad",
+        entries: [
+          { path: "/Users/lionad/notes/todo.md", kind: "file", exists: true },
+          { path: "/Users/lionad/notes", kind: "directory", exists: true },
+        ],
+      },
+      copy,
+    );
+
+    expect(rows.map(row => row.label)).toEqual(["/Users/lionad/notes/todo.md", "/Users/lionad/notes/"]);
+    expect(rows.map(row => row.alias)).toEqual(["~/notes/todo.md", "~/notes/"]);
+    expect(rows.map(row => row.kind)).toEqual(["file", "directory"]);
+    expect(rows[0]?.action).toEqual({ kind: "insert-path", absolutePath: "/Users/lionad/notes/todo.md" });
+    expect(rows[1]?.action).toEqual({ kind: "insert-path", absolutePath: "/Users/lionad/notes/" });
+  });
+
+  it("marks the rows as filesystem origin with the directory detail", () => {
+    const rows = filesystemRows(
+      {
+        home: "/Users/lionad",
+        entries: [
+          { path: "/opt/tool/bin", kind: "directory", exists: true },
+          { path: "/opt/tool/bin/run", kind: "file", exists: true },
+        ],
+      },
+      copy,
+    );
+
+    expect(rows.map(row => row.origin)).toEqual(["filesystem", "filesystem"]);
+    expect(rows.map(row => row.group)).toEqual([copy.groupFilesystem, copy.groupFilesystem]);
+    expect(rows[0]?.detail).toBe(copy.directory);
+    expect(rows[1]?.detail).toBeUndefined();
+    expect(rows.map(row => row.key)).toEqual([
+      "fsys:directory:/opt/tool/bin/",
+      "fsys:file:/opt/tool/bin/run",
+    ]);
+    expect(rows[0]?.alias).toBeUndefined();
+  });
+});
+
+describe("commitRows", () => {
+  it("labels with the subject and jumps with the full hash", () => {
+    const rows = commitRows({ commits: [COMMIT_FOCUS], now }, copy);
+
+    expect(rows[0]).toMatchObject({
+      key: `commit:${COMMIT_FOCUS.hash}`,
+      label: COMMIT_FOCUS.subject,
+      group: copy.groupCommits,
+      action: { kind: "open-commit", hash: COMMIT_FOCUS.hash },
+    });
+    expect(rows[0]?.detail).toBe(`${COMMIT_FOCUS.author} · ${copy.age(now - COMMIT_FOCUS.time * 1000)}`);
+  });
+
+  it("matches the hash itself, so refining the prefix past seven digits keeps the row", () => {
+    const rows = commitRows({ commits: [COMMIT_FOCUS], now }, copy);
+    // The alias is the full hash: a 7-character abbreviation would stop
+    // matching on the 8th keystroke, exactly when the reader is closing in.
+    expect(rows[0]?.alias).toBe(COMMIT_FOCUS.hash);
+    expect(scoreText(COMMIT_FOCUS.hash.slice(0, 12), rows[0]?.alias ?? "")).not.toBeNull();
   });
 });
 

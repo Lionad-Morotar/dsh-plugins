@@ -72,7 +72,7 @@ export const inject = ["slots", "locale", "workbench"];
  * stack reads composer, meter, terminal instead of the dock wedged between them.
  */
 export const DOCK_ROW_CSS = [
-  '[data-composer-dock]:has([data-workbench-dock="term-dock"]){flex-wrap:wrap !important;padding:0 !important;margin:0 !important;gap:0 !important;width:100% !important;max-width:none !important}',
+  '[data-composer-dock]:has([data-workbench-dock="term-dock"]){flex-wrap:wrap !important;padding:0 !important;gap:0 !important;margin-top:0 !important;margin-bottom:0 !important;margin-left:calc(-1 * var(--dsh-dock-bleed-left,0px)) !important;margin-right:calc(-1 * var(--dsh-dock-bleed-right,0px)) !important;width:calc(100% + var(--dsh-dock-bleed-left,0px) + var(--dsh-dock-bleed-right,0px)) !important;max-width:none !important}',
   '[data-composer-dock] [data-workbench-dock="term-dock"]{order:1;margin:0 !important;width:100% !important}',
 ].join("\n");
 

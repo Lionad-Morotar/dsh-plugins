@@ -20,11 +20,25 @@ import type {
   ClientContext,
   CommandDescriptor,
   FileReferenceCandidate,
+  GitExplorerRemote,
+  PathExplorerRemote,
   SessionInput,
+  SessionOpenFace,
   ShortcutCommand,
   ShortcutConfigSnapshot,
 } from "../src/client/dsh.ts";
-import { SESSION_A, SESSION_B, fakeWorkspaces, sessionList, workspaceSnapshot } from "./fixtures.ts";
+import {
+  COMMIT_FOCUS,
+  SESSION_A,
+  SESSION_B,
+  fakeGitExplorer,
+  fakePathExplorer,
+  fakeSessionOpen,
+  fakeWorkspaces,
+  sessionList,
+  workspaceSnapshot,
+} from "./fixtures.ts";
+import { homedir } from "node:os";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>");
 const document = dom.window.document;
@@ -60,6 +74,12 @@ interface HarnessOptions {
   readonly claimBlocked?: boolean;
   readonly seatSurfaces?: boolean;
   readonly openViewResult?: { readonly opened: boolean; readonly focused: boolean };
+  /** The filesystem exploration remote; null keeps it out of the context. */
+  readonly pathExplorer?: PathExplorerRemote | null;
+  /** The session open remote for the reveal fallback; null keeps it out. */
+  readonly sessionOpen?: SessionOpenFace | null;
+  /** The gitExplorer remote the hex commit plane reads; absent keeps it out. */
+  readonly gitExplorer?: GitExplorerRemote;
 }
 
 interface Harness {
@@ -172,6 +192,11 @@ function harness(options: HarnessOptions = {}): Harness {
     },
     pluginNavigation: { openList: vi.fn(), openBundle: vi.fn() },
     workbench,
+    ...(options.pathExplorer === null ? {} : { "remote.pathExplorer": options.pathExplorer ?? defaultPathExplorer() }),
+    ...(options.sessionOpen === undefined || options.sessionOpen === null
+      ? {}
+      : { "remote.session": options.sessionOpen }),
+    ...(options.gitExplorer === undefined ? {} : { "remote.gitExplorer": options.gitExplorer }),
   };
 
   const ctx = {
@@ -218,6 +243,11 @@ function harness(options: HarnessOptions = {}): Harness {
     verbs: runtime.__test.verbs,
     store: runtime.__test.store,
   };
+}
+
+/** The filesystem remote the harness answers with unless a case replaces it. */
+function defaultPathExplorer(): PathExplorerRemote {
+  return fakePathExplorer({ home: homedir(), entries: [] });
 }
 
 /** A sessions fake whose `scope()` answers, so the composer can be reached. */
@@ -470,6 +500,91 @@ describe("file reveal", () => {
   });
 });
 
+describe("absolute path navigation", () => {
+  it("reveals a filesystem row through the abs focus and inserts the expanded path", async () => {
+    const h = harness({
+      pathExplorer: fakePathExplorer({
+        home: "/Users/lionad",
+        entries: [{ path: "/Users/lionad/notes/todo.md", kind: "file", exists: true }],
+      }),
+    });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery("/Users/lionad/notes/tod");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label === "/Users/lionad/notes/todo.md")).toBe(true),
+    );
+    const row = h.store.getSnapshot().rows.find(entry => entry.label === "/Users/lionad/notes/todo.md");
+    expect(row?.origin).toBe("filesystem");
+
+    h.verbs.highlight(0);
+    h.verbs.revealActive();
+    expect(h.workbench.viewFocus.request).toHaveBeenCalledWith("fs-explorer", "abs:/Users/lionad/notes/todo.md");
+
+    h.verbs.accept(row!);
+    expect(h.inserted.at(-1)).toBe("/Users/lionad/notes/todo.md");
+  });
+
+  it("keeps filesystem rows matching while the query is spelled with a tilde", async () => {
+    const home = homedir();
+    const h = harness({
+      pathExplorer: fakePathExplorer({
+        home,
+        entries: [{ path: `${home}/notes/todo.md`, kind: "file", exists: true }],
+      }),
+    });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery("~/notes/tod");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label === `${home}/notes/todo.md`)).toBe(true),
+    );
+  });
+});
+
+describe("reveal fallback", () => {
+  it("opens the file with the system application when the file view is missing", async () => {
+    const h = harness({
+      openViewResult: { opened: false, focused: false },
+      sessionOpen: fakeSessionOpen({ canOpen: true }),
+    });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery("packages/dsh-command-panel/src/client/panel.ts");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label.endsWith("panel.ts"))).toBe(true),
+    );
+    h.verbs.highlight(0);
+    h.verbs.revealActive();
+
+    await vi.waitFor(() => expect(h.store.getSnapshot().open).toBe(false));
+    expect(h.input.notify).toHaveBeenCalledWith("info", expect.stringContaining("系统默认应用"));
+  });
+
+  it("explains when neither the view nor a system opener is available", async () => {
+    const h = harness({
+      openViewResult: { opened: false, focused: false },
+      sessionOpen: null,
+    });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery("packages/dsh-command-panel/src/client/panel.ts");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label.endsWith("panel.ts"))).toBe(true),
+    );
+    h.verbs.highlight(0);
+    h.verbs.revealActive();
+
+    const snapshot = h.store.getSnapshot();
+    expect(snapshot.open).toBe(true);
+    expect(snapshot.notice).toContain("文件面板不可用");
+  });
+});
+
 describe("accept", () => {
   it("writes the absolute path of a file row into the composer", async () => {
     const h = harness();
@@ -488,5 +603,89 @@ describe("accept", () => {
       `${SESSION_A.cwd}/packages/dsh-command-panel/src/client/panel.ts`,
     );
     expect(h.store.getSnapshot().open).toBe(false);
+  });
+});
+
+describe("commit matching", () => {
+  /** Open the panel, type the hex prefix, and wait for the commit row. */
+  async function panelWithCommit(h: Harness): Promise<void> {
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    h.verbs.setQuery(COMMIT_FOCUS.hash.slice(0, 7));
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.action.kind === "open-commit")).toBe(true),
+    );
+  }
+
+  it("lists the commit group first for a hex query", async () => {
+    const h = harness({ gitExplorer: fakeGitExplorer({ commits: [COMMIT_FOCUS] }) });
+    await panelWithCommit(h);
+
+    const rows = h.store.getSnapshot().rows;
+    expect(rows[0]?.group).toBe("提交");
+    expect(rows[0]?.label).toBe(COMMIT_FOCUS.subject);
+  });
+
+  it("stays silent with no commit plane behind a hex query", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery(COMMIT_FOCUS.hash.slice(0, 7));
+    // The workspace plane still answers, which is the load having settled.
+    await vi.waitFor(() =>
+      expect(h.files.list).toHaveBeenCalledWith(SESSION_A.id, COMMIT_FOCUS.hash.slice(0, 7), expect.anything()),
+    );
+
+    const snapshot = h.store.getSnapshot();
+    expect(snapshot.rows.some(row => row.group === "提交")).toBe(false);
+    expect(snapshot.message).toBeNull();
+  });
+
+  it("jumps to the git explorer with the commit focus and closes", async () => {
+    const h = harness({
+      gitExplorer: fakeGitExplorer({ commits: [COMMIT_FOCUS] }),
+      openViewResult: { opened: true, focused: true },
+    });
+    await panelWithCommit(h);
+
+    const row = h.store.getSnapshot().rows.find(entry => entry.action.kind === "open-commit");
+    h.verbs.accept(row!);
+
+    expect(h.workbench.viewFocus.request).toHaveBeenCalledWith("git-explorer", `commit:${COMMIT_FOCUS.hash}`);
+    expect(h.workbench.openViewOrSwitch).toHaveBeenCalledWith("git-explorer", `commit:${COMMIT_FOCUS.hash}`);
+    expect(h.workbench.viewFocus.take).toHaveBeenCalledWith("git-explorer");
+    expect(h.store.getSnapshot().open).toBe(false);
+  });
+
+  it("routes the reveal accelerator through the same jump for a commit row", async () => {
+    const h = harness({
+      gitExplorer: fakeGitExplorer({ commits: [COMMIT_FOCUS] }),
+      openViewResult: { opened: true, focused: true },
+    });
+    await panelWithCommit(h);
+
+    h.verbs.highlight(0);
+    h.verbs.revealActive();
+
+    expect(h.workbench.viewFocus.request).toHaveBeenCalledWith("git-explorer", `commit:${COMMIT_FOCUS.hash}`);
+    expect(h.inserted).toEqual([]);
+  });
+
+  it("says the git panel is missing when the view is not registered", async () => {
+    const h = harness({
+      gitExplorer: fakeGitExplorer({ commits: [COMMIT_FOCUS] }),
+      openViewResult: { opened: false, focused: false },
+    });
+    await panelWithCommit(h);
+
+    const row = h.store.getSnapshot().rows.find(entry => entry.action.kind === "open-commit");
+    h.verbs.accept(row!);
+
+    const snapshot = h.store.getSnapshot();
+    expect(snapshot.open).toBe(true);
+    expect(snapshot.notice).toContain("Git 面板未安装");
+    // The queued focus must not replay into a view that never opened.
+    expect(h.workbench.viewFocus.take).toHaveBeenCalledWith("git-explorer");
   });
 });

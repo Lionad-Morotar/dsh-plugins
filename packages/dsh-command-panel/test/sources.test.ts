@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { copyFor } from "../src/client/copy.ts";
 import { loadRows, type LoadRequest, type SourceServices } from "../src/client/sources.ts";
+import type { GitExplorerRemote } from "../src/client/dsh.ts";
 import {
+  COMMIT_FOCUS,
   SESSION_A,
   SESSION_ARCHIVED,
   SESSION_B,
@@ -11,6 +13,8 @@ import {
   SESSION_SUBAGENT,
   fakeCommands,
   fakeFileReferences,
+  fakeGitExplorer,
+  fakePathExplorer,
   fakeSessions,
   fakeWorkspaces,
   sessionList,
@@ -26,6 +30,7 @@ function services(overrides: Partial<SourceServices> = {}): SourceServices {
   return {
     fileReferences: () => fakeFileReferences(),
     commands: () => fakeCommands(),
+    pathExplorer: () => fakePathExplorer(),
     sessions: () => fakeSessions(list),
     workspaces: () => fakeWorkspaces(workspaceSnapshot()),
     now: () => now,
@@ -86,6 +91,115 @@ describe("loadRows: navigate", () => {
     const result = await loadRows(services({ fileReferences: () => undefined }), request());
     expect(result.status).toBe("error");
     expect(result.message).toBe(copy.failed);
+  });
+});
+
+describe("loadRows: navigate with an absolute query", () => {
+  it("asks the filesystem service instead of the workspace index", async () => {
+    const list = vi.fn(async () => ({ ok: true as const, value: [] }));
+    const result = await loadRows(
+      services({
+        fileReferences: () => ({ list }),
+        pathExplorer: () =>
+          fakePathExplorer({
+            home: "/Users/lionad",
+            entries: [{ path: "/Users/lionad/notes/todo.md", kind: "file", exists: true }],
+          }),
+      }),
+      request({ query: "/Users/lionad/notes/tod" }),
+    );
+
+    expect(list).not.toHaveBeenCalled();
+    expect(result.status).toBe("ready");
+    expect(result.rows.map(row => row.label)).toEqual(["/Users/lionad/notes/todo.md"]);
+    expect(result.rows[0]?.origin).toBe("filesystem");
+  });
+
+  it("needs no session to browse the filesystem", async () => {
+    const result = await loadRows(
+      services({
+        pathExplorer: () =>
+          fakePathExplorer({ home: "/tmp", entries: [{ path: "/tmp/notes", kind: "directory", exists: true }] }),
+      }),
+      request({ query: "/tmp/", sessionId: null }),
+    );
+
+    expect(result.status).toBe("ready");
+    expect(result.rows.map(row => row.label)).toEqual(["/tmp/notes/"]);
+  });
+
+  it("reports a missing filesystem service like any missing service", async () => {
+    const result = await loadRows(
+      services({ pathExplorer: () => undefined }),
+      request({ query: "/tmp/" }),
+    );
+    expect(result.status).toBe("error");
+    expect(result.message).toBe(copy.failed);
+  });
+
+  it("surfaces a filesystem failure by its code", async () => {
+    const result = await loadRows(
+      services({ pathExplorer: () => fakePathExplorer({ error: "gateway/not-found" }) }),
+      request({ query: "/tmp/" }),
+    );
+    expect(result).toMatchObject({ status: "error", message: "gateway/not-found" });
+  });
+});
+
+describe("loadRows: navigate with a hex query", () => {
+  it("attaches the commit group ahead of the workspace files", async () => {
+    const query = vi.fn(async () => ({
+      ok: true as const,
+      value: { ok: true as const, page: { commits: [COMMIT_FOCUS] } },
+    }));
+    const result = await loadRows(
+      services({
+        fileReferences: () => fakeFileReferences({ files: [{ path: "src/panel.ts", kind: "file" }] }),
+        gitExplorer: () => ({ query } satisfies GitExplorerRemote),
+      }),
+      request({ query: "  9393130AB " }),
+    );
+
+    expect(query).toHaveBeenCalledWith(
+      { sessionId: SESSION_A.id, ref: "9393130ab", limit: 5 },
+      expect.anything(),
+    );
+    expect(result.status).toBe("ready");
+    expect(result.rows[0]?.group).toBe(copy.groupCommits);
+    expect(result.rows[0]?.label).toBe(COMMIT_FOCUS.subject);
+    expect(result.rows.some(row => row.group !== copy.groupCommits)).toBe(true);
+  });
+
+  it("issues no commit query when no gitExplorer face answers, and shows no error", async () => {
+    const result = await loadRows(services({ gitExplorer: () => undefined }), request({ query: "9393130" }));
+
+    expect(result.status).toBe("ready");
+    expect(result.rows.some(row => row.group === copy.groupCommits)).toBe(false);
+    expect(result.message).toBeUndefined();
+  });
+
+  it("degrades a refused prefix and a failed transport to no commit rows, silently", async () => {
+    for (const gitExplorer of [
+      fakeGitExplorer({ error: "git-failed" }),
+      { query: async () => ({ ok: false as const, error: { code: "rpc-error" } }) } satisfies GitExplorerRemote,
+    ]) {
+      const result = await loadRows(
+        services({ gitExplorer: () => gitExplorer }),
+        request({ query: "9393130" }),
+      );
+      expect(result.status).toBe("ready");
+      expect(result.rows.some(row => row.group === copy.groupCommits)).toBe(false);
+      expect(result.message).toBeUndefined();
+    }
+  });
+
+  it("keeps a non-hex query on the workspace plane alone", async () => {
+    const query = vi.fn();
+    await loadRows(
+      services({ gitExplorer: () => ({ query } as unknown as GitExplorerRemote) }),
+      request({ query: "panel" }),
+    );
+    expect(query).not.toHaveBeenCalled();
   });
 });
 

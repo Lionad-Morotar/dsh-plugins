@@ -49,6 +49,30 @@ describe("parentQuery", () => {
   });
 });
 
+describe("absolute queries", () => {
+  it("climbs one level out of an absolute directory query", () => {
+    expect(parentQuery("/Users/x/y/")).toBe("/Users/x/");
+    expect(parentQuery("/Users/x/y/fr")).toBe("/Users/x/y/");
+    expect(parentQuery("/")).toBeUndefined();
+  });
+
+  it("keeps the tilde spelling while climbing inside home", () => {
+    expect(parentQuery("~/notes/")).toBe("~/");
+    expect(parentQuery("~/notes/to")).toBe("~/notes/");
+  });
+
+  it("drills into a filesystem directory row by its absolute label", () => {
+    const row: PanelRow = {
+      key: "fsys:directory:/Users/x/y/",
+      label: "/Users/x/y/",
+      kind: "directory",
+      origin: "filesystem",
+      action: { kind: "insert-path", absolutePath: "/Users/x/y/" },
+    };
+    expect(directoryQuery(row)).toBe("/Users/x/y/");
+  });
+});
+
 describe("focusPath", () => {
   it("uses the workspace-relative label the workbench expects", () => {
     expect(focusPath(row("src/client/panel.ts", "file"))).toBe("src/client/panel.ts");

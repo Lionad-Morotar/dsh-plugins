@@ -12,9 +12,10 @@
  * the workbench's `Cmd/Ctrl+Shift+*` family — belongs to the core's shortcut
  * registration and is deliberately not read here.
  */
-import { useEffect, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 
 import { createTerminalPanel } from "./terminal-panel.tsx";
+import { bleedBetween, pickColumn, type Box } from "./bleed.ts";
 import { createDockController, type DockVisibilitySource } from "./dock-controller.ts";
 import type { DockHost } from "./host.ts";
 import type { DockPanel, DockState } from "./dock-state.ts";
@@ -73,6 +74,84 @@ function useDockVisible(visibility: DockVisibilitySource): boolean {
  */
 const DOCK_REST_HEIGHT = "clamp(120px, 32dvh, 300px)";
 
+/** Custom properties the injected rule reads to widen the dock row. */
+const BLEED_LEFT = "--dsh-dock-bleed-left";
+const BLEED_RIGHT = "--dsh-dock-bleed-right";
+
+/** Read one custom property as a pixel count; unset or garbage reads as zero. */
+function readBleed(wrap: HTMLElement, property: string): number {
+  const value = Number.parseFloat(wrap.style.getPropertyValue(property));
+  return Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Widen the dock row out to the conversation column's edges.
+ *
+ * The row lives inside the composer's centred max-width stack, so it inherits
+ * that stack's width and stops short of the column on both sides. CSS cannot
+ * reference an ancestor's width, so this measures the gap and publishes it on
+ * the row; the injected rule turns it into negative margins.
+ *
+ * The measurement has to be idempotent: the row it reads already carries the
+ * correction it wrote last time, so the applied bleed is added back before
+ * comparing (see `bleedBetween`). Without that, a resize observer re-measures
+ * the widened row, answers zero, collapses it, and the dock flips between wide
+ * and narrow on whatever event happens last.
+ * @param ref - the dock root, used to find the row it was placed in.
+ * @param visible - whether the dock is on screen; a hidden row has no width.
+ */
+function useDockBleed(ref: RefObject<HTMLDivElement | null>, visible: boolean): void {
+  useEffect(() => {
+    if (!visible) return;
+    const element = ref.current;
+    const wrap = element?.closest("[data-composer-dock]");
+    if (!(wrap instanceof HTMLElement)) return;
+
+    const ancestors: Element[] = [];
+    let node: Element | null = wrap.parentElement;
+    for (let hop = 0; hop < 8 && node !== null; hop += 1) {
+      ancestors.push(node);
+      node = node.parentElement;
+    }
+
+    const measure = (): void => {
+      const row = wrap.getBoundingClientRect();
+      if (row.width === 0) return;
+      const candidates = ancestors.map(ancestor => ({
+        box: ancestor.getBoundingClientRect(),
+        isDocument: ancestor.tagName === "BODY" || ancestor.tagName === "HTML",
+      }));
+      const column = pickColumn(candidates);
+      if (column === undefined) return;
+      const applied = { left: readBleed(wrap, BLEED_LEFT), right: readBleed(wrap, BLEED_RIGHT) };
+      const bleed = bleedBetween(row, column, applied);
+      const left = `${String(bleed.left)}px`;
+      const right = `${String(bleed.right)}px`;
+      if (wrap.style.getPropertyValue(BLEED_LEFT) !== left) wrap.style.setProperty(BLEED_LEFT, left);
+      if (wrap.style.getPropertyValue(BLEED_RIGHT) !== right) wrap.style.setProperty(BLEED_RIGHT, right);
+    };
+
+    // The first frames are worth re-reading: the dock mounts while the session
+    // view is still settling, and a single early reading can catch a column that
+    // has not finished sizing.
+    measure();
+    const frames: number[] = [];
+    if (typeof requestAnimationFrame === "function") {
+      for (let index = 0; index < 3; index += 1) frames.push(requestAnimationFrame(measure));
+    }
+
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : undefined;
+    observer?.observe(wrap);
+    for (const ancestor of ancestors) observer?.observe(ancestor);
+    window.addEventListener("resize", measure);
+    return () => {
+      for (const frame of frames) cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [ref, visible]);
+}
+
 const rootStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
@@ -96,9 +175,6 @@ const headerStyle: CSSProperties = {
   padding: "6px 12px",
   borderBottom: "1px solid color-mix(in srgb, currentColor 10%, transparent)",
 };
-const titleRowStyle: CSSProperties = { display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 };
-const titleStyle: CSSProperties = { fontSize: 12, fontWeight: 600, letterSpacing: 0.2 };
-const hintStyle: CSSProperties = { fontSize: 11, opacity: 0.5, whiteSpace: "nowrap" };
 const actionsStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 2 };
 // Mid-section of the single-row header: session tabs with inline close, then
 // the new-terminal button. No own border, the header's bottom rule is enough.
@@ -187,10 +263,7 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
     const [binding] = useState(() => rack.open(sessionId, panelId));
     if (binding === undefined) {
       return (
-        <div style={emptyStyle}>
-          <strong>{t("dock.serviceMissing")}</strong>
-          <span style={{ opacity: 0.7 }}>{t("dock.serviceMissingHint")}</span>
-        </div>
+        <div style={emptyStyle}>{t("dock.serviceMissing")}</div>
       );
     }
     return <TerminalPanel binding={binding} label={label} />;
@@ -239,6 +312,8 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
       }
     };
 
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    useDockBleed(rootRef, visible);
     const height = snapshot.mode === "minimized" ? "auto" : snapshot.mode === "fullscreen" ? "min(72vh, 900px)" : DOCK_REST_HEIGHT;
     const activeId = snapshot.activeId;
     const minimized = snapshot.mode === "minimized";
@@ -248,19 +323,17 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
     // "收起 dock" means for the processes living behind these panels.
     return (
       <section
+        aria-label={t("dock.title")}
         data-workbench-dock="term-dock"
         data-dock-mode={snapshot.mode}
         data-dock-visible={visible ? "true" : "false"}
         data-panel-count={panels.length}
         data-dock-session={sessionId ?? ""}
+        ref={rootRef}
         style={{ ...rootStyle, height, display: visible ? "flex" : "none" }}
         onKeyDownCapture={handleKeyDown}
       >
         <header style={headerStyle}>
-          <div style={titleRowStyle}>
-            <span style={titleStyle}>{t("dock.title")}</span>
-            <span style={hintStyle}>{t("dock.hint")}</span>
-          </div>
           <div style={tabStripStyle}>
             {panels.map((panel: DockPanel, index: number) => (
               <button
@@ -318,13 +391,11 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
 
         {sessionId === undefined ? (
           <div style={emptyStyle} role="note">
-            <strong>{t("dock.sessionRequired")}</strong>
-            <span style={{ opacity: 0.7 }}>{t("dock.sessionRequiredHint")}</span>
+            {t("dock.sessionRequired")}
           </div>
         ) : terminals === undefined ? (
           <div style={emptyStyle} role="note">
-            <strong>{t("dock.serviceMissing")}</strong>
-            <span style={{ opacity: 0.7 }}>{t("dock.serviceMissingHint")}</span>
+            {t("dock.serviceMissing")}
           </div>
         ) : (
           // Minimizing hides the body but keeps it mounted: unmounting would

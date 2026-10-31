@@ -271,6 +271,30 @@ export function createJump({ views, sessionId }: JumpWiring): (path: string, lin
   };
 }
 
+/** A parsed `commit:<hash>` focus target. */
+export interface CommitFocus {
+  readonly hash: string;
+}
+
+/** `commit:` followed by one 4-64 digit hex id, either case. */
+const COMMIT_FOCUS_PATTERN = /^commit:([0-9a-f]{4,64})$/iu;
+
+/**
+ * Parse a `commit:<hash>` focus string.
+ *
+ * The command panel addresses a commit by a hex prefix, as short as git
+ * accepts and never longer than a full object id; the hash is normalized to
+ * lowercase because that is what the commit endpoint and the loaded list
+ * compare against. Any other payload belongs to another focus scheme.
+ * @param focus - the focus handed over with a view request.
+ * @returns the normalized hash, or undefined when this is not a commit focus.
+ */
+export function parseCommitFocus(focus: string | undefined): CommitFocus | undefined {
+  if (focus === undefined) return undefined;
+  const match = COMMIT_FOCUS_PATTERN.exec(focus);
+  return match === null ? undefined : { hash: (match[1] ?? "").toLowerCase() };
+}
+
 /** Viewport inputs for {@link computeWindow}. */
 export interface WindowOptions {
   readonly scrollTop: number;

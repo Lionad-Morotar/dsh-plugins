@@ -34,6 +34,14 @@ const PLATFORM_MODULES = [
 ];
 
 /**
+ * Host-half platform packages: the Harness install provides its own copy of
+ * every `@deepseek-ai/*` module. Bundling one would ship a second Typert
+ * protocol or Cordis `Service` class, and class identity is what the gateway
+ * uses to find the service.
+ */
+const HOST_MODULES = ["@deepseek-ai/*"];
+
+/**
  * The ModuleLoader wrapper for the client half.
  *
  * `window.__ModuleLoader__.load` accepts only `{id, factory}` and the id must
@@ -58,7 +66,7 @@ module.exports.boot(require);
 }
 
 /**
- * Bundle one entry to minified text.
+ * Bundle one entry to text.
  *
  * @param entry - absolute path of the TypeScript entry.
  * @param format - `esm` for the host half, `cjs` for the loader-wrapped client half.
@@ -73,7 +81,11 @@ async function bundle(entry, format, external = []) {
     format,
     platform: host ? "node" : "browser",
     target: "es2022",
-    minify: true,
+    // The gateway builds a Remote method's descriptor by reading the running
+    // function's parameter names, so minified identifiers turn every call into
+    // `gateway/arguments-invalid`. Client code travels inside the ModuleLoader
+    // wrapper and has no such reflection contract, so it stays minified.
+    minify: !host,
     write: false,
     legalComments: "none",
     external,
@@ -90,7 +102,7 @@ async function main() {
 
   await writeFile(
     join(libRoot, "index.js"),
-    await bundle(join(packageRoot, "src", "index.ts"), "esm"),
+    await bundle(join(packageRoot, "src", "index.ts"), "esm", HOST_MODULES),
     "utf8",
   );
 

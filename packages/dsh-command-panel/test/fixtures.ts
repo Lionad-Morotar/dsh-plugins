@@ -12,7 +12,11 @@ import type {
   CommandsRemote,
   FileReferenceCandidate,
   FileReferencesRemote,
+  GitCommitSummary,
+  GitExplorerRemote,
+  PathExplorerRemote,
   SessionListState,
+  SessionOpenFace,
   SessionSummary,
   SessionsService,
   WorkspaceSnapshot,
@@ -159,6 +163,41 @@ export function fakeFileReferences(script: RemoteScript = {}): FileReferencesRem
   };
 }
 
+export interface PathScript {
+  readonly home?: string;
+  readonly entries?: ReadonlyArray<{ readonly path: string; readonly kind: "file" | "directory"; readonly exists: boolean }>;
+  readonly error?: string;
+}
+
+/** The filesystem exploration service this package's own host half publishes. */
+export function fakePathExplorer(script: PathScript = {}): PathExplorerRemote {
+  return {
+    resolve: async () =>
+      script.error === undefined
+        ? {
+            ok: true as const,
+            value: { ok: true as const, home: script.home ?? "/Users/lionad", entries: script.entries ?? [] },
+          }
+        : { ok: false as const, error: { code: script.error } },
+  };
+}
+
+export interface SessionOpenScript {
+  readonly canOpen?: boolean;
+  readonly openError?: string;
+}
+
+/** The `remote.session` pair the reveal fallback asks for. */
+export function fakeSessionOpen(script: SessionOpenScript = {}): SessionOpenFace {
+  return {
+    canOpenWorkspacePath: async () => ({ ok: true as const, value: script.canOpen ?? true }),
+    openWorkspacePath: async () =>
+      script.openError === undefined
+        ? { ok: true as const, value: { opened: true as const } }
+        : { ok: false as const, error: { code: script.openError } },
+  };
+}
+
 export function fakeCommands(script: RemoteScript = {}): CommandsRemote {
   return {
     list: async () =>
@@ -166,5 +205,29 @@ export function fakeCommands(script: RemoteScript = {}): CommandsRemote {
         ? { ok: true, value: script.commands ?? [] }
         : { ok: false, error: { code: script.commandError } },
     execute: async () => ({ ok: true, value: undefined }),
+  };
+}
+
+/** One history commit the way `git log` spells it, at a fixed point in time. */
+export const COMMIT_FOCUS: GitCommitSummary = {
+  hash: "9393130e5f1ad2c61b8e04ff9cf01a53d1c7b6e2",
+  author: "Lionad",
+  time: 4_000,
+  subject: "视图消费 commit:<hash> 焦点",
+};
+
+export interface GitScript {
+  readonly commits?: readonly GitCommitSummary[];
+  /** Business failure code the git host half would answer with. */
+  readonly error?: string;
+}
+
+/** The `remote.gitExplorer` query face dsh-git-explorer's host half publishes. */
+export function fakeGitExplorer(script: GitScript = {}): GitExplorerRemote {
+  return {
+    query: async () =>
+      script.error === undefined
+        ? { ok: true as const, value: { ok: true as const, page: { commits: script.commits ?? [] } } }
+        : { ok: true as const, value: { ok: false as const, error: { code: script.error } } },
   };
 }
