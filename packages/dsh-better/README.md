@@ -1,6 +1,6 @@
 # dsh-better
 
-为原生 DeepSeek Harness 增加能力。两个面：`/model` 选择器支持按供应商搜索并在行内平铺推理等级；输入框的模型触发器改为打开同一个选择器，模型名左侧带上 provider 名。
+为原生 DeepSeek Harness 增加能力。三个面：`/model` 选择器支持按供应商搜索并在行内平铺推理等级；输入框的模型触发器改为打开同一个选择器，模型名左侧带上 provider 名；`⌘Space` 把键盘送回输入框，键位在宿主快捷键面板里可改。
 
 ## 解决的问题
 
@@ -24,6 +24,31 @@ DSH 的搜索发生在原生选择器组件内部，用一个模块私有函数�
 
 推理等级是**逐模型**的，不是全局阶梯：实测同一台机器上 75 个模型里有 5 种不同档位组合、24 个完全没有档位。没有档位的模型平铺一档都不显示，点击即提交；只有一档的也不显示（没有可选项）。
 
+## 聚焦输入框
+
+`⌘Space` 把键盘送回输入框，光标落在草稿原来的位置（不是开头）。在别处敲完代码、翻完文件树、或从终端里出来，一个和弦就能回到"继续打字"。
+
+键位不是写死的：本包只向宿主的快捷键服务**声明**一条命令（`better.focusComposer`，标签「聚焦输入框」，别名 `focus input` / `focus composer` / `message input`），于是它出现在宿主的**设置 → 通用 → 编辑快捷键**（或 `⌘/` 打开的那个「快捷键」面板）里，和其他内建绑定同一张表：可录制、可清除、可恢复默认，冲突会被当场拒绝，改动按设备（web 按 origin、desktop 按 `userData/keybindings.json`）持久化。本包不自己存键位，也不自己挂 `keydown`——那样会得到一张隐形的、搜不到也改不了的键位表。
+
+默认键位只声明宿主能承载的四个：
+
+| profile | 默认 | 说明 |
+| --- | --- | --- |
+| `desktop:macos` | `⌘Space` | 桌面端原生键盘桥在任何本地处理器之前拦截已接受的组合，所以编辑器拿不到它 |
+| `desktop:windows` | `Ctrl+Shift+Space` | 不用 `Ctrl+Space`：那是 Windows 的输入法切换 |
+| `web:macos` / `web:windows` | `⌘⇧Space` / `Ctrl+Shift+Space` | 宿主把 `Space` 判为 `reserved`，web 上只有「主修饰键 + Shift/Alt」这一类才被接受 |
+| `desktop:linux` / `web:linux` | 不绑定 | 宿主在 Linux 上对 `Space` 一律判 `reserved`；留给用户在面板里自选 |
+
+`⌘Space` 在 web 端永远绑不上（宿主的 `bindingIssue` 先判 `reserved` 再看浏览器白名单），这是宿主的规则而不是本包的取舍；要在浏览器里用，绑 `⌘⇧Space` 或面板接受的任意组合。macOS 系统层的 Spotlight 也占着 `⌘Space`，本机实测该符号热键已关闭（`com.apple.symbolichotkeys` 里 `64.enabled = false`），所以按键能到达应用；没关掉的机器上系统会先吃掉它。
+
+三种情况下命令让位（`pass`，不吞按键）：有弹层打开（宿主的模态判定在 macOS/Windows 桌面端被原生桥旁路，所以这条守在自己的解析器里）、输入框不在屏上（切到文件/Git 等视图时它确实被卸载）、以及当前没有会话。
+
+## 怎么聚焦的
+
+宿主的会话输入面 `conversation.input.for(sessionScope).focus()` 走的是 Lexical 自己的 focus，因此恢复的是草稿原有的选区；直接对 contenteditable 调 DOM `focus()` 会把光标丢到开头。可达性按宿主自己的次序探测：`uiSession.adapter.current` → `sessions.list.current`，取不到就什么都不做（绝不挑一个用户看不见的后台会话）。
+
+"输入框是否在屏上"用宿主给的那个 div 上的一对属性判定：`[data-composer-input]` 与 `[role='textbox'][aria-multiline='true']` 写在同一个选择器里，宿主改名其中一个也不会让命令静默失效。
+
 ## 安装
 
 profile 的 `package.json` 里加依赖与 bundle：
@@ -45,4 +70,4 @@ pnpm --filter dsh-better typecheck
 pnpm --filter dsh-better build      # 产出 lib/
 ```
 
-`src/client/search.ts` 是纯排序逻辑（无 DOM、无 React），`groups.ts` 复刻原生分组与 per-group 排序，`overlay.tsx` 负责渲染与遮蔽。
+`src/client/search.ts` 是纯排序逻辑（无 DOM、无 React），`groups.ts` 复刻原生分组与 per-group 排序，`overlay.tsx` 负责渲染与遮蔽，`focus.ts` 是快捷键的声明、解析器与两条宿主探测（当前会话、输入框是否在屏）。`test/focus.test.ts` 把宿主的命令 id 规则、web 可接受组合与解析器的三种让位情形钉成断言——注册被宿主拒绝时命令会从面板里消失且不报错，这种失败只能靠断言挡住。
