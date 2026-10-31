@@ -1,0 +1,121 @@
+[
+  {
+    "workspaceId": "w-blog",
+    "title": "blog",
+    "note": "13 分钟前活跃，但成员里还有 2 天前与 4 天前的会话（用户报的那个 bug 场景）",
+    "workspaceTier": "strong",
+    "members": [
+      {
+        "id": "a1",
+        "title": "Deep Research: Monorepo Flow",
+        "tier": "strong",
+        "archived": false,
+        "painted": true
+      },
+      {
+        "id": "a2",
+        "title": "记录开机系统状态基线",
+        "tier": "none",
+        "archived": false,
+        "painted": false
+      },
+      {
+        "id": "a3",
+        "title": "前端工程讲稿 PPT 生成",
+        "tier": "none",
+        "archived": false,
+        "painted": false
+      }
+    ]
+  },
+  {
+    "workspaceId": "w-strong",
+    "title": "dsh-plugins",
+    "note": "35 分钟前活跃，落在 1 小时内",
+    "workspaceTier": "strong",
+    "members": [
+      {
+        "id": "b1",
+        "title": "侧栏活跃度阶梯怎么做",
+        "tier": "strong",
+        "archived": false,
+        "painted": true
+      }
+    ]
+  },
+  {
+    "workspaceId": "w-mid",
+    "title": "flow-skills",
+    "note": "1.5 小时前活跃，落在 2 小时内",
+    "workspaceTier": "mid",
+    "members": [
+      {
+        "id": "c1",
+        "title": "技能文档简化",
+        "tier": "mid",
+        "archived": false,
+        "painted": true
+      }
+    ]
+  },
+  {
+    "workspaceId": "w-faint",
+    "title": "lionad.dev",
+    "note": "4 小时前活跃，落在 5 小时内",
+    "workspaceTier": "faint",
+    "members": [
+      {
+        "id": "d1",
+        "title": "首页改版草稿",
+        "tier": "faint",
+        "archived": false,
+        "painted": true
+      }
+    ]
+  },
+  {
+    "workspaceId": "w-normal",
+    "title": "deep-whale",
+    "note": "8 小时前活跃，超过 5 小时，交还宿主原色",
+    "workspaceTier": "none",
+    "members": [
+      {
+        "id": "e1",
+        "title": "深鲸皮肤配色",
+        "tier": "none",
+        "archived": false,
+        "painted": false
+      }
+    ]
+  },
+  {
+    "workspaceId": "w-running",
+    "title": "running-ws",
+    "note": "有会话正在跑，直接进最强档",
+    "workspaceTier": "strong",
+    "members": [
+      {
+        "id": "f1",
+        "title": "正在跑的会话",
+        "tier": "strong",
+        "archived": false,
+        "painted": true
+      }
+    ]
+  },
+  {
+    "workspaceId": "w-archived",
+    "title": "archived-ws",
+    "note": "唯一成员已归档，工作区仍按它的活动聚合，但会话自身不着色",
+    "workspaceTier": "strong",
+    "members": [
+      {
+        "id": "g1",
+        "title": "归档的会话",
+        "tier": "strong",
+        "archived": true,
+        "painted": false
+      }
+    ]
+  }
+]

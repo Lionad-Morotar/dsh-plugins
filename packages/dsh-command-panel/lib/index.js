@@ -50,7 +50,7 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
 // src/host/path-explorer.ts
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute } from "node:path";
+import { isAbsolute, normalize, resolve } from "node:path";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 // src/shared.ts
@@ -107,15 +107,24 @@ var PathExplorerService = class extends (_a = TypertRemoteService, _resolve_dec 
     const home = homedir();
     const query = request.query;
     if (typeof query !== "string" || query === "") return invalid("query must be a non-empty string");
-    if (query !== "~" && !query.includes("/") && !query.includes("\\")) {
-      return invalid("query must contain a path separator");
+    if (query !== "~" && (query.split(/[\\/]/, 1)[0] ?? "") !== ".." && !query.includes("/") && !query.includes("\\")) {
+      return invalid("query must contain a path separator or a parent step");
     }
-    const target = expandHome(query, home);
-    if (!isAbsolute(target) && !query.startsWith("~")) {
-      return invalid("query must be absolute: start with /, a drive letter, ~, or a UNC root");
+    const expanded = expandHome(query, home);
+    let target;
+    if (isAbsolute(expanded)) {
+      target = normalize(expanded);
+    } else if (expanded.startsWith("~")) {
+      target = normalize(expanded);
+    } else {
+      const base = request.base;
+      if (typeof base !== "string" || base === "" || !isAbsolute(base)) {
+        return invalid("relative queries need an absolute session base directory");
+      }
+      target = normalize(resolve(base, expanded));
     }
     const lastSeparator = Math.max(target.lastIndexOf("/"), target.lastIndexOf("\\"));
-    const namesDirectory = query === "~" || lastSeparator === target.length - 1;
+    const namesDirectory = query === "~" || query === ".." || query.endsWith("/..") || query.endsWith("\\..") || lastSeparator === target.length - 1;
     const directory = namesDirectory ? /[\\/]$/.test(target) ? target : `${target}/` : target.slice(0, lastSeparator + 1);
     const fragment = namesDirectory ? "" : target.slice(lastSeparator + 1);
     const needle = fragment.toLowerCase();

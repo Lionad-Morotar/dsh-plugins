@@ -1,0 +1,205 @@
+/**
+ * Browser-half entry.
+ *
+ * The tint is a stylesheet, not a slot. The sidebar exposes no seat for a
+ * workspace title (the seats under `sidebar.workspaces` are the section itself,
+ * the directory flow and the session rows), so the only hook that covers every row
+ * is the row's own `data-row-key` attribute. This half therefore subscribes to the
+ * session list and the workspace list, decides a tier per row, and rewrites one
+ * `<style>` element.
+ *
+ * Two levels are painted, and each row is decided on its own clock:
+ * - a workspace row, folded from its member sessions (newest member, running
+ *   propagated), because a workspace has no freshness fact of its own;
+ * - a session row, from its own reading, so a fresh header never drags an old
+ *   member into the accent. A session belongs to no workspace for this purpose,
+ *   which is why the id set comes from the session list rather than from a walk
+ *   over workspace membership.
+ *
+ * Nothing here renders React and nothing reads the DOM beyond the element it
+ * owns. The data path is two snapshots plus two subscriptions; the workspace
+ * subscription is what catches membership changes, because a session moving
+ * between workspaces does not necessarily touch the session list.
+ *
+ * cordis calls `apply(ctx, config)` — the context first, this plugin's config
+ * second. The context stays a context here; services come through `inject`.
+ */
+import {
+  aggregateWorkspace,
+  archiveSet,
+  readableRecord,
+  readSession,
+  resolveConfig,
+  sessionIdsOf,
+  tierOf,
+  type ActivityConfig,
+  type SessionListWire,
+} from "./reading.ts";
+import { buildStylesheet, type SessionRule, type WorkspaceRule } from "./rules.ts";
+import { createWriter, type RowWriter } from "./writer.ts";
+
+/** The services this half reads; declared so Cordis resolves them before mounting. */
+export const inject = ["sessions", "workspaces"];
+
+/** How often the clock is allowed to move a level without a host notification. */
+const TICK_MS = 60_000;
+
+/** The session list's observable face. */
+export interface SessionsLike {
+  readonly list: {
+    getSnapshot(): SessionListWire;
+    subscribe(listener: () => void): () => void;
+  };
+}
+
+/** One workspace as the workspaces snapshot lists it. */
+export interface WorkspaceItemWire {
+  /** The workspace's id, which is also its row key; the ungrouped bucket has none. */
+  readonly workspaceId?: string;
+  /** The workspace's member sessions, already filtered by access on the host. */
+  readonly sessionIds?: readonly string[];
+}
+
+/** The slice of the workspaces snapshot this half reads. */
+export interface WorkspaceSnapshotWire {
+  /** The registry's workspaces; absent until the list has loaded. */
+  readonly items?: readonly WorkspaceItemWire[];
+  /** The registry-global archive set, sitting next to `items` on the same snapshot. */
+  readonly archivedSessionIds?: readonly string[];
+}
+
+/**
+ * The workspaces service face.
+ *
+ * Its observable nests under `list`, exactly like `sessions.list`: `workspaces` is
+ * the controller service and `list` is the snapshot source it publishes. Both
+ * `items` and the archive set are read: an archived session still counts as a
+ * member when its workspace is folded, but its own row must stay out of the tint,
+ * because the host paints it with the caption colour that means "archived".
+ */
+export interface WorkspacesLike {
+  readonly list: {
+    getSnapshot(): WorkspaceSnapshotWire;
+    subscribe(listener: () => void): () => void;
+  };
+}
+
+/** The slice of the client context this entry uses. */
+export interface ClientContextLike {
+  readonly sessions: SessionsLike;
+  readonly workspaces: WorkspacesLike;
+}
+
+/**
+ * Read the workspace items out of the workspaces snapshot.
+ *
+ * A snapshot that has not loaded, or one whose container a host upgrade re-homed,
+ * reads as no workspaces rather than as an error: the tint then paints no header
+ * and recovers on the next readable snapshot. Session rows are decided from the
+ * session list, so they survive a workspaces snapshot that cannot be read at all.
+ * @param workspaces - the injected workspaces service.
+ * @returns the items, or an empty list when the snapshot carries none.
+ */
+function workspaceItems(workspaces: WorkspacesLike): readonly unknown[] {
+  const items = readableRecord(workspaces.list.getSnapshot())?.items;
+  return Array.isArray(items) ? items : [];
+}
+
+/**
+ * Read the host's archive set out of the workspaces snapshot.
+ *
+ * The set sits next to `items` on the same snapshot, so it is read from the same
+ * place the host's own rows are built from. An unreadable value reads as nothing
+ * archived rather than as an error: the fold still paints, and only this filter is
+ * lost, which the host's own class keeps correct anyway.
+ * @param workspaces - the injected workspaces service.
+ * @returns the archived session ids.
+ */
+function archivedSessions(workspaces: WorkspacesLike): ReadonlySet<string> {
+  return archiveSet(readableRecord(workspaces.list.getSnapshot())?.archivedSessionIds);
+}
+
+/**
+ * Mount the sidebar tint.
+ *
+ * The recompute is coalesced through a microtask because one host change can
+ * notify several times (a list refresh plus a projection settle), and every write
+ * replaces the whole stylesheet. One microtask hop turns a burst into one table.
+ * @param ctx - client root context.
+ * @param config - the loader row's overrides, if any.
+ * @returns the disposer releasing both subscriptions, the tick and the stylesheet.
+ */
+export function apply(ctx: ClientContextLike, config?: Partial<ActivityConfig>): () => void {
+  const resolved = resolveConfig(config);
+  if (!resolved.enabled) return () => {};
+
+  const writer: RowWriter = createWriter(document);
+  let scheduled = false;
+  let disposed = false;
+
+  const recompute = (): void => {
+    const list = ctx.sessions.list.getSnapshot();
+    const archived = archivedSessions(ctx.workspaces);
+    const now = Date.now();
+    const workspaces: WorkspaceRule[] = [];
+    // A snapshot whose items cannot be read paints no header rather than throwing:
+    // this runs in a microtask, where a throw would become an uncaught error and
+    // leave the table frozen for every row.
+    for (const entry of workspaceItems(ctx.workspaces)) {
+      const item = readableRecord(entry);
+      const workspaceId = item?.workspaceId;
+      // The ungrouped bucket is not a workspace and has no row key of its own.
+      if (typeof workspaceId !== "string" || workspaceId === "") continue;
+      const reading = aggregateWorkspace(list, item?.sessionIds);
+      // An empty or wholly unresolvable workspace is left alone rather than
+      // painted from a guess: a freshly created one must not start out coloured.
+      if (reading === undefined) continue;
+      const tier = tierOf({ reading, running: reading.running, updatedAt: undefined, now, config: resolved });
+      if (tier === "none") continue;
+      workspaces.push({ workspaceId, tier });
+    }
+
+    const sessions: SessionRule[] = [];
+    for (const sessionId of sessionIdsOf(list)) {
+      // The set is the cheap skip and the rule carries the class condition too: the
+      // snapshot can lag the row by a tick, and the caption grey has to survive both.
+      if (archived.has(sessionId)) continue;
+      const facts = readSession(list, sessionId);
+      if (facts === undefined) continue;
+      const tier = tierOf({ reading: facts.reading, running: facts.running, updatedAt: facts.updatedAt, now, config: resolved });
+      if (tier === "none") continue;
+      sessions.push({ sessionId, tier });
+    }
+
+    writer.update(buildStylesheet({ workspaces, sessions }, resolved));
+  };
+
+  const schedule = (): void => {
+    if (scheduled || disposed) return;
+    scheduled = true;
+    queueMicrotask(() => {
+      scheduled = false;
+      if (disposed) return;
+      recompute();
+    });
+  };
+
+  const unsubscribeSessions = ctx.sessions.list.subscribe(schedule);
+  const unsubscribeWorkspaces = ctx.workspaces.list.subscribe(schedule);
+  const timer = setInterval(schedule, TICK_MS);
+  schedule();
+
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    unsubscribeSessions();
+    unsubscribeWorkspaces();
+    clearInterval(timer);
+    writer.dispose();
+  };
+}
+
+/** The plugin object the loader mounts. */
+export const clientPlugin = { name: "dsh-session-activity", inject, apply };
+
+export default clientPlugin;

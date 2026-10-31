@@ -15,7 +15,7 @@
 import { readdir, stat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute } from "node:path";
+import { isAbsolute, normalize, resolve } from "node:path";
 
 import type { Context } from "@deepseek-ai/cordis";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
@@ -105,20 +105,38 @@ export class PathExplorerService extends TypertRemoteService {
     const home = homedir();
     const query = request.query;
     if (typeof query !== "string" || query === "") return invalid("query must be a non-empty string");
-    // A bare `~` names the home directory without carrying a separator.
-    if (query !== "~" && !query.includes("/") && !query.includes("\\")) {
-      return invalid("query must contain a path separator");
+    // A bare `~` names the home directory and a bare `..` names the parent of
+    // the base, neither carrying a separator; any other separator-free word
+    // belongs to the workspace index, not this plane.
+    if (query !== "~" && (query.split(/[\\/]/, 1)[0] ?? "") !== ".." && !query.includes("/") && !query.includes("\\")) {
+      return invalid("query must contain a path separator or a parent step");
     }
-    const target = expandHome(query, home);
-    if (!isAbsolute(target) && !query.startsWith("~")) {
-      return invalid("query must be absolute: start with /, a drive letter, ~, or a UNC root");
+    // Dot segments fold before the directory/fragment split, or a mid-path
+    // `..` would end up filtered against like a child name. Relative queries
+    // climb from the session's working directory; without one there is
+    // nothing to climb from, and that is a caller contract breach.
+    const expanded = expandHome(query, home);
+    let target: string;
+    if (isAbsolute(expanded)) {
+      target = normalize(expanded);
+    } else if (expanded.startsWith("~")) {
+      target = normalize(expanded);
+    } else {
+      const base = request.base;
+      if (typeof base !== "string" || base === "" || !isAbsolute(base)) {
+        return invalid("relative queries need an absolute session base directory");
+      }
+      target = normalize(resolve(base, expanded));
     }
 
     // Split into the directory to list and the fragment to filter by. A bare
     // `~` names the home directory itself, exactly like a trailing separator
     // (whose separator the listing path keeps, so children join cleanly).
     const lastSeparator = Math.max(target.lastIndexOf("/"), target.lastIndexOf("\\"));
-    const namesDirectory = query === "~" || lastSeparator === target.length - 1;
+    // `..`-ending queries name the climbed-to directory itself, the same way a
+    // trailing separator does: the reader wants its children, not the entry.
+    const namesDirectory =
+      query === "~" || query === ".." || query.endsWith("/..") || query.endsWith("\\..") || lastSeparator === target.length - 1;
     const directory = namesDirectory
       ? /[\\/]$/.test(target)
         ? target

@@ -24,7 +24,7 @@ import type {
   WorkspacesService,
 } from "./dsh.ts";
 import type { PanelLevel, PanelMode, SessionScope } from "./panel-state.ts";
-import { hexRefQuery, isTypedAbsolutePath } from "./paths.ts";
+import { escapesWorkspace, hexRefQuery, isTypedAbsolutePath } from "./paths.ts";
 import {
   commandRows,
   commitRows,
@@ -125,8 +125,14 @@ function loadSwitch(services: SourceServices, request: LoadRequest): LoadResult 
 async function loadFiles(services: SourceServices, request: LoadRequest): Promise<LoadResult> {
   const { copy, query } = request;
   // A typed-absolute query browses the raw filesystem, which needs no session
-  // and none of the workspace index: different plane, different loader.
+  // and none of the workspace index: different plane, different loader. A
+  // leading `..` escapes the workspace the same way, but climbs from the
+  // session cwd, so without a session there is nothing to climb from.
   if (isTypedAbsolutePath(query)) return loadFilesystem(services, request);
+  if (escapesWorkspace(query)) {
+    if (request.sessionId === null) return { rows: [], status: "error", message: copy.noticeNoSession };
+    return loadFilesystem(services, request);
+  }
   const sessionId = request.sessionId;
   if (sessionId === null) {
     return { rows: [], status: "error", message: copy.noticeNoSession };
@@ -206,8 +212,15 @@ async function loadFilesystem(services: SourceServices, request: LoadRequest): P
   if (pathExplorer === undefined) {
     return { rows: [], status: "error", message: request.copy.failed };
   }
+  // The base only matters to parent-step queries; absolute and tilde spellings
+  // resolve without one, exactly as they did before sessions were consulted.
+  const sessionId = request.sessionId;
+  const snapshot = sessionId === null ? undefined : services.sessions()?.list.getSnapshot();
+  const cwd = sessionId === null || snapshot === undefined ? "" : cwdOf(snapshot, sessionId);
   try {
-    const transport = await pathExplorer.resolve({ query: request.query }, request.signal);
+    const payload =
+      cwd === "" ? { query: request.query } : { query: request.query, base: cwd };
+    const transport = await pathExplorer.resolve(payload, request.signal);
     if (!transport.ok) return { rows: [], status: "error", message: transport.error.code };
     const result = transport.value;
     if (!result.ok) return { rows: [], status: "error", message: result.error.code };

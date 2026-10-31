@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   composeInsertion,
   displayPath,
+  escapesWorkspace,
   hexRefQuery,
   isAbsolutePath,
   isTypedAbsolutePath,
@@ -165,5 +166,18 @@ describe("displayPath", () => {
     expect(displayPath({ path: "./src", kind: "directory" })).toBe("src/");
     expect(displayPath({ path: "src/", kind: "directory" })).toBe("src/");
     expect(displayPath({ path: "./src/a.ts", kind: "file" })).toBe("src/a.ts");
+  });
+});
+
+describe("escapesWorkspace", () => {
+  it("names a leading parent step as an escape, not a mid-path dot segment", () => {
+    expect(escapesWorkspace("..")).toBe(true);
+    expect(escapesWorkspace("../")).toBe(true);
+    expect(escapesWorkspace("../sibling")).toBe(true);
+    expect(escapesWorkspace("..\\win")).toBe(true);
+    expect(escapesWorkspace("a/../b")).toBe(false);
+    expect(escapesWorkspace("./src")).toBe(false);
+    expect(escapesWorkspace("src")).toBe(false);
+    expect(escapesWorkspace("")).toBe(false);
   });
 });

@@ -32,6 +32,18 @@ export function isTypedAbsolutePath(target: string): boolean {
 }
 
 /**
+ * Whether the query's first segment steps out of the session workspace.
+ *
+ * A leading `..` is something the workspace index can never answer: the host
+ * folds any escape to an empty listing. Mid-path dot segments stay where they
+ * are — `a/../b` resolves inside the workspace and the existing plane handles
+ * it.
+ */
+export function escapesWorkspace(target: string): boolean {
+  return (target.split(/[\\/]/, 1)[0] ?? "") === "..";
+}
+
+/**
  * The commit a hex query names, or undefined when it does not name one.
  *
  * Four digits is where a hex prefix becomes unambiguous enough to be worth a

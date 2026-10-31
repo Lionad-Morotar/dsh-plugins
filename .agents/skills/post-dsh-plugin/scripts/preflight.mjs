@@ -41,7 +41,7 @@ function skillVersion() {
 function usage(message) {
   process.stderr.write(
     "usage: node ~/.claude/skills/post-dsh-plugin/scripts/preflight.mjs --mode check --package <dir> " +
-      "[--repo-created <iso>] [--target <hub|awesome|index|all>] [--json]\n" +
+      "[--repo-created <iso>] [--target <hub|awesome|index|registry|all>] [--json]\n" +
       "       node ... --version\n" +
       (message === undefined ? "" : "error: " + message + "\n"),
   );
@@ -65,7 +65,7 @@ function parseArgs(argv) {
   }
   if (out.mode !== "check") usage("--mode must be check");
   if (out.pkg === undefined) usage("--package is required");
-  if (!["hub", "awesome", "index", "all"].includes(out.target)) usage("--target must be hub, awesome, index or all");
+  if (!["hub", "awesome", "index", "registry", "all"].includes(out.target)) usage("--target must be hub, awesome, index, registry or all");
   return out;
 }
 
@@ -146,6 +146,21 @@ function check() {
     add("index", "format-1 fields", typeof engines === "string" && engines !== "" ? "pass" : "fail", typeof engines === "string" ? "engines.dsh " + engines : "engines.dsh is required per version");
     add("index", "locale titles", existsSync(join(packageRoot, "locale", "en.json")) ? "pass" : "fail", "title and description come from locale/en.json and locale/zh.json");
     add("index", "icon readable", typeof pkg.icon === "string" && existsSync(join(packageRoot, pkg.icon.replace(/^\.\//u, ""))) ? "pass" : "fail", typeof pkg.icon === "string" ? pkg.icon : "no icon field");
+  }
+
+  // The independent entry points (dsh.pub, dshopen, deepseek1024, the Workshop
+  // index, dsh-market, hub.omdsh.dev) do not share one rule, but they do share
+  // the facts that decide whether a package is addressable at all: it must be
+  // its own repository root, public, and installable from that root. Only
+  // hub.omdsh.dev additionally demands the dshWorkshop manifest; dsh.bundle is
+  // merely a compatibility mapping there, not a submission contract.
+  if (wants("registry")) {
+    add("registry", "own repository root", atRoot ? "pass" : "fail", atRoot ? "addressable as owner/repo; dsh.pub and hub.omdsh.dev both read the manifest at the repository root" : "a monorepo subdirectory is rejected by dsh.pub and read as the shell package by hub.omdsh.dev; split the package out first");
+    add("registry", "package not private", isPrivate ? "fail" : "pass", isPrivate ? "a private package cannot be listed" : "public package");
+    add("registry", "bundle declaration", hasBundle ? "pass" : "fail", hasBundle ? "dsh.bundle declared; dsh.pub validates the bundle contract" : "dsh.bundle missing; the installable bundle would not resolve");
+    add("registry", "raster icon", existsSync(iconPng) ? "pass" : "manual", existsSync(iconPng) ? "assets/icon-180.png present; catalogs take GitHub-hosted raster" : "assets/icon-180.png missing; several catalogs reject SVG, add a 180px png");
+    add("registry", "dshWorkshop manifest", typeof pkg.dshWorkshop === "object" && pkg.dshWorkshop !== null ? "pass" : "manual", typeof pkg.dshWorkshop === "object" && pkg.dshWorkshop !== null ? "present; hub.omdsh.dev can build a submission from it" : "absent; only hub.omdsh.dev needs it, the other entry points do not");
+    add("registry", "npm or pinned commit", isPrivate ? "fail" : "manual", isPrivate ? "not published" : "an npm version and a pinned public commit are both acceptable source coordinates; verify the one you intend with npm view or a commit SHA");
   }
 
   if (args.created !== undefined) {

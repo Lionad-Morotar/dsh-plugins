@@ -1,0 +1,17 @@
+[data-row-key="workspace:w-archived"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
+[data-row-key="workspace:w-archived"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}
+[data-row-key="workspace:w-blog"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
+[data-row-key="workspace:w-blog"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}
+[data-row-key="workspace:w-faint"] .JoiKIa_title{color:color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-label-primary))}
+[data-row-key="workspace:w-faint"] > .JoiKIa_slot{color:color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-label-primary))}
+[data-row-key="workspace:w-mid"] .JoiKIa_title{color:color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-label-primary));font-weight:600}
+[data-row-key="workspace:w-mid"] > .JoiKIa_slot{color:color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-label-primary))}
+[data-row-key="workspace:w-running"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
+[data-row-key="workspace:w-running"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}
+[data-row-key="workspace:w-strong"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
+[data-row-key="workspace:w-strong"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}
+[data-row-key="session:a1"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:var(--dsw-alias-state-business-primary)}
+[data-row-key="session:b1"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:var(--dsw-alias-state-business-primary)}
+[data-row-key="session:c1"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-label-primary))}
+[data-row-key="session:d1"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-label-primary))}
+[data-row-key="session:f1"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:var(--dsw-alias-state-business-primary)}

@@ -128,3 +128,45 @@ describe("resolve", () => {
     expect(result.entries).toEqual([]);
   });
 });
+
+describe("resolve: relative bases and dotted segments", () => {
+  it("climbs one level for a leading .. against the session base", async () => {
+    await mkdir(join(root, "outer", "inner"), { recursive: true });
+    await writeFile(join(root, "outer", "readme.md"), "");
+
+    const result = await explorer.resolve({ query: "../rea", base: join(root, "outer", "inner") });
+
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.entries.map(entry => entry.path)).toEqual([join(root, "outer", "readme.md")]);
+  });
+
+  it("lists the parent itself when the query is a bare ..", async () => {
+    await mkdir(join(root, "outer", "inner"), { recursive: true });
+    await writeFile(join(root, "outer", "readme.md"), "");
+
+    const result = await explorer.resolve({ query: "..", base: join(root, "outer", "inner") });
+
+    if (!result.ok) throw new Error("unreachable");
+    // The parent's children, base itself included, directories first.
+    expect(result.entries.map(entry => entry.path)).toEqual([
+      join(root, "outer", "inner"),
+      join(root, "outer", "readme.md"),
+    ]);
+  });
+
+  it("folds dotted segments out of an absolute query before splitting", async () => {
+    await mkdir(join(root, "nested"));
+    await writeFile(join(root, "sib.txt"), "");
+
+    const result = await explorer.resolve({ query: `${root}/nested/../sib` });
+
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.entries.map(entry => entry.path)).toEqual([join(root, "sib.txt")]);
+  });
+
+  it("refuses a relative query without a base", async () => {
+    const result = await explorer.resolve({ query: "../sibling" });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "invalid-request" } });
+  });
+});
