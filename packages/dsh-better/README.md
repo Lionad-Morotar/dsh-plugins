@@ -1,6 +1,6 @@
 # dsh-better
 
-为原生 DeepSeek Harness 增加能力。四个面：`/model` 选择器支持按供应商搜索并在行内平铺推理等级；输入框的模型触发器改为打开同一个选择器，模型名左侧带上 provider 名；`⌘Space` 把键盘送回输入框，键位在宿主快捷键面板里可改；输入框全选时附件一起被选中，复制成文本加绝对路径、粘贴时按路径还原成附件。
+为原生 DeepSeek Harness 增加能力。五个面：`/model` 选择器支持按供应商搜索并在行内平铺推理等级；输入框的模型触发器改为打开同一个选择器，模型名左侧带上 provider 名；`⌘Space` 把键盘送回输入框，键位在宿主快捷键面板里可改；输入框全选时附件一起被选中，复制成文本加绝对路径、粘贴时按路径还原成附件；输入框下方的读数行里，上下文占用环右边多一个「压缩 N 次」。
 
 ## 解决的问题
 
@@ -98,6 +98,31 @@ profile 的 `package.json` 里加依赖与 bundle：
 
 描边用 `outline` 而不是 `border`/`box-shadow`：`outline` 不参与布局，标记出现与消失不引起任何回流；它画在附件自身元素的内侧（`outline-offset: -2px`），因为附件栏的轨道是 `overflow-x: auto / overflow-y: hidden` 且高度正好等于条目高度，画在外侧会被上下裁掉。颜色用 `--dsw-alias-state-business-primary`（本主题里真正承载品牌色的 token，也是发送按钮的填充色），`--dsw-alias-brand-primary` 名字像但在这个主题里是墨色，用它画出来是黑圈。
 
+## 上下文压缩次数
+
+输入框下方那行读数的末尾，上下文占用环（`上下文已用 N%`）右边多一个「压缩 N 次」。它回答的是与占用率相邻但不同的问题：上下文有多满，以及它被重建过多少次——一个跑了四小时却只占 12% 的会话，通常是被压缩过几次的会话，而此前屏幕上没有任何东西说过这件事。
+
+数字来自本包宿主半注册的 `sessionCompaction` 投影（`ctx.sessionProjections`）：占用率说明上下文有多满，永远不会说明它被重建过几次，所以这个数字只能在宿主侧折叠会话日志、再作为 wire view 送到浏览器。客户端半只负责格式化。
+
+计数口径以 `compaction/end` 为准：一次尝试只有一个收口事件，不带 `error` 记一次落地压缩，带 `error` 记一次失败。自动压缩与 `/compact` 走同一条路径，都算。另外两个候选事件都不行：
+
+- `compaction/start` 是摘要开始前写下的持久锁，进程中途崩掉也会留下它，计进去会把没落地的尝试算成一次；
+- `compaction/summary` 是提交的**第一条**事件，写在替换对话面之前——提交在两者之间失败时，catch 会补一条带 `error` 的 `end`，按 summary 计就会把没落地的压缩算成一次。
+
+失败次数因此是「已开锁但没落地」的次数，而不是「所有被拒的尝试」：区域校验、正在压缩等检查都在写 `start` 之前抛错，这类尝试不落任何事件，读数看不到，鼠标悬停的说明也不会把它们算进去。
+
+fork 会话只算自己的：seeded 会话的日志前缀是父会话的事件，registry 从日志开头折叠，所以 `init` 记下继承前缀长度（`inheritedEventCount`），折叠跳过 `seq` 小于它的部分。本机实测一个 seeded 会话有 8 条收口事件，其中 4 条在继承前缀里——不跳过就会把父会话的压缩算成自己的。
+
+零次压缩时不渲染：新会话旁边常驻一个「压缩 0 次」是噪音，占用环自己也是等到有占用才出现。宿主没有 `sessionProjections` 这个 seam 时读数同样不出现，本包其余四个面照旧工作——宿主半用软探测，不是硬依赖。
+
+键名 `sessionCompaction` 沿用 `dsh-session-timing` 的 `sessionTiming` 那个取舍：起一个描述性的新 key 就没有和宿主耦合，代价是万一上游将来也发同名投影、且 `stateVersion` 不同，注册会直接抛错（同版本则静默共享第一个注册）。选新 key 而不是接管既有 key，是为了卸载本包就干净回到上游行为。
+
+### 为什么位置由 CSS `order` 决定
+
+宿主把占用环硬编码在 `conversation.composer.dock` 出口之后，所以 slot 条目在 DOM 顺序上永远在环的左边；而那个出口的锚点样式是 `display: contents`，条目本身就是 dock 这个 flex 行的 item，于是 `order` 是唯一能把读数挪到环右边的开关。
+
+`order` 只收整数，所以「环右边、面板上方」写不成一个介于两者之间的值：占用环与统计 pill 保持默认 0，docked 终端（`dsh-term-dock`）占 1 并顺带把整行变成 wrap、面板独占一行。读数因此也进 order 1 这一档，同时用 slot `order: -1` 让自己在档内排在终端之前——落点就是「环右边、终端上方」。终端 docked 时那一档的 gap 被压成 0，读数自己补 12px 左边距。
+
 ## 开发
 
 ```sh
@@ -109,3 +134,5 @@ pnpm --filter dsh-better build      # 产出 lib/
 `src/client/search.ts` 是纯排序逻辑（无 DOM、无 React），`groups.ts` 复刻原生分组与 per-group 排序，`overlay.tsx` 负责渲染与遮蔽，`focus.ts` 是快捷键的声明、解析器与两条宿主探测（当前会话、输入框是否在屏）。`test/focus.test.ts` 把宿主的命令 id 规则、web 可接受组合与解析器的三种让位情形钉成断言——注册被宿主拒绝时命令会从面板里消失且不报错，这种失败只能靠断言挡住。
 
 `composer-clipboard.ts` 是剪贴板契约（编码、解码、纯文本拼装、路径列表解析、按路径去重），无 DOM 无 React，`test/composer-clipboard.test.ts` 钉住三件事：同应用往返无损、纯文本那份能单独用、文本解析足够窄（提到路径的句子不会被吞成附件）。`composer-attachments.tsx` 是附件栏的包装组件与 DOM 事件面，行为靠真机验证——全选标记、复制写入、粘贴还原、去重、清除时机。
+
+`src/compaction.ts` 是 `sessionCompaction` 投影单元（折叠、schema、wire view），`src/index.ts` 只做注册；`test/compaction.test.ts` 把口径钉死：`compaction/end` 无 error 记落地、带 error 记失败、`start` 与 `summary` 都不计、`seq` 小于继承前缀的事件整段跳过；另外还断言无关事件返回同一个引用（每个 token chunk 都会过这个折叠，换新对象会让 registry 的 `Object.is` 变更检查每次都触发）。`client/compaction-stat.tsx` 的 `compactionReading` 是纯函数（零次静默、单复数、失败说明），`client/compaction-styles.ts` 的样式规则由 `test/compaction-stat.test.ts` 断言 `order: 1` 与 slot 顺序的配对——这两半必须一起成立才能落在占用环右边。
