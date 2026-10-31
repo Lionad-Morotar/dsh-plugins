@@ -1,8 +1,7 @@
-[data-row-key="session:s-2d"]{opacity:0.82}
-[data-row-key="session:s-4d"]{opacity:0.55}
-[data-row-key="session:s-5d"]{opacity:0.45}
-[data-row-key="session:s-archived"]{opacity:0.7}
-[data-row-key="session:s-fresh"]{color:var(--dsw-alias-state-business-primary);font-weight:600}
-[data-row-key="session:s-running"]{color:var(--dsw-alias-state-business-primary);font-weight:600}
-[data-row-key^="session:"]:hover{opacity:1}
-[data-row-key^="session:"][aria-selected="true"]{opacity:1}
+[data-row-key="workspace:w-2d"] .JoiKIa_title{opacity:0.82}
+[data-row-key="workspace:w-4d"] .JoiKIa_title{opacity:0.55}
+[data-row-key="workspace:w-5d"] .JoiKIa_title{opacity:0.45}
+[data-row-key="workspace:w-active"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
+[data-row-key="workspace:w-archived-only"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
+[data-row-key^="workspace:"]:hover .JoiKIa_title{opacity:1}
+[data-row-key^="workspace:"]:has(.JoiKIa_folderActive) .JoiKIa_title{opacity:1}

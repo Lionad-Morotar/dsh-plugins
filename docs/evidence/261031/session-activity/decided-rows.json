@@ -1,44 +1,58 @@
 [
   {
-    "id": "s-running",
-    "label": "运行中（宿主圆点占位）",
+    "workspaceId": "w-active",
+    "title": "dsh-plugins",
+    "note": "一个会话正在跑，另一个 10 分钟前动过",
     "tier": "hot",
-    "opacity": 1
+    "opacity": 1,
+    "members": 2
   },
   {
-    "id": "s-fresh",
-    "label": "10 分钟前有活动",
-    "tier": "hot",
-    "opacity": 1
-  },
-  {
-    "id": "s-today",
-    "label": "6 小时前有活动",
+    "workspaceId": "w-today",
+    "title": "flow-skills",
+    "note": "今天动过，但没在跑",
     "tier": "warm",
-    "opacity": 1
+    "opacity": 1,
+    "members": 1
   },
   {
-    "id": "s-2d",
-    "label": "2.2 天前有活动",
+    "workspaceId": "w-2d",
+    "title": "lionad.dev",
+    "note": "两天多没动静",
     "tier": "dim",
-    "opacity": 0.82
+    "opacity": 0.82,
+    "members": 1
   },
   {
-    "id": "s-4d",
-    "label": "4 天前有活动",
+    "workspaceId": "w-4d",
+    "title": "deep-whale",
+    "note": "四天没动静",
     "tier": "dim",
-    "opacity": 0.55
+    "opacity": 0.55,
+    "members": 2
   },
   {
-    "id": "s-5d",
-    "label": "5 天前有活动（触底）",
+    "workspaceId": "w-5d",
+    "title": "old-lab",
+    "note": "五天没动静，衰减触底",
     "tier": "dim",
-    "opacity": 0.45
+    "opacity": 0.45,
+    "members": 1
   },
   {
-    "id": "s-archived",
-    "label": "归档 · 3 天前",
-    "tier": "dim",
-    "opacity": 0.7
+    "workspaceId": "w-archived-only",
+    "title": "archived-work",
+    "note": "成员全部归档，但最近 20 分钟前还有活动",
+    "tier": "hot",
+    "opacity": 1,
+    "members": 1
+  },
+  {
+    "workspaceId": "w-empty",
+    "title": "empty-ws",
+    "note": "没有会话成员，不产出规则",
+    "tier": "none",
+    "opacity": 1,
+    "members": 0
   }
 ]
