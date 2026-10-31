@@ -1,0 +1,44 @@
+[
+  {
+    "id": "s-running",
+    "label": "运行中（宿主圆点占位）",
+    "tier": "hot",
+    "opacity": 1
+  },
+  {
+    "id": "s-fresh",
+    "label": "10 分钟前有活动",
+    "tier": "hot",
+    "opacity": 1
+  },
+  {
+    "id": "s-today",
+    "label": "6 小时前有活动",
+    "tier": "warm",
+    "opacity": 1
+  },
+  {
+    "id": "s-2d",
+    "label": "2.2 天前有活动",
+    "tier": "dim",
+    "opacity": 0.82
+  },
+  {
+    "id": "s-4d",
+    "label": "4 天前有活动",
+    "tier": "dim",
+    "opacity": 0.55
+  },
+  {
+    "id": "s-5d",
+    "label": "5 天前有活动（触底）",
+    "tier": "dim",
+    "opacity": 0.45
+  },
+  {
+    "id": "s-archived",
+    "label": "归档 · 3 天前",
+    "tier": "dim",
+    "opacity": 0.7
+  }
+]
