@@ -31,6 +31,12 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     // Keyed through the constant so the catalog's label and this dictionary
     // cannot drift apart.
     [FOCUS_LABEL_KEY]: "聚焦输入框",
+    // Attachment clipboard notices. Each names what did not survive the trip, so a
+    // partial copy or paste is never silent.
+    "attach.copySkipped": "{count} 个附件来自剪贴板、没有本地路径，未复制",
+    "attach.pasteMissing": "{count} 个附件对应的文件已不存在，未粘贴",
+    "attach.pasteReferenced": "{count} 个附件超出单次读取上限，已改为路径引用",
+    "attach.copyFailed": "浏览器拒绝了这次剪贴板写入",
   },
   en: {
     "overlay.aria": "Select a model",
@@ -46,5 +52,9 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "trigger.fallback": "Select model",
     "trigger.loading": "Loading models…",
     [FOCUS_LABEL_KEY]: "Focus message input",
+    "attach.copySkipped": "{count} attachment(s) came from the clipboard with no local path and were not copied",
+    "attach.pasteMissing": "{count} attachment(s) no longer exist and were not pasted",
+    "attach.pasteReferenced": "{count} attachment(s) exceed the read limit and became path references",
+    "attach.copyFailed": "The browser refused this clipboard write",
   },
 });

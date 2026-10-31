@@ -20,6 +20,12 @@
 import type { ReactNode } from "react";
 
 import { createOverlay, type OverlayDeps, type OverlayProps } from "./overlay.tsx";
+import {
+  createComposerAttachments,
+  type ComposerAttachmentsDeps,
+  type ComposerAttachmentsProps,
+  type WorkspaceReaderLike,
+} from "./composer-attachments.tsx";
 import { DICTIONARIES } from "./dictionaries.ts";
 import {
   composerMounted,
@@ -43,6 +49,15 @@ const OVERLAY_SLOT = "conversation.input.overlay";
 const SEAT_SLOT = "conversation.input.model";
 
 /**
+ * The draft-attachment rail.
+ *
+ * A `single` slot holding the shell's own rail, so it is shadowed exactly the way
+ * the seat is: this entry wins the cell, draws the shipped component as its child,
+ * and adds the selection and clipboard behaviour around it.
+ */
+const ATTACHMENTS_SLOT = "conversation.input.attachments";
+
+/**
  * Priority for the seat shadow.
  *
  * The seat is a `single` slot, so its occupant is a single cell: any lower
@@ -50,6 +65,14 @@ const SEAT_SLOT = "conversation.input.model";
  * the two shadows are independently identifiable in an entry listing.
  */
 const SEAT_PRIORITY = -50;
+
+/**
+ * Priority for the attachment rail shadow.
+ *
+ * Also below the shell's 0, and distinct from the seat's value so the two shadows
+ * are independently identifiable in an entry listing.
+ */
+const ATTACHMENTS_PRIORITY = -60;
 
 /**
  * The cell id the shell registers its picker under.
@@ -172,6 +195,14 @@ export interface ClientContextLike {
    * effort ladders shown here are the same ones a selection is resolved against.
    */
   readonly modelDirectories?: ModelDirectoriesLike | undefined;
+  /**
+   * The client's Remote namespaces.
+   *
+   * Only `remote` itself is read here; `remote.workspaceFiles` is a separate
+   * service name in this host and is reached through the soft probe below, not
+   * through this object — Cordis refuses a nested lookup that was not declared.
+   */
+  readonly remote?: unknown;
   effect(callback: () => () => void, label?: string): void;
   /**
    * Run a callback once the named services are mounted.
@@ -186,6 +217,19 @@ export interface ClientContextLike {
 /** The scope the `shortcuts` soft probe hands back. */
 export interface ShortcutsScopeLike {
   readonly shortcuts: ShortcutRegistryLike;
+  effect(callback: () => () => void, label?: string): void;
+}
+
+/**
+ * The scope the `remote.workspaceFiles` soft probe hands back.
+ *
+ * A dotted service name is its own entry in this host's registry, so the probe is
+ * read by that full name; `remote` itself is a separate service and reading the
+ * reader off it is refused without a declaration this package deliberately does
+ * not make.
+ */
+export interface WorkspaceFilesScopeLike {
+  readonly "remote.workspaceFiles"?: WorkspaceReaderLike | undefined;
   effect(callback: () => () => void, label?: string): void;
 }
 
@@ -334,6 +378,53 @@ export const clientPlugin = {
       "dsh-better: composer model trigger",
     );
 
+    // The attachment rail: the shipped rail as a child, plus the selection the
+    // shell does not have and the clipboard round-trip that makes it useful.
+    //
+    // The workspace-file reader is a soft probe, not a plugin dependency: without
+    // it a paste still restores the text and leaves the paths as text, and a host
+    // that never mounts that bundle still gets every other feature here.
+    let workspaceFiles: WorkspaceReaderLike | undefined;
+    ctx.inject?.<WorkspaceFilesScopeLike>(["remote.workspaceFiles"], scope => {
+      workspaceFiles = scope["remote.workspaceFiles"];
+      scope.effect(
+        () => () => {
+          workspaceFiles = undefined;
+        },
+        "dsh-better: workspace file reader",
+      );
+    });
+
+    ctx.effect(
+      () =>
+        ctx.slots.inject(ATTACHMENTS_SLOT, () => {
+          const self: { component?: (props: ComposerAttachmentsProps) => ReactNode } = {};
+          const deps: ComposerAttachmentsDeps = {
+            native: () => findShadowedSingle<ComposerAttachmentsProps>(ctx.slots.entries(ATTACHMENTS_SLOT), self.component),
+            pathOf: pathOfFile,
+            // Read per paste rather than captured: the reader arrives with its own
+            // service, which may mount after this registration.
+            reader: () => workspaceFiles,
+            translate: () => ctx.locale.bind?.(NS),
+          };
+          const ComposerAttachments = createComposerAttachments(deps);
+          self.component = ComposerAttachments;
+          return ctx.slots.register(
+            {
+              name: ATTACHMENTS_SLOT,
+              priority: ATTACHMENTS_PRIORITY,
+              locale: NS,
+              // The rail itself is handed everything it needs by the shell; the
+              // Session id is the one thing this wrapper adds, and it is what makes
+              // a pasted path readable through the Session's filesystem.
+              inject: (sessionId) => ({ sessionId }),
+            },
+            ComposerAttachments,
+          );
+        }),
+      "dsh-better: composer attachment selection",
+    );
+
     // The focus chord: one host-registered command, so it appears in 设置 →
     // 快捷键 next to the built-in bindings and is rebound there. `inject` is the
     // soft probe, not a plugin-level dependency — see ClientContextLike.inject.
@@ -365,15 +456,19 @@ export const clientPlugin = {
  *
  * A single slot has one cell, so "the other entry" is unambiguous: every live
  * entry that is not this one is a candidate, and the lowest priority would render.
+ *
+ * Generic over the props because this package shadows two single cells with
+ * unrelated contracts; the search itself only ever touches entry identity and
+ * priority, so it has no reason to know either shape.
  * @param entries - entries registered for the slot.
  * @param own - this plugin's component, excluded from the search.
  * @returns the shell's component, or undefined when the cell is otherwise empty.
  */
-export function findShadowedSingle(
+export function findShadowedSingle<Props>(
   entries: readonly SlotEntryLike[],
-  own: ((props: SeatProps) => ReactNode) | undefined,
-): ((props: SeatProps) => ReactNode) | undefined {
-  let best: ((props: SeatProps) => ReactNode) | undefined;
+  own: ((props: Props) => ReactNode) | undefined,
+): ((props: Props) => ReactNode) | undefined {
+  let best: ((props: Props) => ReactNode) | undefined;
   let bestPriority = Number.POSITIVE_INFINITY;
   for (const entry of entries) {
     const component = entry.component;
@@ -381,7 +476,7 @@ export function findShadowedSingle(
     if (own !== undefined && component === own) continue;
     const priority = entry.options.priority ?? 0;
     if (priority < bestPriority) {
-      best = component as (props: SeatProps) => ReactNode;
+      best = component as (props: Props) => ReactNode;
       bestPriority = priority;
     }
   }
@@ -454,6 +549,32 @@ function directorySnapshot(
   sessionId: string,
 ): DirectorySnapshotLike | undefined {
   return ctx.modelDirectories?.directoryFor?.(sessionId)?.store.getSnapshot();
+}
+
+/**
+ * Resolve one attachment's absolute path, when this document has one.
+ *
+ * The Desktop application installs a bridge that maps a browser `File` back to
+ * the path Chromium read it from; nothing else does. That is the whole reason a
+ * copied attachment can carry a path instead of its bytes: the composer's own
+ * attachments are `File` objects with no path of their own, and only the bridge
+ * can say where they came from.
+ *
+ * Every failure mode here is "no path": the bridge is absent in the web shell, a
+ * clipboard image was never a file on disk, and `getPathForFile` throws for a
+ * `File` it does not recognise. The caller treats all three the same way.
+ * @param file - the browser file of a draft attachment.
+ * @returns the absolute path, or the empty string when this file has none.
+ */
+function pathOfFile(file: File): string {
+  const bridge = (globalThis as { __DSH_HOST_PATHS__?: { pathFor?(file: File): unknown } }).__DSH_HOST_PATHS__;
+  if (bridge?.pathFor === undefined) return "";
+  try {
+    const path = bridge.pathFor(file);
+    return typeof path === "string" ? path : "";
+  } catch {
+    return "";
+  }
 }
 
 /**
