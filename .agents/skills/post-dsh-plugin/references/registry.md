@@ -9,8 +9,8 @@
 ### dsh.pub
 
 - 规模：12,705 个插件（2026-10-31）
-- 投稿：`https://dsh.pub/en/submit/`，一个输入框填仓库根 URL。**注意**：它带 Cloudflare Turnstile，接口 `POST /api/submissions` 服务端强制要 `turnstileToken`，纯脚本发不出去，必须真实浏览器。人在浏览器里点过复选框后，`window.turnstile` 才会给出 token
-- 硬性要求：可安装的 bundle 必须在**仓库根**。monorepo 子目录包在这一条上直接出局
+- 投稿：`https://dsh.pub/en/submit/`，一个输入框填仓库根 URL。注意它带 Cloudflare Turnstile，接口 `POST /api/submissions` 服务端强制要 `turnstileToken`，纯脚本发不出去，必须真实浏览器。人在浏览器里点过复选框后，`window.turnstile` 才会给出 token
+- 硬性要求：可安装的 bundle 必须在仓库根。monorepo 子目录包在这一条上直接出局
 - 流程：提交 → 后台自动开 PR → 三项检查（Quality、Validate plugin submission、Merge validated submission）→ 自动合并。全自动，无人介入
 - 验证过的事实：它的 `Validate` 会跑静态检查、单测、装浏览器做 E2E、构建可部署产物，全程约 6 分钟
 - 上线：合并后 push 触发整合，写 `packages/catalog/src/community.generated.json`、`community.sources.json`、`apps/server/src/installable-slugs.generated.json`、`apps/dsh-plugin/src/client/catalog.generated.json`，然后部署
@@ -20,7 +20,7 @@
 
 - 规模：965 个 npm 包，format-1 索引在 `https://dshopen.org/index.json`
 - 投稿：`polang233/dsh-plugin-index` 的 issue 表单 `plugin-add.yml`，三个字段：插件地址（npm 包名或仓库 URL，子目录要注明）、简短说明、补充信息（可选 Logo 与截图）
-- 判据：它的索引**按 npm 包名组织**，不按 GitHub 仓库。所以只有仓库地址而没有 npm 包的插件在这里很难定位
+- 判据：它的索引按 npm 包名组织，不按 GitHub 仓库。所以只有仓库地址而没有 npm 包的插件在这里很难定位
 - 站点入口：`https://dshopen.org/` 上的 Submit a plugin
 
 ### dshmarketplace.dev
@@ -39,7 +39,7 @@
 
 ### dsh-market.com 创意工坊
 
-- 主仓 `zhu1090093659/dsh-web`（9,857★），但**登记入口不在这个仓**，在独立的 `zhu1090093659/dsh-community-plugins`
+- 主仓 `zhu1090093659/dsh-web`（9,857★），但登记入口不在这个仓，在独立的 `zhu1090093659/dsh-community-plugins`
 - 投稿：往该仓根 `community.json` 追加条目。必填字段、分类枚举、校验命令与追加方式见 `registry-contracts.md`
 - 门禁：PR 由 `.github/pr-review-routes.json` 路由给审查人，缺 review 时状态是 BLOCKED 而非失败，别当成检查没过
 
@@ -65,7 +65,7 @@
 
 星数从高到低，全是提 PR 或 issue：AdamPlatin123（1,488★，容器实测）、0xsline（1,286★）、Zhiyuan-Fan（563★）、Dominic789654（408★，要求仓库带 `#dsh` topic）、bruc3van（483★）、leenkcool/Blue-Whale-Harness（201★，issue 模板 `catalog-intake`）、bradeGithub（196★）、2BingLing/dsh-market（186★，issue 模板 `submit_plugin.md`，bot 自动回复并在收录后关闭 issue）、beancookie（185★，两个 README 各加一行）、whyihaveyou/dsh-suite（64★，issue 模板 `plugin-submission.md`）。
 
-投之前先确认它是不是其实自动同步的——多数写着自动，提 PR 只是提前。
+投之前先确认它是不是其实自动同步的：多数写着自动，提 PR 只是提前。
 
 ## 已经死掉或停更的
 

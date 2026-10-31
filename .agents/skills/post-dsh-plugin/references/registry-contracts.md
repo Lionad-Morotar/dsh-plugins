@@ -67,8 +67,8 @@ schema 是 `omdsh-workshop-submission/v2`，官方定义 `https://hub.omdsh.dev/
 
 `release.profileBundle.spec` 接受两种形态：
 
-- 裸版本号 `0.1.1` —— 走 npm
-- `github:owner/repo#<40 位 commit>` 或 `git+https://...#<40 位>` —— 走 git 固定源
+- 裸版本号 `0.1.1`，走 npm
+- `github:owner/repo#<40 位 commit>` 或 `git+https://...#<40 位>`，走 git 固定源
 
 这意味着**不一定要发 npm**。想避免升版本号与发布，用固定 commit 形态即可，schema 明确允许。反过来，发行 npm 后仓库、npm、市场索引三方要一致，改动面更大。
 
