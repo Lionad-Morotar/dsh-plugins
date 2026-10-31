@@ -62,15 +62,18 @@ export interface WorkspaceItemWire {
 export interface WorkspaceSnapshotWire {
   /** The registry's workspaces; absent until the list has loaded. */
   readonly items?: readonly WorkspaceItemWire[];
+  /** The registry-global archive set, sitting next to `items` on the same snapshot. */
+  readonly archivedSessionIds?: readonly string[];
 }
 
 /**
  * The workspaces service face.
  *
  * Its observable nests under `list`, exactly like `sessions.list`: `workspaces` is
- * the controller service and `list` is the snapshot source it publishes. Only
- * `items` is read; the archive set is deliberately ignored, because an archived
- * session still counts as a member when its workspace is folded.
+ * the controller service and `list` is the snapshot source it publishes. Both
+ * `items` and the archive set are read: an archived session still counts as a
+ * member when its workspace is folded, but its row must stay out of the accent,
+ * because the host paints it with the caption colour that means "archived".
  */
 export interface WorkspacesLike {
   readonly list: {
@@ -100,6 +103,21 @@ function workspaceItems(workspaces: WorkspacesLike): readonly unknown[] {
 }
 
 /**
+ * Read the host's archive set out of the workspaces snapshot.
+ *
+ * The set sits next to `items` on the same snapshot, so it is read from the same
+ * place the host's own rows are built from. An unreadable value reads as nothing
+ * archived rather than as an error: the fold still paints, and only the accent's
+ * filter is lost, which the host's own class keeps correct anyway.
+ * @param workspaces - the injected workspaces service.
+ * @returns the archived session ids, or an empty list when the snapshot carries none.
+ */
+function archivedSessionIds(workspaces: WorkspacesLike): readonly unknown[] {
+  const archived = readableRecord(workspaces.list.getSnapshot())?.archivedSessionIds;
+  return Array.isArray(archived) ? archived : [];
+}
+
+/**
  * Mount the workspace title tint.
  *
  * The recompute is coalesced through a microtask because one host change can
@@ -119,6 +137,7 @@ export function apply(ctx: ClientContextLike, config?: Partial<ActivityConfig>):
 
   const recompute = (): void => {
     const list = ctx.sessions.list.getSnapshot();
+    const archived = archivedSessionIds(ctx.workspaces);
     const now = Date.now();
     const rows: WorkspaceRule[] = [];
     // A snapshot whose items cannot be read paints nothing rather than throwing:
@@ -129,7 +148,7 @@ export function apply(ctx: ClientContextLike, config?: Partial<ActivityConfig>):
       const workspaceId = item?.workspaceId;
       // The ungrouped bucket is not a workspace and has no row key of its own.
       if (typeof workspaceId !== "string" || workspaceId === "") continue;
-      const reading = aggregateWorkspace(list, item?.sessionIds);
+      const reading = aggregateWorkspace(list, item?.sessionIds, archived);
       // An empty or wholly unresolvable workspace is left alone rather than
       // painted from a guess: a freshly created one must not start out dim.
       if (reading === undefined) continue;
@@ -142,6 +161,7 @@ export function apply(ctx: ClientContextLike, config?: Partial<ActivityConfig>):
       rows.push({
         workspaceId,
         tier,
+        hasUnarchivedMembers: reading.archivedCount < reading.memberCount,
         opacityLight: dim ? opacityFor(age, resolved, "light") : 1,
         opacityDark: dim ? opacityFor(age, resolved, "dark") : 1,
       });

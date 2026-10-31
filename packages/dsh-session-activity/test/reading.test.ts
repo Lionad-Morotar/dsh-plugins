@@ -177,7 +177,12 @@ describe("aggregateWorkspace", () => {
       s2: { updatedAt: NOW - 2 * DAY_MS, projectionValues: { sessionActivity: view(NOW - 5 * DAY_MS) } },
       s3: { updatedAt: NOW - 3 * DAY_MS, projectionValues: { sessionActivity: view(NOW - HOUR_MS) } },
     });
-    expect(aggregateWorkspace(list, ["s1", "s2", "s3"])).toEqual({ lastActivityAt: NOW - HOUR_MS, running: false });
+    expect(aggregateWorkspace(list, ["s1", "s2", "s3"])).toEqual({
+      lastActivityAt: NOW - HOUR_MS,
+      running: false,
+      memberCount: 3,
+      archivedCount: 0,
+    });
   });
 
   it("falls back to a member's updatedAt when its projection carries no instant", () => {
@@ -188,13 +193,52 @@ describe("aggregateWorkspace", () => {
     expect(aggregateWorkspace(list, ["s1", "s2"])?.lastActivityAt).toBe(NOW - 2 * HOUR_MS);
   });
 
-  it("counts archived members too, because the archive set is not an input here", () => {
-    // The fold reads the workspace's member ids and the session list, nothing
-    // else: archiving lives on the workspaces snapshot, so a member the host has
-    // archived is just another member. A workspace whose only session is archived
-    // is still one a human worked in.
+  it("reports no archived member when the host's archive set is empty", () => {
+    const list = listOf({ s1: { updatedAt: NOW - HOUR_MS }, s2: { updatedAt: NOW - 2 * HOUR_MS } });
+    expect(aggregateWorkspace(list, ["s1", "s2"], [])).toEqual({
+      lastActivityAt: NOW - HOUR_MS,
+      running: false,
+      memberCount: 2,
+      archivedCount: 0,
+    });
+  });
+
+  it("reports every member as archived when the whole workspace is archived", () => {
+    const list = listOf({ s1: { updatedAt: NOW - HOUR_MS }, s2: { updatedAt: NOW - 2 * HOUR_MS } });
+    expect(aggregateWorkspace(list, ["s1", "s2"], ["s1", "s2"])).toEqual({
+      lastActivityAt: NOW - HOUR_MS,
+      running: false,
+      memberCount: 2,
+      archivedCount: 2,
+    });
+  });
+
+  it("counts only the archived members of this workspace", () => {
+    const list = listOf({ s1: { updatedAt: NOW }, s2: { updatedAt: NOW - HOUR_MS }, s3: { updatedAt: NOW - 2 * HOUR_MS } });
+    expect(aggregateWorkspace(list, ["s1", "s2", "s3"], ["s2", "elsewhere"])?.archivedCount).toBe(1);
+  });
+
+  it("keeps an archived member in the factor, because the workspace was still worked in", () => {
+    // Archiving is a sidebar filter, not an erasure: the member still carries the
+    // newest instant, so a workspace whose only session is archived still reads as
+    // recently used. The archive set only decides which rows the accent may reach.
     const list = listOf({ s1: { updatedAt: NOW - 30 * DAY_MS } });
-    expect(aggregateWorkspace(list, ["s1"])).toEqual({ lastActivityAt: NOW - 30 * DAY_MS, running: false });
+    expect(aggregateWorkspace(list, ["s1"], ["s1"])).toEqual({
+      lastActivityAt: NOW - 30 * DAY_MS,
+      running: false,
+      memberCount: 1,
+      archivedCount: 1,
+    });
+  });
+
+  it("reads an unreadable archive set as nothing archived", () => {
+    // The archive set is another host shape this half does not own; losing it must
+    // cost the accent its filter, not the whole fold.
+    const list = listOf({ s1: { updatedAt: NOW } });
+    for (const unreadable of [undefined, null, "s1", 42, {}]) {
+      expect(aggregateWorkspace(list, ["s1"], unreadable)?.archivedCount).toBe(0);
+    }
+    expect(aggregateWorkspace(list, ["s1"], ["s1", 42, null])?.archivedCount).toBe(1);
   });
 
   it("propagates running from any single member", () => {
@@ -202,7 +246,12 @@ describe("aggregateWorkspace", () => {
       s1: { running: false, updatedAt: NOW - 3 * DAY_MS },
       s2: { running: true, updatedAt: NOW - 3 * DAY_MS },
     });
-    expect(aggregateWorkspace(list, ["s1", "s2"])).toEqual({ lastActivityAt: NOW - 3 * DAY_MS, running: true });
+    expect(aggregateWorkspace(list, ["s1", "s2"])).toEqual({
+      lastActivityAt: NOW - 3 * DAY_MS,
+      running: true,
+      memberCount: 2,
+      archivedCount: 0,
+    });
     expect(aggregateWorkspace(listOf({ s1: { running: false, updatedAt: NOW } }), ["s1"])?.running).toBe(false);
   });
 
@@ -216,12 +265,22 @@ describe("aggregateWorkspace", () => {
   });
 
   it("keeps a readable member that has no clock yet, which the curve reads as undecided", () => {
-    expect(aggregateWorkspace(listOf({ s1: { running: false } }), ["s1"])).toEqual({ lastActivityAt: null, running: false });
+    expect(aggregateWorkspace(listOf({ s1: { running: false } }), ["s1"])).toEqual({
+      lastActivityAt: null,
+      running: false,
+      memberCount: 1,
+      archivedCount: 0,
+    });
   });
 
   it("skips the members the snapshot cannot resolve and keeps the rest", () => {
     const list = listOf({ s2: { updatedAt: NOW - HOUR_MS } });
-    expect(aggregateWorkspace(list, ["gone", 42, "s2"])).toEqual({ lastActivityAt: NOW - HOUR_MS, running: false });
+    expect(aggregateWorkspace(list, ["gone", 42, "s2"])).toEqual({
+      lastActivityAt: NOW - HOUR_MS,
+      running: false,
+      memberCount: 1,
+      archivedCount: 0,
+    });
   });
 
   it("feeds the same curve as a session reading", () => {

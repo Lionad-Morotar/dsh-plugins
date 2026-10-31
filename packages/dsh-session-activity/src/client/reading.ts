@@ -75,13 +75,20 @@ export interface ActivityReading {
  * What one workspace reads as, folded from its member sessions.
  *
  * Deliberately narrow: the curve only ever asks when the level last moved and
- * whether it is still moving, and a workspace answers both from its members.
+ * whether it is still moving, and a workspace answers both from its members. The
+ * two counts answer a third question the rule builder asks, which is whether the
+ * accent has any row to reach: an archived member keeps its host colour, so a
+ * workspace whose members are all archived must not emit a member accent rule.
  */
 export interface WorkspaceReading {
   /** The newest instant any member session shows; null when no member has a clock. */
   readonly lastActivityAt: number | null;
   /** Whether any member session is running. */
   readonly running: boolean;
+  /** How many members the fold could resolve in the session list at all. */
+  readonly memberCount: number;
+  /** How many of those the host marks archived. */
+  readonly archivedCount: number;
 }
 
 /**
@@ -249,6 +256,20 @@ export function selectActivity(list: SessionListWire, sessionId: string): Activi
 }
 
 /**
+ * Fold the host's archive set into a lookup.
+ *
+ * The set arrives as untrusted JSON from the workspaces snapshot, and a host
+ * upgrade may re-home it. Losing it costs the accent its filter, not the whole
+ * fold, so an unreadable value reads as nothing archived.
+ * @param value - the snapshot's `archivedSessionIds`, if any.
+ * @returns the archived session ids.
+ */
+function archiveSet(value: unknown): ReadonlySet<string> {
+  if (!Array.isArray(value)) return new Set();
+  return new Set(value.filter((one): one is string => typeof one === "string"));
+}
+
+/**
  * Fold one workspace's member sessions into a single reading.
  *
  * Membership comes from the workspace item's own `sessionIds`, which the host has
@@ -256,33 +277,42 @@ export function selectActivity(list: SessionListWire, sessionId: string): Activi
  * same way the host's own grouping resolves it: a member the list does not carry
  * contributes nothing, because both clocks it could offer live in that list.
  *
- * Archived members are not excluded. The archive set lives on the workspaces
- * snapshot and this fold never reads it: a workspace whose sessions have all been
- * archived is still one a human worked in, and painting it as untouched would
- * misreport the sidebar. The member with the newest instant decides the age, so a
- * single recent session keeps a long-lived workspace alive.
+ * Archived members are counted, not excluded. Archiving is a sidebar filter rather
+ * than an erasure, so a workspace whose sessions have all been archived is still
+ * one a human worked in, and painting it as untouched would misreport the sidebar.
+ * The member with the newest instant decides the age, so a single recent session
+ * keeps a long-lived workspace alive. The archive set is only reported back, for
+ * the rule builder to keep those rows out of the accent.
  * @param list - the session list snapshot.
  * @param sessionIds - the workspace item's member ids, as untrusted JSON.
+ * @param archivedSessionIds - the host's archive set, as untrusted JSON.
  * @returns the aggregate, or undefined when no member is readable at all.
  */
-export function aggregateWorkspace(list: SessionListWire, sessionIds: unknown): WorkspaceReading | undefined {
+export function aggregateWorkspace(
+  list: SessionListWire,
+  sessionIds: unknown,
+  archivedSessionIds?: unknown,
+): WorkspaceReading | undefined {
   if (!Array.isArray(sessionIds)) return undefined;
   const summaries = readableRecord(readableRecord(list)?.byId);
+  const archived = archiveSet(archivedSessionIds);
   let newest: number | undefined;
   let running = false;
-  let readable = 0;
+  let memberCount = 0;
+  let archivedCount = 0;
   for (const sessionId of sessionIds) {
     if (typeof sessionId !== "string") continue;
     const summary = readableRecord(summaries?.[sessionId]);
     if (summary === undefined) continue;
-    readable += 1;
+    memberCount += 1;
+    if (archived.has(sessionId)) archivedCount += 1;
     if (summary.running === true) running = true;
     const reading = selectActivity(list, sessionId);
     const instant = reading?.lastActivityAt ?? (isInstant(summary.updatedAt) ? summary.updatedAt : undefined);
     if (instant !== undefined && (newest === undefined || instant > newest)) newest = instant;
   }
-  if (readable === 0) return undefined;
-  return { lastActivityAt: newest ?? null, running };
+  if (memberCount === 0) return undefined;
+  return { lastActivityAt: newest ?? null, running, memberCount, archivedCount };
 }
 
 /** The clocks one level is decided from. */

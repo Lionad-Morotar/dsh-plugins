@@ -37,6 +37,13 @@ export interface WorkspaceRule {
   readonly opacityLight: number;
   /** The title's opacity in the dark theme; only read for workspaces that dim. */
   readonly opacityDark: number;
+  /**
+   * Whether the accent has any member row to reach.
+   *
+   * Archived members keep the host's caption colour, so a workspace whose members
+   * are all archived has nothing for a member accent rule to paint.
+   */
+  readonly hasUnarchivedMembers: boolean;
 }
 
 /** The prefix the host puts in `data-row-key` for a workspace row. */
@@ -53,6 +60,30 @@ const SLOT = ".JoiKIa_slot";
 
 /** The host's container around one workspace row and the session rows under it. */
 const GROUP_SECTION = "div.Kjh-qa_groupSection";
+
+/**
+ * The host's class on a session row whose session is archived.
+ *
+ * The same element carries it as `data-row-key`, so it is reachable from the
+ * member selectors without naming a session.
+ */
+const ARCHIVED = ".JoiKIa_archived";
+
+/**
+ * The exclusion the accent carries, written as a condition rather than a weight.
+ *
+ * The host paints an archived session's title with `--dsw-alias-label-caption`
+ * through `.JoiKIa_sessionRow.JoiKIa_archived .JoiKIa_title`, and that caption grey
+ * is how the sidebar says "archived". An accent rule reaching the same span would
+ * read the row as active, so archived rows are left out here rather than painted
+ * and then overridden: no rule of this plugin competes with the host's.
+ *
+ * `:where()` is what keeps the exclusion from becoming a lever. A bare `:not()`
+ * would add a class unit, lifting the member accent rule to the weight of the
+ * interaction invariants; zeroing it leaves the cascade exactly as it was, which is
+ * the same reason the theme gate is wrapped.
+ */
+const NOT_ARCHIVED = `:where(:not(${ARCHIVED}))`;
 
 /**
  * The theme gate for the dark rules.
@@ -158,11 +189,12 @@ function groupOf(rowKey: string): string {
  * its key prefix, because a rule per session id would go stale the moment a session
  * moves and the id is not what makes it a member.
  * @param rowKey - the workspace row's attribute selector.
+ * @param excludeArchived - whether the host's archived rows are left out.
  * @returns one selector per depth.
  */
-function memberSelectors(rowKey: string): string[] {
+function memberSelectors(rowKey: string, excludeArchived = false): string[] {
   const group = groupOf(rowKey);
-  const sessionRow = `[data-row-key^="${SESSION_KEY_PREFIX}"]`;
+  const sessionRow = `[data-row-key^="${SESSION_KEY_PREFIX}"]${excludeArchived ? NOT_ARCHIVED : ""}`;
   return [`${group} > ${sessionRow} ${TITLE}`, `${group} > * > ${sessionRow} ${TITLE}`];
 }
 
@@ -177,24 +209,29 @@ function rule(selectors: readonly string[], declarations: string): string {
  * A warm workspace emits nothing: the rest of the first day is left exactly as the
  * host renders it, and an explicit `opacity:1` would only give the writer text to
  * diff against.
+ *
+ * The two effects treat an archived member differently, and that asymmetry is the
+ * point. The accent is a colour, so it would overwrite the caption grey the host
+ * uses to say "archived"; it therefore leaves those rows out, and emits no member
+ * rule at all when every member is archived. Opacity is orthogonal to hue, so the
+ * dim rules still reach every member: a stale workspace recedes, and an archived
+ * row inside it keeps both its caption colour and its faded state.
  * @param row - the decided workspace.
  * @returns the CSS rules, in emit order.
  */
 function rulesFor(row: WorkspaceRule): string[] {
   const rowKey = rowSelector(row.workspaceId);
-  const members = memberSelectors(rowKey);
   if (row.tier === "hot") {
-    return [
-      rule([titleSelector(rowKey)], EMPHASIS),
-      rule([iconSelector(rowKey)], ICON),
-      rule(members, EMPHASIS),
-    ];
+    const rules = [rule([titleSelector(rowKey)], EMPHASIS), rule([iconSelector(rowKey)], ICON)];
+    if (row.hasUnarchivedMembers) rules.push(rule(memberSelectors(rowKey, true), EMPHASIS));
+    return rules;
   }
   if (row.tier === "dim") {
     // Both themes are written out rather than one being a fallback for the other:
     // the two curves have different slopes and floors, so neither value can be
     // derived from the other at paint time.
     const title = titleSelector(rowKey);
+    const members = memberSelectors(rowKey);
     return [
       rule([title], `opacity:${row.opacityLight}`),
       rule(members, `opacity:${row.opacityLight}`),

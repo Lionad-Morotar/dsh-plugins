@@ -39,10 +39,14 @@ function groupOf(workspaceId: string): string {
   return `div.Kjh-qa_groupSection:has(> ${row}, > * > ${row})`;
 }
 
-/** The selectors for one workspace's member titles, one per row depth. */
-function membersOf(workspaceId: string): string {
+/**
+ * The selectors for one workspace's member titles, one per row depth.
+ * @param workspaceId - the workspace whose members are addressed.
+ * @param excludeArchived - whether the host's archived rows are left out.
+ */
+function membersOf(workspaceId: string, excludeArchived = false): string {
   const group = groupOf(workspaceId);
-  const sessionRow = '[data-row-key^="session:"]';
+  const sessionRow = `[data-row-key^="session:"]${excludeArchived ? ":where(:not(.JoiKIa_archived))" : ""}`;
   return `${group} > ${sessionRow} .JoiKIa_title,${group} > * > ${sessionRow} .JoiKIa_title`;
 }
 
@@ -70,8 +74,13 @@ function hot(workspaceId: string): string[] {
   return [
     `${key} .JoiKIa_title{${HOT}}`,
     `${key} > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}`,
-    `${membersOf(workspaceId)}{${HOT}}`,
+    `${membersOf(workspaceId, true)}{${HOT}}`,
   ];
+}
+
+/** The two rules a hot workspace contributes when every member is archived. */
+function hotHeaderOnly(workspaceId: string): string[] {
+  return hot(workspaceId).slice(0, 2);
 }
 
 /** The four rules one dim workspace contributes: both surfaces, both themes. */
@@ -332,14 +341,64 @@ describe("apply", () => {
 
   it("counts an archived member into the factor", async () => {
     // The archived set lives on the workspaces snapshot and must not exclude a
-    // member: an archived session is still a session someone worked in.
+    // member: an archived session is still a session someone worked in, so this
+    // workspace still reads as hot.
     const host = fakeHost(
       sessions({ s1: session(NOW - 30 * 60_000) }),
       { items: [workspace("w1", ["s1"])], archivedSessionIds: ["s1"] } as unknown as WorkspaceSnapshotWire,
     );
     const dispose = apply(host.ctx);
     await flush();
+    expect(css(host.head)).toBe([...hotHeaderOnly("w1"), BASE].join("\n"));
+    dispose();
+  });
+
+  it("keeps an archived session title out of the accent, so the host's caption grey survives", async () => {
+    // The host paints an archived row's title with `--dsw-alias-label-caption`, and
+    // that grey is the archive signal. One archived member next to a live one is the
+    // case that matters: the workspace is hot, so the accent exists, but it must not
+    // reach the archived row.
+    const host = fakeHost(
+      sessions({ s1: session(NOW - 30 * 60_000), s2: session(NOW - 20 * 60_000) }),
+      { items: [workspace("w1", ["s1", "s2"])], archivedSessionIds: ["s2"] } as unknown as WorkspaceSnapshotWire,
+    );
+    const dispose = apply(host.ctx);
+    await flush();
+    const sheet = css(host.head);
+    expect(sheet).toBe([...hot("w1"), BASE].join("\n"));
+    expect(sheet).toContain(":where(:not(.JoiKIa_archived))");
+    // The exclusion is a condition, not a weight: the accent rule keeps the weight
+    // it had before, so the interaction invariants still outrank it.
+    const accent = sheet.split("\n").find((line) => line.includes("session:") && line.includes(HOT));
+    expect(accent).toBe(`${membersOf("w1", true)}{${HOT}}`);
+    dispose();
+  });
+
+  it("still dims an archived session title, because fading cannot erase the caption grey", async () => {
+    const host = fakeHost(
+      sessions({ s1: session(NOW - 4 * DAY_MS) }),
+      { items: [workspace("w1", ["s1"])], archivedSessionIds: ["s1"] } as unknown as WorkspaceSnapshotWire,
+    );
+    const dispose = apply(host.ctx);
+    await flush();
+    expect(css(host.head)).toBe([...dim("w1", 0.4, 0.55), BASE].join("\n"));
+    dispose();
+  });
+
+  it("repaints when a session is archived, because the accent has to stop reaching its row", async () => {
+    const host = fakeHost(sessions({ s1: session(NOW - 30 * 60_000) }), workspaces(workspace("w1", ["s1"])));
+    const dispose = apply(host.ctx);
+    await flush();
     expect(css(host.head)).toBe([...hot("w1"), BASE].join("\n"));
+
+    host.setWorkspaces({
+      items: [workspace("w1", ["s1"])],
+      archivedSessionIds: ["s1"],
+    } as unknown as WorkspaceSnapshotWire);
+    host.notifyWorkspaces();
+    await flush();
+
+    expect(css(host.head)).toBe([...hotHeaderOnly("w1"), BASE].join("\n"));
     dispose();
   });
 

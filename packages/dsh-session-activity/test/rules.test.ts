@@ -49,15 +49,20 @@ function groupOf(workspaceId: string): string {
   return `div.Kjh-qa_groupSection:has(> ${row}, > * > ${row})`;
 }
 
+/** The host's class on a session row whose session is archived. */
+const ARCHIVED = ".JoiKIa_archived";
+
 /**
  * The selectors for one workspace's member titles, one per row depth.
  *
  * The depth is pinned rather than left as a descendant so a nested child
  * workspace's sessions cannot be painted with their parent's tier.
+ * @param workspaceId - the workspace whose members are addressed.
+ * @param excludeArchived - whether the host's archived rows are left out.
  */
-function membersOf(workspaceId: string): string {
+function membersOf(workspaceId: string, excludeArchived = false): string {
   const group = groupOf(workspaceId);
-  const sessionRow = '[data-row-key^="session:"]';
+  const sessionRow = `[data-row-key^="session:"]${excludeArchived ? `:where(:not(${ARCHIVED}))` : ""}`;
   return `${group} > ${sessionRow} .JoiKIa_title,${group} > * > ${sessionRow} .JoiKIa_title`;
 }
 
@@ -70,7 +75,7 @@ function darken(list: string): string {
 
 /** One row rule with the fields a case does not care about filled in. */
 function row(overrides: Partial<WorkspaceRule> & Pick<WorkspaceRule, "workspaceId" | "tier">): WorkspaceRule {
-  return { opacityLight: 1, opacityDark: 1, ...overrides };
+  return { opacityLight: 1, opacityDark: 1, hasUnarchivedMembers: true, ...overrides };
 }
 
 /** The stylesheet split into lines. */
@@ -84,7 +89,7 @@ function hotRules(workspaceId: string): string[] {
   return [
     `${key} .JoiKIa_title{${HOT}}`,
     `${key} > .JoiKIa_slot{${ICON}}`,
-    `${membersOf(workspaceId)}{${HOT}}`,
+    `${membersOf(workspaceId, true)}{${HOT}}`,
   ];
 }
 
@@ -320,8 +325,59 @@ describe("buildStylesheet", () => {
   it("makes a hot workspace's member session titles follow it", () => {
     const stylesheet = buildStylesheet([row({ workspaceId: "w1", tier: "hot" })], DEFAULT_ACTIVITY_CONFIG);
     expect(stylesheet.split("\n")).toContain(
-      `${membersOf("w1")}{${HOT}}`,
+      `${membersOf("w1", true)}{${HOT}}`,
     );
+  });
+
+  it("keeps an archived member row out of the accent, and leaves the host its caption colour", () => {
+    // The host paints an archived session's title with `--dsw-alias-label-caption`
+    // through `.JoiKIa_sessionRow.JoiKIa_archived .JoiKIa_title`, and that colour is
+    // how the sidebar says "archived". An accent rule reaching the same span would
+    // read the row as active, so the row is excluded at generation time rather than
+    // painted and then overridden.
+    const hot = buildStylesheet([row({ workspaceId: "w1", tier: "hot" })], DEFAULT_ACTIVITY_CONFIG);
+    const accent = hot.split("\n").filter((line) => line.includes(HOT) && line.includes("session:"));
+    expect(accent).toHaveLength(1);
+    for (const selector of splitSelectorList(selectorOf(accent[0] ?? ""))) {
+      expect(selector).toContain(`:where(:not(${ARCHIVED}))`);
+    }
+  });
+
+  it("still dims an archived member row, because opacity cannot erase the archive signal", () => {
+    // Colour and opacity are orthogonal: fading an archived row keeps its caption
+    // hue, so the sidebar still says "archived" while the workspace recedes.
+    const dim = buildStylesheet([row({ workspaceId: "w1", tier: "dim", opacityLight: 0.4, opacityDark: 0.55 })], DEFAULT_ACTIVITY_CONFIG);
+    const emitted = dim.split("\n");
+    const members = emitted.slice(0, emitted.length - BASE.length).filter((line) => line.includes("session:"));
+    expect(members).toHaveLength(2);
+    for (const line of members) {
+      expect(selectorOf(line)).not.toContain(":not(");
+      expect(selectorOf(line)).toContain('[data-row-key^="session:"]');
+    }
+  });
+
+  it("reaches both archived and unarchived rows with the same dim rule, so one rule covers the group", () => {
+    expect(lines([row({ workspaceId: "w1", tier: "dim", opacityLight: 0.4, opacityDark: 0.55 })])).toEqual([
+      ...dimRules("w1", 0.4, 0.55),
+      ...BASE,
+    ]);
+  });
+
+  it("emits no member accent rule when every member is archived, since the rule could only match nothing", () => {
+    const key = '[data-row-key="workspace:w1"]';
+    expect(lines([row({ workspaceId: "w1", tier: "hot", hasUnarchivedMembers: false })])).toEqual([
+      `${key} .JoiKIa_title{${HOT}}`,
+      `${key} > .JoiKIa_slot{${ICON}}`,
+      ...BASE,
+    ]);
+  });
+
+  it("still accents the workspace's own title and icons when every member is archived", () => {
+    // The workspace row is not a session row: the host's archive signal lives on the
+    // session rows, so the header keeps reading as the level that was worked in.
+    const stylesheet = buildStylesheet([row({ workspaceId: "w1", tier: "hot", hasUnarchivedMembers: false })], DEFAULT_ACTIVITY_CONFIG);
+    expect(stylesheet).toContain('[data-row-key="workspace:w1"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}');
+    expect(stylesheet).toContain('[data-row-key="workspace:w1"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}');
   });
 
   it("dims a dim workspace's title and its members in both themes", () => {
