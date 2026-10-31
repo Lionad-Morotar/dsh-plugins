@@ -31,9 +31,46 @@ DSH 侧栏行上唯一的新鲜度事实是 `updatedAt`，它等于 `max(created
 
 ## 浏览器半
 
-当前只有一个可构建的桩：声明 `inject = ["sessions"]`，`apply` 不做任何事，装上不改变任何界面。
+浏览器半把活跃度变成侧栏行的视觉分层，全程不碰插槽、不引 React。
 
-真实的侧栏着色在下一片落地。落点不走插槽：会话行的 `sidebar.session.row.leading` 座位在归档行与有实时状态的行上都不挂载，而那正是要着色的行；着色改由行元素上的 `data-row-key="session:<id>"` 逐行写样式。
+为什么不用插槽：会话行的 `sidebar.session.row.leading` 座位在归档行、空白行、以及有实时状态的行上都不挂载，
+而那恰好就是需要着色的行。唯一覆盖全部会话行的钩子是行元素自身的 `data-row-key="session:<id>"`，
+所以着色是一张逐行生成的样式表，写进本包独占的一个 `<style data-plugin-css>` 元素。
+
+档位与衰减（`src/client/reading.ts`，纯函数）：
+
+| 条件 | 档位 | 效果 |
+| --- | --- | --- |
+| `running === true` | hot | 强调色 `var(--dsw-alias-brand-primary)` + `font-weight: 600` |
+| 最后活动在 `hotWithinMs`（默认 1 小时）内 | hot | 同上 |
+| 在 `dimAfterMs`（默认 24 小时）内 | warm | 不改变样式，保持宿主默认 |
+| 超过 `dimAfterMs` | dim | `opacity = clamp(1 - (ageDays - 1) × dimPerDay, dimFloor, 1)`，量化到 0.01 |
+
+默认 `dimPerDay = 0.15`、`dimFloor = 0.45`：第 1 天 1.00、第 4 天约 0.55、第 5 天触底。
+下界保证 10px 的时间标签仍可读。四个阈值都可经 Loader row 的 config 覆盖，`enabled: false` 时整片不注入。
+
+归档行只走 `opacity`、不写 color 与字重：宿主已经把归档行的标题色显式设成 `--dsw-alias-label-caption`，
+行上的 `color` 盖不住它，而"退后"本来就是归档行该有的读法。
+
+样式表末尾恒有两条不变量规则，保证交互反馈不被暗淡吃掉：`:hover` 与 `[aria-selected="true"]` 强制 `opacity: 1`
+（属性加伪类/双属性的特异性高于单属性选择器，不需要 `!important`）。
+
+数据面与节奏：`inject = ["sessions", "workspaces"]`。会话列表提供快照与订阅；工作区服务只用来读
+`archivedSessionIds`（归档会改这个集合而不动会话列表），路径是 `ctx.workspaces.list.getSnapshot()`——
+`workspaces` 是控制器服务，可观察的 model 挂在它的 `list` 上，和 `sessions.list` 同形。本半不订阅工作区服务，
+所以归档集合的失效上界是一次 tick。宿主通知与 60 秒 tick 都只置一个待重算标记，用 `queueMicrotask` 合并成
+一次重算 + 一次写入；写入前做文本 diff，内容没变就不动 DOM。
+
+## 健壮性契约
+
+这条链路读的是宿主内部形状，宿主升级可能改名或搬家，所以三处边界都按"读不懂就当没有"处理，绝不抛错：
+
+- 投影对 `event.time` 设有限数守卫：非有限或负数的时间戳不推进 `lastActivityAt`（计数照常推进），
+  避免一条坏记录把会话的活跃度永久毒化成 NaN、进而被自己的 schema 拒绝载入
+- 浏览器半逐跳收窄快照：容器缺失、单元格为 `null`、`values` 为 `null` 一律读作沉默；
+  容器整体不可读时本轮产出只含不变量规则的样式表，并在下一个可读快照自动恢复
+- 生成选择器前转义会话 id（反斜杠、双引号、控制符），保证一个 id 永远只产生一个合法的属性选择器，
+  不会被注入串撑破或吞掉相邻规则
 
 ## 安装
 
