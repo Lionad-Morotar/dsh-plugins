@@ -19,10 +19,11 @@
  *   `aria-selected` — only session rows and search-result rows do — so this is the
  *   current-workspace signal that actually exists, reached through `:has()`.
  *
- * Both rules carry the same specificity as a generated dim rule
- * (`[data-row-key="workspace:<id>"] .JoiKIa_title`), so they win on source order:
- * `buildStylesheet` always emits them last, and a test pins that ordering. Neither
- * needs `!important`.
+ * Both rules carry one more class-level unit than a generated dim rule
+ * (`[data-row-key="workspace:<id>"] .JoiKIa_title` is attribute plus class; these
+ * add a pseudo-class, or the `:has()` argument), so they outrank it without
+ * `!important`. They are emitted last as well, which keeps the sheet stable for any
+ * later rule that lands on the same specificity.
  */
 
 /** The `data-plugin-css` value identifying this plugin's single stylesheet. */

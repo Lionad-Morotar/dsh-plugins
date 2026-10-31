@@ -95,7 +95,7 @@ describe("buildStylesheet", () => {
     expect(buildStylesheet([row({ workspaceId: "w1", tier: "hot" })], disabled)).toBe(BASE.join("\n"));
   });
 
-  it("ends every stylesheet with the invariants, which is what lets them win on source order", () => {
+  it("ends every stylesheet with the invariants", () => {
     const stylesheet = buildStylesheet([row({ workspaceId: "w1", tier: "dim", opacity: 0.55 })], DEFAULT_ACTIVITY_CONFIG);
     expect(stylesheet.endsWith(BASE.join("\n"))).toBe(true);
   });

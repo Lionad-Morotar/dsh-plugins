@@ -74,8 +74,8 @@ DSH 侧栏上唯一的新鲜度事实是每个会话的 `updatedAt`，它等于 
   它标记「当前工作区」的方式是给文件夹槽位加 `JoiKIa_folderActive`，所以这条不变量用
   `[data-row-key^="workspace:"]:has(.JoiKIa_folderActive) .JoiKIa_title` 命中，不存在的属性不硬造
 
-两条不变量与 dim 规则（`[data-row-key="workspace:<id>"] .JoiKIa_title`）特异性相同，靠源码顺序取胜：
-`buildStylesheet` 恒把不变量放在最后，并有测试钉住这个顺序。不需要 `!important`。
+两条不变量比 dim 规则（`[data-row-key="workspace:<id>"] .JoiKIa_title`，属性加类）各多一个 class 级单位
+（多出 `:hover` 伪类或 `:has()` 的参数），所以不需要 `!important` 就能压住它；它们也恒排在末尾。
 
 数据面与节奏：`inject = ["sessions", "workspaces"]`。会话列表与工作区列表都提供快照与订阅，
 路径分别是 `ctx.sessions.list` 与 `ctx.workspaces.list`（`workspaces` 是控制器服务，可观察的 model 挂在它的 `list` 上，
