@@ -1,24 +1,17 @@
-[data-row-key="workspace:w-2d"] .JoiKIa_title{opacity:0.76}
-div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-2d"], > * > [data-row-key="workspace:w-2d"]) > [data-row-key^="session:"] .JoiKIa_title,div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-2d"], > * > [data-row-key="workspace:w-2d"]) > * > [data-row-key^="session:"] .JoiKIa_title{opacity:0.76}
-:where(body[data-ds-dark-theme]) [data-row-key="workspace:w-2d"] .JoiKIa_title{opacity:0.82}
-:where(body[data-ds-dark-theme]) div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-2d"], > * > [data-row-key="workspace:w-2d"]) > [data-row-key^="session:"] .JoiKIa_title,:where(body[data-ds-dark-theme]) div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-2d"], > * > [data-row-key="workspace:w-2d"]) > * > [data-row-key^="session:"] .JoiKIa_title{opacity:0.82}
-[data-row-key="workspace:w-4d"] .JoiKIa_title{opacity:0.4}
-div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-4d"], > * > [data-row-key="workspace:w-4d"]) > [data-row-key^="session:"] .JoiKIa_title,div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-4d"], > * > [data-row-key="workspace:w-4d"]) > * > [data-row-key^="session:"] .JoiKIa_title{opacity:0.4}
-:where(body[data-ds-dark-theme]) [data-row-key="workspace:w-4d"] .JoiKIa_title{opacity:0.55}
-:where(body[data-ds-dark-theme]) div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-4d"], > * > [data-row-key="workspace:w-4d"]) > [data-row-key^="session:"] .JoiKIa_title,:where(body[data-ds-dark-theme]) div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-4d"], > * > [data-row-key="workspace:w-4d"]) > * > [data-row-key^="session:"] .JoiKIa_title{opacity:0.55}
-[data-row-key="workspace:w-5d"] .JoiKIa_title{opacity:0.3}
-div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-5d"], > * > [data-row-key="workspace:w-5d"]) > [data-row-key^="session:"] .JoiKIa_title,div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-5d"], > * > [data-row-key="workspace:w-5d"]) > * > [data-row-key^="session:"] .JoiKIa_title{opacity:0.3}
-:where(body[data-ds-dark-theme]) [data-row-key="workspace:w-5d"] .JoiKIa_title{opacity:0.45}
-:where(body[data-ds-dark-theme]) div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-5d"], > * > [data-row-key="workspace:w-5d"]) > [data-row-key^="session:"] .JoiKIa_title,:where(body[data-ds-dark-theme]) div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-5d"], > * > [data-row-key="workspace:w-5d"]) > * > [data-row-key^="session:"] .JoiKIa_title{opacity:0.45}
-[data-row-key="workspace:w-active"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
-[data-row-key="workspace:w-active"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}
-div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-active"], > * > [data-row-key="workspace:w-active"]) > [data-row-key^="session:"]:where(:not(.JoiKIa_archived)) .JoiKIa_title,div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-active"], > * > [data-row-key="workspace:w-active"]) > * > [data-row-key^="session:"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
-[data-row-key="workspace:w-archived-only"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
-[data-row-key="workspace:w-archived-only"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}
-[data-row-key="workspace:w-mixed"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
-[data-row-key="workspace:w-mixed"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}
-div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-mixed"], > * > [data-row-key="workspace:w-mixed"]) > [data-row-key^="session:"]:where(:not(.JoiKIa_archived)) .JoiKIa_title,div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w-mixed"], > * > [data-row-key="workspace:w-mixed"]) > * > [data-row-key^="session:"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
-[data-row-key^="workspace:"]:hover .JoiKIa_title{opacity:1}
-[data-row-key^="workspace:"]:has(.JoiKIa_folderActive) .JoiKIa_title{opacity:1}
-div.Kjh-qa_groupSection:has(> [data-row-key^="workspace:"], > * > [data-row-key^="workspace:"]):hover [data-row-key^="session:"] .JoiKIa_title{opacity:1}
-div.Kjh-qa_groupSection:has([data-row-key^="workspace:"] .JoiKIa_folderActive) [data-row-key^="session:"] .JoiKIa_title{opacity:1}
+[data-row-key="workspace:w-archived"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
+[data-row-key="workspace:w-archived"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}
+[data-row-key="workspace:w-blog"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
+[data-row-key="workspace:w-blog"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}
+[data-row-key="workspace:w-faint"] .JoiKIa_title{color:color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-label-primary))}
+[data-row-key="workspace:w-faint"] > .JoiKIa_slot{color:color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-label-primary))}
+[data-row-key="workspace:w-mid"] .JoiKIa_title{color:color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-label-primary));font-weight:600}
+[data-row-key="workspace:w-mid"] > .JoiKIa_slot{color:color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-label-primary))}
+[data-row-key="workspace:w-running"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
+[data-row-key="workspace:w-running"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}
+[data-row-key="workspace:w-strong"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}
+[data-row-key="workspace:w-strong"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}
+[data-row-key="session:a1"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:var(--dsw-alias-state-business-primary)}
+[data-row-key="session:b1"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:var(--dsw-alias-state-business-primary)}
+[data-row-key="session:c1"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-label-primary))}
+[data-row-key="session:d1"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:color-mix(in srgb, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-label-primary))}
+[data-row-key="session:f1"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:var(--dsw-alias-state-business-primary)}

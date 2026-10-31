@@ -1,74 +1,121 @@
 [
   {
-    "workspaceId": "w-active",
+    "workspaceId": "w-blog",
+    "title": "blog",
+    "note": "13 分钟前活跃，但成员里还有 2 天前与 4 天前的会话（用户报的那个 bug 场景）",
+    "workspaceTier": "strong",
+    "members": [
+      {
+        "id": "a1",
+        "title": "Deep Research: Monorepo Flow",
+        "tier": "strong",
+        "archived": false,
+        "painted": true
+      },
+      {
+        "id": "a2",
+        "title": "记录开机系统状态基线",
+        "tier": "none",
+        "archived": false,
+        "painted": false
+      },
+      {
+        "id": "a3",
+        "title": "前端工程讲稿 PPT 生成",
+        "tier": "none",
+        "archived": false,
+        "painted": false
+      }
+    ]
+  },
+  {
+    "workspaceId": "w-strong",
     "title": "dsh-plugins",
-    "note": "一个会话正在跑，另一个 10 分钟前动过",
-    "tier": "hot",
-    "opacityLight": 1,
-    "opacityDark": 1,
-    "members": 2
+    "note": "35 分钟前活跃，落在 1 小时内",
+    "workspaceTier": "strong",
+    "members": [
+      {
+        "id": "b1",
+        "title": "侧栏活跃度阶梯怎么做",
+        "tier": "strong",
+        "archived": false,
+        "painted": true
+      }
+    ]
   },
   {
-    "workspaceId": "w-today",
+    "workspaceId": "w-mid",
     "title": "flow-skills",
-    "note": "今天动过，但没在跑",
-    "tier": "warm",
-    "opacityLight": 1,
-    "opacityDark": 1,
-    "members": 1
+    "note": "1.5 小时前活跃，落在 2 小时内",
+    "workspaceTier": "mid",
+    "members": [
+      {
+        "id": "c1",
+        "title": "技能文档简化",
+        "tier": "mid",
+        "archived": false,
+        "painted": true
+      }
+    ]
   },
   {
-    "workspaceId": "w-2d",
+    "workspaceId": "w-faint",
     "title": "lionad.dev",
-    "note": "两天多没动静",
-    "tier": "dim",
-    "opacityLight": 0.76,
-    "opacityDark": 0.82,
-    "members": 1
+    "note": "4 小时前活跃，落在 5 小时内",
+    "workspaceTier": "faint",
+    "members": [
+      {
+        "id": "d1",
+        "title": "首页改版草稿",
+        "tier": "faint",
+        "archived": false,
+        "painted": true
+      }
+    ]
   },
   {
-    "workspaceId": "w-4d",
+    "workspaceId": "w-normal",
     "title": "deep-whale",
-    "note": "四天没动静",
-    "tier": "dim",
-    "opacityLight": 0.4,
-    "opacityDark": 0.55,
-    "members": 2
+    "note": "8 小时前活跃，超过 5 小时，交还宿主原色",
+    "workspaceTier": "none",
+    "members": [
+      {
+        "id": "e1",
+        "title": "深鲸皮肤配色",
+        "tier": "none",
+        "archived": false,
+        "painted": false
+      }
+    ]
   },
   {
-    "workspaceId": "w-5d",
-    "title": "old-lab",
-    "note": "五天没动静，衰减触底",
-    "tier": "dim",
-    "opacityLight": 0.3,
-    "opacityDark": 0.45,
-    "members": 1
+    "workspaceId": "w-running",
+    "title": "running-ws",
+    "note": "有会话正在跑，直接进最强档",
+    "workspaceTier": "strong",
+    "members": [
+      {
+        "id": "f1",
+        "title": "正在跑的会话",
+        "tier": "strong",
+        "archived": false,
+        "painted": true
+      }
+    ]
   },
   {
-    "workspaceId": "w-archived-only",
-    "title": "archived-work",
-    "note": "成员全部归档，但最近 20 分钟前还有活动",
-    "tier": "hot",
-    "opacityLight": 1,
-    "opacityDark": 1,
-    "members": 1
-  },
-  {
-    "workspaceId": "w-mixed",
-    "title": "mixed-ws",
-    "note": "一个非归档成员 30 分钟前动过，一个成员已归档",
-    "tier": "hot",
-    "opacityLight": 1,
-    "opacityDark": 1,
-    "members": 2
-  },
-  {
-    "workspaceId": "w-empty",
-    "title": "empty-ws",
-    "note": "没有会话成员，不产出规则",
-    "tier": "none",
-    "opacityLight": 1,
-    "opacityDark": 1,
-    "members": 0
+    "workspaceId": "w-archived",
+    "title": "archived-ws",
+    "note": "唯一成员已归档，工作区仍按它的活动聚合，但会话自身不着色",
+    "workspaceTier": "strong",
+    "members": [
+      {
+        "id": "g1",
+        "title": "归档的会话",
+        "tier": "strong",
+        "archived": true,
+        "painted": false
+      }
+    ]
   }
 ]

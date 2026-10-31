@@ -1,79 +1,69 @@
 
 ########## 浅色主题 ##########
-(宿主默认（未装插件） vs 装了 dsh-session-activity)
+--- 工作区标题（应：strong/mid 加粗，faint 不加粗，normal 不变）---
+DIFF  blog           base=rgb(15, 17, 21) / 400  plugin=rgb(65, 118, 230) / 600
+DIFF  dsh-plugins    base=rgb(15, 17, 21) / 400  plugin=rgb(65, 118, 230) / 600
+DIFF  flow-skills    base=rgb(15, 17, 21) / 400  plugin=color(srgb 0.166667 0.28451 0.533137) / 600
+DIFF  lionad.dev     base=rgb(15, 17, 21) / 400  plugin=color(srgb 0.166667 0.28451 0.533137) / 400
+SAME  deep-whale     base=rgb(15, 17, 21) / 400  plugin=rgb(15, 17, 21) / 400
+DIFF  running-ws     base=rgb(15, 17, 21) / 400  plugin=rgb(65, 118, 230) / 600
+DIFF  archived-ws    base=rgb(15, 17, 21) / 400  plugin=rgb(65, 118, 230) / 600
+--- 工作区图标 ---
+SAME  blog           base=rgb(65, 118, 230)  plugin=rgb(65, 118, 230)
+DIFF  dsh-plugins    base=rgb(129, 133, 140)  plugin=rgb(65, 118, 230)
+DIFF  flow-skills    base=rgb(129, 133, 140)  plugin=color(srgb 0.166667 0.28451 0.533137)
+DIFF  lionad.dev     base=rgb(129, 133, 140)  plugin=color(srgb 0.166667 0.28451 0.533137)
+SAME  deep-whale     base=rgb(129, 133, 140)  plugin=rgb(129, 133, 140)
+DIFF  running-ws     base=rgb(129, 133, 140)  plugin=rgb(65, 118, 230)
+DIFF  archived-ws    base=rgb(129, 133, 140)  plugin=rgb(65, 118, 230)
+--- 会话标题（应：按自己年龄；永不加粗）---
+DIFF  session:base-a1       base=rgb(15, 17, 21) / 400  plugin=rgb(65, 118, 230) / 400
+SAME  session:base-a2       base=rgb(15, 17, 21) / 400  plugin=rgb(15, 17, 21) / 400
+SAME  session:base-a3       base=rgb(15, 17, 21) / 400  plugin=rgb(15, 17, 21) / 400
+DIFF  session:base-b1       base=rgb(15, 17, 21) / 400  plugin=rgb(65, 118, 230) / 400
+DIFF  session:base-c1       base=rgb(15, 17, 21) / 400  plugin=color(srgb 0.166667 0.28451 0.533137) / 400
+DIFF  session:base-d1       base=rgb(15, 17, 21) / 400  plugin=color(srgb 0.166667 0.28451 0.533137) / 400
+SAME  session:base-e1       base=rgb(15, 17, 21) / 400  plugin=rgb(15, 17, 21) / 400
+DIFF  session:base-f1       base=rgb(15, 17, 21) / 400  plugin=rgb(65, 118, 230) / 400
+SAME  session:base-g1[归档] base=rgb(173, 178, 184) / 400  plugin=rgb(173, 178, 184) / 400
 
---- 工作区标题 ---
-DIFF  dsh-plugins          base=rgb(15, 17, 21)/400/1  plugin=rgb(65, 118, 230)/600/1
-SAME  flow-skills          base=rgb(15, 17, 21)/400/1  plugin=rgb(15, 17, 21)/400/1
-DIFF  lionad.dev           base=rgb(15, 17, 21)/400/1  plugin=rgb(15, 17, 21)/400/0.76
-DIFF  deep-whale           base=rgb(15, 17, 21)/400/1  plugin=rgb(15, 17, 21)/400/0.4
-DIFF  old-lab              base=rgb(15, 17, 21)/400/1  plugin=rgb(15, 17, 21)/400/0.3
-DIFF  archived-work        base=rgb(15, 17, 21)/400/1  plugin=rgb(65, 118, 230)/600/1
-DIFF  mixed-ws             base=rgb(15, 17, 21)/400/1  plugin=rgb(65, 118, 230)/600/1
-SAME  empty-ws             base=rgb(15, 17, 21)/400/1  plugin=rgb(15, 17, 21)/400/1
-
---- 工作区图标（folder 槽位）---
-SAME  dsh-plugins          base=rgb(65, 118, 230)/400/1  plugin=rgb(65, 118, 230)/400/1
-SAME  flow-skills          base=rgb(129, 133, 140)/400/1  plugin=rgb(129, 133, 140)/400/1
-SAME  lionad.dev           base=rgb(129, 133, 140)/400/1  plugin=rgb(129, 133, 140)/400/1
-SAME  deep-whale           base=rgb(129, 133, 140)/400/1  plugin=rgb(129, 133, 140)/400/1
-SAME  old-lab              base=rgb(129, 133, 140)/400/1  plugin=rgb(129, 133, 140)/400/1
-DIFF  archived-work        base=rgb(129, 133, 140)/400/1  plugin=rgb(65, 118, 230)/400/1
-DIFF  mixed-ws             base=rgb(129, 133, 140)/400/1  plugin=rgb(65, 118, 230)/400/1
-SAME  empty-ws             base=rgb(129, 133, 140)/400/1  plugin=rgb(129, 133, 140)/400/1
-
---- 成员会话标题（应跟随所属工作区）---
-DIFF  session:a1           base=rgb(15, 17, 21)/400/1  plugin=rgb(65, 118, 230)/600/1
-DIFF  session:a2           base=rgb(15, 17, 21)/400/1  plugin=rgb(65, 118, 230)/600/1
-SAME  session:b1           base=rgb(15, 17, 21)/400/1  plugin=rgb(15, 17, 21)/400/1
-DIFF  session:c1           base=rgb(15, 17, 21)/400/1  plugin=rgb(15, 17, 21)/400/0.76
-DIFF  session:d1           base=rgb(15, 17, 21)/400/1  plugin=rgb(15, 17, 21)/400/0.4
-DIFF  session:d2           base=rgb(15, 17, 21)/400/1  plugin=rgb(15, 17, 21)/400/0.4
-DIFF  session:e1           base=rgb(15, 17, 21)/400/1  plugin=rgb(15, 17, 21)/400/0.3
-SAME  session:f1 [归档]      base=rgb(173, 178, 184)/400/1  plugin=rgb(173, 178, 184)/400/1
-DIFF  session:g1           base=rgb(15, 17, 21)/400/1  plugin=rgb(65, 118, 230)/600/1
-SAME  session:g2 [归档]      base=rgb(173, 178, 184)/400/1  plugin=rgb(173, 178, 184)/400/1
-
+会话标题变粗的条数：0（应为 0）
 标题文字是否被改：未改（正确）
 
 ########## 深色主题 ##########
-(宿主默认（未装插件） vs 装了 dsh-session-activity)
+--- 工作区标题（应：strong/mid 加粗，faint 不加粗，normal 不变）---
+DIFF  blog           base=rgb(249, 250, 251) / 400  plugin=rgb(122, 170, 255) / 600
+DIFF  dsh-plugins    base=rgb(249, 250, 251) / 400  plugin=rgb(122, 170, 255) / 600
+DIFF  flow-skills    base=rgb(249, 250, 251) / 400  plugin=color(srgb 0.702549 0.807843 0.992941) / 600
+DIFF  lionad.dev     base=rgb(249, 250, 251) / 400  plugin=color(srgb 0.702549 0.807843 0.992941) / 400
+SAME  deep-whale     base=rgb(249, 250, 251) / 400  plugin=rgb(249, 250, 251) / 400
+DIFF  running-ws     base=rgb(249, 250, 251) / 400  plugin=rgb(122, 170, 255) / 600
+DIFF  archived-ws    base=rgb(249, 250, 251) / 400  plugin=rgb(122, 170, 255) / 600
+--- 工作区图标 ---
+DIFF  blog           base=rgb(173, 178, 184)  plugin=rgb(122, 170, 255)
+DIFF  dsh-plugins    base=rgb(173, 178, 184)  plugin=rgb(122, 170, 255)
+DIFF  flow-skills    base=rgb(173, 178, 184)  plugin=color(srgb 0.702549 0.807843 0.992941)
+DIFF  lionad.dev     base=rgb(173, 178, 184)  plugin=color(srgb 0.702549 0.807843 0.992941)
+SAME  deep-whale     base=rgb(173, 178, 184)  plugin=rgb(173, 178, 184)
+DIFF  running-ws     base=rgb(173, 178, 184)  plugin=rgb(122, 170, 255)
+DIFF  archived-ws    base=rgb(173, 178, 184)  plugin=rgb(122, 170, 255)
+--- 会话标题（应：按自己年龄；永不加粗）---
+DIFF  session:basedark-a1       base=rgb(249, 250, 251) / 400  plugin=rgb(122, 170, 255) / 400
+SAME  session:basedark-a2       base=rgb(249, 250, 251) / 400  plugin=rgb(249, 250, 251) / 400
+SAME  session:basedark-a3       base=rgb(249, 250, 251) / 400  plugin=rgb(249, 250, 251) / 400
+DIFF  session:basedark-b1       base=rgb(249, 250, 251) / 400  plugin=rgb(122, 170, 255) / 400
+DIFF  session:basedark-c1       base=rgb(249, 250, 251) / 400  plugin=color(srgb 0.702549 0.807843 0.992941) / 400
+DIFF  session:basedark-d1       base=rgb(249, 250, 251) / 400  plugin=color(srgb 0.702549 0.807843 0.992941) / 400
+SAME  session:basedark-e1       base=rgb(249, 250, 251) / 400  plugin=rgb(249, 250, 251) / 400
+DIFF  session:basedark-f1       base=rgb(249, 250, 251) / 400  plugin=rgb(122, 170, 255) / 400
+SAME  session:basedark-g1[归档] base=rgb(129, 133, 140) / 400  plugin=rgb(129, 133, 140) / 400
 
---- 工作区标题 ---
-DIFF  dsh-plugins          base=rgb(249, 250, 251)/400/1  plugin=rgb(122, 170, 255)/600/1
-SAME  flow-skills          base=rgb(249, 250, 251)/400/1  plugin=rgb(249, 250, 251)/400/1
-DIFF  lionad.dev           base=rgb(249, 250, 251)/400/1  plugin=rgb(249, 250, 251)/400/0.82
-DIFF  deep-whale           base=rgb(249, 250, 251)/400/1  plugin=rgb(249, 250, 251)/400/0.55
-DIFF  old-lab              base=rgb(249, 250, 251)/400/1  plugin=rgb(249, 250, 251)/400/0.45
-DIFF  archived-work        base=rgb(249, 250, 251)/400/1  plugin=rgb(122, 170, 255)/600/1
-DIFF  mixed-ws             base=rgb(249, 250, 251)/400/1  plugin=rgb(122, 170, 255)/600/1
-SAME  empty-ws             base=rgb(249, 250, 251)/400/1  plugin=rgb(249, 250, 251)/400/1
-
---- 工作区图标（folder 槽位）---
-DIFF  dsh-plugins          base=rgb(173, 178, 184)/400/1  plugin=rgb(122, 170, 255)/400/1
-SAME  flow-skills          base=rgb(173, 178, 184)/400/1  plugin=rgb(173, 178, 184)/400/1
-SAME  lionad.dev           base=rgb(173, 178, 184)/400/1  plugin=rgb(173, 178, 184)/400/1
-SAME  deep-whale           base=rgb(173, 178, 184)/400/1  plugin=rgb(173, 178, 184)/400/1
-SAME  old-lab              base=rgb(173, 178, 184)/400/1  plugin=rgb(173, 178, 184)/400/1
-DIFF  archived-work        base=rgb(173, 178, 184)/400/1  plugin=rgb(122, 170, 255)/400/1
-DIFF  mixed-ws             base=rgb(173, 178, 184)/400/1  plugin=rgb(122, 170, 255)/400/1
-SAME  empty-ws             base=rgb(173, 178, 184)/400/1  plugin=rgb(173, 178, 184)/400/1
-
---- 成员会话标题（应跟随所属工作区）---
-DIFF  session:a1           base=rgb(249, 250, 251)/400/1  plugin=rgb(122, 170, 255)/600/1
-DIFF  session:a2           base=rgb(249, 250, 251)/400/1  plugin=rgb(122, 170, 255)/600/1
-SAME  session:b1           base=rgb(249, 250, 251)/400/1  plugin=rgb(249, 250, 251)/400/1
-DIFF  session:c1           base=rgb(249, 250, 251)/400/1  plugin=rgb(249, 250, 251)/400/0.82
-DIFF  session:d1           base=rgb(249, 250, 251)/400/1  plugin=rgb(249, 250, 251)/400/0.55
-DIFF  session:d2           base=rgb(249, 250, 251)/400/1  plugin=rgb(249, 250, 251)/400/0.55
-DIFF  session:e1           base=rgb(249, 250, 251)/400/1  plugin=rgb(249, 250, 251)/400/0.45
-SAME  session:f1 [归档]      base=rgb(129, 133, 140)/400/1  plugin=rgb(129, 133, 140)/400/1
-DIFF  session:g1           base=rgb(249, 250, 251)/400/1  plugin=rgb(122, 170, 255)/600/1
-SAME  session:g2 [归档]      base=rgb(129, 133, 140)/400/1  plugin=rgb(129, 133, 140)/400/1
-
+会话标题变粗的条数：0（应为 0）
 标题文字是否被改：未改（正确）
 
-########## 两套主题的暗淡强度对比 ##########
-  lionad.dev         浅色 opacity=0.76   深色 opacity=0.82   浅色更淡（符合预期）
-  deep-whale         浅色 opacity=0.4   深色 opacity=0.55   浅色更淡（符合预期）
-  old-lab            浅色 opacity=0.3   深色 opacity=0.45   浅色更淡（符合预期）
+########## 档位颜色是否真的分得开 ##########
+  rgb(65, 118, 230)  ← session:a1, session:b1, session:f1
+  rgb(15, 17, 21)  ← session:a2, session:a3, session:e1
+  color(srgb 0.166667 0.28451 0.533137)  ← session:c1, session:d1
+  rgb(173, 178, 184)  ← session:g1
+  会话侧出现的不同颜色数：4
