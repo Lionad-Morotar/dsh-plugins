@@ -39,13 +39,38 @@ function groupOf(workspaceId: string): string {
   return `div.Kjh-qa_groupSection:has(> ${row}, > * > ${row})`;
 }
 
+/** The selectors for one workspace's member titles, one per row depth. */
+function membersOf(workspaceId: string): string {
+  const group = groupOf(workspaceId);
+  const sessionRow = '[data-row-key^="session:"]';
+  return `${group} > ${sessionRow} .JoiKIa_title,${group} > * > ${sessionRow} .JoiKIa_title`;
+}
+
+/** Split a selector list at its top level commas. */
+function splitSelectorList(list: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < list.length; index += 1) {
+    const char = list[index];
+    if (char === "(" || char === "[") depth += 1;
+    else if (char === ")" || char === "]") depth -= 1;
+    else if (char === "," && depth === 0) {
+      parts.push(list.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(list.slice(start));
+  return parts;
+}
+
 /** The three rules one hot workspace contributes: title, icon slots, members. */
 function hot(workspaceId: string): string[] {
   const key = `[data-row-key="workspace:${workspaceId}"]`;
   return [
     `${key} .JoiKIa_title{${HOT}}`,
     `${key} > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}`,
-    `${groupOf(workspaceId)} [data-row-key^="session:"] .JoiKIa_title{${HOT}}`,
+    `${membersOf(workspaceId)}{${HOT}}`,
   ];
 }
 
@@ -53,12 +78,14 @@ function hot(workspaceId: string): string[] {
 function dim(workspaceId: string, light: number, dark: number): string[] {
   const key = `[data-row-key="workspace:${workspaceId}"]`;
   const title = `${key} .JoiKIa_title`;
-  const members = `${groupOf(workspaceId)} [data-row-key^="session:"] .JoiKIa_title`;
+  const members = membersOf(workspaceId);
   return [
     `${title}{opacity:${light}}`,
     `${members}{opacity:${light}}`,
     `:where(body[data-ds-dark-theme]) ${title}{opacity:${dark}}`,
-    `:where(body[data-ds-dark-theme]) ${members}{opacity:${dark}}`,
+    `${splitSelectorList(members)
+      .map((one) => `:where(body[data-ds-dark-theme]) ${one}`)
+      .join(",")}{opacity:${dark}}`,
   ];
 }
 
@@ -284,7 +311,7 @@ describe("apply", () => {
     const dispose = apply(host.ctx);
     await flush();
     const sheet = css(host.head);
-    expect(sheet).toContain(`${groupOf("w1")} [data-row-key^="session:"] .JoiKIa_title`);
+    expect(sheet).toContain(`${membersOf("w1")}`);
     expect(sheet).not.toContain('data-row-key="session:');
     expect(sheet).not.toContain(".JoiKIa_sessionRow");
     dispose();

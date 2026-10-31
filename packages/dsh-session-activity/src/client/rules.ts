@@ -129,35 +129,46 @@ function iconSelector(rowKey: string): string {
 }
 
 /**
- * The group container whose own header row is one workspace.
+ * The two depths a host row can sit at inside its group.
  *
- * The row is not reliably a direct child: the host wraps a row that carries a
- * hover card in a `span`, and every real workspace carries one (the ungrouped
- * bucket, which is never painted, is the case that does not). So the argument
- * accepts the row as a child or as a grandchild.
- *
- * It must not reach further. A nested child workspace is its own group section
- * three levels down, and a plain descendant argument would let a parent match it,
- * painting the child's sessions with the parent's tier.
- * @param rowKey - the workspace row's attribute selector.
- * @returns the scoping selector.
+ * The host wraps a row that carries a hover card in a `span`, and every real
+ * workspace and session row carries one, so the row is a grandchild of its group.
+ * A row without a hover card (the ungrouped bucket, a blank row) is a child. Both
+ * depths are spelled out, and neither reaches deeper: a nested child workspace is
+ * its own group section further down, and a plain descendant would let a parent
+ * paint the child's sessions with its own tier.
+ * @param rowKey - the row's attribute selector.
+ * @returns a relative selector list, valid inside `:has()`.
  */
+function ownRow(rowKey: string): string {
+  return `> ${rowKey}, > * > ${rowKey}`;
+}
+
+/** The group container whose own header row is one workspace. */
 function groupOf(rowKey: string): string {
-  return `${GROUP_SECTION}:has(> ${rowKey}, > * > ${rowKey})`;
+  return `${GROUP_SECTION}:has(${ownRow(rowKey)})`;
 }
 
 /**
- * The selector for the session titles under one workspace.
+ * The selectors for the session titles under one workspace.
  *
- * Scoped to the group whose own header is this workspace, so a nested workspace's
- * sessions follow their own header rather than their parent's. Every session row is
- * matched by its key prefix: a rule per session id would go stale the moment a
- * session moves, and the id is not what makes it a member.
+ * Two selectors rather than one descendant selector because the depth has to be
+ * pinned: the members are the group's own session rows, and a descendant would also
+ * catch the sessions of a nested child workspace. Every session row is matched by
+ * its key prefix, because a rule per session id would go stale the moment a session
+ * moves and the id is not what makes it a member.
  * @param rowKey - the workspace row's attribute selector.
- * @returns the member title selector.
+ * @returns one selector per depth.
  */
-function memberSelector(rowKey: string): string {
-  return `${groupOf(rowKey)} [data-row-key^="${SESSION_KEY_PREFIX}"] ${TITLE}`;
+function memberSelectors(rowKey: string): string[] {
+  const group = groupOf(rowKey);
+  const sessionRow = `[data-row-key^="${SESSION_KEY_PREFIX}"]`;
+  return [`${group} > ${sessionRow} ${TITLE}`, `${group} > * > ${sessionRow} ${TITLE}`];
+}
+
+/** One declaration block over one or more selectors. */
+function rule(selectors: readonly string[], declarations: string): string {
+  return `${selectors.join(",")}{${declarations}}`;
 }
 
 /**
@@ -171,11 +182,12 @@ function memberSelector(rowKey: string): string {
  */
 function rulesFor(row: WorkspaceRule): string[] {
   const rowKey = rowSelector(row.workspaceId);
+  const members = memberSelectors(rowKey);
   if (row.tier === "hot") {
     return [
-      `${titleSelector(rowKey)}{${EMPHASIS}}`,
-      `${iconSelector(rowKey)}{${ICON}}`,
-      `${memberSelector(rowKey)}{${EMPHASIS}}`,
+      rule([titleSelector(rowKey)], EMPHASIS),
+      rule([iconSelector(rowKey)], ICON),
+      rule(members, EMPHASIS),
     ];
   }
   if (row.tier === "dim") {
@@ -183,12 +195,14 @@ function rulesFor(row: WorkspaceRule): string[] {
     // the two curves have different slopes and floors, so neither value can be
     // derived from the other at paint time.
     const title = titleSelector(rowKey);
-    const members = memberSelector(rowKey);
     return [
-      `${title}{opacity:${row.opacityLight}}`,
-      `${members}{opacity:${row.opacityLight}}`,
-      `${DARK} ${title}{opacity:${row.opacityDark}}`,
-      `${DARK} ${members}{opacity:${row.opacityDark}}`,
+      rule([title], `opacity:${row.opacityLight}`),
+      rule(members, `opacity:${row.opacityLight}`),
+      rule([`${DARK} ${title}`], `opacity:${row.opacityDark}`),
+      rule(
+        members.map((one) => `${DARK} ${one}`),
+        `opacity:${row.opacityDark}`,
+      ),
     ];
   }
   return [];

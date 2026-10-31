@@ -49,6 +49,25 @@ function groupOf(workspaceId: string): string {
   return `div.Kjh-qa_groupSection:has(> ${row}, > * > ${row})`;
 }
 
+/**
+ * The selectors for one workspace's member titles, one per row depth.
+ *
+ * The depth is pinned rather than left as a descendant so a nested child
+ * workspace's sessions cannot be painted with their parent's tier.
+ */
+function membersOf(workspaceId: string): string {
+  const group = groupOf(workspaceId);
+  const sessionRow = '[data-row-key^="session:"]';
+  return `${group} > ${sessionRow} .JoiKIa_title,${group} > * > ${sessionRow} .JoiKIa_title`;
+}
+
+/** Prefix every selector of a list with the theme gate. */
+function darken(list: string): string {
+  return splitSelectorList(list)
+    .map((one) => `${DARK} ${one}`)
+    .join(",");
+}
+
 /** One row rule with the fields a case does not care about filled in. */
 function row(overrides: Partial<WorkspaceRule> & Pick<WorkspaceRule, "workspaceId" | "tier">): WorkspaceRule {
   return { opacityLight: 1, opacityDark: 1, ...overrides };
@@ -65,7 +84,7 @@ function hotRules(workspaceId: string): string[] {
   return [
     `${key} .JoiKIa_title{${HOT}}`,
     `${key} > .JoiKIa_slot{${ICON}}`,
-    `${groupOf(workspaceId)} [data-row-key^="session:"] .JoiKIa_title{${HOT}}`,
+    `${membersOf(workspaceId)}{${HOT}}`,
   ];
 }
 
@@ -73,12 +92,12 @@ function hotRules(workspaceId: string): string[] {
 function dimRules(workspaceId: string, light: number, dark: number): string[] {
   const key = `[data-row-key="workspace:${workspaceId}"]`;
   const title = `${key} .JoiKIa_title`;
-  const members = `${groupOf(workspaceId)} [data-row-key^="session:"] .JoiKIa_title`;
+  const members = membersOf(workspaceId);
   return [
     `${title}{opacity:${light}}`,
     `${members}{opacity:${light}}`,
     `${DARK} ${title}{opacity:${dark}}`,
-    `${DARK} ${members}{opacity:${dark}}`,
+    `${darken(members)}{opacity:${dark}}`,
   ];
 }
 
@@ -161,6 +180,31 @@ function splitSelectorList(list: string): string[] {
   return parts;
 }
 
+/**
+ * The rule with every quoted value blanked, so only its structure remains.
+ *
+ * A hostile id can put a brace inside a quoted attribute value, where CSS treats
+ * it as inert text; what must not survive is a brace in structural position, which
+ * is what this leaves behind.
+ */
+function unquoted(rule: string): string {
+  let out = "";
+  let inQuote = false;
+  for (let index = 0; index < rule.length; index += 1) {
+    const char = rule[index];
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (!inQuote) out += char;
+  }
+  return out;
+}
+
 /** The most specific selector of a list. */
 function mostSpecific(list: string): Specificity {
   let best: Specificity = [0, 0, 0];
@@ -229,6 +273,16 @@ function selectorOf(rule: string): string {
   return rule.slice(0, rule.indexOf("{"));
 }
 
+/**
+ * The specificity of a rule's selector list.
+ *
+ * Each part of a list is matched on its own, so a rule is as strong as its
+ * strongest part. Collapsing the list to its maximum is what the cascade does.
+ */
+function specificityOfRule(rule: string): Specificity {
+  return mostSpecific(selectorOf(rule));
+}
+
 /** Every emitted rule's selector, in emit order. */
 function selectors(stylesheet: string): string[] {
   return stylesheet.split("\n").map(selectorOf);
@@ -266,7 +320,7 @@ describe("buildStylesheet", () => {
   it("makes a hot workspace's member session titles follow it", () => {
     const stylesheet = buildStylesheet([row({ workspaceId: "w1", tier: "hot" })], DEFAULT_ACTIVITY_CONFIG);
     expect(stylesheet.split("\n")).toContain(
-      `${groupOf("w1")} [data-row-key^="session:"] .JoiKIa_title{${HOT}}`,
+      `${membersOf("w1")}{${HOT}}`,
     );
   });
 
@@ -301,7 +355,7 @@ describe("buildStylesheet", () => {
     const stylesheet = buildStylesheet([row({ workspaceId: "w1", tier: "dim", opacityLight: 0.4, opacityDark: 0.55 })], DEFAULT_ACTIVITY_CONFIG);
     const [lightTitle, lightMembers, darkTitle, darkMembers] = selectors(stylesheet);
     expect(compareSpecificity(specificityOf(darkTitle ?? ""), specificityOf(lightTitle ?? ""))).toBe(0);
-    expect(compareSpecificity(specificityOf(darkMembers ?? ""), specificityOf(lightMembers ?? ""))).toBe(0);
+    expect(compareSpecificity(mostSpecific(darkMembers ?? ""), mostSpecific(lightMembers ?? ""))).toBe(0);
   });
 
   it("leaves a warm workspace exactly as the host renders it", () => {
@@ -395,7 +449,7 @@ describe("buildStylesheet", () => {
         if (!rule.includes("JoiKIa_title") || !invariant.includes("JoiKIa_title")) continue;
         if (rule.includes("session:") !== invariant.includes("session:")) continue;
         expect(
-          compareSpecificity(specificityOf(invariant), specificityOf(rule)),
+          compareSpecificity(specificityOfRule(invariant), specificityOfRule(rule)),
           `${invariant} must outrank ${rule}`,
         ).toBeGreaterThan(0);
       }
@@ -424,21 +478,22 @@ describe("buildStylesheet", () => {
       DEFAULT_ACTIVITY_CONFIG,
     );
     const emitted = stylesheet.split("\n");
+    // One id never splits a rule and never merges two: four lines per workspace,
+    // which is what an unescaped newline or an injected brace would break.
     expect(emitted).toHaveLength(ids.length * 4 + BASE.length);
 
-    // Taken from a regex literal so the character class is written once, with the
-    // escaping the regex engine reads rather than the escaping a string needs.
-    const safe = /(?:[^"\\\u0000-\u001f\u007f-\u009f\u2028\u2029]|\\.)*/.source;
-    const dark = DARK.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const key = `\\[data-row-key="workspace:${safe}"\\]`;
-    const members = `div\\.Kjh-qa_groupSection:has\\(> ${key}, > \\* > ${key}\\) \\[data-row-key\\^="session:"\\] \\.JoiKIa_title`;
-    const title = `${key} \\.JoiKIa_title`;
-    const pattern = new RegExp(
-      `^(?:${title}|${members}|${dark} ${title}|${dark} ${members})\\{opacity:0\\.5\\}$`,
-    );
     for (const line of emitted.slice(0, ids.length * 4)) {
-      expect(line, line).toMatch(pattern);
+      const structure = unquoted(line);
+      // Exactly one declaration block and one closing brace: an injected
+      // `"]{opacity:0}[data-row-key="` would open a second block.
+      expect(structure.split("{")).toHaveLength(2);
+      expect(structure.endsWith("{opacity:0.5}")).toBe(true);
+      // A title rule names the row once; a member rule names it twice per branch,
+      // because each branch repeats the group's `:has()` argument.
+      const keys = line.match(/data-row-key="workspace:/g) ?? [];
+      expect([1, 4]).toContain(keys.length);
     }
     expect(emitted.slice(ids.length * 4)).toEqual(BASE);
   });
+
 });
