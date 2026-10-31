@@ -2,52 +2,48 @@
  * The stylesheet text for one recompute.
  *
  * A stylesheet, not a component, because the sidebar exposes no seat for a
- * workspace title. The workspace row's `data-row-key` attribute is the only hook
- * that covers every workspace row, so the effect is expressed as attribute
+ * workspace title. The rows' `data-row-key` attributes are the only hook that
+ * covers every workspace and session row, so the effect is expressed as attribute
  * selectors and the whole table is rebuilt from scratch on every pass.
  *
- * A painted workspace reaches three surfaces and no more:
- * - its own title, which is the row's label;
- * - its two icon slots, folder and chevron, because the host swaps them on hover
- *   and an icon left at the label's tertiary colour would drop out of the accent
- *   the moment the pointer arrives;
- * - the titles of the sessions under it, so a workspace reads as one level rather
- *   than as a bright header above a column of unrelated labels.
+ * Every row is selected by its own key. That is the whole addressing model: no
+ * group container, no `:has()`, no member follow-through. A session's title is
+ * painted from the session's own clock, so a workspace header and the rows under it
+ * are three independent decisions rather than one.
  *
- * The third surface is reached through the group container the host wraps around
- * a workspace row and its members, and that is a deliberate trade: `:has()` is the
- * only way to say "the group whose own header is this workspace". The workspace
- * row itself is still selected by `[data-row-key="workspace:<id>"]` directly, so
- * an engine without `:has()` still tints the title and the icons and only loses
- * the member follow-through.
+ * A painted workspace reaches two surfaces: its own title, and its two icon slots,
+ * because the host swaps folder and chevron on hover and an icon left at the
+ * label's tertiary colour would drop out of the accent the moment the pointer
+ * arrives. A painted session reaches one surface: its title, and never its weight —
+ * bold is reserved for the workspace level, which is the level a human navigates by.
  *
  * Two properties make the rebuild cheap enough to do on every host notification:
- * rows are emitted in id order, so a reorder never changes the text, and opacity
- * is already quantised by the caller, so a clock that moved a second does not
- * either. The writer's text diff then turns most notifications into no DOM work.
+ * rows are emitted in id order, so a reorder never changes the text, and the
+ * declarations are a pure function of the tier, so a clock that moved a second does
+ * not either. The writer's text diff then turns most notifications into no DOM work.
  */
-import type { ActivityConfig } from "./reading.ts";
-import { BASE_RULES } from "./styles.ts";
+import type { ActivityConfig, PaintedTier } from "./reading.ts";
 
 /** One workspace's painted state, already decided. */
 export interface WorkspaceRule {
   readonly workspaceId: string;
-  readonly tier: "hot" | "warm" | "dim";
-  /** The title's opacity in the light theme; only read for workspaces that dim. */
-  readonly opacityLight: number;
-  /** The title's opacity in the dark theme; only read for workspaces that dim. */
-  readonly opacityDark: number;
-  /**
-   * Whether the accent has any member row to reach.
-   *
-   * Archived members keep the host's caption colour, so a workspace whose members
-   * are all archived has nothing for a member accent rule to paint.
-   */
-  readonly hasUnarchivedMembers: boolean;
+  readonly tier: PaintedTier;
+}
+
+/** One session's painted state, already decided from that session's own clock. */
+export interface SessionRule {
+  readonly sessionId: string;
+  readonly tier: PaintedTier;
+}
+
+/** Everything one recompute decided, in the two levels the sidebar has. */
+export interface RuleSet {
+  readonly workspaces: readonly WorkspaceRule[];
+  readonly sessions: readonly SessionRule[];
 }
 
 /** The prefix the host puts in `data-row-key` for a workspace row. */
-const ROW_KEY_PREFIX = "workspace:";
+const WORKSPACE_KEY_PREFIX = "workspace:";
 
 /** The prefix the host puts in `data-row-key` for a session row. */
 const SESSION_KEY_PREFIX = "session:";
@@ -58,63 +54,46 @@ const TITLE = ".JoiKIa_title";
 /** The host's icon slot; a workspace row carries one for the folder and one for the chevron. */
 const SLOT = ".JoiKIa_slot";
 
-/** The host's container around one workspace row and the session rows under it. */
-const GROUP_SECTION = "div.Kjh-qa_groupSection";
-
 /**
  * The host's class on a session row whose session is archived.
  *
- * The same element carries it as `data-row-key`, so it is reachable from the
- * member selectors without naming a session.
+ * The same element carries it as `data-row-key`, so the exclusion can be written on
+ * the row itself.
  */
 const ARCHIVED = ".JoiKIa_archived";
 
 /**
- * The exclusion the accent carries, written as a condition rather than a weight.
+ * The exclusion the session rules carry, written as a condition rather than a weight.
  *
  * The host paints an archived session's title with `--dsw-alias-label-caption`
  * through `.JoiKIa_sessionRow.JoiKIa_archived .JoiKIa_title`, and that caption grey
  * is how the sidebar says "archived". An accent rule reaching the same span would
- * read the row as active, so archived rows are left out here rather than painted
- * and then overridden: no rule of this plugin competes with the host's.
+ * read the row as active, so archived rows are left out of the paint.
  *
- * `:where()` is what keeps the exclusion from becoming a lever. A bare `:not()`
- * would add a class unit, lifting the member accent rule to the weight of the
- * interaction invariants; zeroing it leaves the cascade exactly as it was, which is
- * the same reason the theme gate is wrapped.
+ * `:where()` is what keeps the exclusion from becoming a lever: a bare `:not()`
+ * would add a class unit and lift these rules above the host's own title rule,
+ * which is exactly the competition this plugin avoids. Zeroing it leaves the
+ * cascade where the host put it.
  */
 const NOT_ARCHIVED = `:where(:not(${ARCHIVED}))`;
 
 /**
- * The theme gate for the dark rules.
- *
- * `:where()` is what keeps the gate a condition rather than a weight: the host's
- * dark theme is an attribute on `body`, and a bare `body[data-ds-dark-theme]`
- * prefix would outrank the interaction invariants by a type selector, so a dimmed
- * title would stay dim under the pointer in the dark theme only. Zeroing the gate's
- * specificity leaves both theme rules exactly as strong as each other.
- */
-const DARK = ":where(body[data-ds-dark-theme])";
-
-/**
- * The tint a hot title carries, written as a token so it follows the active theme.
+ * The accent the strong tier carries, written as a token so it follows the theme.
  *
  * The state token, not `--dsw-alias-brand-primary`: in this theme the brand token
  * resolves to the same value as `--dsw-alias-label-primary` — the colour a title
  * already inherits — in both the light and the dark theme, so recolouring with it
- * changes nothing and only the weight would read as activity. This one is the real
- * accent (`#4176e6` light, `#7aaaff` dark) and differs between themes.
+ * changes nothing. This one is the real accent (`#4176e6` light, `#7aaaff` dark).
  */
-const EMPHASIS = "color:var(--dsw-alias-state-business-primary);font-weight:600";
+const ACCENT = "var(--dsw-alias-state-business-primary)";
 
-/**
- * The colour a hot row's icon slots carry.
- *
- * The host colours its icons with `currentColor` on the slot, so setting `color`
- * here is the whole effect; the folder and the chevron are two slots of the same
- * class, which is why one rule covers both and hover cannot drop the accent.
- */
-const ICON = "color:var(--dsw-alias-state-business-primary)";
+/** The body colour the faint tiers are pulled towards. */
+const BODY = "var(--dsw-alias-label-primary)";
+
+/** Whether this tier's workspace title carries the weight; a session title never does. */
+function isBold(tier: PaintedTier): boolean {
+  return tier === "strong" || tier === "mid";
+}
 
 /** Characters that would end the CSS string or split the rule across lines. */
 function isUnsafeInString(code: number): boolean {
@@ -124,11 +103,11 @@ function isUnsafeInString(code: number): boolean {
 /**
  * Escape one host value for a double-quoted CSS string.
  *
- * The workspace id is host data and this is the only place an untrusted value is
- * written into generated text: an unescaped quote or backslash would end the
- * string early, letting the rest of the id act as selectors or declarations, and a
- * newline would split one rule into two. Control characters cannot name a row, so
- * they are dropped rather than escaped.
+ * The row id is host data and this is the only place an untrusted value is written
+ * into generated text: an unescaped quote or backslash would end the string early,
+ * letting the rest of the id act as selectors or declarations, and a newline would
+ * split one rule into two. Control characters cannot name a row, so they are
+ * dropped rather than escaped.
  * @param value - the host's raw value.
  * @returns the value, safe inside `"…"`.
  */
@@ -145,57 +124,29 @@ function escapeStringValue(value: string): string {
 }
 
 /** The attribute selector for one workspace row. */
-function rowSelector(workspaceId: string): string {
-  return `[data-row-key="${ROW_KEY_PREFIX}${escapeStringValue(workspaceId)}"]`;
+function workspaceRow(workspaceId: string): string {
+  return `[data-row-key="${WORKSPACE_KEY_PREFIX}${escapeStringValue(workspaceId)}"]`;
 }
 
-/** The selector for the title of one workspace row. */
-function titleSelector(rowKey: string): string {
-  return `${rowKey} ${TITLE}`;
-}
-
-/** The selector for the two icon slots of one workspace row. */
-function iconSelector(rowKey: string): string {
-  return `${rowKey} > ${SLOT}`;
+/** The attribute selector for one session row, carrying the archive condition. */
+function sessionRow(sessionId: string): string {
+  return `[data-row-key="${SESSION_KEY_PREFIX}${escapeStringValue(sessionId)}"]${NOT_ARCHIVED}`;
 }
 
 /**
- * The two depths a host row can sit at inside its group.
+ * The colour one tier carries.
  *
- * The host wraps a row that carries a hover card in a `span`, and every real
- * workspace and session row carries one, so the row is a grandchild of its group.
- * A row without a hover card (the ungrouped bucket, a blank row) is a child. Both
- * depths are spelled out, and neither reaches deeper: a nested child workspace is
- * its own group section further down, and a plain descendant would let a parent
- * paint the child's sessions with its own tier.
- * @param rowKey - the row's attribute selector.
- * @returns a relative selector list, valid inside `:has()`.
+ * Strong is the accent undiluted; mid and faint are the same dilution, because the
+ * fifth-hour step is the weight rather than the hue. Mixing towards the body colour
+ * rather than towards the panel is deliberate: towards the background would cost
+ * contrast, towards the label only desaturates, so the faint step still reads.
+ * @param tier - the decided tier.
+ * @param config - the resolved mix percentage.
+ * @returns a `color` token or a `color-mix()` expression.
  */
-function ownRow(rowKey: string): string {
-  return `> ${rowKey}, > * > ${rowKey}`;
-}
-
-/** The group container whose own header row is one workspace. */
-function groupOf(rowKey: string): string {
-  return `${GROUP_SECTION}:has(${ownRow(rowKey)})`;
-}
-
-/**
- * The selectors for the session titles under one workspace.
- *
- * Two selectors rather than one descendant selector because the depth has to be
- * pinned: the members are the group's own session rows, and a descendant would also
- * catch the sessions of a nested child workspace. Every session row is matched by
- * its key prefix, because a rule per session id would go stale the moment a session
- * moves and the id is not what makes it a member.
- * @param rowKey - the workspace row's attribute selector.
- * @param excludeArchived - whether the host's archived rows are left out.
- * @returns one selector per depth.
- */
-function memberSelectors(rowKey: string, excludeArchived = false): string[] {
-  const group = groupOf(rowKey);
-  const sessionRow = `[data-row-key^="${SESSION_KEY_PREFIX}"]${excludeArchived ? NOT_ARCHIVED : ""}`;
-  return [`${group} > ${sessionRow} ${TITLE}`, `${group} > * > ${sessionRow} ${TITLE}`];
+function colorOf(tier: PaintedTier, config: ActivityConfig): string {
+  if (tier === "strong") return ACCENT;
+  return `color-mix(in srgb, ${ACCENT} ${config.faintMixPercent}%, ${BODY})`;
 }
 
 /** One declaration block over one or more selectors. */
@@ -204,58 +155,54 @@ function rule(selectors: readonly string[], declarations: string): string {
 }
 
 /**
- * The rules one workspace contributes, or nothing.
+ * The rules one workspace contributes.
  *
- * A warm workspace emits nothing: the rest of the first day is left exactly as the
- * host renders it, and an explicit `opacity:1` would only give the writer text to
- * diff against.
- *
- * The two effects treat an archived member differently, and that asymmetry is the
- * point. The accent is a colour, so it would overwrite the caption grey the host
- * uses to say "archived"; it therefore leaves those rows out, and emits no member
- * rule at all when every member is archived. Opacity is orthogonal to hue, so the
- * dim rules still reach every member: a stale workspace recedes, and an archived
- * row inside it keeps both its caption colour and its faded state.
+ * The title carries the weight when the tier is strong or mid; the icons only carry
+ * the colour, so the accent reads as one surface rather than as a bolded glyph.
  * @param row - the decided workspace.
+ * @param config - the resolved mix percentage.
  * @returns the CSS rules, in emit order.
  */
-function rulesFor(row: WorkspaceRule): string[] {
-  const rowKey = rowSelector(row.workspaceId);
-  if (row.tier === "hot") {
-    const rules = [rule([titleSelector(rowKey)], EMPHASIS), rule([iconSelector(rowKey)], ICON)];
-    if (row.hasUnarchivedMembers) rules.push(rule(memberSelectors(rowKey, true), EMPHASIS));
-    return rules;
-  }
-  if (row.tier === "dim") {
-    // Both themes are written out rather than one being a fallback for the other:
-    // the two curves have different slopes and floors, so neither value can be
-    // derived from the other at paint time.
-    const title = titleSelector(rowKey);
-    const members = memberSelectors(rowKey);
-    return [
-      rule([title], `opacity:${row.opacityLight}`),
-      rule(members, `opacity:${row.opacityLight}`),
-      rule([`${DARK} ${title}`], `opacity:${row.opacityDark}`),
-      rule(
-        members.map((one) => `${DARK} ${one}`),
-        `opacity:${row.opacityDark}`,
-      ),
-    ];
-  }
-  return [];
+function rulesForWorkspace(row: WorkspaceRule, config: ActivityConfig): string[] {
+  const rowKey = workspaceRow(row.workspaceId);
+  const color = `color:${colorOf(row.tier, config)}`;
+  const title = isBold(row.tier) ? `${color};font-weight:600` : color;
+  return [rule([`${rowKey} ${TITLE}`], title), rule([`${rowKey} > ${SLOT}`], color)];
+}
+
+/**
+ * The rules one session contributes.
+ *
+ * One surface and no weight: a session title is never bold, which is a product
+ * decision rather than a styling gap — the header is the level that carries
+ * emphasis, and bolding every recent session row would make the sidebar shout.
+ * @param row - the decided session.
+ * @param config - the resolved mix percentage.
+ * @returns the CSS rules, in emit order.
+ */
+function rulesForSession(row: SessionRule, config: ActivityConfig): string[] {
+  return [rule([`${sessionRow(row.sessionId)} ${TITLE}`], `color:${colorOf(row.tier, config)}`)];
+}
+
+/** Order workspaces by id, so a reorder in the host never rewrites the sheet. */
+function byWorkspaceId(left: WorkspaceRule, right: WorkspaceRule): number {
+  return left.workspaceId < right.workspaceId ? -1 : left.workspaceId > right.workspaceId ? 1 : 0;
+}
+
+/** Order sessions by id, for the same reason. */
+function bySessionId(left: SessionRule, right: SessionRule): number {
+  return left.sessionId < right.sessionId ? -1 : left.sessionId > right.sessionId ? 1 : 0;
 }
 
 /**
  * Build the whole stylesheet.
- * @param rows - every workspace that has a tier.
- * @param config - the resolved curves; a disabled config emits no row rules.
- * @returns the stylesheet text, ending with the interaction invariants.
+ * @param rules - every row that has a tier, in the two levels the sidebar has.
+ * @param config - the resolved ladder and mix; a disabled config emits nothing.
+ * @returns the stylesheet text, empty when no row is painted.
  */
-export function buildStylesheet(rows: readonly WorkspaceRule[], config: ActivityConfig): string {
-  if (!config.enabled) return BASE_RULES.join("\n");
-  const ordered = [...rows].sort((left, right) =>
-    left.workspaceId < right.workspaceId ? -1 : left.workspaceId > right.workspaceId ? 1 : 0,
-  );
-  const rules = ordered.flatMap(rulesFor);
-  return [...rules, ...BASE_RULES].join("\n");
+export function buildStylesheet(rules: RuleSet, config: ActivityConfig): string {
+  if (!config.enabled) return "";
+  const workspaces = [...rules.workspaces].sort(byWorkspaceId).flatMap((row) => rulesForWorkspace(row, config));
+  const sessions = [...rules.sessions].sort(bySessionId).flatMap((row) => rulesForSession(row, config));
+  return [...workspaces, ...sessions].join("\n");
 }

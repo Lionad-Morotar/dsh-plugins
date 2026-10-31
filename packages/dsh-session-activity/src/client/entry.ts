@@ -3,17 +3,18 @@
  *
  * The tint is a stylesheet, not a slot. The sidebar exposes no seat for a
  * workspace title (the seats under `sidebar.workspaces` are the section itself,
- * the directory flow and the session rows), so the only hook that covers every
- * workspace row is the row's `data-row-key` attribute. This half therefore
- * subscribes to the session list and the workspace list, folds each workspace's
- * members into one reading, and rewrites one `<style>` element.
+ * the directory flow and the session rows), so the only hook that covers every row
+ * is the row's own `data-row-key` attribute. This half therefore subscribes to the
+ * session list and the workspace list, decides a tier per row, and rewrites one
+ * `<style>` element.
  *
- * The painted object is the workspace, not the session row: a workspace is the
- * level a human navigates by, and it is the level whose name has no freshness
- * fact of its own. A session row is read here as the factor behind that reading,
- * and it is painted only as a member — its title follows the workspace it belongs
- * to, through the group the host wraps around both, and never through a rule of
- * its own.
+ * Two levels are painted, and each row is decided on its own clock:
+ * - a workspace row, folded from its member sessions (newest member, running
+ *   propagated), because a workspace has no freshness fact of its own;
+ * - a session row, from its own reading, so a fresh header never drags an old
+ *   member into the accent. A session belongs to no workspace for this purpose,
+ *   which is why the id set comes from the session list rather than from a walk
+ *   over workspace membership.
  *
  * Nothing here renders React and nothing reads the DOM beyond the element it
  * owns. The data path is two snapshots plus two subscriptions; the workspace
@@ -25,15 +26,16 @@
  */
 import {
   aggregateWorkspace,
-  ageOf,
-  opacityFor,
+  archiveSet,
   readableRecord,
+  readSession,
   resolveConfig,
+  sessionIdsOf,
   tierOf,
   type ActivityConfig,
   type SessionListWire,
 } from "./reading.ts";
-import { buildStylesheet, type WorkspaceRule } from "./rules.ts";
+import { buildStylesheet, type SessionRule, type WorkspaceRule } from "./rules.ts";
 import { createWriter, type RowWriter } from "./writer.ts";
 
 /** The services this half reads; declared so Cordis resolves them before mounting. */
@@ -72,7 +74,7 @@ export interface WorkspaceSnapshotWire {
  * Its observable nests under `list`, exactly like `sessions.list`: `workspaces` is
  * the controller service and `list` is the snapshot source it publishes. Both
  * `items` and the archive set are read: an archived session still counts as a
- * member when its workspace is folded, but its row must stay out of the accent,
+ * member when its workspace is folded, but its own row must stay out of the tint,
  * because the host paints it with the caption colour that means "archived".
  */
 export interface WorkspacesLike {
@@ -92,8 +94,9 @@ export interface ClientContextLike {
  * Read the workspace items out of the workspaces snapshot.
  *
  * A snapshot that has not loaded, or one whose container a host upgrade re-homed,
- * reads as no workspaces rather than as an error: the tint then paints nothing and
- * recovers on the next readable snapshot.
+ * reads as no workspaces rather than as an error: the tint then paints no header
+ * and recovers on the next readable snapshot. Session rows are decided from the
+ * session list, so they survive a workspaces snapshot that cannot be read at all.
  * @param workspaces - the injected workspaces service.
  * @returns the items, or an empty list when the snapshot carries none.
  */
@@ -107,18 +110,17 @@ function workspaceItems(workspaces: WorkspacesLike): readonly unknown[] {
  *
  * The set sits next to `items` on the same snapshot, so it is read from the same
  * place the host's own rows are built from. An unreadable value reads as nothing
- * archived rather than as an error: the fold still paints, and only the accent's
- * filter is lost, which the host's own class keeps correct anyway.
+ * archived rather than as an error: the fold still paints, and only this filter is
+ * lost, which the host's own class keeps correct anyway.
  * @param workspaces - the injected workspaces service.
- * @returns the archived session ids, or an empty list when the snapshot carries none.
+ * @returns the archived session ids.
  */
-function archivedSessionIds(workspaces: WorkspacesLike): readonly unknown[] {
-  const archived = readableRecord(workspaces.list.getSnapshot())?.archivedSessionIds;
-  return Array.isArray(archived) ? archived : [];
+function archivedSessions(workspaces: WorkspacesLike): ReadonlySet<string> {
+  return archiveSet(readableRecord(workspaces.list.getSnapshot())?.archivedSessionIds);
 }
 
 /**
- * Mount the workspace title tint.
+ * Mount the sidebar tint.
  *
  * The recompute is coalesced through a microtask because one host change can
  * notify several times (a list refresh plus a projection settle), and every write
@@ -137,36 +139,39 @@ export function apply(ctx: ClientContextLike, config?: Partial<ActivityConfig>):
 
   const recompute = (): void => {
     const list = ctx.sessions.list.getSnapshot();
-    const archived = archivedSessionIds(ctx.workspaces);
+    const archived = archivedSessions(ctx.workspaces);
     const now = Date.now();
-    const rows: WorkspaceRule[] = [];
-    // A snapshot whose items cannot be read paints nothing rather than throwing:
+    const workspaces: WorkspaceRule[] = [];
+    // A snapshot whose items cannot be read paints no header rather than throwing:
     // this runs in a microtask, where a throw would become an uncaught error and
-    // leave the table frozen for every workspace.
+    // leave the table frozen for every row.
     for (const entry of workspaceItems(ctx.workspaces)) {
       const item = readableRecord(entry);
       const workspaceId = item?.workspaceId;
       // The ungrouped bucket is not a workspace and has no row key of its own.
       if (typeof workspaceId !== "string" || workspaceId === "") continue;
-      const reading = aggregateWorkspace(list, item?.sessionIds, archived);
+      const reading = aggregateWorkspace(list, item?.sessionIds);
       // An empty or wholly unresolvable workspace is left alone rather than
-      // painted from a guess: a freshly created one must not start out dim.
+      // painted from a guess: a freshly created one must not start out coloured.
       if (reading === undefined) continue;
       const tier = tierOf({ reading, running: reading.running, updatedAt: undefined, now, config: resolved });
       if (tier === "none") continue;
-      const age = ageOf({ reading, updatedAt: undefined, now });
-      // Both themes are decided here rather than in the rule builder: the builder
-      // only formats text, and a curve that lives in two places drifts.
-      const dim = tier === "dim" && age !== undefined;
-      rows.push({
-        workspaceId,
-        tier,
-        hasUnarchivedMembers: reading.archivedCount < reading.memberCount,
-        opacityLight: dim ? opacityFor(age, resolved, "light") : 1,
-        opacityDark: dim ? opacityFor(age, resolved, "dark") : 1,
-      });
+      workspaces.push({ workspaceId, tier });
     }
-    writer.update(buildStylesheet(rows, resolved));
+
+    const sessions: SessionRule[] = [];
+    for (const sessionId of sessionIdsOf(list)) {
+      // The set is the cheap skip and the rule carries the class condition too: the
+      // snapshot can lag the row by a tick, and the caption grey has to survive both.
+      if (archived.has(sessionId)) continue;
+      const facts = readSession(list, sessionId);
+      if (facts === undefined) continue;
+      const tier = tierOf({ reading: facts.reading, running: facts.running, updatedAt: facts.updatedAt, now, config: resolved });
+      if (tier === "none") continue;
+      sessions.push({ sessionId, tier });
+    }
+
+    writer.update(buildStylesheet({ workspaces, sessions }, resolved));
   };
 
   const schedule = (): void => {

@@ -121,7 +121,7 @@ describe("client bundle", () => {
     expect(typeof plugin.apply).toBe("function");
   });
 
-  it("mounts a stylesheet that tints a workspace, its icons and its member titles", async () => {
+  it("mounts a stylesheet that colours a workspace, its icons and the session rows on their own clocks", async () => {
     const page = fakePage();
     const plugin = evaluate(page.document).factory(() => ({})) as Plugin;
     const dispose = plugin.apply(host());
@@ -131,8 +131,12 @@ describe("client bundle", () => {
     const sheet = page.children[0]?.textContent ?? "";
     expect(sheet).toContain('[data-row-key="workspace:w1"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}');
     expect(sheet).toContain('[data-row-key="workspace:w1"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}');
-    expect(sheet).toContain('div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w1"], > * > [data-row-key="workspace:w1"]) > * > [data-row-key^="session:"]:where(:not(.JoiKIa_archived)) .JoiKIa_title');
-    expect(sheet).not.toContain('data-row-key="session:');
+    // A session row is selected by its own key, and the archived condition is a
+    // zero-weight guard rather than a rule the plugin competes on.
+    expect(sheet).toContain('[data-row-key="session:s1"]:where(:not(.JoiKIa_archived)) .JoiKIa_title{color:var(--dsw-alias-state-business-primary)}');
+    expect(sheet).not.toContain(":has(");
+    expect(sheet).not.toContain("opacity");
+    expect(sheet).not.toContain("Kjh-qa_groupSection");
     dispose();
     expect(page.children).toHaveLength(0);
   });

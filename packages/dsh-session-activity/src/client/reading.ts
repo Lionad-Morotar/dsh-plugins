@@ -2,14 +2,16 @@
  * What one session — and the workspace holding it — reads as, decided from wire
  * shapes this plugin does not own.
  *
- * The tier is a product decision, not a rendering detail: a running level is
- * hot, the last hour is hot, the rest of the first day is left exactly as the
- * host renders it, and from the first full day on the title fades a step per day.
- * There are two curves, one per theme, because the same opacity does not read the
- * same on a white panel and a near-black one. The same curve paints a workspace,
- * which reads as its most recently active member. Keeping that decision here
- * rather than in the entry is what makes the curves testable without a page, and
- * it is why nothing below touches the DOM.
+ * The tier is a product decision, not a rendering detail. There are four of them:
+ * a live level is strong, the first hour stays strong, the second hour and the
+ * fifth step down through two dilutions of the accent, and past the fifth hour the
+ * row is left exactly as the host renders it. Every row is decided on its own
+ * clock — a session by its own last activity, a workspace by its newest member —
+ * because a fresh workspace header must not carry a two-day-old session into the
+ * accent.
+ *
+ * Keeping that decision here rather than in the entry is what makes the ladder
+ * testable without a page, and it is why nothing below touches the DOM.
  *
  * Every value arrives as untrusted JSON from the host list stores: the client
  * does not own the snapshots' shape, a host upgrade may widen or re-home it, and
@@ -20,8 +22,6 @@
 
 /** The projection key the host half registers. */
 export const PROJECTION_KEY = "sessionActivity";
-
-const DAY_MS = 86_400_000;
 
 /** One session's projection cell as the host list state carries it. */
 export interface ProjectionSnapshotWire {
@@ -74,81 +74,69 @@ export interface ActivityReading {
 /**
  * What one workspace reads as, folded from its member sessions.
  *
- * Deliberately narrow: the curve only ever asks when the level last moved and
+ * Deliberately narrow: the ladder only ever asks when the level last moved and
  * whether it is still moving, and a workspace answers both from its members. The
- * two counts answer a third question the rule builder asks, which is whether the
- * accent has any row to reach: an archived member keeps its host colour, so a
- * workspace whose members are all archived must not emit a member accent rule.
+ * member count and the archived count used to answer a third question — whether a
+ * member accent rule had any row to reach — and that question left with the member
+ * follow-through, so they are gone rather than left as dead fields.
  */
 export interface WorkspaceReading {
   /** The newest instant any member session shows; null when no member has a clock. */
   readonly lastActivityAt: number | null;
   /** Whether any member session is running. */
   readonly running: boolean;
-  /** How many members the fold could resolve in the session list at all. */
-  readonly memberCount: number;
-  /** How many of those the host marks archived. */
-  readonly archivedCount: number;
 }
 
 /**
  * The one field every clock decision reads.
  *
  * A session's projection view and a workspace's aggregate both satisfy it, which
- * is what lets the tier and the curve decide either level without knowing which
- * one they were handed.
+ * is what lets the ladder decide either level without knowing which one it was
+ * handed.
  */
 export interface LastActivity {
   /** Wall time of the newest committed event; null when there is nothing to read. */
   readonly lastActivityAt: number | null;
 }
 
-/** The tier a row is painted in; `none` means the row is left alone. */
-export type ActivityTier = "hot" | "warm" | "dim" | "none";
+/** The tier a row is painted in; `none` means the row keeps the host's colour. */
+export type ActivityTier = "strong" | "mid" | "faint" | "none";
 
-/**
- * Which of the two themes a level is painted for.
- *
- * The curves differ because the same opacity does not read the same on both
- * grounds: a faded dark label over a near-black panel still separates from its
- * neighbours, while the light theme needs a wider span before an old workspace
- * visibly recedes.
- */
-export type Theme = "light" | "dark";
+/** The tiers that paint; what the rule builder accepts, so it never formats a no-op. */
+export type PaintedTier = Exclude<ActivityTier, "none">;
 
 /** The tunable face of the tint, as one resolved object. */
 export interface ActivityConfig {
-  /** Age below which a quiet level still reads as active. */
-  readonly hotWithinMs: number;
-  /** Age from which a level starts fading. */
-  readonly dimAfterMs: number;
-  /** Opacity lost per day past the first, dark theme. */
-  readonly dimPerDay: number;
-  /** The darkest a title may get, dark theme; the label has to stay readable. */
-  readonly dimFloor: number;
-  /** Opacity lost per day past the first, light theme. */
-  readonly dimPerDayLight: number;
-  /** The darkest a title may get, light theme. */
-  readonly dimFloorLight: number;
+  /** Age up to which a row reads as strong; the accent undiluted, and bold. */
+  readonly strongWithinMs: number;
+  /** Age up to which a row reads as mid; the diluted accent, and bold. */
+  readonly midWithinMs: number;
+  /** Age up to which a row reads as faint; the diluted accent, no weight. */
+  readonly faintWithinMs: number;
+  /** How much accent the faint colour keeps, the rest being the body colour. */
+  readonly faintMixPercent: number;
   /** Whether the tint mounts at all. */
   readonly enabled: boolean;
 }
 
 /**
- * The shipped curves: an hour of heat, a day before dimming, then two slopes.
+ * The shipped ladder: an hour strong, two hours mid, five hours faint.
  *
- * Light loses `0.2` a day down to `0.3`, dark `0.15` down to `0.45`. The light
- * floor is lower on purpose: `0.45` on a white panel is still close enough to the
- * label colour to read as active, which left the oldest workspaces looking as
- * live as the week-old ones.
+ * The thresholds are inclusive on purpose, because the product statement is
+ * "within the hour", "within two hours", "within five hours": a row exactly one
+ * hour old is still inside the first step. Past the fifth hour nothing is emitted
+ * and the host's own colour takes over, which is what makes a week-old sidebar
+ * read as quiet without any of the rows having been touched.
+ *
+ * The mix is 55% accent into the body colour rather than into the panel: mixing
+ * towards the background costs contrast, while mixing towards the label only
+ * desaturates, so the faint step still reads as text.
  */
 export const DEFAULT_ACTIVITY_CONFIG: ActivityConfig = {
-  hotWithinMs: 3_600_000,
-  dimAfterMs: DAY_MS,
-  dimPerDay: 0.15,
-  dimFloor: 0.45,
-  dimPerDayLight: 0.2,
-  dimFloorLight: 0.3,
+  strongWithinMs: 3_600_000,
+  midWithinMs: 7_200_000,
+  faintWithinMs: 18_000_000,
+  faintMixPercent: 55,
   enabled: true,
 };
 
@@ -157,29 +145,27 @@ function duration(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
-/** Read a fraction within [0, 1], or fall back. */
-function fraction(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : fallback;
+/** Read a percentage within [0, 100], or fall back. */
+function percent(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : fallback;
 }
 
 /**
  * Merge a loader row's config over the shipped defaults.
  *
  * The config arrives as YAML from the Loader, so a typo is a live possibility and
- * a `NaN` here would reach the stylesheet as `opacity:NaN`. A value outside its
- * legal range falls back to the default instead of being clamped: a curve the
- * user did not ask for is worse than the documented one.
+ * a `NaN` here would reach the stylesheet as `color-mix(… NaN%, …)`. A value
+ * outside its legal range falls back to the default instead of being clamped: a
+ * ladder the user did not ask for is worse than the documented one.
  * @param partial - the loader row's overrides, if any.
  * @returns the resolved config.
  */
 export function resolveConfig(partial?: Partial<ActivityConfig>): ActivityConfig {
   return {
-    hotWithinMs: duration(partial?.hotWithinMs, DEFAULT_ACTIVITY_CONFIG.hotWithinMs),
-    dimAfterMs: duration(partial?.dimAfterMs, DEFAULT_ACTIVITY_CONFIG.dimAfterMs),
-    dimPerDay: fraction(partial?.dimPerDay, DEFAULT_ACTIVITY_CONFIG.dimPerDay),
-    dimFloor: fraction(partial?.dimFloor, DEFAULT_ACTIVITY_CONFIG.dimFloor),
-    dimPerDayLight: fraction(partial?.dimPerDayLight, DEFAULT_ACTIVITY_CONFIG.dimPerDayLight),
-    dimFloorLight: fraction(partial?.dimFloorLight, DEFAULT_ACTIVITY_CONFIG.dimFloorLight),
+    strongWithinMs: duration(partial?.strongWithinMs, DEFAULT_ACTIVITY_CONFIG.strongWithinMs),
+    midWithinMs: duration(partial?.midWithinMs, DEFAULT_ACTIVITY_CONFIG.midWithinMs),
+    faintWithinMs: duration(partial?.faintWithinMs, DEFAULT_ACTIVITY_CONFIG.faintWithinMs),
+    faintMixPercent: percent(partial?.faintMixPercent, DEFAULT_ACTIVITY_CONFIG.faintMixPercent),
     enabled: typeof partial?.enabled === "boolean" ? partial.enabled : DEFAULT_ACTIVITY_CONFIG.enabled,
   };
 }
@@ -255,16 +241,62 @@ export function selectActivity(list: SessionListWire, sessionId: string): Activi
   return narrowView(readableRecord(summary?.projectionValues)?.[PROJECTION_KEY]);
 }
 
+/** What one session row needs before its tier can be decided. */
+export interface SessionFacts {
+  /** The projection's reading, when either layer carries a readable one. */
+  readonly reading: ActivityReading | undefined;
+  /** Whether the host reports the session as running right now. */
+  readonly running: boolean;
+  /** The host's own freshness fact; the fallback clock when the projection has none. */
+  readonly updatedAt: number | undefined;
+}
+
+/**
+ * Read everything one session row is decided from, in one narrowing pass.
+ *
+ * Both the session rules and the workspace fold go through this, so a session's
+ * row and its contribution to a header can never disagree about which clock they
+ * saw. A summary that is absent or null is not a session this half can describe,
+ * and the caller paints nothing rather than guessing.
+ * @param list - the session list snapshot.
+ * @param sessionId - the row's session.
+ * @returns the narrowed facts, or undefined when the snapshot carries no summary.
+ */
+export function readSession(list: SessionListWire, sessionId: string): SessionFacts | undefined {
+  const summary = readableRecord(readableRecord(readableRecord(list)?.byId)?.[sessionId]);
+  if (summary === undefined) return undefined;
+  return {
+    reading: selectActivity(list, sessionId),
+    running: summary.running === true,
+    updatedAt: isInstant(summary.updatedAt) ? summary.updatedAt : undefined,
+  };
+}
+
+/**
+ * List every session the snapshot carries.
+ *
+ * Each row is painted on its own clock now, so the entry needs the id set rather
+ * than a walk over workspace membership: a session in the ungrouped bucket belongs
+ * to no workspace and would otherwise never be reached. The keys of `byId` are the
+ * host's own session set — its `ids` array is built from the same items — and an
+ * unreadable container reads as no sessions.
+ * @param list - the session list snapshot.
+ * @returns the session ids, in the host's own key order.
+ */
+export function sessionIdsOf(list: SessionListWire): readonly string[] {
+  return Object.keys(readableRecord(readableRecord(list)?.byId) ?? {});
+}
+
 /**
  * Fold the host's archive set into a lookup.
  *
  * The set arrives as untrusted JSON from the workspaces snapshot, and a host
- * upgrade may re-home it. Losing it costs the accent its filter, not the whole
- * fold, so an unreadable value reads as nothing archived.
+ * upgrade may re-home it. Losing it costs the tint its filter, not the whole
+ * sheet, so an unreadable value reads as nothing archived.
  * @param value - the snapshot's `archivedSessionIds`, if any.
  * @returns the archived session ids.
  */
-function archiveSet(value: unknown): ReadonlySet<string> {
+export function archiveSet(value: unknown): ReadonlySet<string> {
   if (!Array.isArray(value)) return new Set();
   return new Set(value.filter((one): one is string => typeof one === "string"));
 }
@@ -277,42 +309,31 @@ function archiveSet(value: unknown): ReadonlySet<string> {
  * same way the host's own grouping resolves it: a member the list does not carry
  * contributes nothing, because both clocks it could offer live in that list.
  *
- * Archived members are counted, not excluded. Archiving is a sidebar filter rather
- * than an erasure, so a workspace whose sessions have all been archived is still
- * one a human worked in, and painting it as untouched would misreport the sidebar.
- * The member with the newest instant decides the age, so a single recent session
- * keeps a long-lived workspace alive. The archive set is only reported back, for
- * the rule builder to keep those rows out of the accent.
+ * Archived members are counted in, not excluded. Archiving is a sidebar filter
+ * rather than an erasure, so a workspace whose sessions have all been archived is
+ * still one a human worked in, and painting it as untouched would misreport the
+ * sidebar. The member with the newest instant decides the age, so a single recent
+ * session keeps a long-lived workspace alive.
  * @param list - the session list snapshot.
  * @param sessionIds - the workspace item's member ids, as untrusted JSON.
- * @param archivedSessionIds - the host's archive set, as untrusted JSON.
  * @returns the aggregate, or undefined when no member is readable at all.
  */
-export function aggregateWorkspace(
-  list: SessionListWire,
-  sessionIds: unknown,
-  archivedSessionIds?: unknown,
-): WorkspaceReading | undefined {
+export function aggregateWorkspace(list: SessionListWire, sessionIds: unknown): WorkspaceReading | undefined {
   if (!Array.isArray(sessionIds)) return undefined;
-  const summaries = readableRecord(readableRecord(list)?.byId);
-  const archived = archiveSet(archivedSessionIds);
   let newest: number | undefined;
   let running = false;
-  let memberCount = 0;
-  let archivedCount = 0;
+  let resolved = 0;
   for (const sessionId of sessionIds) {
     if (typeof sessionId !== "string") continue;
-    const summary = readableRecord(summaries?.[sessionId]);
-    if (summary === undefined) continue;
-    memberCount += 1;
-    if (archived.has(sessionId)) archivedCount += 1;
-    if (summary.running === true) running = true;
-    const reading = selectActivity(list, sessionId);
-    const instant = reading?.lastActivityAt ?? (isInstant(summary.updatedAt) ? summary.updatedAt : undefined);
+    const facts = readSession(list, sessionId);
+    if (facts === undefined) continue;
+    resolved += 1;
+    if (facts.running) running = true;
+    const instant = facts.reading?.lastActivityAt ?? facts.updatedAt;
     if (instant !== undefined && (newest === undefined || instant > newest)) newest = instant;
   }
-  if (memberCount === 0) return undefined;
-  return { lastActivityAt: newest ?? null, running, memberCount, archivedCount };
+  if (resolved === 0) return undefined;
+  return { lastActivityAt: newest ?? null, running };
 }
 
 /** The clocks one level is decided from. */
@@ -334,7 +355,7 @@ export interface TierInput extends AgeInput {
  * The projection's instant wins over the host's `updatedAt`, because `updatedAt`
  * only counts human prompts: a session that spent twenty minutes in tool calls
  * would otherwise read as hours older than it is. A future instant reads as a
- * negative age, which the tier and the curve both treat as fresh.
+ * negative age, which the ladder treats as fresh.
  * @param input - the two clocks and the reference wall time.
  * @returns the age in milliseconds, or undefined when neither clock exists.
  */
@@ -348,40 +369,19 @@ export function ageOf(input: AgeInput): number | undefined {
  * Decide one level's tier.
  *
  * Running wins over every clock: work that is live is active no matter how old
- * its last committed event is.
- * @param input - the reading, the live status, the clocks and the curve.
- * @returns the tier, or `none` when there is nothing to decide from.
+ * its last committed event is. The thresholds are inclusive, so a row exactly one
+ * hour old is still strong, matching the product statement rather than shaving a
+ * millisecond off each step.
+ * @param input - the reading, the live status, the clocks and the ladder.
+ * @returns the tier, or `none` when there is nothing to decide from or the level
+ *   is past the last threshold.
  */
 export function tierOf(input: TierInput): ActivityTier {
-  if (input.running) return "hot";
+  if (input.running) return "strong";
   const age = ageOf(input);
   if (age === undefined) return "none";
-  if (age < input.config.hotWithinMs) return "hot";
-  if (age < input.config.dimAfterMs) return "warm";
-  return "dim";
-}
-
-/**
- * How far a level fades at one age, in one theme.
- *
- * The curve is flat through the first day, then loses the theme's slope per day
- * and stops at that theme's floor. Quantising to a hundredth is what keeps the
- * stylesheet text stable between ticks: without it every recompute would rewrite
- * the sheet with a slightly different float.
- *
- * The theme is a parameter rather than a lookup because the stylesheet carries
- * both themes at once: one rule per theme, each gated on the host's own attribute.
- * @param ageMs - how long the level has been quiet.
- * @param config - the two curves.
- * @param theme - which curve to read.
- * @returns an opacity in [that theme's floor, 1], quantised to 0.01.
- */
-export function opacityFor(ageMs: number, config: ActivityConfig, theme: Theme): number {
-  if (!Number.isFinite(ageMs)) return 1;
-  const ageDays = ageMs / DAY_MS;
-  if (ageDays <= 1) return 1;
-  const perDay = theme === "light" ? config.dimPerDayLight : config.dimPerDay;
-  const floor = theme === "light" ? config.dimFloorLight : config.dimFloor;
-  const faded = 1 - (ageDays - 1) * perDay;
-  return Math.round(Math.min(1, Math.max(floor, faded)) * 100) / 100;
+  if (age <= input.config.strongWithinMs) return "strong";
+  if (age <= input.config.midWithinMs) return "mid";
+  if (age <= input.config.faintWithinMs) return "faint";
+  return "none";
 }
