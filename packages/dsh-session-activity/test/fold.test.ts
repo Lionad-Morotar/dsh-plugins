@@ -70,6 +70,36 @@ describe("session activity fold", () => {
     expect(definition.apply(after, event(5_000, "turn/end", { turn: 1 }))).toBe(after);
   });
 
+  it("holds the newest readable instant when an event carries a damaged timestamp", () => {
+    const before = replay([event(5_000, "turn/start", { turn: 1 })]);
+    const damaged: readonly unknown[] = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1, undefined];
+    for (const time of damaged) {
+      const after = definition.apply(before, { seq: 0, time: time as number, type: "turn/end", data: {} });
+      expect(after, `advanced on ${String(time)}`).toBe(before);
+      expect(after.lastActivityAt).toBe(5_000);
+    }
+  });
+
+  it("counts a prompt whose timestamp it cannot read, without advancing the instant", () => {
+    const state = definition.apply(definition.init(), { seq: 0, time: Number.NaN, type: "user/message", data: { source: { kind: "user" } } });
+    expect(state.lastActivityAt).toBeNull();
+    expect(state.promptCount).toBe(1);
+    expect(() => activityStateSchema.parse(state)).not.toThrow();
+    expect(() => activityViewSchema.parse(definition.wire.view(state))).not.toThrow();
+  });
+
+  it("stays loadable after replaying a log with damaged timestamps", () => {
+    const state = replay([
+      userMessage(1_000, "user"),
+      { seq: 0, time: Number.NaN, type: "tool/call", data: { callId: "call_a" } },
+      { seq: 0, time: Number.POSITIVE_INFINITY, type: "assistant/message", data: {} },
+    ]);
+    expect(state.lastActivityAt).toBe(1_000);
+    expect(state.toolCallCount).toBe(1);
+    expect(() => activityStateSchema.parse(state)).not.toThrow();
+    expect(() => activityViewSchema.parse(definition.wire.view(state))).not.toThrow();
+  });
+
   it("adds up one ordinary turn across every activity source", () => {
     const value = view([
       userMessage(1_000, "user"),
