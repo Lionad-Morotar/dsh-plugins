@@ -4,7 +4,8 @@
     "title": "dsh-plugins",
     "note": "一个会话正在跑，另一个 10 分钟前动过",
     "tier": "hot",
-    "opacity": 1,
+    "opacityLight": 1,
+    "opacityDark": 1,
     "members": 2
   },
   {
@@ -12,7 +13,8 @@
     "title": "flow-skills",
     "note": "今天动过，但没在跑",
     "tier": "warm",
-    "opacity": 1,
+    "opacityLight": 1,
+    "opacityDark": 1,
     "members": 1
   },
   {
@@ -20,7 +22,8 @@
     "title": "lionad.dev",
     "note": "两天多没动静",
     "tier": "dim",
-    "opacity": 0.82,
+    "opacityLight": 0.76,
+    "opacityDark": 0.82,
     "members": 1
   },
   {
@@ -28,7 +31,8 @@
     "title": "deep-whale",
     "note": "四天没动静",
     "tier": "dim",
-    "opacity": 0.55,
+    "opacityLight": 0.4,
+    "opacityDark": 0.55,
     "members": 2
   },
   {
@@ -36,7 +40,8 @@
     "title": "old-lab",
     "note": "五天没动静，衰减触底",
     "tier": "dim",
-    "opacity": 0.45,
+    "opacityLight": 0.3,
+    "opacityDark": 0.45,
     "members": 1
   },
   {
@@ -44,15 +49,26 @@
     "title": "archived-work",
     "note": "成员全部归档，但最近 20 分钟前还有活动",
     "tier": "hot",
-    "opacity": 1,
+    "opacityLight": 1,
+    "opacityDark": 1,
     "members": 1
+  },
+  {
+    "workspaceId": "w-mixed",
+    "title": "mixed-ws",
+    "note": "一个非归档成员 30 分钟前动过，一个成员已归档",
+    "tier": "hot",
+    "opacityLight": 1,
+    "opacityDark": 1,
+    "members": 2
   },
   {
     "workspaceId": "w-empty",
     "title": "empty-ws",
     "note": "没有会话成员，不产出规则",
     "tier": "none",
-    "opacity": 1,
+    "opacityLight": 1,
+    "opacityDark": 1,
     "members": 0
   }
 ]
