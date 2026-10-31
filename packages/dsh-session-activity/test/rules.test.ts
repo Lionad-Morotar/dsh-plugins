@@ -24,11 +24,17 @@ function lines(rows: readonly RowRule[]): string[] {
 }
 
 describe("buildStylesheet", () => {
-  it("marks a hot row with the brand colour and a heavier weight", () => {
+  it("marks a hot row with the accent colour and a heavier weight", () => {
     expect(lines([row({ sessionId: "s1", tier: "hot" })])).toEqual([
-      '[data-row-key="session:s1"]{color:var(--dsw-alias-brand-primary);font-weight:600}',
+      '[data-row-key="session:s1"]{color:var(--dsw-alias-state-business-primary);font-weight:600}',
       ...BASE,
     ]);
+  });
+
+  it("recolours a hot row with a token the row does not already use", () => {
+    const stylesheet = buildStylesheet([row({ sessionId: "s1", tier: "hot" })], DEFAULT_ACTIVITY_CONFIG);
+    expect(stylesheet).toContain("state-business-primary");
+    expect(stylesheet).not.toContain("brand-primary");
   });
 
   it("dims a dim row by opacity alone", () => {
@@ -49,8 +55,8 @@ describe("buildStylesheet", () => {
 
   it("orders rules by session id, not by arrival", () => {
     expect(lines([row({ sessionId: "s2", tier: "hot" }), row({ sessionId: "s1", tier: "hot" })])).toEqual([
-      '[data-row-key="session:s1"]{color:var(--dsw-alias-brand-primary);font-weight:600}',
-      '[data-row-key="session:s2"]{color:var(--dsw-alias-brand-primary);font-weight:600}',
+      '[data-row-key="session:s1"]{color:var(--dsw-alias-state-business-primary);font-weight:600}',
+      '[data-row-key="session:s2"]{color:var(--dsw-alias-state-business-primary);font-weight:600}',
       ...BASE,
     ]);
   });
@@ -77,7 +83,7 @@ describe("buildStylesheet", () => {
 
   it("escapes a quote and a backslash in the session id", () => {
     expect(lines([row({ sessionId: 'a"b', tier: "hot" })])).toEqual([
-      '[data-row-key="session:a\\"b"]{color:var(--dsw-alias-brand-primary);font-weight:600}',
+      '[data-row-key="session:a\\"b"]{color:var(--dsw-alias-state-business-primary);font-weight:600}',
       ...BASE,
     ]);
     expect(lines([row({ sessionId: "a\\b", tier: "dim", opacity: 0.55 })])).toEqual([

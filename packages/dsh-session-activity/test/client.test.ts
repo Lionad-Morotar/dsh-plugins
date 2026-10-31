@@ -194,7 +194,7 @@ describe("apply", () => {
     const dispose = apply(host.ctx);
     await flush();
     expect(css(host.head)).toBe(
-      ['[data-row-key="session:s1"]{color:var(--dsw-alias-brand-primary);font-weight:600}', BASE].join("\n"),
+      ['[data-row-key="session:s1"]{color:var(--dsw-alias-state-business-primary);font-weight:600}', BASE].join("\n"),
     );
     dispose();
   });
@@ -213,7 +213,7 @@ describe("apply", () => {
     );
     const dispose = apply(host.ctx);
     await flush();
-    expect(css(host.head)).toContain("color:var(--dsw-alias-brand-primary)");
+    expect(css(host.head)).toContain("color:var(--dsw-alias-state-business-primary)");
     dispose();
   });
 
@@ -251,7 +251,7 @@ describe("apply", () => {
     const dispose = apply(host.ctx);
     await flush();
     expect(css(host.head)).toBe(
-      ['[data-row-key="session:s1"]{opacity:0.55}', '[data-row-key="session:s2"]{color:var(--dsw-alias-brand-primary);font-weight:600}', BASE].join("\n"),
+      ['[data-row-key="session:s1"]{opacity:0.55}', '[data-row-key="session:s2"]{color:var(--dsw-alias-state-business-primary);font-weight:600}', BASE].join("\n"),
     );
     dispose();
   });
@@ -276,7 +276,7 @@ describe("apply", () => {
     host.notify();
     await flush();
     expect(css(host.head)).toBe(
-      ['[data-row-key="session:s1"]{color:var(--dsw-alias-brand-primary);font-weight:600}', BASE].join("\n"),
+      ['[data-row-key="session:s1"]{color:var(--dsw-alias-state-business-primary);font-weight:600}', BASE].join("\n"),
     );
     dispose();
   });
@@ -302,7 +302,7 @@ describe("apply", () => {
     const host = fakeHost(snapshot({ s1: session(NOW - 30 * 60_000) }));
     const dispose = apply(host.ctx);
     await flush();
-    expect(css(host.head)).toContain("color:var(--dsw-alias-brand-primary)");
+    expect(css(host.head)).toContain("color:var(--dsw-alias-state-business-primary)");
 
     await vi.advanceTimersByTimeAsync(90 * 60_000);
 
@@ -323,7 +323,7 @@ describe("apply", () => {
     host.setArchived(undefined);
     const dispose = apply(host.ctx);
     await flush();
-    expect(css(host.head)).toContain("color:var(--dsw-alias-brand-primary)");
+    expect(css(host.head)).toContain("color:var(--dsw-alias-state-business-primary)");
     dispose();
   });
 

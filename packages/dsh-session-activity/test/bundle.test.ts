@@ -120,7 +120,7 @@ describe("client bundle", () => {
     await flush();
     expect(page.children).toHaveLength(1);
     expect(page.children[0]?.attributes.get("data-plugin-css")).toBe("dsh-session-activity/rows.css");
-    expect(page.children[0]?.textContent).toContain('[data-row-key="session:s1"]{color:var(--dsw-alias-brand-primary);font-weight:600}');
+    expect(page.children[0]?.textContent).toContain('[data-row-key="session:s1"]{color:var(--dsw-alias-state-business-primary);font-weight:600}');
     dispose();
     expect(page.children).toHaveLength(0);
   });

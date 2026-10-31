@@ -27,8 +27,16 @@ export interface RowRule {
 /** The prefix the host puts in `data-row-key` for a session row. */
 const ROW_KEY_PREFIX = "session:";
 
-/** The host's brand token, so the tint follows the active theme instead of a hardcoded colour. */
-const EMPHASIS = "color:var(--dsw-alias-brand-primary);font-weight:600";
+/**
+ * The tint a hot row carries, written as a token so it follows the active theme.
+ *
+ * The state token, not `--dsw-alias-brand-primary`: in this theme the brand token
+ * resolves to the same value as `--dsw-alias-label-primary` — the colour a row's
+ * text already inherits — in both the light and the dark theme, so recolouring
+ * with it changes nothing and only the weight would read as activity. This one is
+ * the real accent (`#4176e6` light, `#7aaaff` dark) and differs between themes.
+ */
+const EMPHASIS = "color:var(--dsw-alias-state-business-primary);font-weight:600";
 
 /** Characters that would end the CSS string or split the rule across lines. */
 function isUnsafeInString(code: number): boolean {
