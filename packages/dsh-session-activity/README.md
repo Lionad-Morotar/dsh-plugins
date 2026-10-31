@@ -41,13 +41,17 @@ DSH 侧栏行上唯一的新鲜度事实是 `updatedAt`，它等于 `max(created
 
 | 条件 | 档位 | 效果 |
 | --- | --- | --- |
-| `running === true` | hot | 强调色 `var(--dsw-alias-brand-primary)` + `font-weight: 600` |
+| `running === true` | hot | 强调色 `var(--dsw-alias-state-business-primary)`（`#4176e6` 浅 / `#7aaaff` 深）+ `font-weight: 600` |
 | 最后活动在 `hotWithinMs`（默认 1 小时）内 | hot | 同上 |
 | 在 `dimAfterMs`（默认 24 小时）内 | warm | 不改变样式，保持宿主默认 |
 | 超过 `dimAfterMs` | dim | `opacity = clamp(1 - (ageDays - 1) × dimPerDay, dimFloor, 1)`，量化到 0.01 |
 
 默认 `dimPerDay = 0.15`、`dimFloor = 0.45`：第 1 天 1.00、第 4 天约 0.55、第 5 天触底。
 下界保证 10px 的时间标签仍可读。四个阈值都可经 Loader row 的 config 覆盖，`enabled: false` 时整片不注入。
+
+强调色为什么不用 `--dsw-alias-brand-primary`：这个主题里品牌令牌与 `--dsw-alias-label-primary` 同值
+（浅色都是 `#0f1115`、深色都是 `#f9fafb`），而后者正是行文字本来就继承的颜色，所以拿它上色等于什么都没改，
+只剩字重能读出活跃。状态色令牌才是真正的强调色，且亮暗两套取值不同。换令牌前先核对这条。
 
 归档行只走 `opacity`、不写 color 与字重：宿主已经把归档行的标题色显式设成 `--dsw-alias-label-caption`，
 行上的 `color` 盖不住它，而"退后"本来就是归档行该有的读法。
