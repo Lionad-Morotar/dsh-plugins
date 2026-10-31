@@ -30,9 +30,37 @@ const ROW_KEY_PREFIX = "session:";
 /** The host's brand token, so the tint follows the active theme instead of a hardcoded colour. */
 const EMPHASIS = "color:var(--dsw-alias-brand-primary);font-weight:600";
 
+/** Characters that would end the CSS string or split the rule across lines. */
+function isUnsafeInString(code: number): boolean {
+  return code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029;
+}
+
+/**
+ * Escape one host value for a double-quoted CSS string.
+ *
+ * The session id is host data and this is the only place an untrusted value is
+ * written into generated text: an unescaped quote or backslash would end the
+ * string early, letting the rest of the id act as selectors or declarations, and a
+ * newline would split one rule into two. Control characters cannot name a row, so
+ * they are dropped rather than escaped.
+ * @param value - the host's raw value.
+ * @returns the value, safe inside `"…"`.
+ */
+function escapeStringValue(value: string): string {
+  let escaped = "";
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (isUnsafeInString(code)) continue;
+    if (char === "\\") escaped += "\\\\";
+    else if (char === '"') escaped += '\\"';
+    else escaped += char;
+  }
+  return escaped;
+}
+
 /** The attribute selector for one session row. */
 function selectorFor(sessionId: string): string {
-  return `[data-row-key="${ROW_KEY_PREFIX}${sessionId}"]`;
+  return `[data-row-key="${ROW_KEY_PREFIX}${escapeStringValue(sessionId)}"]`;
 }
 
 /**

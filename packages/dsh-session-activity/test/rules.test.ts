@@ -74,4 +74,33 @@ describe("buildStylesheet", () => {
     const stylesheet = buildStylesheet([row({ sessionId: "s1", tier: "hot" })], DEFAULT_ACTIVITY_CONFIG);
     expect(stylesheet.endsWith(BASE.join("\n"))).toBe(true);
   });
+
+  it("escapes a quote and a backslash in the session id", () => {
+    expect(lines([row({ sessionId: 'a"b', tier: "hot" })])).toEqual([
+      '[data-row-key="session:a\\"b"]{color:var(--dsw-alias-brand-primary);font-weight:600}',
+      ...BASE,
+    ]);
+    expect(lines([row({ sessionId: "a\\b", tier: "dim", opacity: 0.55 })])).toEqual([
+      '[data-row-key="session:a\\\\b"]{opacity:0.55}',
+      ...BASE,
+    ]);
+  });
+
+  it("drops a line break rather than escaping it, so one row stays one line", () => {
+    expect(lines([row({ sessionId: "a\nb", tier: "dim", opacity: 0.55 })])).toEqual(['[data-row-key="session:ab"]{opacity:0.55}', ...BASE]);
+  });
+
+  it("keeps every hostile id inside one legal attribute selector", () => {
+    const ids = ['a"b', "a\\b", "a\nb", "a\rb", "a\u0000b", "a\u2028b", '"]{opacity:0}[data-row-key="'];
+    const stylesheet = buildStylesheet(
+      ids.map((sessionId) => row({ sessionId, tier: "dim", opacity: 0.5 })),
+      DEFAULT_ACTIVITY_CONFIG,
+    );
+    const emitted = stylesheet.split("\n");
+    expect(emitted).toHaveLength(ids.length + BASE.length);
+    for (const line of emitted.slice(0, ids.length)) {
+      expect(line).toMatch(/^\[data-row-key="(?:[^"\\\u0000-\u001f\u007f-\u009f\u2028\u2029]|\\.)*"\]\{opacity:0\.5\}$/);
+    }
+    expect(emitted.slice(ids.length)).toEqual(BASE);
+  });
 });
