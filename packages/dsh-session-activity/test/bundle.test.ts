@@ -80,7 +80,7 @@ function evaluate(document: unknown): LoadCall {
   return call;
 }
 
-/** A host double: one running session, no archive set. */
+/** A host double: one running session inside one workspace, no archive set. */
 function host(): unknown {
   return {
     sessions: {
@@ -93,7 +93,15 @@ function host(): unknown {
         subscribe: () => () => {},
       },
     },
-    workspaces: { list: { getSnapshot: () => ({ archivedSessionIds: [] }) } },
+    workspaces: {
+      list: {
+        getSnapshot: () => ({
+          items: [{ workspaceId: "w1", path: "/tmp/w1", title: "w1", sessionIds: ["s1"], createdAt: "2026-01-01T00:00:00.000Z" }],
+          archivedSessionIds: [],
+        }),
+        subscribe: () => () => {},
+      },
+    },
   };
 }
 
@@ -113,14 +121,15 @@ describe("client bundle", () => {
     expect(typeof plugin.apply).toBe("function");
   });
 
-  it("mounts a stylesheet for a running session", async () => {
+  it("mounts a stylesheet that tints a workspace title and no session row", async () => {
     const page = fakePage();
     const plugin = evaluate(page.document).factory(() => ({})) as Plugin;
     const dispose = plugin.apply(host());
     await flush();
     expect(page.children).toHaveLength(1);
     expect(page.children[0]?.attributes.get("data-plugin-css")).toBe("dsh-session-activity/rows.css");
-    expect(page.children[0]?.textContent).toContain('[data-row-key="session:s1"]{color:var(--dsw-alias-state-business-primary);font-weight:600}');
+    expect(page.children[0]?.textContent).toContain('[data-row-key="workspace:w1"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}');
+    expect(page.children[0]?.textContent).not.toContain('data-row-key="session:');
     dispose();
     expect(page.children).toHaveLength(0);
   });

@@ -1,15 +1,17 @@
 /**
- * The row tint's read side.
+ * The tint's read side.
  *
- * These cases pin the two product decisions the tint rests on: how alive a
- * session reads (its tier) and how far it fades (its opacity). The expected
- * values are written as literals rather than derived from the constants under
- * test, because a curve that quietly changed shape would still satisfy a
+ * These cases pin the two product decisions the tint rests on: how alive a row
+ * reads (its tier) and how far it fades (its opacity), plus the fold that turns a
+ * workspace's member sessions into the one reading its title is painted from. The
+ * expected values are written as literals rather than derived from the constants
+ * under test, because a curve that quietly changed shape would still satisfy a
  * self-consistent assertion.
  */
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_ACTIVITY_CONFIG,
+  aggregateWorkspace,
   narrowView,
   opacityFor,
   resolveConfig,
@@ -44,6 +46,11 @@ function listWith(entry: {
   const projectionsBySession: Record<string, unknown> = {};
   if (entry.shared !== undefined) projectionsBySession.s1 = entry.shared;
   return { byId, projectionsBySession } as unknown as SessionListWire;
+}
+
+/** A snapshot over several sessions, each carrying its projection on the object layer. */
+function listOf(summaries: Record<string, Record<string, unknown>>): SessionListWire {
+  return { byId: summaries, projectionsBySession: {} } as unknown as SessionListWire;
 }
 
 /** One tier decision with the shared defaults. */
@@ -156,6 +163,68 @@ describe("selectActivity", () => {
     const nullValues = { byId: { s1: { projectionValues: null } }, projectionsBySession: {} } as unknown as SessionListWire;
     expect(() => selectActivity(nullValues, "s1")).not.toThrow();
     expect(selectActivity(nullValues, "s1")).toBeUndefined();
+  });
+});
+
+describe("aggregateWorkspace", () => {
+  it("takes the newest instant across the members, not the first or the last", () => {
+    const list = listOf({
+      s1: { updatedAt: NOW - 30 * DAY_MS, projectionValues: { sessionActivity: view(NOW - 10 * DAY_MS) } },
+      s2: { updatedAt: NOW - 2 * DAY_MS, projectionValues: { sessionActivity: view(NOW - 5 * DAY_MS) } },
+      s3: { updatedAt: NOW - 3 * DAY_MS, projectionValues: { sessionActivity: view(NOW - HOUR_MS) } },
+    });
+    expect(aggregateWorkspace(list, ["s1", "s2", "s3"])).toEqual({ lastActivityAt: NOW - HOUR_MS, running: false });
+  });
+
+  it("falls back to a member's updatedAt when its projection carries no instant", () => {
+    const list = listOf({
+      s1: { updatedAt: NOW - 4 * HOUR_MS, projectionValues: { sessionActivity: view(null) } },
+      s2: { updatedAt: NOW - 2 * HOUR_MS },
+    });
+    expect(aggregateWorkspace(list, ["s1", "s2"])?.lastActivityAt).toBe(NOW - 2 * HOUR_MS);
+  });
+
+  it("counts archived members too, because the archive set is not an input here", () => {
+    // The fold reads the workspace's member ids and the session list, nothing
+    // else: archiving lives on the workspaces snapshot, so a member the host has
+    // archived is just another member. A workspace whose only session is archived
+    // is still one a human worked in.
+    const list = listOf({ s1: { updatedAt: NOW - 30 * DAY_MS } });
+    expect(aggregateWorkspace(list, ["s1"])).toEqual({ lastActivityAt: NOW - 30 * DAY_MS, running: false });
+  });
+
+  it("propagates running from any single member", () => {
+    const list = listOf({
+      s1: { running: false, updatedAt: NOW - 3 * DAY_MS },
+      s2: { running: true, updatedAt: NOW - 3 * DAY_MS },
+    });
+    expect(aggregateWorkspace(list, ["s1", "s2"])).toEqual({ lastActivityAt: NOW - 3 * DAY_MS, running: true });
+    expect(aggregateWorkspace(listOf({ s1: { running: false, updatedAt: NOW } }), ["s1"])?.running).toBe(false);
+  });
+
+  it("reads nothing when no member resolves, so an empty workspace is never painted", () => {
+    expect(aggregateWorkspace(listOf({}), [])).toBeUndefined();
+    expect(aggregateWorkspace(listOf({ s1: { updatedAt: NOW } }), ["gone"])).toBeUndefined();
+    expect(aggregateWorkspace(listOf({ s1: { updatedAt: NOW } }), undefined)).toBeUndefined();
+    expect(aggregateWorkspace(listOf({ s1: { updatedAt: NOW } }), "s1")).toBeUndefined();
+    expect(aggregateWorkspace({ byId: { s1: null } } as unknown as SessionListWire, ["s1"])).toBeUndefined();
+    expect(aggregateWorkspace({} as unknown as SessionListWire, ["s1"])).toBeUndefined();
+  });
+
+  it("keeps a readable member that has no clock yet, which the curve reads as undecided", () => {
+    expect(aggregateWorkspace(listOf({ s1: { running: false } }), ["s1"])).toEqual({ lastActivityAt: null, running: false });
+  });
+
+  it("skips the members the snapshot cannot resolve and keeps the rest", () => {
+    const list = listOf({ s2: { updatedAt: NOW - HOUR_MS } });
+    expect(aggregateWorkspace(list, ["gone", 42, "s2"])).toEqual({ lastActivityAt: NOW - HOUR_MS, running: false });
+  });
+
+  it("feeds the same curve as a session reading", () => {
+    const quiet = { lastActivityAt: NOW - 2 * HOUR_MS, running: false };
+    const live = { lastActivityAt: null, running: true };
+    expect(tierOf({ reading: quiet, running: quiet.running, updatedAt: undefined, now: NOW, config: DEFAULT_ACTIVITY_CONFIG })).toBe("warm");
+    expect(tierOf({ reading: live, running: live.running, updatedAt: undefined, now: NOW, config: DEFAULT_ACTIVITY_CONFIG })).toBe("hot");
   });
 });
 

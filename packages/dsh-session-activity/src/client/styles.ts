@@ -7,11 +7,22 @@
  * `BASE_RULES` to every table it emits.
  *
  * The base rules are the invariant that keeps the tint from eating the row's
- * interaction feedback. A dimmed row is dimmed by `opacity` on the row itself,
- * so hovering or selecting it would also dim the highlight the host paints at
- * exactly the moment the user is acting on that row. Attribute-plus-pseudo-class
- * selectors already outrank the single-attribute rules the tint writes, which is
- * why neither of these needs `!important`.
+ * interaction feedback. Dimming now lands on the title span only, so the hover
+ * background the host paints on the row is never faded; what these rules protect
+ * is the label itself, which must read at full strength exactly when the user is
+ * acting on it.
+ *
+ * Two states are keyed on, both taken from the host's own row:
+ * - hover, a pseudo-class on the row;
+ * - the workspace that holds the current session, which the host marks with
+ *   `JoiKIa_folderActive` on the row's folder slot. Project rows carry no
+ *   `aria-selected` — only session rows and search-result rows do — so this is the
+ *   current-workspace signal that actually exists, reached through `:has()`.
+ *
+ * Both rules carry the same specificity as a generated dim rule
+ * (`[data-row-key="workspace:<id>"] .JoiKIa_title`), so they win on source order:
+ * `buildStylesheet` always emits them last, and a test pins that ordering. Neither
+ * needs `!important`.
  */
 
 /** The `data-plugin-css` value identifying this plugin's single stylesheet. */
@@ -19,6 +30,6 @@ export const STYLE_TAG_ID = "dsh-session-activity/rows.css";
 
 /** Rules every emitted stylesheet ends with, in emit order. */
 export const BASE_RULES: readonly string[] = [
-  '[data-row-key^="session:"]:hover{opacity:1}',
-  '[data-row-key^="session:"][aria-selected="true"]{opacity:1}',
+  '[data-row-key^="workspace:"]:hover .JoiKIa_title{opacity:1}',
+  '[data-row-key^="workspace:"]:has(.JoiKIa_folderActive) .JoiKIa_title{opacity:1}',
 ];

@@ -1,16 +1,18 @@
 /**
- * What one session reads as, decided from wire shapes this plugin does not own.
+ * What one session — and the workspace holding it — reads as, decided from wire
+ * shapes this plugin does not own.
  *
- * The tier is a product decision, not a rendering detail: a running session is
+ * The tier is a product decision, not a rendering detail: a running level is
  * hot, the last hour is hot, the rest of the first day is left exactly as the
- * host renders it, and from the first full day on the row fades a step per day.
- * Keeping that decision here rather than in the entry is what makes the curve
- * testable without a page, and it is why nothing below touches the DOM.
+ * host renders it, and from the first full day on the title fades a step per day.
+ * The same curve paints a workspace, which reads as its most recently active
+ * member. Keeping that decision here rather than in the entry is what makes the
+ * curve testable without a page, and it is why nothing below touches the DOM.
  *
- * Every value arrives as untrusted JSON from the host list store: the client does
- * not own the snapshot's shape, a host upgrade may widen or re-home it, and the
- * projection is filled per session as the host finishes folding. So each hop
- * narrows and treats an unreadable shape as silence. A row with no readable
+ * Every value arrives as untrusted JSON from the host list stores: the client
+ * does not own the snapshots' shape, a host upgrade may widen or re-home it, and
+ * the projection is filled per session as the host finishes folding. So each hop
+ * narrows and treats an unreadable shape as silence. A level with no readable
  * reading is left alone rather than painted on a guess.
  */
 
@@ -67,18 +69,43 @@ export interface ActivityReading {
   readonly toolCallCount: number;
 }
 
+/**
+ * What one workspace reads as, folded from its member sessions.
+ *
+ * Deliberately narrow: the curve only ever asks when the level last moved and
+ * whether it is still moving, and a workspace answers both from its members.
+ */
+export interface WorkspaceReading {
+  /** The newest instant any member session shows; null when no member has a clock. */
+  readonly lastActivityAt: number | null;
+  /** Whether any member session is running. */
+  readonly running: boolean;
+}
+
+/**
+ * The one field every clock decision reads.
+ *
+ * A session's projection view and a workspace's aggregate both satisfy it, which
+ * is what lets the tier and the curve decide either level without knowing which
+ * one they were handed.
+ */
+export interface LastActivity {
+  /** Wall time of the newest committed event; null when there is nothing to read. */
+  readonly lastActivityAt: number | null;
+}
+
 /** The tier a row is painted in; `none` means the row is left alone. */
 export type ActivityTier = "hot" | "warm" | "dim" | "none";
 
 /** The tunable face of the tint, as one resolved object. */
 export interface ActivityConfig {
-  /** Age below which a quiet session still reads as active. */
+  /** Age below which a quiet level still reads as active. */
   readonly hotWithinMs: number;
-  /** Age from which a session starts fading. */
+  /** Age from which a level starts fading. */
   readonly dimAfterMs: number;
   /** Opacity lost per day past the first. */
   readonly dimPerDay: number;
-  /** The darkest a row may get; the time label has to stay readable. */
+  /** The darkest a title may get; the label has to stay readable. */
   readonly dimFloor: number;
   /** Whether the tint mounts at all. */
   readonly enabled: boolean;
@@ -194,9 +221,46 @@ export function selectActivity(list: SessionListWire, sessionId: string): Activi
   return narrowView(readableRecord(summary?.projectionValues)?.[PROJECTION_KEY]);
 }
 
-/** The clocks one row is decided from. */
+/**
+ * Fold one workspace's member sessions into a single reading.
+ *
+ * Membership comes from the workspace item's own `sessionIds`, which the host has
+ * already filtered by access, and each id resolves through the session list the
+ * same way the host's own grouping resolves it: a member the list does not carry
+ * contributes nothing, because both clocks it could offer live in that list.
+ *
+ * Archived members are not excluded. The archive set lives on the workspaces
+ * snapshot and this fold never reads it: a workspace whose sessions have all been
+ * archived is still one a human worked in, and painting it as untouched would
+ * misreport the sidebar. The member with the newest instant decides the age, so a
+ * single recent session keeps a long-lived workspace alive.
+ * @param list - the session list snapshot.
+ * @param sessionIds - the workspace item's member ids, as untrusted JSON.
+ * @returns the aggregate, or undefined when no member is readable at all.
+ */
+export function aggregateWorkspace(list: SessionListWire, sessionIds: unknown): WorkspaceReading | undefined {
+  if (!Array.isArray(sessionIds)) return undefined;
+  const summaries = readableRecord(readableRecord(list)?.byId);
+  let newest: number | undefined;
+  let running = false;
+  let readable = 0;
+  for (const sessionId of sessionIds) {
+    if (typeof sessionId !== "string") continue;
+    const summary = readableRecord(summaries?.[sessionId]);
+    if (summary === undefined) continue;
+    readable += 1;
+    if (summary.running === true) running = true;
+    const reading = selectActivity(list, sessionId);
+    const instant = reading?.lastActivityAt ?? (isInstant(summary.updatedAt) ? summary.updatedAt : undefined);
+    if (instant !== undefined && (newest === undefined || instant > newest)) newest = instant;
+  }
+  if (readable === 0) return undefined;
+  return { lastActivityAt: newest ?? null, running };
+}
+
+/** The clocks one level is decided from. */
 export interface AgeInput {
-  readonly reading: ActivityReading | undefined;
+  readonly reading: LastActivity | undefined;
   readonly updatedAt: number | undefined;
   readonly now: number;
 }
@@ -208,7 +272,7 @@ export interface TierInput extends AgeInput {
 }
 
 /**
- * How long ago this session last showed signs of life.
+ * How long ago this level last showed signs of life.
  *
  * The projection's instant wins over the host's `updatedAt`, because `updatedAt`
  * only counts human prompts: a session that spent twenty minutes in tool calls
@@ -224,12 +288,12 @@ export function ageOf(input: AgeInput): number | undefined {
 }
 
 /**
- * Decide one row's tier.
+ * Decide one level's tier.
  *
- * Running wins over every clock: a session whose work is live is active no matter
- * how old its last committed event is.
+ * Running wins over every clock: work that is live is active no matter how old
+ * its last committed event is.
  * @param input - the reading, the live status, the clocks and the curve.
- * @returns the tier, or `none` when the row has nothing to decide from.
+ * @returns the tier, or `none` when there is nothing to decide from.
  */
 export function tierOf(input: TierInput): ActivityTier {
   if (input.running) return "hot";
@@ -241,13 +305,13 @@ export function tierOf(input: TierInput): ActivityTier {
 }
 
 /**
- * How far a row fades at one age.
+ * How far a level fades at one age.
  *
  * The curve is flat through the first day, then loses `dimPerDay` per day and
  * stops at `dimFloor`. Quantising to a hundredth is what keeps the stylesheet
  * text stable between ticks: without it every recompute would rewrite the sheet
  * with a slightly different float.
- * @param ageMs - how long the session has been quiet.
+ * @param ageMs - how long the level has been quiet.
  * @param config - the curve.
  * @returns an opacity in [dimFloor, 1], quantised to 0.01.
  */

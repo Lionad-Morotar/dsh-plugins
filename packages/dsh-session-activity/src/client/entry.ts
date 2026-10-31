@@ -1,37 +1,43 @@
 /**
  * Browser-half entry.
  *
- * The tint is a stylesheet, not a slot. The sidebar's row seats are gated to
- * exactly the rows this feature must leave alone (archived rows, and rows the
- * host is already showing live status for), so the only hook that covers every
- * session row is its `data-row-key` attribute. This half therefore subscribes to
- * the session list, decides each row's tier, and rewrites one `<style>` element.
+ * The tint is a stylesheet, not a slot. The sidebar exposes no seat for a
+ * workspace title (the seats under `sidebar.workspaces` are the section itself,
+ * the directory flow and the session rows), so the only hook that covers every
+ * workspace row is the row's `data-row-key` attribute. This half therefore
+ * subscribes to the session list and the workspace list, folds each workspace's
+ * members into one reading, and rewrites one `<style>` element.
+ *
+ * The painted object is the workspace title, not the session row: a workspace is
+ * the level a human navigates by, and it is the level whose name has no freshness
+ * fact of its own. Session rows are read here only as the factor behind that
+ * reading.
  *
  * Nothing here renders React and nothing reads the DOM beyond the element it
- * owns. The data path is one snapshot plus one subscription; the workspaces
- * service is read for its archive set only, because archiving moves that set
- * without touching the session list.
+ * owns. The data path is two snapshots plus two subscriptions; the workspace
+ * subscription is what catches membership changes, because a session moving
+ * between workspaces does not necessarily touch the session list.
  *
  * cordis calls `apply(ctx, config)` — the context first, this plugin's config
  * second. The context stays a context here; services come through `inject`.
  */
 import {
+  aggregateWorkspace,
   ageOf,
   opacityFor,
   readableRecord,
   resolveConfig,
-  selectActivity,
   tierOf,
   type ActivityConfig,
   type SessionListWire,
 } from "./reading.ts";
-import { buildStylesheet, type RowRule } from "./rules.ts";
+import { buildStylesheet, type WorkspaceRule } from "./rules.ts";
 import { createWriter, type RowWriter } from "./writer.ts";
 
 /** The services this half reads; declared so Cordis resolves them before mounting. */
 export const inject = ["sessions", "workspaces"];
 
-/** How often the clock is allowed to move a row without a host notification. */
+/** How often the clock is allowed to move a level without a host notification. */
 const TICK_MS = 60_000;
 
 /** The session list's observable face. */
@@ -42,22 +48,32 @@ export interface SessionsLike {
   };
 }
 
+/** One workspace as the workspaces snapshot lists it. */
+export interface WorkspaceItemWire {
+  /** The workspace's id, which is also its row key; the ungrouped bucket has none. */
+  readonly workspaceId?: string;
+  /** The workspace's member sessions, already filtered by access on the host. */
+  readonly sessionIds?: readonly string[];
+}
+
 /** The slice of the workspaces snapshot this half reads. */
 export interface WorkspaceSnapshotWire {
-  /** The registry-global archive set; absent until the list has loaded. */
-  readonly archivedSessionIds?: readonly string[];
+  /** The registry's workspaces; absent until the list has loaded. */
+  readonly items?: readonly WorkspaceItemWire[];
 }
 
 /**
  * The workspaces service face.
  *
  * Its observable nests under `list`, exactly like `sessions.list`: `workspaces` is
- * the controller service and `list` is the snapshot source it publishes. The
- * archive set is the only field this half reads.
+ * the controller service and `list` is the snapshot source it publishes. Only
+ * `items` is read; the archive set is deliberately ignored, because an archived
+ * session still counts as a member when its workspace is folded.
  */
 export interface WorkspacesLike {
   readonly list: {
     getSnapshot(): WorkspaceSnapshotWire;
+    subscribe(listener: () => void): () => void;
   };
 }
 
@@ -68,31 +84,28 @@ export interface ClientContextLike {
 }
 
 /**
- * Read the archive set out of the workspaces snapshot.
+ * Read the workspace items out of the workspaces snapshot.
  *
- * Read on every recompute rather than cached: archiving changes this set without
- * changing the session list, and this slice deliberately does not subscribe to
- * the workspaces service. The 60 second tick is therefore also the bound on how
- * long a freshly archived row can keep its colour. A snapshot that has not loaded
- * reads as nothing archived, which matches the host's own default rendering.
+ * A snapshot that has not loaded, or one whose container a host upgrade re-homed,
+ * reads as no workspaces rather than as an error: the tint then paints nothing and
+ * recovers on the next readable snapshot.
  * @param workspaces - the injected workspaces service.
- * @returns the archived session ids.
+ * @returns the items, or an empty list when the snapshot carries none.
  */
-function archivedSessionIds(workspaces: WorkspacesLike): ReadonlySet<string> {
-  const ids = workspaces.list.getSnapshot().archivedSessionIds;
-  if (!Array.isArray(ids)) return new Set();
-  return new Set(ids);
+function workspaceItems(workspaces: WorkspacesLike): readonly unknown[] {
+  const items = readableRecord(workspaces.list.getSnapshot())?.items;
+  return Array.isArray(items) ? items : [];
 }
 
 /**
- * Mount the row tint.
+ * Mount the workspace title tint.
  *
  * The recompute is coalesced through a microtask because one host change can
  * notify several times (a list refresh plus a projection settle), and every write
  * replaces the whole stylesheet. One microtask hop turns a burst into one table.
  * @param ctx - client root context.
  * @param config - the loader row's overrides, if any.
- * @returns the disposer releasing the subscription, the tick and the stylesheet.
+ * @returns the disposer releasing both subscriptions, the tick and the stylesheet.
  */
 export function apply(ctx: ClientContextLike, config?: Partial<ActivityConfig>): () => void {
   const resolved = resolveConfig(config);
@@ -104,26 +117,27 @@ export function apply(ctx: ClientContextLike, config?: Partial<ActivityConfig>):
 
   const recompute = (): void => {
     const list = ctx.sessions.list.getSnapshot();
-    const archived = archivedSessionIds(ctx.workspaces);
     const now = Date.now();
-    const rows: RowRule[] = [];
-    // A snapshot whose rows cannot be read paints nothing rather than throwing:
+    const rows: WorkspaceRule[] = [];
+    // A snapshot whose items cannot be read paints nothing rather than throwing:
     // this runs in a microtask, where a throw would become an uncaught error and
-    // leave the table frozen for every session.
-    const summaries = readableRecord(readableRecord(list)?.byId);
-    for (const sessionId of Object.keys(summaries ?? {})) {
-      const summary = readableRecord(summaries?.[sessionId]);
-      if (summary === undefined) continue;
-      const reading = selectActivity(list, sessionId);
-      const updatedAt = typeof summary.updatedAt === "number" ? summary.updatedAt : undefined;
-      const tier = tierOf({ reading, running: summary.running === true, updatedAt, now, config: resolved });
+    // leave the table frozen for every workspace.
+    for (const entry of workspaceItems(ctx.workspaces)) {
+      const item = readableRecord(entry);
+      const workspaceId = item?.workspaceId;
+      // The ungrouped bucket is not a workspace and has no row key of its own.
+      if (typeof workspaceId !== "string" || workspaceId === "") continue;
+      const reading = aggregateWorkspace(list, item?.sessionIds);
+      // An empty or wholly unresolvable workspace is left alone rather than
+      // painted from a guess: a freshly created one must not start out dim.
+      if (reading === undefined) continue;
+      const tier = tierOf({ reading, running: reading.running, updatedAt: undefined, now, config: resolved });
       if (tier === "none") continue;
-      const age = ageOf({ reading, updatedAt, now });
+      const age = ageOf({ reading, updatedAt: undefined, now });
       rows.push({
-        sessionId,
+        workspaceId,
         tier,
         opacity: tier === "dim" && age !== undefined ? opacityFor(age, resolved) : 1,
-        archived: archived.has(sessionId),
       });
     }
     writer.update(buildStylesheet(rows, resolved));
@@ -139,14 +153,16 @@ export function apply(ctx: ClientContextLike, config?: Partial<ActivityConfig>):
     });
   };
 
-  const unsubscribe = ctx.sessions.list.subscribe(schedule);
+  const unsubscribeSessions = ctx.sessions.list.subscribe(schedule);
+  const unsubscribeWorkspaces = ctx.workspaces.list.subscribe(schedule);
   const timer = setInterval(schedule, TICK_MS);
   schedule();
 
   return () => {
     if (disposed) return;
     disposed = true;
-    unsubscribe();
+    unsubscribeSessions();
+    unsubscribeWorkspaces();
     clearInterval(timer);
     writer.dispose();
   };
