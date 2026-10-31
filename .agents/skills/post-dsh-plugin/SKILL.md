@@ -1,10 +1,10 @@
 ---
 name: post-dsh-plugin
 description: 把 DSH 插件投进各市场并如实标注收录状态
-argument-hint: "[预检 | 索引 | awesome | hub | 徽章] <包目录>"
+argument-hint: "[预检 | 索引 | awesome | hub | registry | 徽章] <包目录>"
 disable-model-invocation: true
 metadata:
-  version: alpha
+  version: alpha2
 ---
 
 # post-dsh-plugin：DSH 插件投稿
@@ -12,16 +12,17 @@ metadata:
 ## 要求
 
 - 事实先于文本：每个市场的收录规则要现读其站点或仓库，不凭印象写条目。规则会变，本技能的 references 记录的是取数方式与判据，不是可以被抄进条目的常量。
-- 收录状态的声明必须可验证。徽章、README 措辞、"已收录"字样只在详情页真的能打开时才写。提交了不等于收录了。
+- 收录状态的声明必须可验证。徽章、README 措辞、「已收录」字样只在详情页真的能打开时才写。提交了不等于收录了，合并了也不等于上线了。
 - 一个包能进哪些面由包自身的事实决定，不由想投多少决定。预检脚本先跑，它红的项不要绕过。
 - 本技能有副作用（写条目文件、提交 Issue 或 PR、改 README），因此只允许 `/post-dsh-plugin` 手动调用。
 
 ## 意图路由
 
-- 预检：问"这个包能投哪些市场"、"投稿前还差什么" → Workflow preflight
+- 预检：问「这个包能投哪些市场」「投稿前还差什么」→ Workflow preflight
 - 索引与条目：monorepo 里生成 `market/index.json` 或 `market/awesome/*.yml` → Workflow artifacts
-- hub：投 dsh-plugin.org（Issue 或等 topic 自动爬取） → Workflow hub
 - awesome：给 awesome-dsh-plugin 提条目 PR → Workflow awesome
+- hub：投 dsh-plugin.org（Issue 或等 topic 自动爬取）→ Workflow hub
+- registry：投 dsh.pub / dshopen.org / dshmarketplace.dev / deepseek1024 / dsh-market 创意工坊 / hub.omdsh.dev → Workflow registry
 - 徽章：往 README 加收录徽章或其它可验证徽章 → Workflow badge
 
 ## 外部依赖入口
@@ -33,19 +34,22 @@ metadata:
   调用：
   ```sh
   node .agents/skills/post-dsh-plugin/scripts/preflight.mjs --mode check \
-    --package <dir> --target hub|awesome|index|all [--repo-created <iso>] [--json]
+    --package <dir> --target hub|awesome|index|registry|all [--repo-created <iso>] [--json]
   ```
 
   退出码 0 全部可读规则通过、1 有阻断项、2 用法错误、3 包读不出来
-- 四个市场的取数入口见 `references/markets.md`，其中 hub 的目录接口是唯一能机器判断"是否已收录"的路径
+- 各市场的取数入口与机制分类见 `references/markets.md`，逐个入口的坐标与投稿动作见 `references/registry.md`
+- 机器契约（逐字满足、错一个字段就白跑）见 `references/registry-contracts.md`
+- hub 的目录接口是唯一能机器判断「是否已收录」的路径
 - 浏览器操作走 flow-web；本技能不内建抓取
 
 ## Workflow preflight：判定能投哪些面
 
-0. 定位包目录。monorepo 里先确认这个包是独立仓库还是子目录包，两者在 hub 的判定完全不同（见 references/markets.md 的 monorepo 一节）
+0. 定位包目录。monorepo 里先确认这个包是独立仓库还是子目录包，两者在 hub 与 dsh.pub 的判定完全不同（见 references/markets.md 的 monorepo 一节）
 1. 跑预检脚本，`--target all` 一次看全。有 `--repo-created` 时把仓库创建时间传进去，否则 awesome 的年龄门禁只会报 manual
 2. 读输出里的 manual 项。这些是脚本无法离线判定的事实（GitHub topic、npm 上是否真有这个版本、详情页是否已收录），逐条用实际命令核实，不要当成通过
 3. 报告：能投的面、被阻断的项及原因、需要人工确认的项。阻断项不绕过，先修包本身
+4. 先判层次再列清单：源头三件事（topic、npm、awesome）优先，做完再看独立入口，最后才考虑长尾。不要一上来就铺开十几条
 
 ## Workflow artifacts：生成索引与目录条目
 
@@ -54,14 +58,6 @@ metadata:
 3. 目录条目的形状由它自己的仓库规则决定，取数方式见 `references/awesome.md`。重点：文件名从 URL 折叠而来，图标只收 GitHub 托管的位图，SVG 会被拒
 4. monorepo 与独立仓库的条目形状不同。包搬仓之后旧条目必须删除而不是并存，否则同一个包在市场里出现两条
 
-## Workflow hub：投 dsh-plugin.org
-
-1. 确认收录机制：它按 GitHub topic 自动爬取，没有 PR 流程，人工审核。手册见 `references/hub.md`
-2. 核对硬性要求：公开仓库、`dsh-plugin` topic、README 含 `dsh plugin --profile web add <包名>`、导出 apply、仓库根有 package.json
-3. 判断是否已被收录。查详情页 `https://dsh-plugin.org/zh/plugins/<owner>/<repo>` 与目录接口，两者都说没有才需要提交
-4. 需要提交时填 Issue。站点提供一个预填链接，但完整正文的 URL 会过长而加载失败：先打开空表单，再填标题与正文，最后人工点 Create。正文格式与各栏取舍见 `references/hub.md`
-5. 提交后不要把状态写成"已收录"。审核通过的标准是详情页返回 200，在那之前只能写"已提交"
-
 ## Workflow awesome：给 awesome-dsh-plugin 提条目
 
 1. 克隆其仓库并基于最新 upstream 建分支。基线过期会让它的提交检查把你早先合入的条目当成本次新增，报出远超上限的条目数
@@ -69,24 +65,47 @@ metadata:
 3. 跑它的 `scripts/check-submission.mjs --base <upstream>`，注意它会实时查 GitHub 判断仓库年龄，这一步需要 GITHUB_TOKEN
 4. 仓库年龄不足 1 天是硬阻断。它的报错原文说明该检查会在约 24 小时后自行重跑通过，不要为此重开或强推
 5. 提 PR 前把正文、清单勾选状态自查一遍。PR 正文模板见 `references/awesome.md`
+6. 合并只是第一层。要等夜间构建进 `dsh-plugin-catalog`，下游市场才可见；汇报时区分「已合并」与「已上线」
+
+## Workflow hub：投 dsh-plugin.org
+
+1. 确认收录机制：它按 GitHub topic 自动爬取，没有 PR 流程，人工审核。手册见 `references/hub.md`
+2. 核对硬性要求：公开仓库、`dsh-plugin` topic、README 含 `dsh plugin --profile web add <包名>`、导出 apply、仓库根有 package.json
+3. 判断是否已被收录。查详情页 `https://dsh-plugin.org/zh/plugins/<owner>/<repo>` 与目录接口，两者都说没有才需要提交
+4. 需要提交时填 Issue。站点提供一个预填链接，但完整正文的 URL 会过长而加载失败：先打开空表单，再填标题与正文，最后人工点 Create。正文格式与各栏取舍见 `references/hub.md`
+5. 提交后不要把状态写成「已收录」。审核通过的标准是详情页返回 200，在那之前只能写「已提交」
+
+## Workflow registry：投独立入口
+
+这一层的每一条都不会自动出现，要逐个动手。坐标与当前机制见 `references/registry.md`，机器契约见 `references/registry-contracts.md`。
+
+1. 按性价比排序，先做 dsh.pub、dshopen.org、dshmarketplace.dev 三条，再考虑 deepseek1024、dsh-market 创意工坊，最后才评估 hub.omdsh.dev（门槛最高、刷新最慢）
+2. dsh.pub 带 Cloudflare Turnstile，服务端强制校验，**必须由人在浏览器里点过复选框**；脚本与 CDP 都过不去。提交一次就会自动开 PR、跑检查、自动合并，不需要盯
+3. 表单与 PR 型先读对方模板：`.github/ISSUE_TEMPLATE/` 有就直接按它的字段填，没有就看 CONTRIBUTING
+4. 每投一条立刻记录可验证判据：PR 号或 issue 号。之后用详情页状态码或数据产物确认落地
+5. 提交前跑一次预检的 registry 目标，阻断项不要带着投
 
 ## Workflow badge：加徽章
 
 1. 分清两类徽章。可当场验证的（npm 版本、许可证、topic）随时可加；声称收录状态的（`Listed on dsh-plugin.org`）只在详情页 200 之后加
-2. 加收录徽章前先取详情页状态码。徽章文案是"已收录"，链接指向详情页，两者不一致就是对外不实声明
+2. 加收录徽章前先取详情页状态码。徽章文案是「已收录」，链接指向详情页，两者不一致就是对外不实声明
 3. 徽章 URL 与替代文案见 `references/badge.md`
 
 ## 红线与故障恢复
 
 - 预检退出码非零不得继续投稿。阻断项修包，不修判定。
-- 不把"提交了"写成"已收录"。详情页 404 时加收录徽章属于不实声明。
+- 不把「提交了」写成「已收录」。详情页 404 时加收录徽章属于不实声明。
+- 不把「已合并」写成「已上线」。合并、数据整合、站点可见是三件事，混为一谈会让读者点进 404。
 - 不手改生成物。索引与目录条目都是产物，改了会在下次生成时消失。
 - 不虚构市场规则。规则以站点与仓库的当前状态为准，本技能 references 失效时以实读为准并同步更新。
+- 报红先分层：是**我方产物**不合格，还是**对方仓库/管线**故障。判据三条（用对方校验器跑我方产物、看该工作流历史红绿、看别人的同类投稿）见 `references/markets.md`。曾有人把当前数据写成字面量断言，导致任何新投稿必然失败——那种情况改自己没用，正解是提 issue 加修复 PR。
 - 网络瞬断与认证失效要先分辨再重试。GitHub 域名解析到代理 fake-ip 而不可达是常见形态，此时表现为连不上而不是 404。
 
 ## References 地图
 
-- `references/markets.md`：四个市场面的定位差异、各自取数入口、monorepo 与独立仓库在 hub 的判定差异；Workflow preflight 与 hub Step 0 读
+- `references/markets.md`：三层结构、五类收录机制的判据、合并与上线的分层、我方失败与对方故障的区分、四类内容的形态差异、monorepo 与独立仓库的判定差异；Workflow preflight 与排障时读
+- `references/registry.md`：独立入口逐条的坐标、投稿动作、硬性要求、已知故障与验证判据；Workflow registry 必读
+- `references/registry-contracts.md`：dshWorkshop 清单、submission v2、Turnstile、deepseek1024 条目 schema、community.json 等机器契约与踩坑原文；Workflow registry 提交前必读
 - `references/hub.md`：dsh-plugin.org 的收录机制、硬性要求清单、Issue 正文格式与各栏写法、收录状态判定；Workflow hub 必读
 - `references/awesome.md`：awesome-dsh-plugin 的条目形状、命名折叠规则、图标与描述约束、提交检查的阻断项、PR 正文模板；Workflow awesome 必读
 - `references/badge.md`：徽章两类划分、收录徽章的启用条件与替代文案、可验证徽章的 URL 形态；Workflow badge 必读

@@ -1,40 +1,72 @@
-# 四个市场面
+# 市场面全景
 
-同一个 DSH 插件可以被四条不同的通道分发，它们接受的东西不一样。投稿前先分清目标面，否则会把为一个面准备的材料递给另一个面。
+DSH 没有官方市场。到 2026-11-01，社区已经跑出上百个自称「插件市场」的项目，但真正值得投的只有十几条，而且它们不是并列的十几条通道，而是三层结构。看清层次再动手，否则会把同一份材料递给三个不同机制的面，或者把二十条通道都当成本人肉去提。
 
-- 自建 format-1 索引：收录单位是索引文件里的条目，你自己决定，不需要 PR
-- awesome-dsh-plugin：收录单位是仓里的一个 yml，该仓维护者合 PR 决定，有 PR 流程
-- dsh-plugin.org：收录单位是 GitHub 仓库，站点爬取后人工审核，没有 PR 流程
-- npm：收录单位是已发布的包，无需审核，也不需要 PR
+## 三层结构
 
-## 取数入口
+第一层是源头，只有三件事：GitHub `dsh-plugin` topic、npm 发布、awesome 主目录。绝大多数目录是这三者的派生产物，从它们自动同步。做完这三件，长尾里一大半会自己出现。
 
-各面的事实都要现读，不要凭记忆填。
+第二层是独立入口，各自有单独的收录机制，不会因为你打了 topic 就自动出现。这一层才需要逐个动手：dsh.pub、dshopen.org、dshmarketplace.dev、hub.omdsh.dev、deepseek1024.com、dsh-market.com 创意工坊。
 
-- 自建索引：`https://raw.githubusercontent.com/<owner>/<repo>/main/market/index.json`，format 1，逐版本钉 npm 源与发布时间戳
-- awesome 目录：仓库 `awesome-dsh-plugin/awesome-dsh-plugin`，条目在 `data/plugins/`，校验器在 `scripts/lib/entries.mjs`，
-  提交检查在 `scripts/check-submission.mjs`
-- hub 目录：`https://api.dsh-plugin.org/plugins.{lang}.json` 是全量目录（数 MB，含每条的 repo 与 slug，是机器判断"是否已收录"的唯一可靠路径）；`https://dsh-plugin.org/zh/plugins/<owner>/<repo>` 是详情页，404 即未收录
-- hub 的 API 根 `https://api.dsh-plugin.org/` 会列出全部端点，端点少且稳定，猜路径不如先读它
+第三层是长尾 PR 型目录，几十个，星数从几十到一千五，多数写着自动同步。逐个提 PR 的边际价值很低，挑星数高且明确要求手动提交的做几条即可。
 
-## hub 的一仓库一插件事实
+## 按收录机制分类（判据，不是清单）
 
-hub 的收录单位是 GitHub 仓库，不是包。它按仓库根的 `package.json` 识别包名，再核对 npm 上有没有这个包。
+清单会过期，机制才是稳定的。看到一个新站，先判断它属于哪类：
 
-这意味着 monorepo 子目录包在 hub 这条路上面临结构性问题：仓库根是 monorepo 的壳，扫描读到的是壳的包名，而那通常不是你要投的包。
+- topic 爬取型：给它打 `dsh-plugin` topic 就会被抓。你无法「提交」，只能等刷新。判据是它的仓库里有没有 ingest-topic 一类脚本，或者站上写着「tag your repository」
+- 自动核实型：它会扫 topic，但只收录通过它自己静态核实的仓库，通常有 `approved.json` / `repositories.json` 之类产物，且展示时按 star 排序取前 N
+- PR 型：往它仓库里加一个条目文件或一行 README
+- Issue 表单型：它仓库有 `.github/ISSUE_TEMPLATE/`，用表单提交，维护者审核
+- 自建索引型：没有投稿这回事，你自己托管一份 format-1 索引，用户手动添加索引源
 
-实测依据：hub 全量目录数千条里，用 `github:` 源码安装形式的一条也没有，引用 `/tree/` 子目录的也一条也没有，全部是 npm 包名。没有先例不等于一定不支持，
-但这足以说明"把一个子目录包直接投进 hub"不是它设计的路径。
+## 四类判据怎么取
 
-遇到 monorepo 子目录包，两条可选：
+- 收录状态的唯一可靠判据是详情页状态码。各站的路径形态不同：`dsh-plugin.org/plugins/<owner>/<repo>`、`dshfind.com/zh/plugins/<owner>/<repo>`、`dsh.pub/plugins/<owner>/<repo>`。404 即未收录。目录数据文件的刷新可能滞后数小时，详情页比数据文件更可信
+- PR 与 Issue 的状态要分开说。「已提交」不是「已收录」，「CI 绿」不是「已合并」，「已合并」也不等于「已上线」——见下文
+- 长尾目录是否已收我们，看它的数据产物里能不能搜到 `owner/repo`，别只看 README（README 常只展示 top N）
 
-1. 拆成独立仓库，让它成为仓库根。这一劳永逸地满足 hub 的模型，也让 npm 包名、仓库名与安装命令三者一致。
-2. 保持 monorepo。此时走 awesome 目录（它明确支持子目录条目与 `#name` 后缀），hub 那条先放弃。
+## 合并之后不等于上线
 
-拆仓之后，本仓里那个位置通常换成 submodule。要注意 submodule 的 `ignore = all` 会让父仓的指针变更不进索引，更新指针要 `git add --force`。
+这是本次投稿踩到的真实分层，之前没有记录：
 
-## 包搬仓后必须做的事
+awesome 目录合并后要等夜间构建进 `dsh-plugin-catalog`，下游（dsh-m、dsh-find-plugin、dsh-market、dshopen）才可见。
 
-- 市场脚本里写死的仓库地址与子目录路径要改成从包的 `repository` 字段派生，否则产物会指向旧位置且不报错（旧值仍然"合法"）
+dsh.pub 更细：PR 自动合并 → push 触发整合任务写入 `community.generated.json` 等四个生成物 → 站点部署。第三段可能卡在它自己的 Cloudflare Workers 构建上，而这个构建对**所有**近期投稿都失败。判据是拿上一个合并的插件去探详情页：如果它也 404，就不是我们的事。
+
+所以汇报状态时必须区分三层：合并了、数据整合了、站点可见了。
+
+## 我方失败还是对方故障
+
+投稿报红时先分这一层，别急着改自己的东西。三条判据：
+
+1. 用对方自己的校验器跑我方产物。能过就说明产物没问题
+2. 看该工作流的历史红绿分布。连续多次全红、且别人的同类投稿同样失败，指向对方仓库
+3. 看对方的断言是否把当前数据写死。真实案例：某仓库的站点自检把 `transactional` 项目数写成字面量 `2`，而新投稿恰好会把这个数变成 3，于是**任何**新的同类投稿都必然失败
+
+第 3 条尤其隐蔽：断言写死的是「当前快照」而不是「不变量」，它只在你恰好是第一个破坏快照的人时爆。遇到这种情况，改自己的产物没用，正解是提 issue 加修复 PR。
+
+## 四类内容的差异（同一份材料要变形）
+
+| 面 | 收录单位 | 需要的形态 |
+| --- | --- | --- |
+| 自建索引 | 索引文件里的条目 | format-1 JSON，逐版本钉 npm 源与时间戳 |
+| awesome 目录 | 仓库里一个 yml | owner/repo 坐标、GitHub 托管位图、英文描述 |
+| topic 爬取型 | GitHub 仓库 | topic、README、bundle 声明 |
+| 表单/PR 型 | 条目或一行 README | 取决于对方仓库的实际形状 |
+
+图标格式是最容易做反的一处：format-1 索引接受 SVG，能接受相对引用与 data URL；awesome 目录只收 GitHub 托管的 png/jpg/webp 位图，SVG 明确被拒。同一份视觉要出两版。
+
+## 包搬仓后必须做的
+
+- 市场脚本里写死的仓库地址与子目录路径改成从包的 `repository` 字段派生，否则产物指向旧位置且不报错（旧值仍然「合法」）
 - 旧条目删除，不要与新条目并存，否则同一个包在市场里出现两条
-- 清单检查里"必须是 packages/<name>"这类断言要改成"声明了就必须与包实际位置一致"，才能同时覆盖独立仓库、子目录包与写错三种形态
+- 清单检查里「必须是 packages/<name>」这类断言改成「声明了就必须与包实际位置一致」
+
+## monorepo 子目录包的结构性问题
+
+hub 一类按仓库根 `package.json` 识别包名的站点，看不到 monorepo 里的子包：它读到的是壳的包名。实测全量目录数千条里，用 `/tree/` 子目录形式的一条也没有。
+
+两种做法：拆成独立仓库（一劳永逸，包名、仓库名、安装命令三者一致），或保持 monorepo 只走 awesome（它明确支持子目录条目与 `#name` 后缀）。
+
+拆仓后本仓那个位置通常换成 submodule，注意 `ignore = all` 会让父仓的指针变更不进索引，更新指针要 `git add --force`。
