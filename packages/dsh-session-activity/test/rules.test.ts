@@ -1,0 +1,77 @@
+/**
+ * The stylesheet one recompute produces.
+ *
+ * A rule is the only thing that reaches the page, so these cases pin the text
+ * itself: which effect each tier is allowed to carry, that archived rows dim
+ * only, and that the same row set always yields the same text. The last point is
+ * what keeps the writer from touching the DOM on every host notification.
+ */
+import { describe, expect, it } from "vitest";
+import { DEFAULT_ACTIVITY_CONFIG } from "../src/client/reading.ts";
+import { buildStylesheet, type RowRule } from "../src/client/rules.ts";
+
+/** The two invariants every stylesheet ends with. */
+const BASE = ['[data-row-key^="session:"]:hover{opacity:1}', '[data-row-key^="session:"][aria-selected="true"]{opacity:1}'];
+
+/** One row rule with the fields a case does not care about filled in. */
+function row(overrides: Partial<RowRule> & Pick<RowRule, "sessionId" | "tier">): RowRule {
+  return { opacity: 1, archived: false, ...overrides };
+}
+
+/** The stylesheet split into lines. */
+function lines(rows: readonly RowRule[]): string[] {
+  return buildStylesheet(rows, DEFAULT_ACTIVITY_CONFIG).split("\n");
+}
+
+describe("buildStylesheet", () => {
+  it("marks a hot row with the brand colour and a heavier weight", () => {
+    expect(lines([row({ sessionId: "s1", tier: "hot" })])).toEqual([
+      '[data-row-key="session:s1"]{color:var(--dsw-alias-brand-primary);font-weight:600}',
+      ...BASE,
+    ]);
+  });
+
+  it("dims a dim row by opacity alone", () => {
+    expect(lines([row({ sessionId: "s1", tier: "dim", opacity: 0.55 })])).toEqual(['[data-row-key="session:s1"]{opacity:0.55}', ...BASE]);
+  });
+
+  it("leaves a warm row exactly as the host renders it", () => {
+    expect(lines([row({ sessionId: "s1", tier: "warm" })])).toEqual(BASE);
+  });
+
+  it("dims an archived row without recolouring it", () => {
+    expect(lines([row({ sessionId: "s1", tier: "hot", archived: true })])).toEqual(['[data-row-key="session:s1"]{opacity:1}', ...BASE]);
+    expect(lines([row({ sessionId: "s1", tier: "dim", opacity: 0.55, archived: true })])).toEqual([
+      '[data-row-key="session:s1"]{opacity:0.55}',
+      ...BASE,
+    ]);
+  });
+
+  it("orders rules by session id, not by arrival", () => {
+    expect(lines([row({ sessionId: "s2", tier: "hot" }), row({ sessionId: "s1", tier: "hot" })])).toEqual([
+      '[data-row-key="session:s1"]{color:var(--dsw-alias-brand-primary);font-weight:600}',
+      '[data-row-key="session:s2"]{color:var(--dsw-alias-brand-primary);font-weight:600}',
+      ...BASE,
+    ]);
+  });
+
+  it("produces identical text for the same set in another order", () => {
+    const one = [row({ sessionId: "s3", tier: "dim", opacity: 0.7 }), row({ sessionId: "s1", tier: "hot" })];
+    const other = [row({ sessionId: "s1", tier: "hot" }), row({ sessionId: "s3", tier: "dim", opacity: 0.7 })];
+    expect(buildStylesheet(one, DEFAULT_ACTIVITY_CONFIG)).toBe(buildStylesheet(other, DEFAULT_ACTIVITY_CONFIG));
+  });
+
+  it("keeps the interaction invariants with no rows at all", () => {
+    expect(buildStylesheet([], DEFAULT_ACTIVITY_CONFIG)).toBe(BASE.join("\n"));
+  });
+
+  it("keeps them too when the plugin is disabled", () => {
+    const disabled = { ...DEFAULT_ACTIVITY_CONFIG, enabled: false };
+    expect(buildStylesheet([row({ sessionId: "s1", tier: "hot" })], disabled)).toBe(BASE.join("\n"));
+  });
+
+  it("ends every stylesheet with the invariants", () => {
+    const stylesheet = buildStylesheet([row({ sessionId: "s1", tier: "hot" })], DEFAULT_ACTIVITY_CONFIG);
+    expect(stylesheet.endsWith(BASE.join("\n"))).toBe(true);
+  });
+});
