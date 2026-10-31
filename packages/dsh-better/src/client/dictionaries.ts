@@ -37,6 +37,12 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "attach.pasteMissing": "{count} 个附件对应的文件已不存在，未粘贴",
     "attach.pasteReferenced": "{count} 个附件超出单次读取上限，已改为路径引用",
     "attach.copyFailed": "浏览器拒绝了这次剪贴板写入",
+    // The compression count beside the context meter. The row stays silent at
+    // zero, so every string here describes at least one compression.
+    "compaction.reading": "压缩 {count} 次",
+    "compaction.readingOne": "压缩 1 次",
+    "compaction.tooltip": "本会话上下文已压缩 {count} 次",
+    "compaction.tooltipWithFailures": "本会话上下文已压缩 {count} 次，另有 {failures} 次压缩失败",
   },
   en: {
     "overlay.aria": "Select a model",
@@ -56,5 +62,9 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "attach.pasteMissing": "{count} attachment(s) no longer exist and were not pasted",
     "attach.pasteReferenced": "{count} attachment(s) exceed the read limit and became path references",
     "attach.copyFailed": "The browser refused this clipboard write",
+    "compaction.reading": "{count} compactions",
+    "compaction.readingOne": "1 compaction",
+    "compaction.tooltip": "This session's context was compressed {count} time(s)",
+    "compaction.tooltipWithFailures": "This session's context was compressed {count} time(s), with {failures} failed attempt(s)",
   },
 });

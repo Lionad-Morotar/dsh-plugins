@@ -36,6 +36,9 @@ import {
   type ShortcutRegistryLike,
 } from "./focus.ts";
 import { insertStyles } from "./styles.ts";
+import { CompactionStat } from "./compaction-stat.tsx";
+import { COMPACTION_ID, COMPACTION_ORDER, COMPACTION_SLOT } from "./compaction-registration.ts";
+import { installCompactionStyles } from "./compaction-styles.ts";
 import { createSeat, type SeatDeps, type SeatProps } from "./seat.tsx";
 import { modelPopupSpec, openContext, openSegment, type PopupOpenerLike } from "./trigger.ts";
 
@@ -284,6 +287,28 @@ export const clientPlugin = {
     ctx.effect(() => ctx.locale.register(NS, DICTIONARIES), "dsh-better: locale");
     // The effort badges are the only element here the shell does not style.
     ctx.effect(() => insertStyles(doc), "dsh-better: effort badge stylesheet");
+    // The compression count carries its own sheet: it is installed by the dock
+    // entry rather than the picker, so the two surfaces stay independent.
+    ctx.effect(() => installCompactionStyles(doc), "dsh-better: compaction count stylesheet");
+
+    // The compression count beside the context meter. Nothing is injected: the
+    // slot hands every entry `useProjection` and a namespace-bound `t`, which is
+    // the whole contract this reading needs.
+    ctx.effect(
+      () =>
+        ctx.slots.inject(COMPACTION_SLOT, () =>
+          ctx.slots.register(
+            {
+              name: COMPACTION_SLOT,
+              id: COMPACTION_ID,
+              order: COMPACTION_ORDER,
+              locale: NS,
+            },
+            CompactionStat,
+          ),
+        ),
+      "dsh-better: compaction count",
+    );
 
     /**
      * Build and register the overlay.

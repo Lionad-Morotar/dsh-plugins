@@ -70,6 +70,14 @@ export const inject = ["slots", "locale", "workbench"];
  * `order: 1` is the reader's sentence "the terminal belongs at the bottom": the
  * row's other entries keep the default order and stay above the dock, so the
  * stack reads composer, meter, terminal instead of the dock wedged between them.
+ *
+ * Two things here are consumed outside this package, so neither is free to change:
+ * the attribute this rule selects on (`data-workbench-dock="term-dock"`) and the
+ * `order: 1` band. `dsh-better`'s compaction count joins that band and registers
+ * ahead of this panel in slot order so it lands beside the context meter, and it
+ * re-adds the 12px gap this rule zeroes by keying on the same attribute. Renaming
+ * either would fail no test anywhere — the reading would just lose its spacing, or
+ * move below the panel.
  */
 export const DOCK_ROW_CSS = [
   '[data-composer-dock]:has([data-workbench-dock="term-dock"]){flex-wrap:wrap !important;padding:0 !important;gap:0 !important;margin-top:0 !important;margin-bottom:0 !important;margin-left:calc(-1 * var(--dsh-dock-bleed-left,0px)) !important;margin-right:calc(-1 * var(--dsh-dock-bleed-right,0px)) !important;width:calc(100% + var(--dsh-dock-bleed-left,0px) + var(--dsh-dock-bleed-right,0px)) !important;max-width:none !important}',
