@@ -66,7 +66,7 @@ module.exports.boot(require);
 }
 
 /**
- * Bundle one entry to minified text.
+ * Bundle one entry to text.
  *
  * @param entry - absolute path of the TypeScript entry.
  * @param format - `esm` for the host half, `cjs` for the loader-wrapped client half.
@@ -81,7 +81,11 @@ async function bundle(entry, format, external = []) {
     format,
     platform: host ? "node" : "browser",
     target: "es2022",
-    minify: true,
+    // The gateway builds a Remote method's descriptor by reading the running
+    // function's parameter names, so minified identifiers turn every call into
+    // `gateway/arguments-invalid`. Client code travels inside the ModuleLoader
+    // wrapper and has no such reflection contract, so it stays minified.
+    minify: !host,
     write: false,
     legalComments: "none",
     external,

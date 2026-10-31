@@ -88,7 +88,9 @@ async function childrenOf(directory: string): Promise<PathEntry[]> {
  * Resolve one typed path fragment against the filesystem.
  *
  * Wire shape: the request object is the first parameter and an optional
- * trailing `AbortSignal` the last, per the gateway's pass-through contract.
+ * trailing `AbortSignal` the last. The gateway recognises cancellation by the
+ * literal parameter name `signal` only — any other spelling becomes a JSON
+ * business argument instead.
  */
 export class PathExplorerService extends TypertRemoteService {
   static inject: string[] = [];
@@ -98,7 +100,8 @@ export class PathExplorerService extends TypertRemoteService {
   }
 
   @Remote("resolve")
-  async resolve(request: PathResolveRequest, _signal?: AbortSignal): Promise<PathResolveResult> {
+  async resolve(request: PathResolveRequest, signal?: AbortSignal): Promise<PathResolveResult> {
+    void signal;
     const home = homedir();
     const query = request.query;
     if (typeof query !== "string" || query === "") return invalid("query must be a non-empty string");

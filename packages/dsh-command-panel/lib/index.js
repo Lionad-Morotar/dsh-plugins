@@ -1,1 +1,155 @@
-var U=Object.create;var k=Object.defineProperty;var X=Object.getOwnPropertyDescriptor;var M=(t,e)=>(e=Symbol[t])?e:Symbol.for("Symbol."+t),R=t=>{throw TypeError(t)};var _=(t,e,r)=>e in t?k(t,e,{enumerable:!0,configurable:!0,writable:!0,value:r}):t[e]=r;var T=(t,e)=>k(t,"name",{value:e,configurable:!0});var $=t=>[,,,U(t?.[M("metadata")]??null)],H=["class","method","getter","setter","accessor","field","value","get","set"],x=t=>t!==void 0&&typeof t!="function"?R("Function expected"):t,z=(t,e,r,a,o)=>({kind:H[t],name:e,metadata:a,addInitializer:s=>r._?R("Already initialized"):o.push(x(s||null))}),v=(t,e)=>_(e,M("metadata"),t[3]),O=(t,e,r,a)=>{for(var o=0,s=t[e>>1],i=s&&s.length;o<i;o++)e&1?s[o].call(r):a=s[o].call(r,a);return a},W=(t,e,r,a,o,s)=>{var i,l,h,p,g,n=e&7,y=!!(e&8),c=!!(e&16),f=n>3?t.length+1:n?y?1:2:0,D=H[n+5],L=n>3&&(t[f-1]=[]),N=t[f]||(t[f]=[]),d=n&&(!c&&!y&&(o=o.prototype),n<5&&(n>3||!c)&&X(n<4?o:{get[r](){return q(this,s)},set[r](u){return A(this,s,u)}},r));n?c&&n<4&&T(s,(n>2?"set ":n>1?"get ":"")+r):T(o,r);for(var P=a.length-1;P>=0;P--)p=z(n,r,h={},t[3],N),n&&(p.static=y,p.private=c,g=p.access={has:c?u=>B(o,u):u=>r in u},n^3&&(g.get=c?u=>(n^1?q:G)(u,o,n^4?s:d.get):u=>u[r]),n>2&&(g.set=c?(u,E)=>A(u,o,E,n^4?s:d.set):(u,E)=>u[r]=E)),l=(0,a[P])(n?n<4?c?s:d[D]:n>4?void 0:{get:d.get,set:d.set}:o,p),h._=1,n^4||l===void 0?x(l)&&(n>4?L.unshift(l):n?c?s=l:d[D]=l:o=l):typeof l!="object"||l===null?R("Object expected"):(x(i=l.get)&&(d.get=i),x(i=l.set)&&(d.set=i),x(i=l.init)&&L.unshift(i));return n||v(t,o),d&&k(o,r,d),c?n^4?s:d:o},F=(t,e,r)=>_(t,typeof e!="symbol"?e+"":e,r),w=(t,e,r)=>e.has(t)||R("Cannot "+r),B=(t,e)=>Object(e)!==e?R('Cannot use the "in" operator on this value'):t.has(e),q=(t,e,r)=>(w(t,e,"read from private field"),r?r.call(t):e.get(t));var A=(t,e,r,a)=>(w(t,e,"write to private field"),a?a.call(t,r):e.set(t,r),r),G=(t,e,r)=>(w(t,e,"access private method"),r);import{readdir as J,stat as K}from"node:fs/promises";import{homedir as Q}from"node:os";import{isAbsolute as Y}from"node:path";import{Remote as Z,TypertRemoteService as tt}from"@deepseek-ai/dsh-typert-protocol";var b="pathExplorer";var et=20,rt=100;function nt(t){return typeof t!="number"||!Number.isFinite(t)?et:Math.min(rt,Math.max(1,Math.trunc(t)))}function ot(t,e){return t==="~"?e:t.startsWith("~/")||t.startsWith("~\\")?`${e}${t.slice(1)}`:t}function C(t){return{ok:!1,error:{code:"invalid-request",message:t}}}async function S(t){try{return await K(t)}catch{return}}async function st(t){let e;try{e=await J(t,{withFileTypes:!0})}catch{return[]}let r=e.map(a=>({path:`${t}${a.name}`,kind:a.isDirectory()?"directory":"file",exists:!0}));return r.sort((a,o)=>a.kind!==o.kind?a.kind==="directory"?-1:1:a.path.toLowerCase()<o.path.toLowerCase()?-1:1),r}var V,j,I,m=class extends(j=tt,V=[Z("resolve")],j){constructor(r){super(r,b);O(I,5,this)}async resolve(r,a){let o=Q(),s=r.query;if(typeof s!="string"||s==="")return C("query must be a non-empty string");if(s!=="~"&&!s.includes("/")&&!s.includes("\\"))return C("query must contain a path separator");let i=ot(s,o);if(!Y(i)&&!s.startsWith("~"))return C("query must be absolute: start with /, a drive letter, ~, or a UNC root");let l=Math.max(i.lastIndexOf("/"),i.lastIndexOf("\\")),h=s==="~"||l===i.length-1,p=h?/[\\/]$/.test(i)?i:`${i}/`:i.slice(0,l+1),n=(h?"":i.slice(l+1)).toLowerCase(),y=[];if((await S(p))?.isDirectory()===!0){let c=await st(p);for(let f of c)f.path!==i&&(n!==""&&!f.path.slice(p.length).toLowerCase().startsWith(n)||y.push(f))}if(!h){let c=await S(i);c!==void 0&&y.unshift({path:i,kind:c.isDirectory()?"directory":"file",exists:!0})}return{ok:!0,home:o,entries:y.slice(0,nt(r.limit))}}};I=$(j),W(I,1,"resolve",V,m),v(I,m),F(m,"inject",[]);var ht="dsh-command-panel",xt=[],Rt=m;export{b as PATH_SERVICE,m as PathExplorerService,Rt as default,xt as inject,ht as name};
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __knownSymbol = (name2, symbol) => (symbol = Symbol[name2]) ? symbol : /* @__PURE__ */ Symbol.for("Symbol." + name2);
+var __typeError = (msg) => {
+  throw TypeError(msg);
+};
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+var __decoratorStart = (base) => [, , , __create(base?.[__knownSymbol("metadata")] ?? null)];
+var __decoratorStrings = ["class", "method", "getter", "setter", "accessor", "field", "value", "get", "set"];
+var __expectFn = (fn) => fn !== void 0 && typeof fn !== "function" ? __typeError("Function expected") : fn;
+var __decoratorContext = (kind, name2, done, metadata, fns) => ({ kind: __decoratorStrings[kind], name: name2, metadata, addInitializer: (fn) => done._ ? __typeError("Already initialized") : fns.push(__expectFn(fn || null)) });
+var __decoratorMetadata = (array, target) => __defNormalProp(target, __knownSymbol("metadata"), array[3]);
+var __runInitializers = (array, flags, self, value) => {
+  for (var i = 0, fns = array[flags >> 1], n = fns && fns.length; i < n; i++) flags & 1 ? fns[i].call(self) : value = fns[i].call(self, value);
+  return value;
+};
+var __decorateElement = (array, flags, name2, decorators, target, extra) => {
+  var fn, it, done, ctx, access, k = flags & 7, s = !!(flags & 8), p = !!(flags & 16);
+  var j = k > 3 ? array.length + 1 : k ? s ? 1 : 2 : 0, key = __decoratorStrings[k + 5];
+  var initializers = k > 3 && (array[j - 1] = []), extraInitializers = array[j] || (array[j] = []);
+  var desc = k && (!p && !s && (target = target.prototype), k < 5 && (k > 3 || !p) && __getOwnPropDesc(k < 4 ? target : { get [name2]() {
+    return __privateGet(this, extra);
+  }, set [name2](x) {
+    return __privateSet(this, extra, x);
+  } }, name2));
+  k ? p && k < 4 && __name(extra, (k > 2 ? "set " : k > 1 ? "get " : "") + name2) : __name(target, name2);
+  for (var i = decorators.length - 1; i >= 0; i--) {
+    ctx = __decoratorContext(k, name2, done = {}, array[3], extraInitializers);
+    if (k) {
+      ctx.static = s, ctx.private = p, access = ctx.access = { has: p ? (x) => __privateIn(target, x) : (x) => name2 in x };
+      if (k ^ 3) access.get = p ? (x) => (k ^ 1 ? __privateGet : __privateMethod)(x, target, k ^ 4 ? extra : desc.get) : (x) => x[name2];
+      if (k > 2) access.set = p ? (x, y) => __privateSet(x, target, y, k ^ 4 ? extra : desc.set) : (x, y) => x[name2] = y;
+    }
+    it = (0, decorators[i])(k ? k < 4 ? p ? extra : desc[key] : k > 4 ? void 0 : { get: desc.get, set: desc.set } : target, ctx), done._ = 1;
+    if (k ^ 4 || it === void 0) __expectFn(it) && (k > 4 ? initializers.unshift(it) : k ? p ? extra = it : desc[key] = it : target = it);
+    else if (typeof it !== "object" || it === null) __typeError("Object expected");
+    else __expectFn(fn = it.get) && (desc.get = fn), __expectFn(fn = it.set) && (desc.set = fn), __expectFn(fn = it.init) && initializers.unshift(fn);
+  }
+  return k || __decoratorMetadata(array, target), desc && __defProp(target, name2, desc), p ? k ^ 4 ? extra : desc : target;
+};
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
+var __privateIn = (member, obj) => Object(obj) !== obj ? __typeError('Cannot use the "in" operator on this value') : member.has(obj);
+var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read from private field"), getter ? getter.call(obj) : member.get(obj));
+var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
+var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
+
+// src/host/path-explorer.ts
+import { readdir, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { isAbsolute } from "node:path";
+import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
+
+// src/shared.ts
+var PATH_SERVICE = "pathExplorer";
+
+// src/host/path-explorer.ts
+var DEFAULT_LIMIT = 20;
+var MAX_LIMIT = 100;
+function clampLimit(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_LIMIT;
+  return Math.min(MAX_LIMIT, Math.max(1, Math.trunc(value)));
+}
+function expandHome(query, home) {
+  if (query === "~") return home;
+  if (query.startsWith("~/") || query.startsWith("~\\")) return `${home}${query.slice(1)}`;
+  return query;
+}
+function invalid(message) {
+  return { ok: false, error: { code: "invalid-request", message } };
+}
+async function statOf(target) {
+  try {
+    return await stat(target);
+  } catch {
+    return void 0;
+  }
+}
+async function childrenOf(directory) {
+  let dirents;
+  try {
+    dirents = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const entries = dirents.map((dirent) => ({
+    path: `${directory}${dirent.name}`,
+    kind: dirent.isDirectory() ? "directory" : "file",
+    exists: true
+  }));
+  entries.sort((left, right) => {
+    if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
+    return left.path.toLowerCase() < right.path.toLowerCase() ? -1 : 1;
+  });
+  return entries;
+}
+var _resolve_dec, _a, _init;
+var PathExplorerService = class extends (_a = TypertRemoteService, _resolve_dec = [Remote("resolve")], _a) {
+  constructor(ctx) {
+    super(ctx, PATH_SERVICE);
+    __runInitializers(_init, 5, this);
+  }
+  async resolve(request, signal) {
+    void signal;
+    const home = homedir();
+    const query = request.query;
+    if (typeof query !== "string" || query === "") return invalid("query must be a non-empty string");
+    if (query !== "~" && !query.includes("/") && !query.includes("\\")) {
+      return invalid("query must contain a path separator");
+    }
+    const target = expandHome(query, home);
+    if (!isAbsolute(target) && !query.startsWith("~")) {
+      return invalid("query must be absolute: start with /, a drive letter, ~, or a UNC root");
+    }
+    const lastSeparator = Math.max(target.lastIndexOf("/"), target.lastIndexOf("\\"));
+    const namesDirectory = query === "~" || lastSeparator === target.length - 1;
+    const directory = namesDirectory ? /[\\/]$/.test(target) ? target : `${target}/` : target.slice(0, lastSeparator + 1);
+    const fragment = namesDirectory ? "" : target.slice(lastSeparator + 1);
+    const needle = fragment.toLowerCase();
+    const entries = [];
+    if ((await statOf(directory))?.isDirectory() === true) {
+      const children = await childrenOf(directory);
+      for (const child of children) {
+        if (child.path === target) continue;
+        if (needle !== "" && !child.path.slice(directory.length).toLowerCase().startsWith(needle)) continue;
+        entries.push(child);
+      }
+    }
+    if (!namesDirectory) {
+      const self = await statOf(target);
+      if (self !== void 0) {
+        entries.unshift({ path: target, kind: self.isDirectory() ? "directory" : "file", exists: true });
+      }
+    }
+    return { ok: true, home, entries: entries.slice(0, clampLimit(request.limit)) };
+  }
+};
+_init = __decoratorStart(_a);
+__decorateElement(_init, 1, "resolve", _resolve_dec, PathExplorerService);
+__decoratorMetadata(_init, PathExplorerService);
+__publicField(PathExplorerService, "inject", []);
+
+// src/index.ts
+var name = "dsh-command-panel";
+var inject = [];
+var index_default = PathExplorerService;
+export {
+  PATH_SERVICE,
+  PathExplorerService,
+  index_default as default,
+  inject,
+  name
+};
