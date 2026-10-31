@@ -167,18 +167,22 @@ export interface PathScript {
   readonly home?: string;
   readonly entries?: ReadonlyArray<{ readonly path: string; readonly kind: "file" | "directory"; readonly exists: boolean }>;
   readonly error?: string;
+  /** Observed request, for specs that pin what the loader sent. */
+  readonly onResolve?: (request: { readonly query: string; readonly base?: string }) => void;
 }
 
 /** The filesystem exploration service this package's own host half publishes. */
 export function fakePathExplorer(script: PathScript = {}): PathExplorerRemote {
   return {
-    resolve: async () =>
-      script.error === undefined
+    resolve: async request => {
+      script.onResolve?.(request);
+      return script.error === undefined
         ? {
             ok: true as const,
             value: { ok: true as const, home: script.home ?? "/Users/lionad", entries: script.entries ?? [] },
           }
-        : { ok: false as const, error: { code: script.error } },
+        : { ok: false as const, error: { code: script.error } };
+    },
   };
 }
 

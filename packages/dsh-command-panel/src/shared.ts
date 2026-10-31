@@ -20,6 +20,8 @@ export interface PathEntry {
 /** Resolve request; the query is the reader's typed text, tilde included. */
 export interface PathResolveRequest {
   readonly query: string;
+  /** Session working directory that relative queries (`../x`) climb from. */
+  readonly base?: string;
   readonly limit?: number;
 }
 

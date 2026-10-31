@@ -264,3 +264,38 @@ describe("loadRows: switch", () => {
     expect(result.status).toBe("ready");
   });
 });
+
+describe("loadRows: navigate with a parent-step query", () => {
+  it("browses the filesystem against the session cwd", async () => {
+    let seen: { query: string; base?: string } | undefined;
+    const list = vi.fn(async () => ({ ok: true as const, value: [] }));
+    const result = await loadRows(
+      services({
+        fileReferences: () => ({ list }),
+        pathExplorer: () =>
+          fakePathExplorer({
+            entries: [{ path: "/Users/lionad/notes", kind: "directory", exists: true }],
+            onResolve: request => {
+              seen = request;
+            },
+          }),
+      }),
+      request({ query: "../notes" }),
+    );
+
+    expect(list).not.toHaveBeenCalled();
+    expect(seen).toEqual({ query: "../notes", base: "/Users/lionad/Github/Lionad-Morotar/dsh-plugins" });
+    expect(result.status).toBe("ready");
+    expect(result.rows[0]?.origin).toBe("filesystem");
+  });
+
+  it("explains the missing session instead of resolving without a base", async () => {
+    const result = await loadRows(
+      services({ pathExplorer: () => fakePathExplorer() }),
+      request({ query: "../notes", sessionId: null }),
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.message).toBe(copy.noticeNoSession);
+  });
+});
