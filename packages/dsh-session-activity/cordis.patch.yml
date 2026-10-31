@@ -1,0 +1,5 @@
+# Mount dsh-session-activity: this package owns the durable activity fold that
+# lets the sidebar tell how alive each session still is.
+- insert:
+    - id: session-activity
+      name: 'dsh-session-activity'
