@@ -20,10 +20,47 @@ const NOW = 1_800_000_000_000;
 const BASE = [
   '[data-row-key^="workspace:"]:hover .JoiKIa_title{opacity:1}',
   '[data-row-key^="workspace:"]:has(.JoiKIa_folderActive) .JoiKIa_title{opacity:1}',
+  'div.Kjh-qa_groupSection:has(> [data-row-key^="workspace:"], > * > [data-row-key^="workspace:"]):hover [data-row-key^="session:"] .JoiKIa_title{opacity:1}',
+  'div.Kjh-qa_groupSection:has([data-row-key^="workspace:"] .JoiKIa_folderActive) [data-row-key^="session:"] .JoiKIa_title{opacity:1}',
 ].join("\n");
 
 /** The accent a hot workspace's title carries. */
 const HOT = "color:var(--dsw-alias-state-business-primary);font-weight:600";
+
+/**
+ * The group whose own header row is one workspace.
+ *
+ * Two branches because the host wraps a row carrying a hover card in a `span`: a
+ * real workspace's row is a grandchild of the group, one without a hover card is a
+ * child.
+ */
+function groupOf(workspaceId: string): string {
+  const row = `[data-row-key="workspace:${workspaceId}"]`;
+  return `div.Kjh-qa_groupSection:has(> ${row}, > * > ${row})`;
+}
+
+/** The three rules one hot workspace contributes: title, icon slots, members. */
+function hot(workspaceId: string): string[] {
+  const key = `[data-row-key="workspace:${workspaceId}"]`;
+  return [
+    `${key} .JoiKIa_title{${HOT}}`,
+    `${key} > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}`,
+    `${groupOf(workspaceId)} [data-row-key^="session:"] .JoiKIa_title{${HOT}}`,
+  ];
+}
+
+/** The four rules one dim workspace contributes: both surfaces, both themes. */
+function dim(workspaceId: string, light: number, dark: number): string[] {
+  const key = `[data-row-key="workspace:${workspaceId}"]`;
+  const title = `${key} .JoiKIa_title`;
+  const members = `${groupOf(workspaceId)} [data-row-key^="session:"] .JoiKIa_title`;
+  return [
+    `${title}{opacity:${light}}`,
+    `${members}{opacity:${light}}`,
+    `:where(body[data-ds-dark-theme]) ${title}{opacity:${dark}}`,
+    `:where(body[data-ds-dark-theme]) ${members}{opacity:${dark}}`,
+  ];
+}
 
 /** One `<style>` element as the writer creates it. */
 class FakeStyleElement {
@@ -220,11 +257,11 @@ describe("apply", () => {
     vi.unstubAllGlobals();
   });
 
-  it("paints a workspace holding a running session hot, on its title", async () => {
+  it("paints a workspace holding a running session hot, on its title, icons and members", async () => {
     const host = fakeHost(sessions({ s1: session(null, { running: true }) }), workspaces(workspace("w1", ["s1"])));
     const dispose = apply(host.ctx);
     await flush();
-    expect(css(host.head)).toBe([`[data-row-key="workspace:w1"] .JoiKIa_title{${HOT}}`, BASE].join("\n"));
+    expect(css(host.head)).toBe([...hot("w1"), BASE].join("\n"));
     dispose();
   });
 
@@ -235,19 +272,34 @@ describe("apply", () => {
     );
     const dispose = apply(host.ctx);
     await flush();
-    expect(css(host.head)).toBe(['[data-row-key="workspace:w1"] .JoiKIa_title{opacity:0.55}', BASE].join("\n"));
+    expect(css(host.head)).toBe([...dim("w1", 0.4, 0.55), BASE].join("\n"));
     dispose();
   });
 
-  it("leaves every session row untouched, whatever its own reading says", async () => {
+  it("follows a workspace's member session titles through the group, never through a session id", async () => {
     const host = fakeHost(
       sessions({ s1: session(NOW - 4 * DAY_MS), s2: session(NOW - 10 * DAY_MS) }),
+      workspaces(workspace("w1", ["s1", "s2"])),
+    );
+    const dispose = apply(host.ctx);
+    await flush();
+    const sheet = css(host.head);
+    expect(sheet).toContain(`${groupOf("w1")} [data-row-key^="session:"] .JoiKIa_title`);
+    expect(sheet).not.toContain('data-row-key="session:');
+    expect(sheet).not.toContain(".JoiKIa_sessionRow");
+    dispose();
+  });
+
+  it("leaves a session row outside any painted workspace at the host's own styling", async () => {
+    // Only the members of a painted workspace follow it: a session whose own
+    // reading is old, inside a warm workspace, must keep the host's rendering.
+    const host = fakeHost(
+      sessions({ s1: session(NOW - 2 * 3_600_000), s2: session(NOW - 30 * DAY_MS) }),
       workspaces(workspace("w1", ["s1"])),
     );
     const dispose = apply(host.ctx);
     await flush();
-    expect(css(host.head)).not.toContain('data-row-key="session:');
-    expect(css(host.head)).not.toContain(".JoiKIa_sessionRow");
+    expect(css(host.head)).toBe(BASE);
     dispose();
   });
 
@@ -260,7 +312,7 @@ describe("apply", () => {
     );
     const dispose = apply(host.ctx);
     await flush();
-    expect(css(host.head)).toBe([`[data-row-key="workspace:w1"] .JoiKIa_title{${HOT}}`, BASE].join("\n"));
+    expect(css(host.head)).toBe([...hot("w1"), BASE].join("\n"));
     dispose();
   });
 
@@ -328,7 +380,7 @@ describe("apply", () => {
     await flush();
 
     expect(writes(host.head)).toBe(2);
-    expect(css(host.head)).toBe(['[data-row-key="workspace:w1"] .JoiKIa_title{opacity:0.55}', BASE].join("\n"));
+    expect(css(host.head)).toBe([...dim("w1", 0.4, 0.55), BASE].join("\n"));
     dispose();
   });
 
@@ -347,8 +399,8 @@ describe("apply", () => {
 
     expect(css(host.head)).toBe(
       [
-        `[data-row-key="workspace:w1"] .JoiKIa_title{${HOT}}`,
-        `[data-row-key="workspace:w2"] .JoiKIa_title{${HOT}}`,
+        ...hot("w1"),
+        ...hot("w2"),
         BASE,
       ].join("\n"),
     );
@@ -359,7 +411,7 @@ describe("apply", () => {
     const host = fakeHost(sessions({ s1: session(NOW - 4 * DAY_MS) }), workspaces(workspace("w1", ["s1"])));
     const dispose = apply(host.ctx);
     await flush();
-    expect(css(host.head)).toContain("opacity:0.55");
+    expect(css(host.head)).toContain("opacity:0.4");
 
     host.setWorkspaces(workspaces());
     host.notifyWorkspaces();

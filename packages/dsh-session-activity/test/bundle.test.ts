@@ -121,15 +121,18 @@ describe("client bundle", () => {
     expect(typeof plugin.apply).toBe("function");
   });
 
-  it("mounts a stylesheet that tints a workspace title and no session row", async () => {
+  it("mounts a stylesheet that tints a workspace, its icons and its member titles", async () => {
     const page = fakePage();
     const plugin = evaluate(page.document).factory(() => ({})) as Plugin;
     const dispose = plugin.apply(host());
     await flush();
     expect(page.children).toHaveLength(1);
     expect(page.children[0]?.attributes.get("data-plugin-css")).toBe("dsh-session-activity/rows.css");
-    expect(page.children[0]?.textContent).toContain('[data-row-key="workspace:w1"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}');
-    expect(page.children[0]?.textContent).not.toContain('data-row-key="session:');
+    const sheet = page.children[0]?.textContent ?? "";
+    expect(sheet).toContain('[data-row-key="workspace:w1"] .JoiKIa_title{color:var(--dsw-alias-state-business-primary);font-weight:600}');
+    expect(sheet).toContain('[data-row-key="workspace:w1"] > .JoiKIa_slot{color:var(--dsw-alias-state-business-primary)}');
+    expect(sheet).toContain('div.Kjh-qa_groupSection:has(> [data-row-key="workspace:w1"], > * > [data-row-key="workspace:w1"]) [data-row-key^="session:"] .JoiKIa_title');
+    expect(sheet).not.toContain('data-row-key="session:');
     dispose();
     expect(page.children).toHaveLength(0);
   });

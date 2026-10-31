@@ -5,9 +5,11 @@
  * The tier is a product decision, not a rendering detail: a running level is
  * hot, the last hour is hot, the rest of the first day is left exactly as the
  * host renders it, and from the first full day on the title fades a step per day.
- * The same curve paints a workspace, which reads as its most recently active
- * member. Keeping that decision here rather than in the entry is what makes the
- * curve testable without a page, and it is why nothing below touches the DOM.
+ * There are two curves, one per theme, because the same opacity does not read the
+ * same on a white panel and a near-black one. The same curve paints a workspace,
+ * which reads as its most recently active member. Keeping that decision here
+ * rather than in the entry is what makes the curves testable without a page, and
+ * it is why nothing below touches the DOM.
  *
  * Every value arrives as untrusted JSON from the host list stores: the client
  * does not own the snapshots' shape, a host upgrade may widen or re-home it, and
@@ -97,26 +99,49 @@ export interface LastActivity {
 /** The tier a row is painted in; `none` means the row is left alone. */
 export type ActivityTier = "hot" | "warm" | "dim" | "none";
 
+/**
+ * Which of the two themes a level is painted for.
+ *
+ * The curves differ because the same opacity does not read the same on both
+ * grounds: a faded dark label over a near-black panel still separates from its
+ * neighbours, while the light theme needs a wider span before an old workspace
+ * visibly recedes.
+ */
+export type Theme = "light" | "dark";
+
 /** The tunable face of the tint, as one resolved object. */
 export interface ActivityConfig {
   /** Age below which a quiet level still reads as active. */
   readonly hotWithinMs: number;
   /** Age from which a level starts fading. */
   readonly dimAfterMs: number;
-  /** Opacity lost per day past the first. */
+  /** Opacity lost per day past the first, dark theme. */
   readonly dimPerDay: number;
-  /** The darkest a title may get; the label has to stay readable. */
+  /** The darkest a title may get, dark theme; the label has to stay readable. */
   readonly dimFloor: number;
+  /** Opacity lost per day past the first, light theme. */
+  readonly dimPerDayLight: number;
+  /** The darkest a title may get, light theme. */
+  readonly dimFloorLight: number;
   /** Whether the tint mounts at all. */
   readonly enabled: boolean;
 }
 
-/** The shipped curve: an hour of heat, a day before dimming, floor on the fifth day. */
+/**
+ * The shipped curves: an hour of heat, a day before dimming, then two slopes.
+ *
+ * Light loses `0.2` a day down to `0.3`, dark `0.15` down to `0.45`. The light
+ * floor is lower on purpose: `0.45` on a white panel is still close enough to the
+ * label colour to read as active, which left the oldest workspaces looking as
+ * live as the week-old ones.
+ */
 export const DEFAULT_ACTIVITY_CONFIG: ActivityConfig = {
   hotWithinMs: 3_600_000,
   dimAfterMs: DAY_MS,
   dimPerDay: 0.15,
   dimFloor: 0.45,
+  dimPerDayLight: 0.2,
+  dimFloorLight: 0.3,
   enabled: true,
 };
 
@@ -146,6 +171,8 @@ export function resolveConfig(partial?: Partial<ActivityConfig>): ActivityConfig
     dimAfterMs: duration(partial?.dimAfterMs, DEFAULT_ACTIVITY_CONFIG.dimAfterMs),
     dimPerDay: fraction(partial?.dimPerDay, DEFAULT_ACTIVITY_CONFIG.dimPerDay),
     dimFloor: fraction(partial?.dimFloor, DEFAULT_ACTIVITY_CONFIG.dimFloor),
+    dimPerDayLight: fraction(partial?.dimPerDayLight, DEFAULT_ACTIVITY_CONFIG.dimPerDayLight),
+    dimFloorLight: fraction(partial?.dimFloorLight, DEFAULT_ACTIVITY_CONFIG.dimFloorLight),
     enabled: typeof partial?.enabled === "boolean" ? partial.enabled : DEFAULT_ACTIVITY_CONFIG.enabled,
   };
 }
@@ -305,20 +332,26 @@ export function tierOf(input: TierInput): ActivityTier {
 }
 
 /**
- * How far a level fades at one age.
+ * How far a level fades at one age, in one theme.
  *
- * The curve is flat through the first day, then loses `dimPerDay` per day and
- * stops at `dimFloor`. Quantising to a hundredth is what keeps the stylesheet
- * text stable between ticks: without it every recompute would rewrite the sheet
- * with a slightly different float.
+ * The curve is flat through the first day, then loses the theme's slope per day
+ * and stops at that theme's floor. Quantising to a hundredth is what keeps the
+ * stylesheet text stable between ticks: without it every recompute would rewrite
+ * the sheet with a slightly different float.
+ *
+ * The theme is a parameter rather than a lookup because the stylesheet carries
+ * both themes at once: one rule per theme, each gated on the host's own attribute.
  * @param ageMs - how long the level has been quiet.
- * @param config - the curve.
- * @returns an opacity in [dimFloor, 1], quantised to 0.01.
+ * @param config - the two curves.
+ * @param theme - which curve to read.
+ * @returns an opacity in [that theme's floor, 1], quantised to 0.01.
  */
-export function opacityFor(ageMs: number, config: ActivityConfig): number {
+export function opacityFor(ageMs: number, config: ActivityConfig, theme: Theme): number {
   if (!Number.isFinite(ageMs)) return 1;
   const ageDays = ageMs / DAY_MS;
   if (ageDays <= 1) return 1;
-  const faded = 1 - (ageDays - 1) * config.dimPerDay;
-  return Math.round(Math.min(1, Math.max(config.dimFloor, faded)) * 100) / 100;
+  const perDay = theme === "light" ? config.dimPerDayLight : config.dimPerDay;
+  const floor = theme === "light" ? config.dimFloorLight : config.dimFloor;
+  const faded = 1 - (ageDays - 1) * perDay;
+  return Math.round(Math.min(1, Math.max(floor, faded)) * 100) / 100;
 }

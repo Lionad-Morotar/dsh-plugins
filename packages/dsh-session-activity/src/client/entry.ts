@@ -8,10 +8,12 @@
  * subscribes to the session list and the workspace list, folds each workspace's
  * members into one reading, and rewrites one `<style>` element.
  *
- * The painted object is the workspace title, not the session row: a workspace is
- * the level a human navigates by, and it is the level whose name has no freshness
- * fact of its own. Session rows are read here only as the factor behind that
- * reading.
+ * The painted object is the workspace, not the session row: a workspace is the
+ * level a human navigates by, and it is the level whose name has no freshness
+ * fact of its own. A session row is read here as the factor behind that reading,
+ * and it is painted only as a member — its title follows the workspace it belongs
+ * to, through the group the host wraps around both, and never through a rule of
+ * its own.
  *
  * Nothing here renders React and nothing reads the DOM beyond the element it
  * owns. The data path is two snapshots plus two subscriptions; the workspace
@@ -134,10 +136,14 @@ export function apply(ctx: ClientContextLike, config?: Partial<ActivityConfig>):
       const tier = tierOf({ reading, running: reading.running, updatedAt: undefined, now, config: resolved });
       if (tier === "none") continue;
       const age = ageOf({ reading, updatedAt: undefined, now });
+      // Both themes are decided here rather than in the rule builder: the builder
+      // only formats text, and a curve that lives in two places drifts.
+      const dim = tier === "dim" && age !== undefined;
       rows.push({
         workspaceId,
         tier,
-        opacity: tier === "dim" && age !== undefined ? opacityFor(age, resolved) : 1,
+        opacityLight: dim ? opacityFor(age, resolved, "light") : 1,
+        opacityDark: dim ? opacityFor(age, resolved, "dark") : 1,
       });
     }
     writer.update(buildStylesheet(rows, resolved));

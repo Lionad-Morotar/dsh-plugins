@@ -6,11 +6,20 @@
  * that covers every workspace row, so the effect is expressed as attribute
  * selectors and the whole table is rebuilt from scratch on every pass.
  *
- * The tint lands on the row's title span and nowhere else. The label text stays
- * the host's, and the folder icon and the row actions carry their own states, so
- * an opacity on the row itself would fade all three. Session rows are not touched
- * at all: this feature reads them as the factor behind a workspace, never as a
- * thing to paint.
+ * A painted workspace reaches three surfaces and no more:
+ * - its own title, which is the row's label;
+ * - its two icon slots, folder and chevron, because the host swaps them on hover
+ *   and an icon left at the label's tertiary colour would drop out of the accent
+ *   the moment the pointer arrives;
+ * - the titles of the sessions under it, so a workspace reads as one level rather
+ *   than as a bright header above a column of unrelated labels.
+ *
+ * The third surface is reached through the group container the host wraps around
+ * a workspace row and its members, and that is a deliberate trade: `:has()` is the
+ * only way to say "the group whose own header is this workspace". The workspace
+ * row itself is still selected by `[data-row-key="workspace:<id>"]` directly, so
+ * an engine without `:has()` still tints the title and the icons and only loses
+ * the member follow-through.
  *
  * Two properties make the rebuild cheap enough to do on every host notification:
  * rows are emitted in id order, so a reorder never changes the text, and opacity
@@ -24,15 +33,37 @@ import { BASE_RULES } from "./styles.ts";
 export interface WorkspaceRule {
   readonly workspaceId: string;
   readonly tier: "hot" | "warm" | "dim";
-  /** The title's opacity; only read for workspaces that carry an opacity rule. */
-  readonly opacity: number;
+  /** The title's opacity in the light theme; only read for workspaces that dim. */
+  readonly opacityLight: number;
+  /** The title's opacity in the dark theme; only read for workspaces that dim. */
+  readonly opacityDark: number;
 }
 
 /** The prefix the host puts in `data-row-key` for a workspace row. */
 const ROW_KEY_PREFIX = "workspace:";
 
-/** The host's title span; the only element the tint is allowed to restyle. */
+/** The prefix the host puts in `data-row-key` for a session row. */
+const SESSION_KEY_PREFIX = "session:";
+
+/** The host's title span; the label of a workspace row or of a session row. */
 const TITLE = ".JoiKIa_title";
+
+/** The host's icon slot; a workspace row carries one for the folder and one for the chevron. */
+const SLOT = ".JoiKIa_slot";
+
+/** The host's container around one workspace row and the session rows under it. */
+const GROUP_SECTION = "div.Kjh-qa_groupSection";
+
+/**
+ * The theme gate for the dark rules.
+ *
+ * `:where()` is what keeps the gate a condition rather than a weight: the host's
+ * dark theme is an attribute on `body`, and a bare `body[data-ds-dark-theme]`
+ * prefix would outrank the interaction invariants by a type selector, so a dimmed
+ * title would stay dim under the pointer in the dark theme only. Zeroing the gate's
+ * specificity leaves both theme rules exactly as strong as each other.
+ */
+const DARK = ":where(body[data-ds-dark-theme])";
 
 /**
  * The tint a hot title carries, written as a token so it follows the active theme.
@@ -44,6 +75,15 @@ const TITLE = ".JoiKIa_title";
  * accent (`#4176e6` light, `#7aaaff` dark) and differs between themes.
  */
 const EMPHASIS = "color:var(--dsw-alias-state-business-primary);font-weight:600";
+
+/**
+ * The colour a hot row's icon slots carry.
+ *
+ * The host colours its icons with `currentColor` on the slot, so setting `color`
+ * here is the whole effect; the folder and the chevron are two slots of the same
+ * class, which is why one rule covers both and hover cannot drop the accent.
+ */
+const ICON = "color:var(--dsw-alias-state-business-primary)";
 
 /** Characters that would end the CSS string or split the rule across lines. */
 function isUnsafeInString(code: number): boolean {
@@ -73,31 +113,91 @@ function escapeStringValue(value: string): string {
   return escaped;
 }
 
-/** The selector for one workspace row's title. */
-function selectorFor(workspaceId: string): string {
-  return `[data-row-key="${ROW_KEY_PREFIX}${escapeStringValue(workspaceId)}"] ${TITLE}`;
+/** The attribute selector for one workspace row. */
+function rowSelector(workspaceId: string): string {
+  return `[data-row-key="${ROW_KEY_PREFIX}${escapeStringValue(workspaceId)}"]`;
+}
+
+/** The selector for the title of one workspace row. */
+function titleSelector(rowKey: string): string {
+  return `${rowKey} ${TITLE}`;
+}
+
+/** The selector for the two icon slots of one workspace row. */
+function iconSelector(rowKey: string): string {
+  return `${rowKey} > ${SLOT}`;
 }
 
 /**
- * The rule one workspace contributes, or nothing.
+ * The group container whose own header row is one workspace.
+ *
+ * The row is not reliably a direct child: the host wraps a row that carries a
+ * hover card in a `span`, and every real workspace carries one (the ungrouped
+ * bucket, which is never painted, is the case that does not). So the argument
+ * accepts the row as a child or as a grandchild.
+ *
+ * It must not reach further. A nested child workspace is its own group section
+ * three levels down, and a plain descendant argument would let a parent match it,
+ * painting the child's sessions with the parent's tier.
+ * @param rowKey - the workspace row's attribute selector.
+ * @returns the scoping selector.
+ */
+function groupOf(rowKey: string): string {
+  return `${GROUP_SECTION}:has(> ${rowKey}, > * > ${rowKey})`;
+}
+
+/**
+ * The selector for the session titles under one workspace.
+ *
+ * Scoped to the group whose own header is this workspace, so a nested workspace's
+ * sessions follow their own header rather than their parent's. Every session row is
+ * matched by its key prefix: a rule per session id would go stale the moment a
+ * session moves, and the id is not what makes it a member.
+ * @param rowKey - the workspace row's attribute selector.
+ * @returns the member title selector.
+ */
+function memberSelector(rowKey: string): string {
+  return `${groupOf(rowKey)} [data-row-key^="${SESSION_KEY_PREFIX}"] ${TITLE}`;
+}
+
+/**
+ * The rules one workspace contributes, or nothing.
  *
  * A warm workspace emits nothing: the rest of the first day is left exactly as the
  * host renders it, and an explicit `opacity:1` would only give the writer text to
  * diff against.
  * @param row - the decided workspace.
- * @returns one CSS rule, or undefined for a workspace that keeps the host's styling.
+ * @returns the CSS rules, in emit order.
  */
-function ruleFor(row: WorkspaceRule): string | undefined {
-  const selector = selectorFor(row.workspaceId);
-  if (row.tier === "hot") return `${selector}{${EMPHASIS}}`;
-  if (row.tier === "dim") return `${selector}{opacity:${row.opacity}}`;
-  return undefined;
+function rulesFor(row: WorkspaceRule): string[] {
+  const rowKey = rowSelector(row.workspaceId);
+  if (row.tier === "hot") {
+    return [
+      `${titleSelector(rowKey)}{${EMPHASIS}}`,
+      `${iconSelector(rowKey)}{${ICON}}`,
+      `${memberSelector(rowKey)}{${EMPHASIS}}`,
+    ];
+  }
+  if (row.tier === "dim") {
+    // Both themes are written out rather than one being a fallback for the other:
+    // the two curves have different slopes and floors, so neither value can be
+    // derived from the other at paint time.
+    const title = titleSelector(rowKey);
+    const members = memberSelector(rowKey);
+    return [
+      `${title}{opacity:${row.opacityLight}}`,
+      `${members}{opacity:${row.opacityLight}}`,
+      `${DARK} ${title}{opacity:${row.opacityDark}}`,
+      `${DARK} ${members}{opacity:${row.opacityDark}}`,
+    ];
+  }
+  return [];
 }
 
 /**
  * Build the whole stylesheet.
  * @param rows - every workspace that has a tier.
- * @param config - the resolved curve; a disabled config emits no row rules.
+ * @param config - the resolved curves; a disabled config emits no row rules.
  * @returns the stylesheet text, ending with the interaction invariants.
  */
 export function buildStylesheet(rows: readonly WorkspaceRule[], config: ActivityConfig): string {
@@ -105,6 +205,6 @@ export function buildStylesheet(rows: readonly WorkspaceRule[], config: Activity
   const ordered = [...rows].sort((left, right) =>
     left.workspaceId < right.workspaceId ? -1 : left.workspaceId > right.workspaceId ? 1 : 0,
   );
-  const rules = ordered.map(ruleFor).filter((rule): rule is string => rule !== undefined);
+  const rules = ordered.flatMap(rulesFor);
   return [...rules, ...BASE_RULES].join("\n");
 }

@@ -7,6 +7,10 @@
  * expected values are written as literals rather than derived from the constants
  * under test, because a curve that quietly changed shape would still satisfy a
  * self-consistent assertion.
+ *
+ * Both themes are asserted, because they are two curves and not one curve behind a
+ * token: light loses more per day and bottoms out higher, so the light sidebar
+ * still separates a two-day-old workspace from a two-week-old one.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -266,46 +270,74 @@ describe("tierOf", () => {
 });
 
 describe("opacityFor", () => {
-  it("stays fully opaque through the first day", () => {
-    expect(opacityFor(0, DEFAULT_ACTIVITY_CONFIG)).toBe(1);
-    expect(opacityFor(DAY_MS, DEFAULT_ACTIVITY_CONFIG)).toBe(1);
+  it("stays fully opaque through the first day in both themes", () => {
+    for (const theme of ["light", "dark"] as const) {
+      expect(opacityFor(0, DEFAULT_ACTIVITY_CONFIG, theme)).toBe(1);
+      expect(opacityFor(DAY_MS, DEFAULT_ACTIVITY_CONFIG, theme)).toBe(1);
+    }
   });
 
-  it("fades a step per day after that", () => {
-    expect(opacityFor(2 * DAY_MS, DEFAULT_ACTIVITY_CONFIG)).toBe(0.85);
-    expect(opacityFor(4 * DAY_MS, DEFAULT_ACTIVITY_CONFIG)).toBe(0.55);
+  it("fades a step per day after that in the dark theme", () => {
+    expect(opacityFor(2 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "dark")).toBe(0.85);
+    expect(opacityFor(4 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "dark")).toBe(0.55);
   });
 
-  it("bottoms out on the fifth day and never goes darker", () => {
-    expect(opacityFor(5 * DAY_MS, DEFAULT_ACTIVITY_CONFIG)).toBe(0.45);
-    expect(opacityFor(30 * DAY_MS, DEFAULT_ACTIVITY_CONFIG)).toBe(0.45);
+  it("bottoms the dark theme out on the fifth day", () => {
+    expect(opacityFor(5 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "dark")).toBe(0.45);
+    expect(opacityFor(30 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "dark")).toBe(0.45);
+  });
+
+  it("fades the light theme faster and further", () => {
+    expect(opacityFor(2 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "light")).toBe(0.8);
+    expect(opacityFor(3 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "light")).toBe(0.6);
+    expect(opacityFor(4 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "light")).toBe(0.4);
+  });
+
+  it("bottoms the light theme out on the fifth day, at a lighter floor", () => {
+    expect(opacityFor(4.5 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "light")).toBe(0.3);
+    expect(opacityFor(5 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "light")).toBe(0.3);
+    expect(opacityFor(30 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "light")).toBe(0.3);
+  });
+
+  it("keeps the two themes apart at every age past the first day", () => {
+    for (const ageDays of [1.5, 2, 3, 4, 6, 30]) {
+      const age = ageDays * DAY_MS;
+      expect(opacityFor(age, DEFAULT_ACTIVITY_CONFIG, "light")).toBeLessThan(
+        opacityFor(age, DEFAULT_ACTIVITY_CONFIG, "dark"),
+      );
+    }
   });
 
   it("quantises to a hundredth so the stylesheet text stays stable", () => {
-    const value = opacityFor(1.5 * DAY_MS, DEFAULT_ACTIVITY_CONFIG);
-    expect(value).toBe(0.93);
-    expect(opacityFor(1.5 * DAY_MS, DEFAULT_ACTIVITY_CONFIG)).toBe(value);
+    const light = opacityFor(1.5 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "light");
+    expect(light).toBe(0.9);
+    expect(opacityFor(1.5 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "light")).toBe(light);
+    expect(opacityFor(1.5 * DAY_MS, DEFAULT_ACTIVITY_CONFIG, "dark")).toBe(0.93);
   });
 
-  it("follows a configured curve and floor", () => {
-    const config = resolveConfig({ dimPerDay: 0.3, dimFloor: 0.2 });
-    expect(opacityFor(2 * DAY_MS, config)).toBe(0.7);
-    expect(opacityFor(3 * DAY_MS, config)).toBe(0.4);
-    expect(opacityFor(9 * DAY_MS, config)).toBe(0.2);
+  it("follows a configured curve and floor per theme", () => {
+    const config = resolveConfig({ dimPerDay: 0.3, dimFloor: 0.2, dimPerDayLight: 0.1, dimFloorLight: 0.6 });
+    expect(opacityFor(2 * DAY_MS, config, "dark")).toBe(0.7);
+    expect(opacityFor(9 * DAY_MS, config, "dark")).toBe(0.2);
+    expect(opacityFor(2 * DAY_MS, config, "light")).toBe(0.9);
+    expect(opacityFor(9 * DAY_MS, config, "light")).toBe(0.6);
   });
 
   it("stays opaque for an unreadable age", () => {
-    expect(opacityFor(Number.NaN, DEFAULT_ACTIVITY_CONFIG)).toBe(1);
+    expect(opacityFor(Number.NaN, DEFAULT_ACTIVITY_CONFIG, "light")).toBe(1);
+    expect(opacityFor(Number.NaN, DEFAULT_ACTIVITY_CONFIG, "dark")).toBe(1);
   });
 });
 
 describe("resolveConfig", () => {
-  it("defaults to an hour of heat, a day before dimming, and a fifth-day floor", () => {
+  it("defaults to an hour of heat, a day before dimming, and a per-theme curve", () => {
     expect(DEFAULT_ACTIVITY_CONFIG).toEqual({
       hotWithinMs: HOUR_MS,
       dimAfterMs: DAY_MS,
       dimPerDay: 0.15,
       dimFloor: 0.45,
+      dimPerDayLight: 0.2,
+      dimFloorLight: 0.3,
       enabled: true,
     });
     expect(resolveConfig()).toEqual(DEFAULT_ACTIVITY_CONFIG);
@@ -319,11 +351,21 @@ describe("resolveConfig", () => {
     });
   });
 
+  it("keeps an overridden light curve", () => {
+    expect(resolveConfig({ dimPerDayLight: 0.05, dimFloorLight: 0.7 })).toEqual({
+      ...DEFAULT_ACTIVITY_CONFIG,
+      dimPerDayLight: 0.05,
+      dimFloorLight: 0.7,
+    });
+  });
+
   it("falls back to the default for a value outside its legal range", () => {
     expect(resolveConfig({ hotWithinMs: -1 }).hotWithinMs).toBe(HOUR_MS);
     expect(resolveConfig({ dimAfterMs: Number.NaN }).dimAfterMs).toBe(DAY_MS);
     expect(resolveConfig({ dimPerDay: 2 }).dimPerDay).toBe(0.15);
     expect(resolveConfig({ dimFloor: -0.2 }).dimFloor).toBe(0.45);
+    expect(resolveConfig({ dimPerDayLight: 1.5 }).dimPerDayLight).toBe(0.2);
+    expect(resolveConfig({ dimFloorLight: Number.NaN }).dimFloorLight).toBe(0.3);
     expect(resolveConfig({ enabled: "yes" as unknown as boolean }).enabled).toBe(true);
   });
 });
