@@ -268,6 +268,8 @@ export interface UiWorkspaceService {
   startSession(workspaceId?: string, options?: { readonly agentPreset?: string }): void;
   /** Archive a session; a running one is refused unless `stopActivity` is set. */
   archiveSession(sessionId: string, options?: { readonly stopActivity?: boolean }): Promise<void>;
+  /** Bring an archived session back to its list; idempotent on the host. */
+  unarchiveSession(sessionId: string): Promise<void>;
   /** Fork a session without changing the selection; returns the child id. */
   forkSession(
     sessionId: string,

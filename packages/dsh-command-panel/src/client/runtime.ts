@@ -57,6 +57,7 @@ import {
   back as backModel,
   clampHighlight,
   drill,
+  drillArchived,
   highlightAt,
   modelFor,
   moveHighlight,
@@ -336,8 +337,17 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
 
   // ── cache keys ──────────────────────────────────────────────────────────
 
-  function cacheKey(mode: PanelMode, level: string, scopeKey: string, sessionId: string | null): string {
-    return [mode, level, scopeKey, sessionId ?? "-"].join("|");
+  // The archive filter is part of the session level's identity: the ordinary
+  // list and the archived side of the same scope are different row sets and
+  // must never share a slot, even though today only root-level keys are read.
+  function cacheKey(
+    mode: PanelMode,
+    level: string,
+    scopeKey: string,
+    sessionId: string | null,
+    archivedOnly = false,
+  ): string {
+    return [mode, level, scopeKey, sessionId ?? "-", archivedOnly ? "archived" : "live"].join("|");
   }
 
   function keyOf(snapshot: ReturnType<typeof store.getSnapshot>): string {
@@ -348,7 +358,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         : model.scope.kind === "workspace"
           ? model.scope.workspaceId
           : model.scope.kind;
-    return cacheKey(model.mode, model.level, scopeKey, currentSessionId());
+    return cacheKey(model.mode, model.level, scopeKey, currentSessionId(), model.archivedOnly);
   }
 
   // ── loading ─────────────────────────────────────────────────────────────
@@ -442,6 +452,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       sessionId: currentSessionId(),
       copy: copy(),
       signal,
+      archivedOnly: snapshot.model.archivedOnly,
     };
   }
 
@@ -616,6 +627,9 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     const scope = model.scope;
     if (scope === null) return null;
     const transcript = copy();
+    // The archive filter replaces the scope's name: what the reader is looking
+    // at is the registry-global archive set, not "all sessions".
+    if (model.archivedOnly) return transcript.archivedSessions;
     if (scope.kind === "all") return transcript.allSessions;
     if (scope.kind === "ungrouped") return transcript.ungrouped;
     const workspaces = services.workspaces();
@@ -737,6 +751,14 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     scheduleLoad(0);
   }
 
+  /** The archive view is the all-scope list with its filter state on. */
+  function drillArchivedTo(): void {
+    const snapshot = store.getSnapshot();
+    rawRows = [];
+    store.set({ model: drillArchived(snapshot.model), status: "loading", rows: [], notice: null });
+    scheduleLoad(0);
+  }
+
   function accept(row: PanelRow): void {
     switch (row.action.kind) {
       case "insert-path":
@@ -754,6 +776,9 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         return;
       case "drill":
         drillTo(row.action.scope);
+        return;
+      case "drill-archived":
+        drillArchivedTo();
         return;
       case "open-session":
         acceptSession(row.action.sessionId);

@@ -58,6 +58,12 @@ export interface LoadRequest {
   readonly sessionId: string | null;
   readonly copy: Copy;
   readonly signal: AbortSignal;
+  /**
+   * Whether the switch mode's session level lists archived sessions. The
+   * archive is model state, not a separate data plane: the same two
+   * snapshots answer both sides of the filter.
+   */
+  readonly archivedOnly?: boolean;
 }
 
 export interface LoadResult {
@@ -117,7 +123,14 @@ function loadSwitch(services: SourceServices, request: LoadRequest): LoadResult 
   const snapshot = workspaces.list.getSnapshot();
   const rows =
     request.level === "sessions"
-      ? sessionRows(list, snapshot, request.scope ?? { kind: "all" }, request.copy, services.now())
+      ? sessionRows(
+          list,
+          snapshot,
+          request.scope ?? { kind: "all" },
+          request.copy,
+          services.now(),
+          request.archivedOnly === true,
+        )
       : workspaceRows(snapshot, list, request.copy);
   return { rows, status: "ready" };
 }

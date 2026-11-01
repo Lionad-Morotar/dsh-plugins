@@ -35,6 +35,12 @@ export interface PanelModel {
   readonly query: string;
   /** Index of the highlighted row; always kept inside the visible rows. */
   readonly highlight: number;
+  /**
+   * Whether the session level lists the scope's archived sessions instead of
+   * the live ones. The archive is a filter state, not a third level: back
+   * returns to the same scope's ordinary list before it returns to the root.
+   */
+  readonly archivedOnly: boolean;
 }
 
 /** What a back gesture leads to. */
@@ -44,7 +50,7 @@ export type BackResult =
 
 /** The model for a freshly opened mode: no query, first row highlighted. */
 export function modelFor(mode: PanelMode): PanelModel {
-  return { mode, level: "root", scope: null, query: "", highlight: 0 };
+  return { mode, level: "root", scope: null, query: "", highlight: 0, archivedOnly: false };
 }
 
 /** A retyped query always moves the highlight to the strongest row. */
@@ -91,17 +97,39 @@ export function reconciled(model: PanelModel, count: number): PanelModel {
  * there.
  */
 export function drill(model: PanelModel, scope: SessionScope): PanelModel {
-  return { ...model, level: "sessions", scope, query: "", highlight: 0 };
+  return { ...model, level: "sessions", scope, query: "", highlight: 0, archivedOnly: false };
+}
+
+/**
+ * Enter the global archive view.
+ *
+ * The archive set is registry-global rather than per workspace, so the entry
+ * point is always the all-scope session list with the archive filter on. The
+ * query is cleared for the same reason `drill` clears it: the row that was
+ * picked was the search.
+ */
+export function drillArchived(model: PanelModel): PanelModel {
+  return { ...model, level: "sessions", scope: { kind: "all" }, query: "", highlight: 0, archivedOnly: true };
 }
 
 /**
  * One level up, or out.
+ *
+ * The archive filter is a state inside the session level, so back from an
+ * archived view lands on the same scope's ordinary list; only a second back
+ * goes up to the root.
  *
  * @param model - current model.
  * @returns the parent model, or `close` when the reader is already at the top.
  */
 export function back(model: PanelModel): BackResult {
   if (model.mode === "switch" && model.level === "sessions") {
+    if (model.archivedOnly) {
+      return {
+        kind: "model",
+        model: { ...model, archivedOnly: false, query: "", highlight: 0 },
+      };
+    }
     return {
       kind: "model",
       model: { ...model, level: "root", scope: null, query: "", highlight: 0 },

@@ -233,7 +233,7 @@ describe("loadRows: command", () => {
 });
 
 describe("loadRows: switch", () => {
-  it("returns workspaces at the top level", async () => {
+  it("returns workspaces at the top level, closing with the two fixed rows", async () => {
     const result = await loadRows(services(), request({ mode: "switch" }));
     expect(result.status).toBe("ready");
     expect(result.rows.map(row => row.label)).toEqual([
@@ -241,15 +241,22 @@ describe("loadRows: switch", () => {
       "other",
       copy.allSessions,
       copy.ungrouped,
+      copy.newSession,
+      copy.archivedSessions,
     ]);
   });
 
-  it("returns one workspace's sessions at the second level", async () => {
+  it("returns one workspace's sessions at the second level, with a new-session row", async () => {
     const result = await loadRows(
       services(),
       request({ mode: "switch", level: "sessions", scope: { kind: "workspace", workspaceId: "ws-one" } }),
     );
-    expect(result.rows.map(row => row.label)).toEqual(["重构命令面板"]);
+    expect(result.rows.map(row => row.label)).toEqual(["重构命令面板", copy.newSession]);
+    expect(result.rows.at(-1)?.action).toEqual({
+      kind: "create-session",
+      scope: "workspace",
+      workspaceId: "ws-one",
+    });
   });
 
   it("needs no session and no remote at all", async () => {
