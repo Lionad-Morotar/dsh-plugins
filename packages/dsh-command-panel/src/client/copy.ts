@@ -84,6 +84,8 @@ export interface Copy {
     readonly restored: (title: string) => string;
     /** Restored on the host but the open hand-off failed. */
     readonly restoreOpenFailed: string;
+    /** The unarchive write itself failed; the session stays archived. */
+    readonly restoreFailed: (code: string | undefined) => string;
     readonly themeSwitched: (dark: boolean) => string;
     readonly failed: (what: string, code: string | undefined) => string;
   };
@@ -180,6 +182,7 @@ const ZH: Copy = {
     pinned: pinned => (pinned ? "已置顶当前会话" : "已取消置顶"),
     restored: title => `已恢复「${title}」`,
     restoreOpenFailed: "已恢复该会话，但打开失败；请从侧栏进入",
+    restoreFailed: code => `恢复会话失败${code === undefined || code === "" ? "" : `：${code}`}`,
     themeSwitched: dark => (dark ? "已切到深色主题" : "已切到浅色主题"),
     failed: (what, code) => `${what}失败${code === undefined || code === "" ? "" : `：${code}`}`,
   },
@@ -284,6 +287,7 @@ const EN: Copy = {
     pinned: pinned => (pinned ? "Pinned this session" : "Unpinned this session"),
     restored: title => `Restored “${title}”`,
     restoreOpenFailed: "The session was restored, but opening it failed; use the sidebar",
+    restoreFailed: code => `Restore failed${code === undefined || code === "" ? "" : `: ${code}`}`,
     themeSwitched: dark => (dark ? "Switched to the dark theme" : "Switched to the light theme"),
     failed: (what, code) => `${what} failed${code === undefined || code === "" ? "" : `: ${code}`}`,
   },

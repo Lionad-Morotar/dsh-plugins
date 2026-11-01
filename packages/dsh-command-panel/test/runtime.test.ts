@@ -24,12 +24,14 @@ import type {
   PathExplorerRemote,
   SessionInput,
   SessionOpenFace,
+  SessionSummary,
   ShortcutCommand,
   ShortcutConfigSnapshot,
 } from "../src/client/dsh.ts";
 import {
   COMMIT_FOCUS,
   SESSION_A,
+  SESSION_ARCHIVED,
   SESSION_B,
   fakeGitExplorer,
   fakePathExplorer,
@@ -80,6 +82,8 @@ interface HarnessOptions {
   readonly sessionOpen?: SessionOpenFace | null;
   /** The gitExplorer remote the hex commit plane reads; absent keeps it out. */
   readonly gitExplorer?: GitExplorerRemote;
+  /** The session catalogue rows; defaults to the standard two-session fake. */
+  readonly sessions?: readonly SessionSummary[];
 }
 
 interface Harness {
@@ -141,7 +145,10 @@ function harness(options: HarnessOptions = {}): Harness {
   const fakes: Record<string, unknown> = {
     sessions: {
       ...fakeSessionsWithScope(),
-      list: { getSnapshot: () => sessionList([SESSION_A, SESSION_B]), subscribe: () => () => undefined },
+      list: {
+        getSnapshot: () => sessionList(options.sessions ?? [SESSION_A, SESSION_B]),
+        subscribe: () => () => undefined,
+      },
     },
     workspaces: fakeWorkspaces(workspaceSnapshot()),
     conversation: { input: { for: () => input } },
@@ -687,5 +694,31 @@ describe("commit matching", () => {
     expect(snapshot.notice).toContain("Git 面板未安装");
     // The queued focus must not replay into a view that never opened.
     expect(h.workbench.viewFocus.take).toHaveBeenCalledWith("git-explorer");
+  });
+});
+
+describe("archive view", () => {
+  it("drills in from the fixed row, labels the crumb, and back returns to the ordinary list", async () => {
+    const h = harness({
+      sessions: [SESSION_A, SESSION_B, SESSION_ARCHIVED],
+    });
+    runCommand(h, "command-panel.switch");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    const entry = h.store.getSnapshot().rows.find(row => row.key === "scope:archived");
+    expect(entry).toBeDefined();
+    h.verbs.accept(entry!);
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    expect(h.store.getSnapshot().model.archivedOnly).toBe(true);
+    expect(h.verbs.crumbLabel()).toBe("已归档会话");
+    const rows = h.store.getSnapshot().rows;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every(row => row.action.kind === "restore-session")).toBe(true);
+
+    h.verbs.back();
+    await vi.waitFor(() => expect(h.store.getSnapshot().model.archivedOnly).toBe(false));
+    expect(h.verbs.crumbLabel()).not.toBe("已归档会话");
+    expect(h.store.getSnapshot().open).toBe(true);
   });
 });

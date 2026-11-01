@@ -153,6 +153,16 @@ describe("create-session", () => {
     expect(h.notices).toEqual([]);
   });
 
+  it("hands a named workspace to startSession when the row carries one", async () => {
+    const h = harness();
+    await runCatalogAction(
+      { kind: "create-session", scope: "workspace", workspaceId: "ws-nine" },
+      h.deps,
+    );
+    expect(h.deps.uiWorkspace()!.startSession).toHaveBeenCalledWith("ws-nine");
+    expect(h.closed()).toBe(1);
+  });
+
   it("needs the current session's directory for an ungrouped session", async () => {
     const h = harness({ currentSessionId: null });
     await runCatalogAction({ kind: "create-session", scope: "ungrouped" }, h.deps);
@@ -350,5 +360,48 @@ describe("seatActions", () => {
     );
     actions?.open?.();
     expect(open).toHaveBeenCalled();
+  });
+});
+
+describe("restore-session", () => {
+  it("restores on the host, opens the session, then closes", async () => {
+    const h = harness();
+    await runCatalogAction({ kind: "restore-session", sessionId: "sess-a" }, h.deps);
+    const ui = h.deps.uiWorkspace()!;
+    expect(ui.unarchiveSession).toHaveBeenCalledWith("sess-a");
+    expect(ui.openSession).toHaveBeenCalledWith("sess-a");
+    expect(h.closed()).toBe(1);
+  });
+
+  it("announces the restored title after landing", async () => {
+    const h = harness();
+    await runCatalogAction({ kind: "restore-session", sessionId: "sess-a" }, h.deps);
+    expect(h.notices).toEqual([{ text: copy.actions.restored("重构命令面板"), tone: "info" }]);
+  });
+
+  it("reports a failed restore and keeps the panel open", async () => {
+    const h = harness({ unarchiveThrows: { rpcError: { code: "workspace/nope" } } });
+    await runCatalogAction({ kind: "restore-session", sessionId: "sess-a" }, h.deps);
+    expect(h.notices[0]?.tone).toBe("error");
+    expect(h.closed()).toBe(0);
+    expect(h.deps.uiWorkspace()!.openSession).not.toHaveBeenCalled();
+  });
+
+  it("lands the open-failed fallback when the hand-off throws after a restore", async () => {
+    const h = harness();
+    const ui = h.deps.uiWorkspace()!;
+    (ui.openSession as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("detached");
+    });
+    await runCatalogAction({ kind: "restore-session", sessionId: "sess-a" }, h.deps);
+    expect(h.notices[0]?.text).toBe(copy.actions.restoreOpenFailed);
+    expect(h.closed()).toBe(0);
+  });
+
+  it("says so when the workspace service is absent", async () => {
+    const h = harness({ absent: ["uiWorkspace"] });
+    await runCatalogAction({ kind: "restore-session", sessionId: "sess-a" }, h.deps);
+    expect(h.notices[0]?.tone).toBe("error");
+    expect(h.closed()).toBe(0);
   });
 });
