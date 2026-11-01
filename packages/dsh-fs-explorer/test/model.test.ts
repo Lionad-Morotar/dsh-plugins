@@ -202,6 +202,50 @@ describe("flattenTree", () => {
     }
   });
 
+  it("assembles identity tags on directory rows only", () => {
+    const levels = new Map<string, TreeLevel>([
+      [
+        "",
+        level([
+          { name: "packages", kind: "directory" },
+          { name: "README.md", kind: "file" },
+        ]),
+      ],
+      [
+        "packages",
+        level([
+          { name: "dsh-jump", kind: "directory" },
+          { name: "dsh-fs-explorer", kind: "directory" },
+          { name: "main.ts", kind: "file" },
+        ]),
+      ],
+    ]);
+    const tags = new Map([
+      ["packages/dsh-jump", "submodule" as const],
+      ["packages/*", "package" as const],
+    ]);
+    const rows = flattenTree(levels, new Set(["packages"]), undefined, tags);
+    const tagOf = (name: string) => {
+      const row = rows.find(candidate => candidate.type === "entry" && candidate.name === name);
+      return row?.type === "entry" ? row.tag : undefined;
+    };
+    // The exact submodule identity wins over the matching package pattern.
+    expect(tagOf("dsh-jump")).toBe("submodule");
+    expect(tagOf("dsh-fs-explorer")).toBe("package");
+    expect(tagOf("packages")).toBeUndefined();
+    expect(tagOf("README.md")).toBeUndefined();
+    expect(tagOf("main.ts")).toBeUndefined();
+  });
+
+  it("never tags a file row even when the map carries its path", () => {
+    const levels = new Map<string, TreeLevel>([
+      ["", level([{ name: "a.ts", kind: "file" }])],
+    ]);
+    const tags = new Map([["a.ts", "submodule" as const]]);
+    const rows = flattenTree(levels, new Set(), undefined, tags);
+    expect(rows[0]?.type === "entry" ? rows[0].tag : "present").toBeUndefined();
+  });
+
   it("decorates changed file rows with their line counts", () => {
     const levels = new Map<string, TreeLevel>([
       ["", root],

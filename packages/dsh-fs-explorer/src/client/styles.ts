@@ -37,6 +37,8 @@ export const FS_STYLES = `
   --fx-archive: color-mix(in oklab, var(--dsw-alias-state-warn-primary, currentColor) 55%, var(--dsw-alias-state-error-primary, currentColor));
   --fx-folder: var(--dsw-alias-state-business-primary, currentColor);
   --fx-file: var(--dsw-alias-label-tertiary, currentColor);
+  --fx-tag-submodule: var(--dsw-alias-state-business-primary, currentColor);
+  --fx-tag-package: var(--dsw-alias-state-warn-primary, currentColor);
   --fx-modified: var(--dsw-alias-state-warn-primary, currentColor);
   --fx-added: var(--dsw-alias-state-success-primary, currentColor);
   --fx-deleted: var(--dsw-alias-state-error-primary, currentColor);
@@ -315,6 +317,24 @@ export const FS_STYLES = `
 
 .fx-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
 .fx-row[data-kind="directory"] .fx-name { font-weight: 500; }
+.fx-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 14px;
+  padding: 0 4px;
+  flex: none;
+  margin-left: 2px;
+  border-radius: 4px;
+  background: color-mix(in oklab, currentColor 13%, transparent);
+  font-family: var(--fx-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.fx-tag[data-tag="submodule"] { color: var(--fx-tag-submodule); }
+.fx-tag[data-tag="package"] { color: var(--fx-tag-package); }
 .fx-row-fill { flex: 1 1 0; min-width: 4px; }
 .fx-tone { color: var(--fx-tone, currentColor); }
 .fx-tone[data-tone="warning"] { --fx-tone: var(--fx-modified); }

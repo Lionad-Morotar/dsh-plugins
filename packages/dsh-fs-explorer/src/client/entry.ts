@@ -42,6 +42,7 @@ import {
 import { boot, previewChunkRoute } from "./preview-chunk.ts";
 import { insertStyles } from "./styles.ts";
 import { parseStatusZ, statusBadge, statusTone } from "./status.ts";
+import { buildWorkspaceMap, workspaceTagFor } from "./workspace-map.ts";
 import { createFsExplorerView, type WorkbenchFace } from "./view.tsx";
 import {
   createFilesResolver,
@@ -166,6 +167,8 @@ export const __test = {
   tabLabel,
   normalizeListing,
   normalizeStatusSnapshot,
+  buildWorkspaceMap,
+  workspaceTagFor,
   parseStatusZ,
   statusTone,
   statusBadge,

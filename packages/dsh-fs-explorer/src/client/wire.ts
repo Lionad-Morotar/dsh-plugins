@@ -350,6 +350,8 @@ export type NormalizedStatus =
       readonly stats?: readonly FsChangeStat[];
       /** HEAD summary for the footer's branch segment; undefined when absent. */
       readonly head?: FsGitHead;
+      /** Absolute repository root, for reading `.gitmodules` by path. */
+      readonly root?: string;
     }
   | { readonly ok: false; readonly message: string };
 
@@ -422,18 +424,21 @@ function readSnapshot(value: unknown): NormalizedStatus {
     readonly status?: unknown;
     readonly stats?: unknown;
     readonly head?: unknown;
+    readonly root?: unknown;
   };
   if (typeof record.status !== "string") {
     return { ok: false, message: "Git 快照缺少 status" };
   }
   const stats = readStats(record.stats);
   const head = readHead(record.head);
+  const root = typeof record.root === "string" && record.root !== "" ? record.root : undefined;
   // A plain directory is a valid answer with no repository, hence no status.
   return {
     ok: true,
     status: record.isRepository === false ? "" : record.status,
     ...(stats === undefined ? {} : { stats }),
     ...(head === undefined ? {} : { head }),
+    ...(root === undefined ? {} : { root }),
   };
 }
 
@@ -443,9 +448,9 @@ function readSnapshot(value: unknown): NormalizedStatus {
  * The generated Remote wraps the Host method in `RemoteResult<T>`, and the
  * Host method answers a business `{ ok, snapshot }` union of its own. Both
  * layers are checked by shape, so a host build that flattens one still works.
- * The optional `stats` and `head` members are shape-checked each on its own:
- * a host that predates them folds out a snapshot without them and the tree
- * degrades to its badge-only look instead of failing.
+ * The optional `stats`, `head` and `root` members are shape-checked each on
+ * its own: a host that predates them folds out a snapshot without them and
+ * the tree degrades to its badge-only look instead of failing.
  * @param response - whatever `gitExplorer.snapshot` resolved to.
  * @returns the raw porcelain text with its decorations, or a one-line failure.
  */

@@ -154,6 +154,17 @@ export function TreeRowView({ row, selected, cursor, top, t, onToggle, onSelect,
         <FileBadge name={row.name} />
       )}
       <span className="fx-name">{row.name}</span>
+      {row.tag === undefined ? null : (
+        <span
+          className="fx-tag"
+          data-tag={row.tag}
+          data-testid="fx-tag"
+          title={t(`tag.${row.tag}`)}
+          aria-label={t(`tag.${row.tag}`)}
+        >
+          {row.tag === "submodule" ? "SUB" : "PKG"}
+        </span>
+      )}
       {row.status === undefined ? null : (
         <span
           className="fx-status-badge fx-tone"

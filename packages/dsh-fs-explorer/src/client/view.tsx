@@ -26,6 +26,7 @@ import { consumeViewRequest, createPanelStackRegistry } from "./panels.ts";
 import { headLabel, joinChangeStats, parseStatusZ, type FsGitHead, type StatusMap } from "./status.ts";
 import { PreviewPane } from "./preview-pane.tsx";
 import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody } from "./tree.tsx";
+import { buildWorkspaceMap, MANIFEST_FILES, type WorkspaceTag } from "./workspace-map.ts";
 import {
   describeFailure,
   normalizeListing,
@@ -95,6 +96,29 @@ export function initialViewState(sessionId: string | undefined, hasFiles: boolea
 
 const loadingLevel = (): TreeLevel => ({ status: "loading", nodes: [], truncated: false, total: 0 });
 
+/** The identity map's empty singleton, so a reset never re-renders the tree. */
+const EMPTY_TAGS: ReadonlyMap<string, WorkspaceTag> = new Map();
+
+/**
+ * Fold one `read` answer down to its text.
+ *
+ * The generated Remote wraps the page in `{ok, value}`; a direct service
+ * answers the page itself. Every other shape — a refusal envelope, a page
+ * without `text` — reads as absent, because identity badges are an
+ * enhancement and never an error surface.
+ * @param response - whatever `workspaceFiles.read` resolved to.
+ * @returns the text, or undefined when the answer carries none.
+ */
+function readText(response: unknown): string | undefined {
+  if (response === null || typeof response !== "object") return undefined;
+  const record = response as { readonly ok?: unknown; readonly value?: unknown };
+  if (record.ok === false) return undefined;
+  const page = record.ok === true ? record.value : response;
+  if (page === null || typeof page !== "object") return undefined;
+  const text = (page as { readonly text?: unknown }).text;
+  return typeof text === "string" ? text : undefined;
+}
+
 function StateBlock({
   title,
   description,
@@ -144,6 +168,8 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     const [levels, setLevels] = useState<ReadonlyMap<string, TreeLevel>>(() => new Map());
     const [statuses, setStatuses] = useState<StatusMap | undefined>(undefined);
     const [head, setHead] = useState<FsGitHead | undefined>(undefined);
+    const [gitRoot, setGitRoot] = useState<string | undefined>(undefined);
+    const [workspaceTags, setWorkspaceTags] = useState<ReadonlyMap<string, WorkspaceTag>>(EMPTY_TAGS);
     const levelsRef = useRef(levels);
     levelsRef.current = levels;
     const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
@@ -154,6 +180,9 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     const [reveal, setReveal] = useState<FocusTarget | undefined>(undefined);
     const controllers = useRef<Map<string, AbortController>>(new Map());
     const handledRequest = useRef<string | undefined>(undefined);
+
+    const rootLevel = levels.get("");
+    const rootReady = rootLevel?.status === "ready";
 
     /**
      * Open one focus request's target.
@@ -254,12 +283,14 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       if (sessionId === undefined || statusFace === undefined) {
         setStatuses(undefined);
         setHead(undefined);
+        setGitRoot(undefined);
         return;
       }
       let alive = true;
       const controller = new AbortController();
       setStatuses(undefined);
       setHead(undefined);
+      setGitRoot(undefined);
       Promise.resolve()
         .then(() => statusFace.snapshot({ sessionId, maxCommits: 1 }, controller.signal))
         .then(response => {
@@ -268,15 +299,18 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
           if (!normalized.ok) {
             setStatuses(undefined);
             setHead(undefined);
+            setGitRoot(undefined);
             return;
           }
           setStatuses(joinChangeStats(parseStatusZ(normalized.status), normalized.stats));
           setHead(normalized.head);
+          setGitRoot(normalized.root);
         })
         .catch(() => {
           if (alive) {
             setStatuses(undefined);
             setHead(undefined);
+            setGitRoot(undefined);
           }
         });
       return () => {
@@ -284,6 +318,46 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
         controller.abort();
       };
     }, [sessionId, statusFace, reloadToken]);
+
+    // Directory identity is an enhancement over the plain tree: an unreadable,
+    // absent or unparseable manifest reads as "no badge" and never fails the
+    // panel. The manifests are read once the root listing is known (the pattern
+    // gate needs its directory names); `.gitmodules` joins by absolute path as
+    // soon as the snapshot's repository root arrives, and a late root reruns
+    // the whole computation under a fresh abort.
+    useEffect(() => {
+      const read = files?.read;
+      if (sessionId === undefined || files === undefined || typeof read !== "function" || !rootReady) {
+        setWorkspaceTags(EMPTY_TAGS);
+        return;
+      }
+      const sid = sessionId;
+      const controller = new AbortController();
+      const readCandidate = async (key: string, path: string): Promise<[string, string] | undefined> => {
+        try {
+          const text = readText(await read.call(files, sid, path, {}, controller.signal));
+          return text === undefined ? undefined : [key, text];
+        } catch {
+          // A refusal — absolute path rejected, session mismatched — is absent.
+          return undefined;
+        }
+      };
+      const reads = MANIFEST_FILES.filter(name => name !== ".gitmodules").map(name => readCandidate(name, name));
+      if (gitRoot !== undefined) {
+        reads.push(readCandidate(".gitmodules", `${gitRoot.replace(/\/+$/u, "")}/.gitmodules`));
+      }
+      void Promise.all(reads).then(results => {
+        if (controller.signal.aborted || sessionRef.current !== sid) return;
+        const texts = new Map<string, string>();
+        for (const result of results) if (result !== undefined) texts.set(result[0], result[1]);
+        const root = levelsRef.current.get("");
+        const names = new Set(
+          root?.status === "ready" ? root.nodes.filter(node => node.kind === "directory").map(node => node.name) : [],
+        );
+        setWorkspaceTags(buildWorkspaceMap(texts, names));
+      });
+      return () => controller.abort();
+    }, [sessionId, files, rootReady, gitRoot, reloadToken]);
 
     // The Git panel jumps with `path:<workspace path>:<line>` and the address
     // bridge with `abs:<filesystem path>:<line>`; consume that request once,
@@ -315,9 +389,6 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       consume();
       return queue.subscribe(consume);
     }, [workbench, sessionId, openRequest]);
-
-    const rootLevel = levels.get("");
-    const rootReady = rootLevel?.status === "ready";
 
     // Reveal runs after the root arrives: expand every ancestor in order,
     // listing each level that is not cached yet, then select the file.
@@ -396,7 +467,10 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       return () => document.removeEventListener("keydown", listener, true);
     }, [focusComposer]);
 
-    const rows = useMemo(() => flattenTree(levels, expanded, statuses), [levels, expanded, statuses]);
+    const rows = useMemo(
+      () => flattenTree(levels, expanded, statuses, workspaceTags),
+      [levels, expanded, statuses, workspaceTags],
+    );
     const changeCount = statuses === undefined ? undefined : Object.keys(statuses).length;
     const summaryTone =
       statuses === undefined
