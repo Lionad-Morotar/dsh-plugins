@@ -2,11 +2,11 @@
  * The file workbench's conversation view.
  *
  * One full-height tree over the host's `workspaceFiles.list`. The view owns the
- * lazy level ledger, the expansion set, selection and the reveal request the
- * Git panel hands over; sorting, flattening and the virtual window stay pure in
- * `model.ts`. Every host seam is optional at read time, so a deployment without
- * the file service renders an explicit empty state instead of throwing inside
- * the conversation shell.
+ * lazy level ledger, the expansion set, selection and the active-panel reveal
+ * that keeps the tree aligned with the open file; sorting, flattening and the
+ * virtual window stay pure in `model.ts`. Every host seam is optional at read
+ * time, so a deployment without the file service renders an explicit empty
+ * state instead of throwing inside the conversation shell.
  */
 import {
   useCallback,
@@ -23,12 +23,12 @@ import {
 import type { Translate } from "./copy.ts";
 import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap } from "./keyboard.ts";
 import {
+  ancestorChain,
   buildTree,
   describeListing,
   flattenTree,
-  joinPath,
+  isAbsolutePath,
   listingPath,
-  type FocusTarget,
   type TreeLevel,
 } from "./model.ts";
 import {
@@ -216,7 +216,6 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     const panels = useSyncExternalStore(stack.subscribe, stack.snapshot, stack.snapshot);
     const activePath = panels.active ?? undefined;
     const [reloadToken, setReloadToken] = useState(0);
-    const [reveal, setReveal] = useState<FocusTarget | undefined>(undefined);
     const controllers = useRef<Map<string, AbortController>>(new Map());
     const handledRequest = useRef<string | undefined>(undefined);
 
@@ -239,14 +238,13 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     /**
      * Open one focus request's target.
      *
-     * A workspace-relative target also asks the tree to reveal it, which expands
-     * its ancestors on the way. An absolute one has no row to reveal — the tree
-     * only lists the workspace — so it opens the panel and nothing else.
+     * Opening only changes the stack's active panel; the reveal effect below
+     * watches that change, so no reveal state needs to travel with the
+     * request.
      */
     const openRequest = useCallback(
       (path: string, line: number, absolute: boolean): void => {
         stack.open(path, line, absolute);
-        if (!absolute) setReveal({ path, line, absolute });
       },
       [stack],
     );
@@ -316,7 +314,6 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       controllers.current.clear();
       setLevels(new Map());
       setExpanded(new Set());
-      setReveal(undefined);
       handledRequest.current = undefined;
       if (sessionId !== undefined && files !== undefined) void loadLevel("", sessionId, files);
       return () => {
@@ -442,36 +439,25 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       return queue.subscribe(consume);
     }, [workbench, sessionId, openRequest]);
 
-    // Reveal runs after the root arrives: expand every ancestor in order,
-    // listing each level that is not cached yet, then select the file.
+    // The active panel is the single source of reveal: every entry point — a
+    // focus request, a tab click, the ⌘⌥ arrows, a close fallback or a remount
+    // restore — lands on `panels.active`, and this effect aligns the tree with
+    // it. Absolute paths sit outside the workspace, so they have no row to
+    // align and the tree keeps whatever state the reader left. While the
+    // active panel does not change, a manually collapsed tree stays collapsed.
     useEffect(() => {
-      if (reveal === undefined || sessionId === undefined || files === undefined || !rootReady) return;
-      let alive = true;
-      const parts = reveal.path.split("/").filter(Boolean);
-      const chain: string[] = [];
-      let prefix = "";
-      for (const part of parts.slice(0, -1)) {
-        prefix = joinPath(prefix, part);
-        chain.push(prefix);
-      }
-      if (chain.length > 0) {
-        setExpanded(previous => new Set([...previous, ...chain]));
-      }
-      const run = async (): Promise<void> => {
-        for (const directory of chain) {
-          if (levelsRef.current.get(directory)?.status === "ready") continue;
-          const ok = await loadLevel(directory, sessionId, files);
-          if (!alive || !ok) return;
-        }
-        if (!alive) return;
-        stack.open(reveal.path, reveal.line, reveal.absolute);
-        setReveal(undefined);
-      };
-      void run();
-      return () => {
-        alive = false;
-      };
-    }, [reveal, sessionId, files, rootReady, loadLevel, stack]);
+      if (activePath === undefined || !rootReady || isAbsolutePath(activePath)) return;
+      const chain = ancestorChain(activePath);
+      if (chain.length === 0) return;
+      // The same reference on no change keeps a click on an already-visible row render-free.
+      setExpanded(previous =>
+        chain.every(directory => previous.has(directory)) ? previous : new Set([...previous, ...chain]),
+      );
+      if (sessionId === undefined || files === undefined) return;
+      const missing = chain.filter(directory => levelsRef.current.get(directory)?.status !== "ready");
+      if (missing.length === 0) return;
+      void Promise.all(missing.map(directory => loadLevel(directory, sessionId, files)));
+    }, [activePath, rootReady, sessionId, files, loadLevel]);
 
     /** Focus the host's conversation composer, the Esc destination. */
     const focusComposer = useCallback((): boolean => {

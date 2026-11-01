@@ -333,6 +333,32 @@ export function joinPath(parent: string, name: string): string {
   return clean === "" ? name : `${clean}/${name}`;
 }
 
+/**
+ * The ancestor directories between the root and one workspace file.
+ *
+ * Reveal keeps every ancestor of the active panel open so its row stays
+ * reachable. The file's own segment is not a directory, and the root (`""`)
+ * is always loaded, so neither belongs to the chain. `./` prefixes and
+ * backslashes are normalized the way panel keys are, so every chain entry
+ * keys the level ledger exactly.
+ * @param path - a workspace-relative path.
+ * @returns ancestor directory paths, outermost first; empty for a bare name.
+ */
+export function ancestorChain(path: string): string[] {
+  const segments = path
+    .replace(/\\/gu, "/")
+    .replace(/^(?:\.\/)+/u, "")
+    .split("/")
+    .filter(Boolean);
+  const chain: string[] = [];
+  let prefix = "";
+  for (const segment of segments.slice(0, -1)) {
+    prefix = joinPath(prefix, segment);
+    chain.push(prefix);
+  }
+  return chain;
+}
+
 /** A focus request carried by `openView("fs-explorer", "path:<path>:<line>")`. */
 export interface FocusTarget {
   readonly path: string;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ancestorChain,
   badgeFor,
   buildTree,
   computeTreeWindow,
@@ -329,5 +330,21 @@ describe("paths, focus and size", () => {
     expect(formatSize(1024)).toBe("1.0 KB");
     expect(formatSize(1536)).toBe("1.5 KB");
     expect(formatSize(10 * 1024 * 1024)).toBe("10 MB");
+  });
+});
+
+describe("ancestorChain", () => {
+  it("returns no ancestors for an empty path or a bare file", () => {
+    expect(ancestorChain("")).toEqual([]);
+    expect(ancestorChain("a.ts")).toEqual([]);
+  });
+
+  it("walks every ancestor directory, outermost first, without the file itself", () => {
+    expect(ancestorChain("a/b/c.md")).toEqual(["a", "a/b"]);
+  });
+
+  it("normalizes `./` prefixes and backslashes the way panel keys are normalized", () => {
+    expect(ancestorChain("./a/b/c.md")).toEqual(["a", "a/b"]);
+    expect(ancestorChain(".\\./a\\b.ts")).toEqual(["a"]);
   });
 });
