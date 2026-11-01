@@ -8,7 +8,17 @@
  * time, so a deployment without the file service renders an explicit empty
  * state instead of throwing inside the conversation shell.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import type { Translate } from "./copy.ts";
 import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap } from "./keyboard.ts";
@@ -21,11 +31,23 @@ import {
   listingPath,
   type TreeLevel,
 } from "./model.ts";
+import {
+  TREE_PANE_MAX_WIDTH,
+  TREE_PANE_MIN_WIDTH,
+  clampTreePaneWidth,
+  dragReturnedToBase,
+  paneResizeKeyAction,
+  readTreePaneWidth,
+  resetTreePaneWidth,
+  saveTreePaneWidth,
+  type PaneWidthStorage,
+} from "./pane-width.ts";
 import { PanelEmpty, PanelTabs } from "./panel-tabs.tsx";
 import { consumeViewRequest, createPanelStackRegistry } from "./panels.ts";
-import { parseStatusZ, type StatusMap } from "./status.ts";
+import { headLabel, joinChangeStats, parseStatusZ, type FsGitHead, type StatusMap } from "./status.ts";
 import { PreviewPane } from "./preview-pane.tsx";
 import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody } from "./tree.tsx";
+import { buildWorkspaceMap, MANIFEST_FILES, type WorkspaceTag } from "./workspace-map.ts";
 import {
   describeFailure,
   normalizeListing,
@@ -95,6 +117,47 @@ export function initialViewState(sessionId: string | undefined, hasFiles: boolea
 
 const loadingLevel = (): TreeLevel => ({ status: "loading", nodes: [], truncated: false, total: 0 });
 
+/**
+ * localStorage for pane widths; null outside a browser or when access throws.
+ */
+function paneWidthStorage(): PaneWidthStorage | null {
+  if (typeof document === "undefined") return null;
+  try {
+    return document.defaultView?.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Below the 760px breakpoint the stylesheet stacks the two panes and hides the
+// handle; this check keeps the drag hook inert there too, not just unreachable.
+// The query must stay in sync with the media query in styles.ts.
+const stackedLayout = (): boolean =>
+  typeof window === "undefined" || window.matchMedia("(max-width: 760px)").matches;
+
+/** The identity map's empty singleton, so a reset never re-renders the tree. */
+const EMPTY_TAGS: ReadonlyMap<string, WorkspaceTag> = new Map();
+
+/**
+ * Fold one `read` answer down to its text.
+ *
+ * The generated Remote wraps the page in `{ok, value}`; a direct service
+ * answers the page itself. Every other shape — a refusal envelope, a page
+ * without `text` — reads as absent, because identity badges are an
+ * enhancement and never an error surface.
+ * @param response - whatever `workspaceFiles.read` resolved to.
+ * @returns the text, or undefined when the answer carries none.
+ */
+function readText(response: unknown): string | undefined {
+  if (response === null || typeof response !== "object") return undefined;
+  const record = response as { readonly ok?: unknown; readonly value?: unknown };
+  if (record.ok === false) return undefined;
+  const page = record.ok === true ? record.value : response;
+  if (page === null || typeof page !== "object") return undefined;
+  const text = (page as { readonly text?: unknown }).text;
+  return typeof text === "string" ? text : undefined;
+}
+
 function StateBlock({
   title,
   description,
@@ -143,6 +206,9 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
 
     const [levels, setLevels] = useState<ReadonlyMap<string, TreeLevel>>(() => new Map());
     const [statuses, setStatuses] = useState<StatusMap | undefined>(undefined);
+    const [head, setHead] = useState<FsGitHead | undefined>(undefined);
+    const [gitRoot, setGitRoot] = useState<string | undefined>(undefined);
+    const [workspaceTags, setWorkspaceTags] = useState<ReadonlyMap<string, WorkspaceTag>>(EMPTY_TAGS);
     const levelsRef = useRef(levels);
     levelsRef.current = levels;
     const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
@@ -152,6 +218,22 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     const [reloadToken, setReloadToken] = useState(0);
     const controllers = useRef<Map<string, AbortController>>(new Map());
     const handledRequest = useRef<string | undefined>(undefined);
+
+    // The tree column's width: null keeps the stylesheet's fluid clamp, a
+    // pixel count from a past drag pins it. Moves only touch state; the store
+    // is written once at drag rest.
+    const paneStorage = useMemo(() => paneWidthStorage(), []);
+    const [treeWidth, setTreeWidth] = useState<number | null>(() => readTreePaneWidth(paneStorage));
+    const handleRef = useRef<HTMLDivElement | null>(null);
+    // `restWidth` is the width state at drag start: what a drag that lands
+    // back where it began must restore, so a persisted pixel count survives
+    // its own no-op drag and an unpinned session stays fluid.
+    const dragRef = useRef<{ pointerId: number; startX: number; baseWidth: number; restWidth: number | null } | null>(
+      null,
+    );
+
+    const rootLevel = levels.get("");
+    const rootReady = rootLevel?.status === "ready";
 
     /**
      * Open one focus request's target.
@@ -244,30 +326,87 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     // namespace, a plain directory or a broken snapshot all read as "no status"
     // and leave the tree fully usable. Only status text is requested, so the
     // snapshot is capped at one commit to keep the history read off the mount
-    // path.
+    // path. The same response also carries the line counts and HEAD summary;
+    // both are optional members, so a host that predates them decorates nothing.
     useEffect(() => {
       if (sessionId === undefined || statusFace === undefined) {
         setStatuses(undefined);
+        setHead(undefined);
+        setGitRoot(undefined);
         return;
       }
       let alive = true;
       const controller = new AbortController();
       setStatuses(undefined);
+      setHead(undefined);
+      setGitRoot(undefined);
       Promise.resolve()
         .then(() => statusFace.snapshot({ sessionId, maxCommits: 1 }, controller.signal))
         .then(response => {
           if (!alive) return;
           const normalized = normalizeStatusSnapshot(response);
-          setStatuses(normalized.ok ? parseStatusZ(normalized.status) : undefined);
+          if (!normalized.ok) {
+            setStatuses(undefined);
+            setHead(undefined);
+            setGitRoot(undefined);
+            return;
+          }
+          setStatuses(joinChangeStats(parseStatusZ(normalized.status), normalized.stats));
+          setHead(normalized.head);
+          setGitRoot(normalized.root);
         })
         .catch(() => {
-          if (alive) setStatuses(undefined);
+          if (alive) {
+            setStatuses(undefined);
+            setHead(undefined);
+            setGitRoot(undefined);
+          }
         });
       return () => {
         alive = false;
         controller.abort();
       };
     }, [sessionId, statusFace, reloadToken]);
+
+    // Directory identity is an enhancement over the plain tree: an unreadable,
+    // absent or unparseable manifest reads as "no badge" and never fails the
+    // panel. The manifests are read once the root listing is known (the pattern
+    // gate needs its directory names); `.gitmodules` joins by absolute path as
+    // soon as the snapshot's repository root arrives, and a late root reruns
+    // the whole computation under a fresh abort.
+    useEffect(() => {
+      const read = files?.read;
+      if (sessionId === undefined || files === undefined || typeof read !== "function" || !rootReady) {
+        setWorkspaceTags(EMPTY_TAGS);
+        return;
+      }
+      const sid = sessionId;
+      const controller = new AbortController();
+      const readCandidate = async (key: string, path: string): Promise<[string, string] | undefined> => {
+        try {
+          const text = readText(await read.call(files, sid, path, {}, controller.signal));
+          return text === undefined ? undefined : [key, text];
+        } catch {
+          // A refusal — absolute path rejected, session mismatched — is absent.
+          return undefined;
+        }
+      };
+      const reads = MANIFEST_FILES.filter(name => name !== ".gitmodules").map(name => readCandidate(name, name));
+      if (gitRoot !== undefined) {
+        reads.push(readCandidate(".gitmodules", `${gitRoot.replace(/\/+$/u, "")}/.gitmodules`));
+      }
+      void Promise.all(reads).then(results => {
+        if (controller.signal.aborted || sessionRef.current !== sid) return;
+        const texts = new Map<string, string>();
+        for (const result of results) if (result !== undefined) texts.set(result[0], result[1]);
+        const root = levelsRef.current.get("");
+        const names = new Set(
+          root?.status === "ready" ? root.nodes.filter(node => node.kind === "directory").map(node => node.name) : [],
+        );
+        setWorkspaceTags(buildWorkspaceMap(texts, names));
+      });
+      return () => controller.abort();
+    }, [sessionId, files, rootReady, gitRoot, reloadToken]);
 
     // The Git panel jumps with `path:<workspace path>:<line>` and the address
     // bridge with `abs:<filesystem path>:<line>`; consume that request once,
@@ -300,9 +439,6 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       return queue.subscribe(consume);
     }, [workbench, sessionId, openRequest]);
 
-    const rootLevel = levels.get("");
-    const rootReady = rootLevel?.status === "ready";
-
     // The active panel is the single source of reveal: every entry point — a
     // focus request, a tab click, the ⌘⌥ arrows, a close fallback or a remount
     // restore — lands on `panels.active`, and this effect aligns the tree with
@@ -331,6 +467,104 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       input.focus();
       return true;
     }, []);
+
+    // The tree column's divider. The pane left of the handle is the baseline:
+    // the fluid default has no number in state, so a drag measures the
+    // rendered box and works in pixel deltas from there.
+    const beginPaneDrag = useCallback(
+      (event: ReactPointerEvent<HTMLDivElement>): void => {
+        if (event.button !== 0 || dragRef.current !== null || stackedLayout()) return;
+        const pane = handleRef.current?.previousElementSibling;
+        if (!(pane instanceof HTMLElement)) return;
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          return; // Without capture a pointer leaving the window strands the drag.
+        }
+        dragRef.current = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          baseWidth: pane.getBoundingClientRect().width,
+          restWidth: treeWidth,
+        };
+        document.body.classList.add("fx-pane-resizing");
+      },
+      [treeWidth],
+    );
+
+    const movePaneDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
+      const drag = dragRef.current;
+      if (drag === null || drag.pointerId !== event.pointerId) return;
+      setTreeWidth(clampTreePaneWidth(drag.baseWidth + event.clientX - drag.startX));
+    }, []);
+
+    const endPaneDrag = useCallback(
+      (event: ReactPointerEvent<HTMLDivElement>): void => {
+        const drag = dragRef.current;
+        if (drag === null || drag.pointerId !== event.pointerId) return;
+        dragRef.current = null;
+        document.body.classList.remove("fx-pane-resizing");
+        try {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch {
+          // Capture is already gone; pointercancel beats this handler here.
+        }
+        const width = drag.baseWidth + event.clientX - drag.startX;
+        // The moves already pinned transient pixels into state; a drag that
+        // lands back where it began must undo that, or the fluid default
+        // stays lost for the rest of the session.
+        if (dragReturnedToBase(width, drag.baseWidth)) {
+          setTreeWidth(drag.restWidth);
+          return;
+        }
+        setTreeWidth(saveTreePaneWidth(paneStorage, width));
+      },
+      [paneStorage],
+    );
+
+    const resetPaneWidth = useCallback((): void => {
+      resetTreePaneWidth(paneStorage);
+      setTreeWidth(null);
+    }, [paneStorage]);
+
+    // Keyboard parity for the separator. A fluid pane has no number in
+    // state, so a nudge measures the rendered box and steps from what is on
+    // screen; preventDefault keeps the arrows from scrolling the tree.
+    const onPaneHandleKeyDown = useCallback(
+      (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+        if (event.nativeEvent.isComposing) return;
+        const action = paneResizeKeyAction(
+          event.key,
+          event.altKey || event.ctrlKey || event.metaKey || event.shiftKey,
+        );
+        if (action === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (action.kind === "reset") {
+          resetPaneWidth();
+          return;
+        }
+        if (action.kind === "min" || action.kind === "max") {
+          const bound = action.kind === "min" ? TREE_PANE_MIN_WIDTH : TREE_PANE_MAX_WIDTH;
+          setTreeWidth(saveTreePaneWidth(paneStorage, bound));
+          return;
+        }
+        const pane = handleRef.current?.previousElementSibling;
+        const current =
+          pane instanceof HTMLElement ? pane.getBoundingClientRect().width : (treeWidth ?? TREE_PANE_MIN_WIDTH);
+        setTreeWidth(saveTreePaneWidth(paneStorage, current + action.delta));
+      },
+      [paneStorage, resetPaneWidth, treeWidth],
+    );
+
+    // A drag that outlives this mount (view switched mid-gesture) must not
+    // leave the document-level resizing class behind.
+    useEffect(
+      () => () => {
+        if (dragRef.current !== null) document.body.classList.remove("fx-pane-resizing");
+      },
+      [],
+    );
 
     // Panel chords are captured before the conversation's own handlers: ⌘⌥↓
     // turns the editor column, not the transcript, and Ctrl+W must win over
@@ -369,7 +603,10 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       return () => document.removeEventListener("keydown", listener, true);
     }, [focusComposer]);
 
-    const rows = useMemo(() => flattenTree(levels, expanded, statuses), [levels, expanded, statuses]);
+    const rows = useMemo(
+      () => flattenTree(levels, expanded, statuses, workspaceTags),
+      [levels, expanded, statuses, workspaceTags],
+    );
     const changeCount = statuses === undefined ? undefined : Object.keys(statuses).length;
     const summaryTone =
       statuses === undefined
@@ -379,6 +616,9 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
           : changeCount === 0
             ? "success"
             : "warning";
+    // The branch segment names HEAD when the snapshot folded one; without an
+    // upstream the ahead/behind arrows have nothing to count against.
+    const branchLabel = headLabel(head);
 
     const toggleDirectory = useCallback(
       (path: string): void => {
@@ -501,7 +741,10 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
             />
           ) : (
             <>
-              <div className="fx-tree-pane">
+              <div
+                className="fx-tree-pane"
+                style={treeWidth === null ? undefined : ({ "--fx-tree-width": `${treeWidth}px` } as CSSProperties)}
+              >
                 <TreeBody
                   rows={rows}
                   selectedPath={activePath}
@@ -511,6 +754,26 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                   onRetry={retryDirectory}
                 />
               </div>
+              <div
+                ref={handleRef}
+                className="fx-pane-handle"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label={t("pane.resize")}
+                aria-valuemin={TREE_PANE_MIN_WIDTH}
+                aria-valuemax={TREE_PANE_MAX_WIDTH}
+                aria-valuenow={treeWidth ?? undefined}
+                title={t("pane.resizeHint")}
+                tabIndex={0}
+                data-testid="fs-pane-handle"
+                onPointerDown={beginPaneDrag}
+                onPointerMove={movePaneDrag}
+                onPointerUp={endPaneDrag}
+                onPointerCancel={endPaneDrag}
+                onLostPointerCapture={endPaneDrag}
+                onKeyDown={onPaneHandleKeyDown}
+                onDoubleClick={resetPaneWidth}
+              />
               <div className="fx-editor">
                 <PanelTabs
                   panels={panels.panels}
@@ -569,6 +832,17 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                   ? t("status.clean")
                   : t("status.summary").replace("{count}", String(changeCount))}
             </span>
+            {branchLabel === null ? null : (
+              <span className="fx-foot-branch" data-testid="fs-branch" title={t("foot.branch")}>
+                {branchLabel}
+                {head?.upstream !== undefined && (head.ahead ?? 0) > 0 ? (
+                  <span className="fx-foot-ahead">{`↑${String(head.ahead)}`}</span>
+                ) : null}
+                {head?.upstream !== undefined && (head.behind ?? 0) > 0 ? (
+                  <span className="fx-foot-behind">{`↓${String(head.behind)}`}</span>
+                ) : null}
+              </span>
+            )}
             <span className="fx-spacer" />
             <span>{t("foot.order")}</span>
           </footer>

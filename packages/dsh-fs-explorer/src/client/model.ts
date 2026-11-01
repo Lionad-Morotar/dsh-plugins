@@ -10,7 +10,16 @@
 import { baseName } from "dsh-preview-viewers/address.ts";
 
 import { LISTING_TRUNCATED_LABEL } from "../shared.ts";
-import { indexDirectoryChanges, statusOf, type FsChangeStatus, type StatusMap, type StatusTone } from "./status.ts";
+import {
+  changeDiff,
+  indexDirectoryChanges,
+  statusOf,
+  type FsChangeDiff,
+  type FsChangeStatus,
+  type StatusMap,
+  type StatusTone,
+} from "./status.ts";
+import { workspaceTagFor, type WorkspaceTag } from "./workspace-map.ts";
 
 /** A directory child as the host listing describes it. */
 export interface FsEntryLike {
@@ -426,6 +435,10 @@ export type TreeRow =
       readonly status?: FsChangeStatus;
       readonly statusCount?: number;
       readonly statusTone?: StatusTone;
+      /** Line counts for a changed file row; untracked files carry none. */
+      readonly diff?: FsChangeDiff;
+      /** Identity badge a directory row carries; files never ask for one. */
+      readonly tag?: WorkspaceTag;
     }
   | {
       readonly type: "status";
@@ -448,12 +461,14 @@ export type TreeRow =
  * @param levels - loaded directory levels keyed by workspace path (`""` is the root).
  * @param expanded - workspace paths currently open.
  * @param statuses - parsed `git status` map, or undefined when Git is unavailable.
+ * @param tags - workspace identity map, or undefined when no manifest was read.
  * @returns visible rows in display order.
  */
 export function flattenTree(
   levels: ReadonlyMap<string, TreeLevel>,
   expanded: ReadonlySet<string>,
   statuses?: StatusMap,
+  tags?: ReadonlyMap<string, WorkspaceTag>,
 ): TreeRow[] {
   const rows: TreeRow[] = [];
   const statusIndex = indexDirectoryChanges(statuses);
@@ -465,8 +480,13 @@ export function flattenTree(
       const child = joinPath(path, node.name);
       const isDirectory = node.kind === "directory";
       const open = isDirectory && expanded.has(child);
-      const fileStatus = isDirectory ? undefined : statusOf(child, statuses);
+      // A file row's key is exact in the status map, so its marker answers both
+      // the badge and the line counts; directories never carry counts.
+      const marker = isDirectory || statuses === undefined ? undefined : statuses[child];
+      const fileStatus = marker?.status ?? (isDirectory ? undefined : statusOf(child, statuses));
+      const diff = marker === undefined ? undefined : changeDiff(marker);
       const aggregate = isDirectory ? statusIndex.get(child) : undefined;
+      const tag = isDirectory ? workspaceTagFor(tags, child) : undefined;
       rows.push({
         type: "entry",
         path: child,
@@ -477,6 +497,8 @@ export function flattenTree(
         ...(node.size === undefined ? {} : { size: node.size }),
         ...(fileStatus === undefined ? {} : { status: fileStatus }),
         ...(aggregate === undefined ? {} : { statusCount: aggregate.count, statusTone: aggregate.tone }),
+        ...(diff === undefined ? {} : { diff }),
+        ...(tag === undefined ? {} : { tag }),
       });
       if (!open) continue;
       const childLevel = levels.get(child);

@@ -37,6 +37,8 @@ export const FS_STYLES = `
   --fx-archive: color-mix(in oklab, var(--dsw-alias-state-warn-primary, currentColor) 55%, var(--dsw-alias-state-error-primary, currentColor));
   --fx-folder: var(--dsw-alias-state-business-primary, currentColor);
   --fx-file: var(--dsw-alias-label-tertiary, currentColor);
+  --fx-tag-submodule: var(--dsw-alias-state-business-primary, currentColor);
+  --fx-tag-package: var(--dsw-alias-state-warn-primary, currentColor);
   --fx-modified: var(--dsw-alias-state-warn-primary, currentColor);
   --fx-added: var(--dsw-alias-state-success-primary, currentColor);
   --fx-deleted: var(--dsw-alias-state-error-primary, currentColor);
@@ -126,11 +128,42 @@ export const FS_STYLES = `
 .fx-tree-pane {
   display: flex;
   flex-direction: column;
-  flex: 0 0 clamp(220px, 34%, 380px);
+  /* A user-dragged width arrives as the --fx-tree-width inline variable; the
+     fallback keeps the shipped fluid clamp for everyone who never dragged. */
+  flex: 0 0 var(--fx-tree-width, clamp(220px, 34%, 380px));
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--fx-border-soft);
 }
+.fx-pane-handle {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 6px;
+  /* Centre the hit zone on the tree pane's border so the grabbable band sits
+     on the line the eye follows, half of it overlapping the pane. */
+  margin-left: -3px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.fx-pane-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-.5px);
+  background: var(--fx-accent);
+  opacity: 0;
+}
+.fx-pane-handle:hover::before { opacity: .55; }
+/* The handle is 6px wide, so the default focus ring collapses into noise;
+   the keyboard focus reuses the hover line instead. */
+.fx-pane-handle:focus-visible { outline: none; }
+.fx-pane-handle:focus-visible::before { opacity: .55; }
+/* Applied to the document body while a drag is live: no text selection under a
+   moving pointer and a stable cursor wherever it travels. */
+body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-editor {
   display: flex;
   flex-direction: column;
@@ -315,6 +348,24 @@ export const FS_STYLES = `
 
 .fx-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
 .fx-row[data-kind="directory"] .fx-name { font-weight: 500; }
+.fx-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 14px;
+  padding: 0 4px;
+  flex: none;
+  margin-left: 2px;
+  border-radius: 4px;
+  background: color-mix(in oklab, currentColor 13%, transparent);
+  font-family: var(--fx-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.fx-tag[data-tag="submodule"] { color: var(--fx-tag-submodule); }
+.fx-tag[data-tag="package"] { color: var(--fx-tag-package); }
 .fx-row-fill { flex: 1 1 0; min-width: 4px; }
 .fx-tone { color: var(--fx-tone, currentColor); }
 .fx-tone[data-tone="warning"] { --fx-tone: var(--fx-modified); }
@@ -360,6 +411,19 @@ export const FS_STYLES = `
 }
 .fx-row[data-status="deleted"] .fx-name { text-decoration: line-through; text-decoration-thickness: 1px; opacity: .75; }
 .fx-row[data-status="conflicted"] .fx-name { font-weight: 600; }
+.fx-diff {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  font-family: var(--fx-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.fx-diff-add { color: var(--fx-added); }
+.fx-diff-del { color: var(--fx-deleted); }
+.fx-diff-bin { color: var(--fx-caption); }
 .fx-size {
   flex: none;
   min-width: 5ch;
@@ -429,6 +493,18 @@ export const FS_STYLES = `
 .fx-foot-git { display: inline-flex; align-items: center; gap: 5px; }
 .fx-foot-git[data-state="none"] { color: var(--fx-caption); }
 .fx-foot-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
+.fx-foot-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--fx-mono);
+  white-space: nowrap;
+}
+.fx-foot-ahead { color: var(--fx-added); }
+.fx-foot-behind { color: var(--fx-deleted); }
 
 .fx-empty {
   display: flex;
@@ -655,6 +731,10 @@ export const FS_STYLES = `
     border-right: 0;
     border-bottom: 1px solid var(--fx-border-soft);
   }
+  /* Stacked panes have no horizontal split to resize, so the handle and any
+     persisted width (the media rule above wins the cascade over the variable)
+     both go inert. */
+  .fx-pane-handle { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

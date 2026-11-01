@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  changeDiff,
   directoryChanges,
+  headLabel,
+  joinChangeStats,
   parseStatusZ,
   statusBadge,
   statusOf,
@@ -116,5 +119,51 @@ describe("directoryChanges", () => {
     expect(directoryChanges("docs", statuses)).toBeUndefined();
     expect(directoryChanges("src", undefined)).toBeUndefined();
     expect(directoryChanges("", statuses)).toBeUndefined();
+  });
+});
+
+describe("joinChangeStats", () => {
+  it("indexes stats by path and decorates the matching markers", () => {
+    const joined = joinChangeStats(parseStatusZ(FIXTURE), [
+      { path: "src/有 空格.ts", additions: 12, deletions: 4 },
+      { path: "src/new name.ts", additions: 9, deletions: 0 },
+    ]);
+    expect(joined["src/有 空格.ts"]).toEqual({ status: "modified", additions: 12, deletions: 4 });
+    // A rename's counts key the new path, the same path the status map keys.
+    expect(joined["src/new name.ts"]).toEqual({ status: "renamed", additions: 9, deletions: 0 });
+    // Untracked paths have no counts and stay as they were.
+    expect(joined["未命名.md"]).toEqual({ status: "untracked" });
+  });
+
+  it("keeps binary markers as null counts on both sides", () => {
+    const joined = joinChangeStats({ "logo.png": { status: "modified" } }, [
+      { path: "logo.png", additions: null, deletions: null },
+    ]);
+    expect(joined["logo.png"]).toEqual({ status: "modified", additions: null, deletions: null });
+  });
+
+  it("ignores stat entries whose path is not in the status map", () => {
+    const joined = joinChangeStats({ "a.ts": { status: "modified" } }, [{ path: "b.ts", additions: 1, deletions: 1 }]);
+    expect(joined["b.ts"]).toBeUndefined();
+    expect(joined["a.ts"]).toEqual({ status: "modified" });
+  });
+});
+
+describe("changeDiff", () => {
+  it("maps counted, binary and uncounted markers", () => {
+    expect(changeDiff({ status: "modified", additions: 12, deletions: 4 })).toEqual({ additions: 12, deletions: 4 });
+    expect(changeDiff({ status: "modified", additions: null, deletions: null })).toEqual({ binary: true });
+    // A half-null pair is not a shape git produces; either null reads binary.
+    expect(changeDiff({ status: "modified", additions: 1, deletions: null })).toEqual({ binary: true });
+    expect(changeDiff({ status: "untracked" })).toBeUndefined();
+  });
+});
+
+describe("headLabel", () => {
+  it("names the branch, or the first seven hash characters when detached", () => {
+    expect(headLabel({ hash: "9af31c2e6bd2", branch: "main", detached: false })).toBe("main");
+    expect(headLabel({ hash: "9af31c2e6bd2", branch: null, detached: true })).toBe("9af31c2");
+    expect(headLabel({ hash: null, branch: null, detached: false })).toBeNull();
+    expect(headLabel(undefined)).toBeNull();
   });
 });

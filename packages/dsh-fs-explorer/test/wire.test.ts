@@ -127,6 +127,85 @@ describe("normalizeStatusSnapshot", () => {
     });
     expect(normalizeStatusSnapshot(null)).toEqual({ ok: false, message: "Git 服务返回了无效响应" });
   });
+
+  it("folds out the snapshot's line stats and head", () => {
+    const result = normalizeStatusSnapshot({
+      ok: true,
+      value: {
+        ok: true,
+        snapshot: {
+          isRepository: true,
+          status: "1 .M N... 100644 100644 100644 aaaa bbbb src/a.ts\0",
+          stats: [
+            { path: "src/a.ts", additions: 3, deletions: 1 },
+            { path: "assets/logo.png", additions: null, deletions: null },
+          ],
+          head: { hash: "9af31c2e6bd2", branch: "main", detached: false, upstream: "origin/main", ahead: 2, behind: 0 },
+        },
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.stats).toEqual([
+        { path: "src/a.ts", additions: 3, deletions: 1 },
+        { path: "assets/logo.png", additions: null, deletions: null },
+      ]);
+      expect(result.head).toEqual({
+        hash: "9af31c2e6bd2",
+        branch: "main",
+        detached: false,
+        upstream: "origin/main",
+        ahead: 2,
+        behind: 0,
+      });
+    }
+  });
+
+  it("folds stats and head from the flattened business form too", () => {
+    const result = normalizeStatusSnapshot({
+      ok: true,
+      snapshot: {
+        isRepository: true,
+        status: "",
+        stats: [{ path: "a.ts", additions: 0, deletions: 9 }],
+        head: { hash: null, branch: null, detached: false },
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.stats).toEqual([{ path: "a.ts", additions: 0, deletions: 9 }]);
+      expect(result.head).toEqual({ hash: null, branch: null, detached: false });
+    }
+  });
+
+  it("leaves stats and head undefined for an old host that only carries status", () => {
+    const result = normalizeStatusSnapshot({
+      ok: true,
+      value: { ok: true, snapshot: { isRepository: true, status: "? a.md\0" } },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.stats).toBeUndefined();
+      expect(result.head).toBeUndefined();
+    }
+  });
+
+  it("drops malformed stats and a null head instead of failing", () => {
+    const result = normalizeStatusSnapshot({
+      ok: true,
+      snapshot: {
+        isRepository: true,
+        status: "",
+        stats: [{ path: "a.ts", additions: 3, deletions: 1 }, { path: 7, additions: 1, deletions: 1 }, "nope"],
+        head: null,
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.stats).toEqual([{ path: "a.ts", additions: 3, deletions: 1 }]);
+      expect(result.head).toBeUndefined();
+    }
+  });
 });
 
 describe("normalizeBytes", () => {
