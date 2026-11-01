@@ -175,6 +175,18 @@ export function TreeRowView({ row, selected, cursor, top, t, onToggle, onSelect,
         </span>
       )}
       <span className="fx-row-fill" />
+      {row.diff === undefined ? null : (
+        <span className="fx-diff" data-testid="fx-diff" aria-hidden="true">
+          {"binary" in row.diff ? (
+            <span className="fx-diff-bin">{t("row.binary")}</span>
+          ) : (
+            <>
+              <span className="fx-diff-add">{`+${String(row.diff.additions)}`}</span>
+              <span className="fx-diff-del">{`-${String(row.diff.deletions)}`}</span>
+            </>
+          )}
+        </span>
+      )}
       {row.size === undefined ? null : <span className="fx-size">{formatSize(row.size)}</span>}
     </button>
   );

@@ -41,6 +41,13 @@ describe("surface dictionary", () => {
     expect(Object.keys(ZH).sort()).toEqual(Object.keys(EN).sort());
   });
 
+  it("ships the diff-stat and branch keys in both languages", () => {
+    expect(ZH["row.binary"]).toBe("bin");
+    expect(EN["row.binary"]).toBe("bin");
+    expect(ZH["foot.branch"]).toBeTypeOf("string");
+    expect(EN["foot.branch"]).toBeTypeOf("string");
+  });
+
   it("rebinds the surface vocabulary onto this package's namespace", () => {
     const t = surfaceTranslator((key: string) => `ns:${key}`);
     expect(t("state.loading")).toBe(`ns:${SURFACE_KEY_PREFIX}state.loading`);

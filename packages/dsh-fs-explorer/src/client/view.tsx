@@ -23,7 +23,7 @@ import {
 } from "./model.ts";
 import { PanelEmpty, PanelTabs } from "./panel-tabs.tsx";
 import { consumeViewRequest, createPanelStackRegistry } from "./panels.ts";
-import { parseStatusZ, type StatusMap } from "./status.ts";
+import { headLabel, joinChangeStats, parseStatusZ, type FsGitHead, type StatusMap } from "./status.ts";
 import { PreviewPane } from "./preview-pane.tsx";
 import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody } from "./tree.tsx";
 import {
@@ -143,6 +143,7 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
 
     const [levels, setLevels] = useState<ReadonlyMap<string, TreeLevel>>(() => new Map());
     const [statuses, setStatuses] = useState<StatusMap | undefined>(undefined);
+    const [head, setHead] = useState<FsGitHead | undefined>(undefined);
     const levelsRef = useRef(levels);
     levelsRef.current = levels;
     const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
@@ -247,24 +248,36 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     // namespace, a plain directory or a broken snapshot all read as "no status"
     // and leave the tree fully usable. Only status text is requested, so the
     // snapshot is capped at one commit to keep the history read off the mount
-    // path.
+    // path. The same response also carries the line counts and HEAD summary;
+    // both are optional members, so a host that predates them decorates nothing.
     useEffect(() => {
       if (sessionId === undefined || statusFace === undefined) {
         setStatuses(undefined);
+        setHead(undefined);
         return;
       }
       let alive = true;
       const controller = new AbortController();
       setStatuses(undefined);
+      setHead(undefined);
       Promise.resolve()
         .then(() => statusFace.snapshot({ sessionId, maxCommits: 1 }, controller.signal))
         .then(response => {
           if (!alive) return;
           const normalized = normalizeStatusSnapshot(response);
-          setStatuses(normalized.ok ? parseStatusZ(normalized.status) : undefined);
+          if (!normalized.ok) {
+            setStatuses(undefined);
+            setHead(undefined);
+            return;
+          }
+          setStatuses(joinChangeStats(parseStatusZ(normalized.status), normalized.stats));
+          setHead(normalized.head);
         })
         .catch(() => {
-          if (alive) setStatuses(undefined);
+          if (alive) {
+            setStatuses(undefined);
+            setHead(undefined);
+          }
         });
       return () => {
         alive = false;
@@ -393,6 +406,9 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
           : changeCount === 0
             ? "success"
             : "warning";
+    // The branch segment names HEAD when the snapshot folded one; without an
+    // upstream the ahead/behind arrows have nothing to count against.
+    const branchLabel = headLabel(head);
 
     const toggleDirectory = useCallback(
       (path: string): void => {
@@ -583,6 +599,17 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                   ? t("status.clean")
                   : t("status.summary").replace("{count}", String(changeCount))}
             </span>
+            {branchLabel === null ? null : (
+              <span className="fx-foot-branch" data-testid="fs-branch" title={t("foot.branch")}>
+                {branchLabel}
+                {head?.upstream !== undefined && (head.ahead ?? 0) > 0 ? (
+                  <span className="fx-foot-ahead">{`↑${String(head.ahead)}`}</span>
+                ) : null}
+                {head?.upstream !== undefined && (head.behind ?? 0) > 0 ? (
+                  <span className="fx-foot-behind">{`↓${String(head.behind)}`}</span>
+                ) : null}
+              </span>
+            )}
             <span className="fx-spacer" />
             <span>{t("foot.order")}</span>
           </footer>

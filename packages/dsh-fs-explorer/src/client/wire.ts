@@ -9,8 +9,9 @@
  * directory listing. Every probe is non-throwing, because a deployment without
  * the service must render the panel's "service unavailable" state rather than
  * take the conversation row down. The same file also folds the Git panel's
- * snapshot response down to its raw `git status` text, because status colouring
- * reuses that endpoint instead of spawning a second git reader.
+ * snapshot response down to its raw `git status` text plus the line-count and
+ * HEAD decorations the row badges and the footer paint, because status
+ * colouring reuses that endpoint instead of spawning a second git reader.
  *
  * The preview has two reads over the same face: `read` pages text and `readBytes`
  * hands a family renderer the whole file. Both are optional and both fold the
@@ -20,6 +21,7 @@ import type { ReadFile } from "dsh-preview-viewers/contracts.ts";
 
 import type { FsEntryLike } from "./model.ts";
 import { PreviewReadError, type PreviewFiles } from "./preview.ts";
+import type { FsChangeStat, FsGitHead } from "./status.ts";
 
 /** One directory listing as the host wire carries it. */
 export interface WorkspaceDirectoryListingLike {
@@ -341,29 +343,111 @@ export function createGitStatusResolver(ctx: StatusContextLike): StatusResolver 
 
 /** A Git snapshot after both transport and business envelopes were folded. */
 export type NormalizedStatus =
-  | { readonly ok: true; readonly status: string }
+  | {
+      readonly ok: true;
+      readonly status: string;
+      /** Per-path line counts; undefined on a host that predates the field. */
+      readonly stats?: readonly FsChangeStat[];
+      /** HEAD summary for the footer's branch segment; undefined when absent. */
+      readonly head?: FsGitHead;
+    }
   | { readonly ok: false; readonly message: string };
+
+/** Read one numstat side: a count, null for a binary file, or undefined when invalid. */
+function readCount(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+  return undefined;
+}
+
+/**
+ * Shape-check the snapshot's line stats.
+ *
+ * Entries a host folded differently (a non-string path, a negative count) are
+ * dropped one by one; anything that is not an array degrades to "no
+ * decoration" rather than failing the status colouring that already works.
+ */
+function readStats(value: unknown): readonly FsChangeStat[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const stats: FsChangeStat[] = [];
+  for (const entry of value) {
+    if (entry === null || typeof entry !== "object") continue;
+    const record = entry as { readonly path?: unknown; readonly additions?: unknown; readonly deletions?: unknown };
+    if (typeof record.path !== "string" || record.path === "") continue;
+    const additions = readCount(record.additions);
+    const deletions = readCount(record.deletions);
+    if (additions === undefined || deletions === undefined) continue;
+    stats.push({ path: record.path, additions, deletions });
+  }
+  return stats;
+}
+
+/**
+ * Shape-check the snapshot's HEAD summary.
+ *
+ * `head` is null in a repository without commits and absent on hosts that
+ * predate the field; both read as "no branch segment" rather than a failure.
+ */
+function readHead(value: unknown): FsGitHead | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const record = value as {
+    readonly hash?: unknown;
+    readonly branch?: unknown;
+    readonly detached?: unknown;
+    readonly upstream?: unknown;
+    readonly ahead?: unknown;
+    readonly behind?: unknown;
+  };
+  const readAheadCount = (raw: unknown): number | undefined =>
+    typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : undefined;
+  const upstream = typeof record.upstream === "string" && record.upstream !== "" ? record.upstream : undefined;
+  const ahead = readAheadCount(record.ahead);
+  const behind = readAheadCount(record.behind);
+  return {
+    hash: typeof record.hash === "string" && record.hash !== "" ? record.hash : null,
+    branch: typeof record.branch === "string" && record.branch !== "" ? record.branch : null,
+    detached: record.detached === true,
+    ...(upstream === undefined ? {} : { upstream }),
+    ...(ahead === undefined ? {} : { ahead }),
+    ...(behind === undefined ? {} : { behind }),
+  };
+}
 
 function readSnapshot(value: unknown): NormalizedStatus {
   if (value === null || typeof value !== "object") {
     return { ok: false, message: "Git 服务返回了无效响应" };
   }
-  const record = value as { readonly isRepository?: unknown; readonly status?: unknown };
+  const record = value as {
+    readonly isRepository?: unknown;
+    readonly status?: unknown;
+    readonly stats?: unknown;
+    readonly head?: unknown;
+  };
   if (typeof record.status !== "string") {
     return { ok: false, message: "Git 快照缺少 status" };
   }
+  const stats = readStats(record.stats);
+  const head = readHead(record.head);
   // A plain directory is a valid answer with no repository, hence no status.
-  return { ok: true, status: record.isRepository === false ? "" : record.status };
+  return {
+    ok: true,
+    status: record.isRepository === false ? "" : record.status,
+    ...(stats === undefined ? {} : { stats }),
+    ...(head === undefined ? {} : { head }),
+  };
 }
 
 /**
- * Fold the Git snapshot response down to its raw status text.
+ * Fold the Git snapshot response down to its raw status text and decorations.
  *
  * The generated Remote wraps the Host method in `RemoteResult<T>`, and the
  * Host method answers a business `{ ok, snapshot }` union of its own. Both
  * layers are checked by shape, so a host build that flattens one still works.
+ * The optional `stats` and `head` members are shape-checked each on its own:
+ * a host that predates them folds out a snapshot without them and the tree
+ * degrades to its badge-only look instead of failing.
  * @param response - whatever `gitExplorer.snapshot` resolved to.
- * @returns the raw porcelain text, or a one-line failure description.
+ * @returns the raw porcelain text with its decorations, or a one-line failure.
  */
 export function normalizeStatusSnapshot(response: unknown): NormalizedStatus {
   if (response === null || typeof response !== "object") {

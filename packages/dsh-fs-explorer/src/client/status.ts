@@ -15,7 +15,34 @@ export type FsChangeStatus = "modified" | "added" | "deleted" | "renamed" | "unt
 /** One path's status, shaped as the acceptance probe expects. */
 export interface FsChangeMarker {
   readonly status: FsChangeStatus;
+  /**
+   * Line counts joined from the snapshot's stats; absent for untracked files
+   * and hosts that predate the field. Null is git's binary marker.
+   */
+  readonly additions?: number | null;
+  readonly deletions?: number | null;
 }
+
+/** Line counts for one changed path, as the snapshot's numstat reports them. */
+export interface FsChangeStat {
+  readonly path: string;
+  /** Null on both sides marks a binary file, which git prints as `-`. */
+  readonly additions: number | null;
+  readonly deletions: number | null;
+}
+
+/** Where HEAD sits, for the footer's branch segment. */
+export interface FsGitHead {
+  readonly hash: string | null;
+  readonly branch: string | null;
+  readonly detached: boolean;
+  readonly upstream?: string;
+  readonly ahead?: number;
+  readonly behind?: number;
+}
+
+/** A file row's line-count decoration: counts, or the binary marker. */
+export type FsChangeDiff = { readonly additions: number; readonly deletions: number } | { readonly binary: true };
 
 /** Every changed path, keyed by its workspace-relative path. */
 export type StatusMap = Readonly<Record<string, FsChangeMarker>>;
@@ -180,6 +207,61 @@ export function statusOf(path: string, statuses: StatusMap | undefined): FsChang
   if (direct !== undefined) return direct.status;
   const asDirectory = statuses[`${path.replace(/\/+$/u, "")}/`];
   return asDirectory?.status;
+}
+
+/**
+ * The diff decoration one changed file row paints beside its badge.
+ *
+ * A marker without counts is an untracked file (or a host without stats) and
+ * keeps its badge-only look; null counts are git's binary marker.
+ * @param marker - one parsed marker, counts joined or not.
+ * @returns the counts, the binary marker, or undefined.
+ */
+export function changeDiff(marker: FsChangeMarker): FsChangeDiff | undefined {
+  const { additions, deletions } = marker;
+  if (additions === undefined || deletions === undefined) return undefined;
+  if (additions === null || deletions === null) return { binary: true };
+  return { additions, deletions };
+}
+
+/**
+ * The footer branch segment's label.
+ *
+ * A detached HEAD names its commit by the first seven characters, the length
+ * git itself abbreviates to. Anything without a name to show answers null, so
+ * the segment does not render rather than painting an empty chip.
+ * @param head - the folded HEAD summary, or undefined without one.
+ * @returns the branch name, a short hash, or null.
+ */
+export function headLabel(head: FsGitHead | undefined): string | null {
+  if (head === undefined) return null;
+  if (head.detached && head.hash !== null) return head.hash.slice(0, 7);
+  return head.branch;
+}
+
+/**
+ * Decorate the parsed status map with the snapshot's line counts.
+ *
+ * Stats key the same workspace-relative path the status map keys (a rename's
+ * counts arrive under the new path), so the join is one lookup per stat entry.
+ * A stat without a matching status adds nothing: the status map decides which
+ * rows exist, the counts only decorate them.
+ * @param changes - the map `parseStatusZ` produced.
+ * @param stats - per-path line counts, or undefined on a host without them.
+ * @returns a new map whose matching markers carry their counts.
+ */
+export function joinChangeStats(
+  changes: Readonly<Record<string, FsChangeMarker>>,
+  stats: readonly FsChangeStat[] | undefined,
+): Record<string, FsChangeMarker> {
+  const joined: Record<string, FsChangeMarker> = { ...changes };
+  if (stats === undefined) return joined;
+  for (const stat of stats) {
+    const marker = joined[stat.path];
+    if (marker === undefined) continue;
+    joined[stat.path] = { ...marker, additions: stat.additions, deletions: stat.deletions };
+  }
+  return joined;
 }
 
 /** Aggregate marker for one directory row. */

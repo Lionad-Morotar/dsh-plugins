@@ -201,6 +201,35 @@ describe("flattenTree", () => {
       expect(status.label).toContain("1 项");
     }
   });
+
+  it("decorates changed file rows with their line counts", () => {
+    const levels = new Map<string, TreeLevel>([
+      ["", root],
+      [
+        "src",
+        level([
+          { name: "main.ts", kind: "file" },
+          { name: "logo.png", kind: "file" },
+          { name: "scratch.ts", kind: "file" },
+        ]),
+      ],
+    ]);
+    const statuses = {
+      "src/main.ts": { status: "modified" as const, additions: 12, deletions: 4 },
+      "src/logo.png": { status: "modified" as const, additions: null, deletions: null },
+      "src/scratch.ts": { status: "untracked" as const },
+    };
+    const rows = flattenTree(levels, new Set(["src"]), statuses);
+    const diffOf = (name: string) => {
+      const row = rows.find(candidate => candidate.type === "entry" && candidate.name === name);
+      return row?.type === "entry" ? row.diff : undefined;
+    };
+    expect(diffOf("main.ts")).toEqual({ additions: 12, deletions: 4 });
+    expect(diffOf("logo.png")).toEqual({ binary: true });
+    expect(diffOf("scratch.ts")).toBeUndefined();
+    // Directory rows aggregate; they never carry line counts.
+    expect(diffOf("src")).toBeUndefined();
+  });
 });
 
 describe("paths, focus and size", () => {
