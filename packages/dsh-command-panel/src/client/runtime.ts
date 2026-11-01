@@ -337,8 +337,17 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
 
   // ── cache keys ──────────────────────────────────────────────────────────
 
-  function cacheKey(mode: PanelMode, level: string, scopeKey: string, sessionId: string | null): string {
-    return [mode, level, scopeKey, sessionId ?? "-"].join("|");
+  // The archive filter is part of the session level's identity: the ordinary
+  // list and the archived side of the same scope are different row sets and
+  // must never share a slot, even though today only root-level keys are read.
+  function cacheKey(
+    mode: PanelMode,
+    level: string,
+    scopeKey: string,
+    sessionId: string | null,
+    archivedOnly = false,
+  ): string {
+    return [mode, level, scopeKey, sessionId ?? "-", archivedOnly ? "archived" : "live"].join("|");
   }
 
   function keyOf(snapshot: ReturnType<typeof store.getSnapshot>): string {
@@ -349,7 +358,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         : model.scope.kind === "workspace"
           ? model.scope.workspaceId
           : model.scope.kind;
-    return cacheKey(model.mode, model.level, scopeKey, currentSessionId());
+    return cacheKey(model.mode, model.level, scopeKey, currentSessionId(), model.archivedOnly);
   }
 
   // ── loading ─────────────────────────────────────────────────────────────
