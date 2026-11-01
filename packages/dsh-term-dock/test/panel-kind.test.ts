@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { createDockState } from "../src/client/dock-state.ts";
 import { kindPickerChoices, planPanelBody } from "../src/client/panel-body.ts";
 import { createDockHost } from "../src/client/host.ts";
+import { kindMountIdentity } from "../src/client/view.tsx";
 
 /** A registered-kind descriptor shaped like the workbench core's. */
 function descriptor(kind: string, title = kind) {
@@ -78,6 +79,33 @@ describe("kind picker choices", () => {
   it("offers the registered kinds in order, without the built-in", () => {
     const choices = kindPickerChoices([descriptor("arch", "Arch"), descriptor("terminal", "fake")]);
     expect(choices).toEqual([{ kind: "arch", title: "Arch" }]);
+  });
+});
+
+describe("kind mount identity", () => {
+  /** The kind-branch plan KindPanelBody receives, narrowed off the union. */
+  const kindPlan = (kinds: ReturnType<typeof descriptor>[]) => {
+    const plan = planPanelBody("arch", kinds);
+    if (plan.plan !== "kind") throw new Error(`expected kind plan, got ${plan.plan}`);
+    return plan;
+  };
+
+  it("stays stable across dock re-renders that rebuild the plan object", () => {
+    const arch = descriptor("arch", "Arch");
+    // Every render re-reads the registry (a fresh array) and re-plans the
+    // body; the mount effect must not see a new identity in that churn.
+    const render = () => kindMountIdentity(kindPlan([descriptor("graph"), arch]), "s1");
+    const first = render();
+    const second = render();
+    expect(second).toEqual(first);
+    expect(second[1]).toBe(arch.mount);
+  });
+
+  it("changes when the kind is re-registered or the session switches", () => {
+    const arch = descriptor("arch", "Arch");
+    const before = kindMountIdentity(kindPlan([arch]), "s1");
+    expect(kindMountIdentity(kindPlan([descriptor("arch", "Arch")]), "s1")).not.toEqual(before);
+    expect(kindMountIdentity(kindPlan([arch]), "s2")).not.toEqual(before);
   });
 });
 

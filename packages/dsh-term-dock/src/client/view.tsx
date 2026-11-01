@@ -18,7 +18,7 @@ import { createTerminalPanel } from "./terminal-panel.tsx";
 import { bleedBetween, pickColumn, type Box } from "./bleed.ts";
 import { createDockController, type DockVisibilitySource } from "./dock-controller.ts";
 import { TERMINAL_PANEL_KIND, type DockPanel, type DockPanelKind, type DockState } from "./dock-state.ts";
-import { kindPickerChoices, planPanelBody, type PanelBodyPlan } from "./panel-body.ts";
+import { kindPickerChoices, planPanelBody, type PanelBodyPlan, type PanelKindDescriptor } from "./panel-body.ts";
 import type { DockHost } from "./host.ts";
 import type { TerminalRack } from "./rack.ts";
 import type { Translate } from "./copy.ts";
@@ -334,6 +334,22 @@ function PlusPicker({
 }
 
 /**
+ * The mount lifecycle identity of one kind body: the registered kind, its
+ * mount closure and the session. The plan object itself is rebuilt on every
+ * render (`planPanelBody` re-runs against a fresh registry snapshot), so
+ * keying the mount effect on it would dispose and remount the panel on every
+ * dock state change. The mount closure is the stable stand-in: the core's
+ * kind ledger hands out the same descriptor until the kind is re-registered,
+ * and a new closure is exactly the edge that must remount.
+ */
+export function kindMountIdentity(
+  plan: Extract<PanelBodyPlan, { readonly plan: "kind" }>,
+  sessionId: string,
+): readonly [string, PanelKindDescriptor["mount"], string] {
+  return [plan.kind, plan.mount, sessionId];
+}
+
+/**
  * Build the dock component for one mount.
  * @param wiring - dock state, view rack, host seams and the translate seat.
  * @returns the component registered into the conversation dock slot.
@@ -363,7 +379,7 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
       return () => {
         if (typeof dispose === "function") dispose();
       };
-    }, [plan, sessionId]);
+    }, kindMountIdentity(plan, sessionId));
     return (
       <div
         ref={hostRef}
