@@ -144,6 +144,10 @@ export const GIT_STYLES = `
   opacity: 0;
 }
 .gx-pane-handle:hover::before { opacity: .55; }
+/* The handle is 6px wide, so the default focus ring collapses into noise;
+   the keyboard focus reuses the hover line instead. */
+.gx-pane-handle:focus-visible { outline: none; }
+.gx-pane-handle:focus-visible::before { opacity: .55; }
 /* Applied to the document body while a drag is live: no text selection under a
    moving pointer and a stable cursor wherever it travels. */
 body.gx-pane-resizing { user-select: none; cursor: col-resize; }

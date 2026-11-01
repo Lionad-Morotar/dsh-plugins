@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  PANE_RESIZE_STEP,
   TREE_PANE_MAX_WIDTH,
   TREE_PANE_MIN_WIDTH,
   TREE_PANE_WIDTH_KEY,
   clampTreePaneWidth,
+  dragReturnedToBase,
+  paneResizeKeyAction,
   readTreePaneWidth,
   resetTreePaneWidth,
   saveTreePaneWidth,
@@ -28,6 +31,40 @@ function deniedStorage(): PaneWidthStorage {
   };
   return { getItem: deny, setItem: deny, removeItem: deny };
 }
+
+describe("dragReturnedToBase", () => {
+  it("treats a landing on the start width, sub-pixel jitter included, as no new intent", () => {
+    expect(dragReturnedToBase(350, 350)).toBe(true);
+    expect(dragReturnedToBase(350.4, 350)).toBe(true);
+    expect(dragReturnedToBase(349.6, 350)).toBe(true);
+  });
+
+  it("treats a real move away from the start as new intent to persist", () => {
+    expect(dragReturnedToBase(351, 350)).toBe(false);
+    expect(dragReturnedToBase(320, 350)).toBe(false);
+  });
+});
+
+describe("paneResizeKeyAction", () => {
+  it("maps bare arrows to one-step nudges: left narrows, right widens", () => {
+    expect(paneResizeKeyAction("ArrowLeft", false)).toEqual({ kind: "nudge", delta: -PANE_RESIZE_STEP });
+    expect(paneResizeKeyAction("ArrowRight", false)).toEqual({ kind: "nudge", delta: PANE_RESIZE_STEP });
+  });
+
+  it("maps Home and End to the bounds, Delete and Backspace to reset", () => {
+    expect(paneResizeKeyAction("Home", false)).toEqual({ kind: "min" });
+    expect(paneResizeKeyAction("End", false)).toEqual({ kind: "max" });
+    expect(paneResizeKeyAction("Delete", false)).toEqual({ kind: "reset" });
+    expect(paneResizeKeyAction("Backspace", false)).toEqual({ kind: "reset" });
+  });
+
+  it("leaves modified chords and unrelated keys to the host", () => {
+    expect(paneResizeKeyAction("ArrowLeft", true)).toBeNull();
+    expect(paneResizeKeyAction("ArrowRight", true)).toBeNull();
+    expect(paneResizeKeyAction("Enter", false)).toBeNull();
+    expect(paneResizeKeyAction("a", false)).toBeNull();
+  });
+});
 
 describe("clampTreePaneWidth", () => {
   it("keeps the bounds and every width between them as-is", () => {

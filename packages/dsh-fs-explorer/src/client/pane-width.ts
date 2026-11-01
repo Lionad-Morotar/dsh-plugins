@@ -76,3 +76,48 @@ export function resetTreePaneWidth(storage: PaneWidthStorage | null | undefined)
     // A refusing store keeps its entry; nothing further can be done here.
   }
 }
+
+/**
+ * True when a finished drag landed back on the width it started from, after
+ * rounding. The gesture then expresses no new intent: the caller restores
+ * the pre-drag width state (null keeps the fluid CSS default) and leaves
+ * the store untouched, instead of persisting the transient pixels the
+ * in-flight moves already wrote into state.
+ */
+export function dragReturnedToBase(width: number, baseWidth: number): boolean {
+  return Math.round(width) === Math.round(baseWidth);
+}
+
+/** Keyboard nudge per arrow press on a focused separator, in CSS pixels. */
+export const PANE_RESIZE_STEP = 16;
+
+/** What one keydown on the focused separator asks the pane width to do. */
+export type PaneResizeAction =
+  | { readonly kind: "nudge"; readonly delta: number }
+  | { readonly kind: "min" }
+  | { readonly kind: "max" }
+  | { readonly kind: "reset" };
+
+/**
+ * Translate a keypress on the focused separator. Left narrows and right
+ * widens, matching the visual direction of the tree column. Chords carrying
+ * a modifier stay with the host: those are accelerators, not adjustments.
+ */
+export function paneResizeKeyAction(key: string, modifierHeld: boolean): PaneResizeAction | null {
+  if (modifierHeld) return null;
+  switch (key) {
+    case "ArrowLeft":
+      return { kind: "nudge", delta: -PANE_RESIZE_STEP };
+    case "ArrowRight":
+      return { kind: "nudge", delta: PANE_RESIZE_STEP };
+    case "Home":
+      return { kind: "min" };
+    case "End":
+      return { kind: "max" };
+    case "Backspace":
+    case "Delete":
+      return { kind: "reset" };
+    default:
+      return null;
+  }
+}

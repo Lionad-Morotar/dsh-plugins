@@ -7,7 +7,16 @@
  * read time so a deployment without the Git service renders an explicit empty
  * state instead of throwing inside the conversation shell.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import { ChangesPane } from "./changes-pane.tsx";
 import { DetailPane } from "./detail-pane.tsx";
@@ -15,7 +24,11 @@ import { HistoryPane, HISTORY_PAGE_SIZE } from "./history-pane.tsx";
 import type { Translate } from "./copy.ts";
 import { createJump, groupChanges, layoutGraph, parseCommitFocus, type GraphRow } from "./model.ts";
 import {
+  LEFT_COLUMN_MAX_WIDTH,
+  LEFT_COLUMN_MIN_WIDTH,
   clampLeftColumnWidth,
+  dragReturnedToBase,
+  paneResizeKeyAction,
   readLeftColumnWidth,
   resetLeftColumnWidth,
   saveLeftColumnWidth,
@@ -202,7 +215,12 @@ export function createGitExplorerView(wiring: ViewWiring) {
     const paneStorage = useMemo(() => paneWidthStorage(), []);
     const [leftWidth, setLeftWidth] = useState<number | null>(() => readLeftColumnWidth(paneStorage));
     const handleRef = useRef<HTMLDivElement | null>(null);
-    const dragRef = useRef<{ pointerId: number; startX: number; baseWidth: number } | null>(null);
+    // `restWidth` is the width state at drag start: what a drag that lands
+    // back where it began must restore, so a persisted pixel count survives
+    // its own no-op drag and an unpinned session stays fluid.
+    const dragRef = useRef<{ pointerId: number; startX: number; baseWidth: number; restWidth: number | null } | null>(
+      null,
+    );
 
     const selectFromFocus = useCallback((hash: string): void => {
       pendingFocus.current = hash;
@@ -212,22 +230,26 @@ export function createGitExplorerView(wiring: ViewWiring) {
     // The left column's divider. The pane left of the handle is the baseline:
     // the fluid default has no number in state, so a drag measures the
     // rendered box and works in pixel deltas from there.
-    const beginPaneDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
-      if (event.button !== 0 || dragRef.current !== null || stackedLayout()) return;
-      const pane = handleRef.current?.previousElementSibling;
-      if (!(pane instanceof HTMLElement)) return;
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        return; // Without capture a pointer leaving the window strands the drag.
-      }
-      dragRef.current = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        baseWidth: pane.getBoundingClientRect().width,
-      };
-      document.body.classList.add("gx-pane-resizing");
-    }, []);
+    const beginPaneDrag = useCallback(
+      (event: ReactPointerEvent<HTMLDivElement>): void => {
+        if (event.button !== 0 || dragRef.current !== null || stackedLayout()) return;
+        const pane = handleRef.current?.previousElementSibling;
+        if (!(pane instanceof HTMLElement)) return;
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          return; // Without capture a pointer leaving the window strands the drag.
+        }
+        dragRef.current = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          baseWidth: pane.getBoundingClientRect().width,
+          restWidth: leftWidth,
+        };
+        document.body.classList.add("gx-pane-resizing");
+      },
+      [leftWidth],
+    );
 
     const movePaneDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
       const drag = dragRef.current;
@@ -247,8 +269,13 @@ export function createGitExplorerView(wiring: ViewWiring) {
           // Capture is already gone; pointercancel beats this handler here.
         }
         const width = drag.baseWidth + event.clientX - drag.startX;
-        // A click without movement must not pin the fluid default into pixels.
-        if (Math.round(width) === Math.round(drag.baseWidth)) return;
+        // The moves already pinned transient pixels into state; a drag that
+        // lands back where it began must undo that, or the fluid default
+        // stays lost for the rest of the session.
+        if (dragReturnedToBase(width, drag.baseWidth)) {
+          setLeftWidth(drag.restWidth);
+          return;
+        }
         setLeftWidth(saveLeftColumnWidth(paneStorage, width));
       },
       [paneStorage],
@@ -258,6 +285,36 @@ export function createGitExplorerView(wiring: ViewWiring) {
       resetLeftColumnWidth(paneStorage);
       setLeftWidth(null);
     }, [paneStorage]);
+
+    // Keyboard parity for the separator. A fluid pane has no number in
+    // state, so a nudge measures the rendered box and steps from what is on
+    // screen; preventDefault keeps the arrows from scrolling the list.
+    const onPaneHandleKeyDown = useCallback(
+      (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+        if (event.nativeEvent.isComposing) return;
+        const action = paneResizeKeyAction(
+          event.key,
+          event.altKey || event.ctrlKey || event.metaKey || event.shiftKey,
+        );
+        if (action === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (action.kind === "reset") {
+          resetPaneWidth();
+          return;
+        }
+        if (action.kind === "min" || action.kind === "max") {
+          const bound = action.kind === "min" ? LEFT_COLUMN_MIN_WIDTH : LEFT_COLUMN_MAX_WIDTH;
+          setLeftWidth(saveLeftColumnWidth(paneStorage, bound));
+          return;
+        }
+        const pane = handleRef.current?.previousElementSibling;
+        const current =
+          pane instanceof HTMLElement ? pane.getBoundingClientRect().width : (leftWidth ?? LEFT_COLUMN_MIN_WIDTH);
+        setLeftWidth(saveLeftColumnWidth(paneStorage, current + action.delta));
+      },
+      [paneStorage, resetPaneWidth, leftWidth],
+    );
 
     // A drag that outlives this mount (view switched mid-gesture) must not
     // leave the document-level resizing class behind.
@@ -514,13 +571,18 @@ export function createGitExplorerView(wiring: ViewWiring) {
               role="separator"
               aria-orientation="vertical"
               aria-label={t("pane.resize")}
+              aria-valuemin={LEFT_COLUMN_MIN_WIDTH}
+              aria-valuemax={LEFT_COLUMN_MAX_WIDTH}
+              aria-valuenow={leftWidth ?? undefined}
               title={t("pane.resizeHint")}
+              tabIndex={0}
               data-testid="gx-pane-handle"
               onPointerDown={beginPaneDrag}
               onPointerMove={movePaneDrag}
               onPointerUp={endPaneDrag}
               onPointerCancel={endPaneDrag}
               onLostPointerCapture={endPaneDrag}
+              onKeyDown={onPaneHandleKeyDown}
               onDoubleClick={resetPaneWidth}
             />
             <div className="gx-col">

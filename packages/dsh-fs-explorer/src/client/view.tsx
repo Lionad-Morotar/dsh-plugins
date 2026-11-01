@@ -16,6 +16,7 @@ import {
   useState,
   useSyncExternalStore,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
@@ -31,7 +32,11 @@ import {
   type TreeLevel,
 } from "./model.ts";
 import {
+  TREE_PANE_MAX_WIDTH,
+  TREE_PANE_MIN_WIDTH,
   clampTreePaneWidth,
+  dragReturnedToBase,
+  paneResizeKeyAction,
   readTreePaneWidth,
   resetTreePaneWidth,
   saveTreePaneWidth,
@@ -221,7 +226,12 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     const paneStorage = useMemo(() => paneWidthStorage(), []);
     const [treeWidth, setTreeWidth] = useState<number | null>(() => readTreePaneWidth(paneStorage));
     const handleRef = useRef<HTMLDivElement | null>(null);
-    const dragRef = useRef<{ pointerId: number; startX: number; baseWidth: number } | null>(null);
+    // `restWidth` is the width state at drag start: what a drag that lands
+    // back where it began must restore, so a persisted pixel count survives
+    // its own no-op drag and an unpinned session stays fluid.
+    const dragRef = useRef<{ pointerId: number; startX: number; baseWidth: number; restWidth: number | null } | null>(
+      null,
+    );
 
     const rootLevel = levels.get("");
     const rootReady = rootLevel?.status === "ready";
@@ -475,22 +485,26 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     // The tree column's divider. The pane left of the handle is the baseline:
     // the fluid default has no number in state, so a drag measures the
     // rendered box and works in pixel deltas from there.
-    const beginPaneDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
-      if (event.button !== 0 || dragRef.current !== null || stackedLayout()) return;
-      const pane = handleRef.current?.previousElementSibling;
-      if (!(pane instanceof HTMLElement)) return;
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        return; // Without capture a pointer leaving the window strands the drag.
-      }
-      dragRef.current = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        baseWidth: pane.getBoundingClientRect().width,
-      };
-      document.body.classList.add("fx-pane-resizing");
-    }, []);
+    const beginPaneDrag = useCallback(
+      (event: ReactPointerEvent<HTMLDivElement>): void => {
+        if (event.button !== 0 || dragRef.current !== null || stackedLayout()) return;
+        const pane = handleRef.current?.previousElementSibling;
+        if (!(pane instanceof HTMLElement)) return;
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          return; // Without capture a pointer leaving the window strands the drag.
+        }
+        dragRef.current = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          baseWidth: pane.getBoundingClientRect().width,
+          restWidth: treeWidth,
+        };
+        document.body.classList.add("fx-pane-resizing");
+      },
+      [treeWidth],
+    );
 
     const movePaneDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
       const drag = dragRef.current;
@@ -510,8 +524,13 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
           // Capture is already gone; pointercancel beats this handler here.
         }
         const width = drag.baseWidth + event.clientX - drag.startX;
-        // A click without movement must not pin the fluid default into pixels.
-        if (Math.round(width) === Math.round(drag.baseWidth)) return;
+        // The moves already pinned transient pixels into state; a drag that
+        // lands back where it began must undo that, or the fluid default
+        // stays lost for the rest of the session.
+        if (dragReturnedToBase(width, drag.baseWidth)) {
+          setTreeWidth(drag.restWidth);
+          return;
+        }
         setTreeWidth(saveTreePaneWidth(paneStorage, width));
       },
       [paneStorage],
@@ -521,6 +540,36 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       resetTreePaneWidth(paneStorage);
       setTreeWidth(null);
     }, [paneStorage]);
+
+    // Keyboard parity for the separator. A fluid pane has no number in
+    // state, so a nudge measures the rendered box and steps from what is on
+    // screen; preventDefault keeps the arrows from scrolling the tree.
+    const onPaneHandleKeyDown = useCallback(
+      (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+        if (event.nativeEvent.isComposing) return;
+        const action = paneResizeKeyAction(
+          event.key,
+          event.altKey || event.ctrlKey || event.metaKey || event.shiftKey,
+        );
+        if (action === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (action.kind === "reset") {
+          resetPaneWidth();
+          return;
+        }
+        if (action.kind === "min" || action.kind === "max") {
+          const bound = action.kind === "min" ? TREE_PANE_MIN_WIDTH : TREE_PANE_MAX_WIDTH;
+          setTreeWidth(saveTreePaneWidth(paneStorage, bound));
+          return;
+        }
+        const pane = handleRef.current?.previousElementSibling;
+        const current =
+          pane instanceof HTMLElement ? pane.getBoundingClientRect().width : (treeWidth ?? TREE_PANE_MIN_WIDTH);
+        setTreeWidth(saveTreePaneWidth(paneStorage, current + action.delta));
+      },
+      [paneStorage, resetPaneWidth, treeWidth],
+    );
 
     // A drag that outlives this mount (view switched mid-gesture) must not
     // leave the document-level resizing class behind.
@@ -725,13 +774,18 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                 role="separator"
                 aria-orientation="vertical"
                 aria-label={t("pane.resize")}
+                aria-valuemin={TREE_PANE_MIN_WIDTH}
+                aria-valuemax={TREE_PANE_MAX_WIDTH}
+                aria-valuenow={treeWidth ?? undefined}
                 title={t("pane.resizeHint")}
+                tabIndex={0}
                 data-testid="fs-pane-handle"
                 onPointerDown={beginPaneDrag}
                 onPointerMove={movePaneDrag}
                 onPointerUp={endPaneDrag}
                 onPointerCancel={endPaneDrag}
                 onLostPointerCapture={endPaneDrag}
+                onKeyDown={onPaneHandleKeyDown}
                 onDoubleClick={resetPaneWidth}
               />
               <div className="fx-editor">
