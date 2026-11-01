@@ -33,6 +33,28 @@ export interface DockDescriptor {
   readonly order?: number;
 }
 
+/**
+ * The mount context a dock hands one panel of a registered kind.
+ *
+ * The dock owns the chrome; the kind owns everything inside the element it
+ * receives. The disposer (when returned) is called exactly once, when the
+ * panel body leaves the dock.
+ */
+export interface DockPanelMountContext {
+  /** The session the panel is scoped to; the dock never mounts one without. */
+  readonly sessionId: string;
+}
+
+/** A panel kind a feature package registers into a dock's chrome. */
+export interface DockPanelKindDescriptor {
+  /** Kind identity inside the dock; the built-in `"terminal"` is never here. */
+  readonly kind: string;
+  /** Human-readable label the dock's tab strip and kind picker show. */
+  readonly title: string;
+  /** Render one panel body into a fresh element; optional disposer unmounts. */
+  readonly mount: (host: HTMLElement, context: DockPanelMountContext) => (() => void) | void;
+}
+
 /** The service shape the feature packages consume. */
 export interface WorkbenchService {
   /** Contract version; features read it before trusting optional members. */
@@ -55,6 +77,10 @@ export interface WorkbenchService {
   registerDock(dock: DockDescriptor): () => void;
   /** Registered docks, in registration order. */
   docks(): readonly DockDescriptor[];
+  /** Register a panel kind a dock can host; disposer removes it. */
+  registerDockPanelKind(descriptor: DockPanelKindDescriptor): () => void;
+  /** Registered panel kinds, in registration order. */
+  dockPanelKinds(): readonly DockPanelKindDescriptor[];
   /** Open a conversation view for the current session. */
   openView(id: string, focus?: string): boolean;
   /**
@@ -108,6 +134,10 @@ export function createWorkbenchService(ctx: unknown): WorkbenchService {
   const panels = createPanelLedger();
   const adapters = createHostAdapters(ctx, typeof document === "undefined" ? undefined : document);
   const dockRows: DockDescriptor[] = [];
+  // Same ledger shape as dockRows: kind-string identity, registration order,
+  // first registration wins a duplicate (the desktop double-apply relies on
+  // the caller's dispose-then-register, not on replacement semantics here).
+  const panelKindRows: DockPanelKindDescriptor[] = [];
   // The dock is on by default: a fresh install should show the surface the user
   // installed, and hiding it is the explicit choice.
   const dockVisibility = createDockVisibility(true);
@@ -134,6 +164,15 @@ export function createWorkbenchService(ctx: unknown): WorkbenchService {
       };
     },
     docks: () => [...dockRows],
+    registerDockPanelKind(descriptor) {
+      if (panelKindRows.some(entry => entry.kind === descriptor.kind)) return () => {};
+      panelKindRows.push(descriptor);
+      return () => {
+        const index = panelKindRows.findIndex(entry => entry.kind === descriptor.kind);
+        if (index >= 0) panelKindRows.splice(index, 1);
+      };
+    },
+    dockPanelKinds: () => [...panelKindRows],
     openView(id, focus) {
       const sessionId = readCurrentSessionId(ctx);
       if (sessionId === undefined) return false;

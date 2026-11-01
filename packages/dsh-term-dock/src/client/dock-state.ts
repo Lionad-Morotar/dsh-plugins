@@ -15,10 +15,22 @@
 /** How much room the dock takes. */
 export type DockMode = "docked" | "minimized" | "fullscreen";
 
+/**
+ * Panel kinds the dock hosts. `"terminal"` is built in; every other kind is
+ * registered on the workbench core by the package that owns it, so the union
+ * stays open on purpose (the string literal only keeps the default spellable).
+ */
+export type DockPanelKind = "terminal" | (string & Record<never, never>);
+
+/** The built-in kind; `open()` without a kind means exactly this one. */
+export const TERMINAL_PANEL_KIND = "terminal";
+
 /** One terminal panel the dock lays out. */
 export interface DockPanel {
   /** Panel identity inside this dock; unique across the dock's life. */
   readonly id: string;
+  /** Which chrome renders this panel; terminal is the default. */
+  readonly kind: DockPanelKind;
   /** Session the panel's process belongs to; absent until a session exists. */
   readonly sessionId?: string;
 }
@@ -33,6 +45,8 @@ export interface DockSnapshot {
 /** Extra identity an opener can attach to a panel. */
 export interface DockOpenOptions {
   readonly sessionId?: string;
+  /** Panel kind; omitted means the built-in terminal. */
+  readonly kind?: DockPanelKind;
 }
 
 /** Read/subscribe face handed to the React surface. */
@@ -111,7 +125,9 @@ export function createDockState(initial: Partial<DockSnapshot> = {}): DockState 
         publish({ ...state, mode: awake(state.mode), activeId: id });
         return;
       }
-      const panel: DockPanel = options.sessionId === undefined ? { id } : { id, sessionId: options.sessionId };
+      const kind = options.kind ?? TERMINAL_PANEL_KIND;
+      const panel: DockPanel =
+        options.sessionId === undefined ? { id, kind } : { id, kind, sessionId: options.sessionId };
       publish({ ...state, mode: awake(state.mode), panels: [...state.panels, panel], activeId: id });
     },
     minimize() {
@@ -130,10 +146,12 @@ export function createDockState(initial: Partial<DockSnapshot> = {}): DockState 
       const active = (state.activeId === null ? undefined : panelOf(state.activeId)) ?? state.panels[0];
       if (active === undefined) return;
       const taken = new Set(state.panels.map(panel => panel.id));
+      // The sibling inherits the active panel's kind: splitting an Arch pane
+      // reads as "two diagrams side by side", splitting a terminal as today.
       const sibling: DockPanel =
         active.sessionId === undefined
-          ? { id: siblingId(active.id, taken) }
-          : { id: siblingId(active.id, taken), sessionId: active.sessionId };
+          ? { id: siblingId(active.id, taken), kind: active.kind }
+          : { id: siblingId(active.id, taken), kind: active.kind, sessionId: active.sessionId };
       publish({ ...state, panels: [...state.panels, sibling], activeId: sibling.id });
     },
     close(id) {
