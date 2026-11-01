@@ -18,5 +18,9 @@ export const WORKBENCH_SERVICE = "workbench";
  * Feature packages read this from `ctx.workbench.version`; bump it whenever a
  * field they consume changes shape, so an older feature package can refuse to
  * mount instead of failing on a missing member.
+ *
+ * 2: `views.onChatShown` was added, and the entry now drives composer focus
+ * from it, so a chat return observed by the seam no longer leaves the keyboard
+ * on the clicked tab.
  */
-export const WORKBENCH_VERSION = 1;
+export const WORKBENCH_VERSION = 2;

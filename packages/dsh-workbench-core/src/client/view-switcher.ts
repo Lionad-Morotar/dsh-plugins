@@ -43,6 +43,14 @@ export interface ViewSwitcherOptions {
   readonly sessionId: string;
   /** Omitted outside a browser; the switcher then only tries the seam. */
   readonly doc?: ViewSwitcherDocument | undefined;
+  /**
+   * Called when the DOM fallback lands on the chat tab.
+   *
+   * The seam path needs no callback: the seam publishes its own successful
+   * switch. A tab click is invisible to it, so without this the fallback would
+   * hand the keyboard back to nothing.
+   */
+  readonly onChatShown?: (() => void) | undefined;
 }
 
 /** The node-drivable seam the entry and the acceptance probe use. */
@@ -177,7 +185,12 @@ export function switchToViewTab(doc: ViewSwitcherDocument | undefined, index: nu
  * @param options - seam, session and the optional document face.
  * @returns `open` / `showChat`; both try the seam first and the DOM second.
  */
-export function createViewSwitcher({ service, sessionId, doc }: ViewSwitcherOptions): ViewSwitcher {
+export function createViewSwitcher({
+  service,
+  sessionId,
+  doc,
+  onChatShown,
+}: ViewSwitcherOptions): ViewSwitcher {
   return {
     open(viewId) {
       if (service.open(sessionId, viewId, "")) return true;
@@ -185,8 +198,12 @@ export function createViewSwitcher({ service, sessionId, doc }: ViewSwitcherOpti
       return labels === undefined ? false : clickLabels(doc, labels);
     },
     showChat() {
+      // The seam announces its own success, so only the fallback reports here;
+      // announcing both would deliver the same focus twice.
       if (service.showChat(sessionId)) return true;
-      return clickLabels(doc, VIEW_LABELS.chat ?? []);
+      const clicked = clickLabels(doc, VIEW_LABELS.chat ?? []);
+      if (clicked) onChatShown?.();
+      return clicked;
     },
   };
 }

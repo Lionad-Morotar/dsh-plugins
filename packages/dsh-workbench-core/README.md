@@ -40,6 +40,7 @@
 - 录制时先过一遍宿主支持的键码集（`src/client/keycode.ts` 镜像 `Key*` / `Digit*` / `F1-24` 与固定名表）：宿主 `normalizeBinding` 对表外键码直接抛错，而面板捕获的是原始 `keydown`，Insert / End / Home 这类键以前会把异常漏到控制台，现在换成一句"宿主不支持这个键"。`describeBinding` 本身也包了兜底。
 - 命令注册：三条全局命令经 `ctx.shortcuts.register` 注册，desktop 的 macOS / Windows / Linux 三套平台 profile 写同一条声明。单条注册失败只记一条 warn，不连累设置页——设置页正是解释冲突的地方。
 - 会话头「返回对话」行：注册进 `conversation.session.header.views.actions`，把 owner 的 `onOpen` 绑进 views seam，是 root 侧唯一的切视图通道。
+- 回到对话即就位（`src/client/focus.ts`、`src/client/chat-tab.ts`）：切回聊天视图时把键盘交还输入框，不必先点一下。焦点不走裸 `element.focus()` 而是 `conversation.input.for(scope).focus()`，让 Lexical 把光标放回草稿原处。有两个来源：插件自己发起的返回（终端 dock、View More 菜单、`closeView`）终点在 views seam，订阅一次就够；宿主自己那条「对话」标签的点击不经过任何插件代码，只能在 window 捕获阶段拦一次。捕获阶段先于宿主重挂视图，所以请求要靠 `[0, 16, 40, 90, 200]` ms 的重试窗口跨过重挂；整个窗口只留一个在途定时器，重复触发是幂等的，晚到的步骤不会从读者已经移开的输入框里抢键。
 
 ## 快捷键
 
@@ -76,8 +77,8 @@ node .nsl/chain/accept-s1b-view-seam.mjs  # views seam 真的调到宿主 openVi
 node .nsl/chain/accept-s8-settings.mjs    # 三组矩阵、跟随目录、不可用组合带原因与替代键
 ```
 
-单包：`pnpm --filter dsh-workbench-core test`（98 用例）、`typecheck`、`build`。
+单包：`pnpm --filter dsh-workbench-core test`（134 用例）、`typecheck`、`build`。
 
 ## 结构
 
-`src/client/keymap.ts` 是命令与键位的单一来源，设置矩阵与宿主注册都读它；`src/client/view-digits.ts` 是会话视图数字键的偏好、命令表与 web 路由；`src/client/shortcut-router.ts` 是 web 端的捕获阶段本地路由，命中后调 `commands.ts` 的同一套解析器；`src/client/view-switcher.ts` 是 seam → 宿主标签的双路切视图（按标签文本切视图、按位置切标签都在这里）；`src/client/dock-visibility.ts` 是 dock 开关的可订阅状态；`src/client/settings.ts` 是纯决策（分组、跨端可用性、冲突检查），不碰 React；`src/client/service.ts` 只做装配；`section.tsx` 把快照投影成 DOM。宿主半 `src/index.ts` 是空挂行，让 Loader 在两侧都能解析这个包名。
+`src/client/keymap.ts` 是命令与键位的单一来源，设置矩阵与宿主注册都读它；`src/client/view-digits.ts` 是会话视图数字键的偏好、命令表与 web 路由；`src/client/shortcut-router.ts` 是 web 端的捕获阶段本地路由，命中后调 `commands.ts` 的同一套解析器；`src/client/view-switcher.ts` 是 seam → 宿主标签的双路切视图（按标签文本切视图、按位置切标签都在这里）；`src/client/focus.ts` 是回到对话时的输入框聚焦与重试窗口；`src/client/chat-tab.ts` 是宿主那条「对话」标签点击的唯一入口；`src/client/dock-visibility.ts` 是 dock 开关的可订阅状态；`src/client/settings.ts` 是纯决策（分组、跨端可用性、冲突检查），不碰 React；`src/client/service.ts` 只做装配；`section.tsx` 把快照投影成 DOM。宿主半 `src/index.ts` 是空挂行，让 Loader 在两侧都能解析这个包名。

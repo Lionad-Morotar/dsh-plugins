@@ -19,6 +19,8 @@ import {
   type ViewDigitRuntime,
 } from "./commands.ts";
 import { EN, ZH } from "./copy.ts";
+import { installChatTabFocus } from "./chat-tab.ts";
+import { createComposerFocus, focusComposerFor, type FocusScheduler } from "./focus.ts";
 import {
   LOCALE_NAMESPACE,
   SECTION_ID,
@@ -30,7 +32,7 @@ import {
 } from "./registration.ts";
 import { createWorkbenchSection, type ShortcutsLike } from "./section.tsx";
 import { buildSettingsGroups, checkBindings } from "./settings.ts";
-import { createSessionSelection } from "./session.ts";
+import { createSessionSelection, readCurrentSessionId } from "./session.ts";
 import { createWorkbenchService, type WorkbenchService } from "./service.ts";
 import { createGlobalKeyRouter, installGlobalKeyRouter } from "./shortcut-router.ts";
 import { createReturnToChatRow, resolveMenuItemButton, type LoaderRequire } from "./view-actions.tsx";
@@ -65,6 +67,8 @@ export interface ClientContextLike {
   get?(name: string): unknown;
   /** Host shortcut registry; the settings matrix reads its catalog. */
   readonly shortcuts?: ShortcutRegistryLike & ShortcutsLike;
+  /** Session service; the composer focus hook reaches a session scope through it. */
+  readonly sessions?: { scope?(sessionId: string): unknown };
   readonly logger?: { warn?(message: string): void };
 }
 
@@ -268,8 +272,32 @@ export function apply(ctx: ClientContextLike): () => void {
     ),
   );
 
+  // Every chat return that starts inside plugin code (the terminal dock, the
+  // View More menu, `closeView`) ends on the seam, where the host leaves focus on
+  // the clicked tab. Subscribing here is what hands the keyboard back to the
+  // composer; host tab clicks never cross plugin code, which is why each view
+  // claims focus for itself on mount instead.
+  const composerFocus = createComposerFocus({
+    ctx,
+    ...(typeof document === "undefined" ? {} : { doc: document }),
+    sessionId: () => readCurrentSessionId(ctx),
+    ...(typeof window === "undefined" ? {} : { scheduler: window as FocusScheduler }),
+  });
+  const offChatShown = service.views.onChatShown(() => composerFocus.request());
+  // The host's own 对话 tab click is the one return the seam never sees: the
+  // host owns that button and its handler stays on the host side. A
+  // capture-phase listener takes the click before the host remounts the view,
+  // so the retry schedule can carry the request across the remount.
+  const offChatTab = installChatTabFocus({
+    onChatTab: () => composerFocus.request(),
+    ...(typeof window === "undefined" ? {} : { target: window }),
+  });
+
   return () => {
     if (typeof offViewActions === "function") offViewActions();
+    offChatTab();
+    offChatShown();
+    composerFocus.dispose();
     offDigitRouter();
     offDigitCommands();
     offKeyRouter();
@@ -287,6 +315,8 @@ export function apply(ctx: ClientContextLike): () => void {
  * React, so it is exported rather than hidden behind the service instance.
  */
 export const __test = {
+  createComposerFocus,
+  installChatTabFocus,
   createViewSeam,
   createViewSwitcher,
   createViewDigitPreference,
@@ -296,6 +326,7 @@ export const __test = {
   createGlobalKeyRouter,
   switchToViewTab,
   listViewTabs,
+  focusComposerFor,
 };
 
 /** The plugin object the loader mounts. */

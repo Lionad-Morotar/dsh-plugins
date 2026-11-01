@@ -119,7 +119,7 @@ describe("core client entry", () => {
 
     const service = services.get("workbench") as WorkbenchService | undefined;
     expect(service).toBeDefined();
-    expect(service?.version).toBe(1);
+    expect(service?.version).toBe(2);
     expect((ctx as { workbench?: WorkbenchService }).workbench).toBe(service);
 
     const provideIndex = calls.findIndex(call => call.type === "provide");
@@ -158,17 +158,17 @@ describe("core client entry", () => {
 
       const dispose = apply(ctx as never);
 
-      // Two capture-phase listeners on web: the three host-refused chords and
-      // the optional alt+digit view switch. Desktop installs neither.
-      expect(addEventListener).toHaveBeenCalledTimes(2);
-      for (const call of addEventListener.mock.calls) {
-        expect(call[0]).toBe("keydown");
+      // Two capture-phase keydown listeners on web: the three host-refused
+      // chords and the optional alt+digit view switch. Desktop installs neither.
+      const keyCalls = addEventListener.mock.calls.filter(call => call[0] === "keydown");
+      expect(keyCalls).toHaveLength(2);
+      for (const call of keyCalls) {
         expect(typeof call[1]).toBe("function");
         expect(call[2]).toBe(true);
       }
       dispose();
       for (const call of addEventListener.mock.calls) {
-        expect(removeEventListener).toHaveBeenCalledWith("keydown", call[1], true);
+        expect(removeEventListener).toHaveBeenCalledWith(call[0], call[1], true);
       }
     } finally {
       vi.unstubAllGlobals();
@@ -184,7 +184,30 @@ describe("core client entry", () => {
 
       apply(ctx as never);
 
-      expect(addEventListener).not.toHaveBeenCalled();
+      expect(addEventListener.mock.calls.filter(call => call[0] === "keydown")).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("watches the host chat tab on every runtime, because the host owns that click", () => {
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    vi.stubGlobal("window", { addEventListener, removeEventListener });
+    try {
+      const { ctx } = createContext();
+      ctx.shortcuts = shortcutService("desktop");
+
+      const dispose = apply(ctx as never);
+
+      // The seam only sees returns that start inside plugin code; the host's own
+      // 对话 tab click never crosses it, so the listener is runtime-independent.
+      const clickCalls = addEventListener.mock.calls.filter(call => call[0] === "click");
+      expect(clickCalls).toHaveLength(1);
+      expect(clickCalls[0]?.[2]).toBe(true);
+
+      dispose();
+      expect(removeEventListener).toHaveBeenCalledWith("click", clickCalls[0]?.[1], true);
     } finally {
       vi.unstubAllGlobals();
     }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createViewSwitcher, type ViewSwitcherElement } from "../src/client/view-switcher.ts";
 
@@ -127,5 +127,49 @@ describe("view switcher", () => {
     });
     expect(switcher.open("fs-explorer")).toBe(false);
     expect(switcher.showChat()).toBe(false);
+  });
+
+  it("reports only the tab-click path to onChatShown, so focus is handed back once", () => {
+    const viaSeam = vi.fn();
+    const seam = createViewSwitcher({
+      service: { open: () => false, showChat: () => true },
+      sessionId: "s1",
+      doc: { querySelectorAll: () => [tab("对话", [], "chat")], querySelector: () => null },
+      onChatShown: viaSeam,
+    });
+    expect(seam.showChat()).toBe(true);
+    // The seam publishes its own success; reporting here would focus twice.
+    expect(viaSeam).not.toHaveBeenCalled();
+
+    const viaDom = vi.fn();
+    const dom = createViewSwitcher({
+      service: { open: () => false, showChat: () => false },
+      sessionId: "s1",
+      doc: { querySelectorAll: () => [tab("对话", [], "chat")], querySelector: () => null },
+      onChatShown: viaDom,
+    });
+    expect(dom.showChat()).toBe(true);
+    expect(viaDom).toHaveBeenCalledTimes(1);
+
+    const missing = vi.fn();
+    const nowhere = createViewSwitcher({
+      service: { open: () => false, showChat: () => false },
+      sessionId: "s1",
+      doc: { querySelectorAll: () => [], querySelector: () => null },
+      onChatShown: missing,
+    });
+    expect(nowhere.showChat()).toBe(false);
+    expect(missing).not.toHaveBeenCalled();
+  });
+
+  it("opens a view without reporting a chat return", () => {
+    const seen = vi.fn();
+    const switcher = createViewSwitcher({
+      service: { open: () => true, showChat: () => false },
+      sessionId: "s1",
+      onChatShown: seen,
+    });
+    expect(switcher.open("git-explorer")).toBe(true);
+    expect(seen).not.toHaveBeenCalled();
   });
 });

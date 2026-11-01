@@ -9,7 +9,7 @@ const emptyContext = { get: () => undefined };
 describe("workbench service", () => {
   it("exposes the contract version and the command table", () => {
     const service = createWorkbenchService(emptyContext);
-    expect(service.version).toBe(1);
+    expect(service.version).toBe(2);
     expect(service.shortcuts.catalog()).toBe(service.keymap);
     expect(service.keymap.map(command => command.id)).toEqual([
       "workbench.files.toggle",
