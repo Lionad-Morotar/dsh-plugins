@@ -23,21 +23,28 @@ import {
   type CaretKeyEvent,
 } from "./keys.ts";
 import { moveRichText, moveTextField, type CaretSelection, type TextFieldLike } from "./caret.ts";
-import { isScrollable, pageTarget, revealDelta, textFieldScroll, type Rect, type ScrollBox } from "./reveal.ts";
+import { isScrollable, pageTarget, pickScrollContainer, revealDelta, textFieldScroll, type Rect, type ScrollBox, type ScrollCandidate } from "./reveal.ts";
+
+/** The window events this plugin wires, keyed like the DOM's own event maps. */
+interface KeysWindowEventMap {
+  keydown: KeyboardEvent;
+  mousemove: MouseEvent;
+}
 
 export interface KeysWindow {
   document: Document;
   getSelection(): CaretSelection | null;
-  addEventListener(
-    type: "keydown",
-    listener: (event: KeyboardEvent) => void,
+  addEventListener<K extends keyof KeysWindowEventMap>(
+    type: K,
+    listener: (event: KeysWindowEventMap[K]) => void,
+    options?: { capture?: boolean; passive?: boolean },
+  ): void;
+  removeEventListener<K extends keyof KeysWindowEventMap>(
+    type: K,
+    listener: (event: KeysWindowEventMap[K]) => void,
     options?: { capture?: boolean },
   ): void;
-  removeEventListener(
-    type: "keydown",
-    listener: (event: KeyboardEvent) => void,
-    options?: { capture?: boolean },
-  ): void;
+  dispatchEvent(event: Event): boolean;
   getComputedStyle?(element: Element): { overflowY: string; overflowX: string };
 }
 
@@ -58,6 +65,11 @@ export interface AppDeps {
   excludeSelector?: string;
   /** The transcript scrollport a page key scrolls; defaults to the host's. */
   scrollportSelector?: string;
+  /**
+   * Viewport hit-test for the pointer branch, injected by tests because jsdom
+   * never implemented document.elementFromPoint. Defaults to the real one.
+   */
+  pointerElementAt?: (x: number, y: number) => Element | null;
 }
 
 const DEFAULT_EXCLUDE_SELECTOR = "[data-conversation-scroll]";
@@ -90,6 +102,13 @@ export function createApp(deps: AppDeps = {}): KeysApp {
   const win = deps.window ?? (globalThis as unknown as KeysWindow);
   const excludeSelector = deps.excludeSelector ?? DEFAULT_EXCLUDE_SELECTOR;
   const scrollportSelector = deps.scrollportSelector ?? DEFAULT_SCROLLPORT_SELECTOR;
+  const pointerElementAt = deps.pointerElementAt ?? ((x: number, y: number) => win.document.elementFromPoint(x, y) ?? null);
+
+  // Where the pointer was last seen, viewport coordinates. mousemove only ever
+  // writes these two numbers — no layout reads on a hot path — and the initial
+  // off-screen value makes the first hit test miss, which falls the key back
+  // to the transcript exactly as if the pointer had never entered the window.
+  const lastPointer = { x: -1, y: -1 };
 
   function richCaretRect(): Rect | null {
     if (deps.caretRect !== undefined) return deps.caretRect();
@@ -134,6 +153,41 @@ export function createApp(deps: AppDeps = {}): KeysApp {
       node = node.parentElement;
     }
     return found;
+  }
+
+  /**
+   * The container a pointer-driven page step should move, or null when
+   * nothing scrollable sits under the pointer.
+   *
+   * Every DOM read (hit test, computed overflow, scroll metrics) stays in this
+   * layer; the choice itself is the pure {@link pickScrollContainer}, so the
+   * selection policy is testable without a layout engine.
+   */
+  function scrollableUnderPointer(): HTMLElement | null {
+    const hit = pointerElementAt(lastPointer.x, lastPointer.y);
+    if (hit === null) return null;
+    const candidates: ScrollCandidate[] = [];
+    const nodes: Element[] = [];
+    let node: Element | null = hit;
+    while (node !== null) {
+      // A window without getComputedStyle reports no overflow at all; reading
+      // that as scrollable leaves the decision to the metrics, the same
+      // contract the caret reveal uses.
+      const style = win.getComputedStyle?.(node);
+      const box = node as HTMLElement;
+      candidates.push({
+        overflowY: style === undefined ? "auto" : style.overflowY,
+        overflowX: style === undefined ? "auto" : style.overflowX,
+        scrollHeight: box.scrollHeight,
+        clientHeight: box.clientHeight,
+        scrollWidth: box.scrollWidth,
+        clientWidth: box.clientWidth,
+      });
+      nodes.push(node);
+      node = node.parentElement;
+    }
+    const picked = pickScrollContainer(candidates);
+    return picked === null ? null : (nodes[picked] as HTMLElement);
   }
 
   function revealRichText(target: Element): void {
@@ -183,7 +237,7 @@ export function createApp(deps: AppDeps = {}): KeysApp {
   }
 
   /**
-   * Scroll one page step inside the transcript.
+   * Scroll one page step inside any container.
    *
    * Half a viewport, not a full one: a full page leaves no shared row between
    * before and after, so the reader loses their anchor and has to re-find the
@@ -194,9 +248,7 @@ export function createApp(deps: AppDeps = {}): KeysApp {
    * `scrollBy`, so a no-op at either end never emits a scroll event the host
    * would attribute to a reading intent.
    */
-  function pageTranscript(target: Element, direction: -1 | 1, fraction: number): void {
-    const box = (target.closest(scrollportSelector) ?? win.document.querySelector(scrollportSelector)) as HTMLElement | null;
-    if (box === null) return;
+  function pageContainer(box: HTMLElement, direction: -1 | 1, fraction: number): void {
     const landing = pageTarget(
       { scrollTop: box.scrollTop, scrollHeight: box.scrollHeight, clientHeight: box.clientHeight },
       direction,
@@ -204,6 +256,13 @@ export function createApp(deps: AppDeps = {}): KeysApp {
     );
     if (!landing.moved) return;
     box.scrollTop = landing.top;
+  }
+
+  /** Resolve the stroke's scrollport — the composer's own first, else the page's. */
+  function pageTranscript(target: Element, direction: -1 | 1, fraction: number): void {
+    const box = (target.closest(scrollportSelector) ?? win.document.querySelector(scrollportSelector)) as HTMLElement | null;
+    if (box === null) return;
+    pageContainer(box, direction, fraction);
   }
 
   return {
@@ -222,23 +281,29 @@ export function createApp(deps: AppDeps = {}): KeysApp {
         // a non-editable target, and the caret branch below returns early for
         // exactly that case.
         //
-        // Claimed in two situations, both of which would otherwise page the
-        // transcript by a full viewport: the stroke came from an editable
-        // (whose ancestors include the scrollport), or it landed inside the
-        // scrollport itself. A stroke anywhere else is somebody's own paging
-        // (a sidebar list, a picker, a menu) and stays native.
-        // The browser reports the stroke against BODY whenever nothing owns
-        // focus, and clicking the transcript does not focus anything: that is
-        // the ordinary "scrolling while reading" case and must be claimed too.
-        // What must stay native is a stroke aimed at a different scroll surface
-        // (a sidebar list, a picker, a menu), which is exactly a target that is
-        // neither editable nor inside this transcript.
+        // Three priority levels decide where a page step lands, in order:
+        // 1. An editable has focus — the stroke's ancestors include the
+        //    scrollport, and paging must never yank the surface the user is
+        //    typing into.
+        // 2. The pointer sits inside a scrollable area — that is the surface
+        //    the user is looking at, so it is what gets paged ("page where the
+        //    pointer is"). This branch deliberately ignores excludeSelector:
+        //    that list protects the caret reveal from moving the transcript,
+        //    while a pointer parked on the transcript is an explicit request
+        //    to page it.
+        // 3. Otherwise the transcript fallback decides, unchanged from before
+        //    the pointer branch existed: BODY (the no-focus reading state) or
+        //    a target inside the scrollport pages the transcript, and any
+        //    other target (a sidebar list, a picker, a menu) keeps its native
+        //    full-page behaviour.
         const editableFocused = event.target !== null && classifyTarget(event.target) !== "none";
-        const aimedAtTranscript = isBody(event.target) || landsInScrollport(event.target, scrollportSelector);
-        const scroll = editableFocused || aimedAtTranscript ? matchScrollKey(like, true) : null;
+        const pointerBox = editableFocused ? null : scrollableUnderPointer();
+        const aimedAtTranscript = pointerBox === null && (isBody(event.target) || landsInScrollport(event.target, scrollportSelector));
+        const scroll = editableFocused || pointerBox !== null || aimedAtTranscript ? matchScrollKey(like, true) : null;
         if (scroll !== null) {
           event.preventDefault();
-          pageTranscript(event.target as Element, scroll.direction, scroll.fraction);
+          if (pointerBox !== null) pageContainer(pointerBox, scroll.direction, scroll.fraction);
+          else pageTranscript(event.target as Element, scroll.direction, scroll.fraction);
           return;
         }
 
@@ -260,9 +325,18 @@ export function createApp(deps: AppDeps = {}): KeysApp {
         revealRichText(event.target as Element);
       };
 
+      const onMouseMove = (event: MouseEvent): void => {
+        lastPointer.x = event.clientX;
+        lastPointer.y = event.clientY;
+      };
+
       win.addEventListener("keydown", onKeyDown, { capture: true });
+      // Passive: the handler only records coordinates, so there is nothing it
+      // would ever need preventDefault for.
+      win.addEventListener("mousemove", onMouseMove, { passive: true });
       return () => {
         win.removeEventListener("keydown", onKeyDown, { capture: true });
+        win.removeEventListener("mousemove", onMouseMove);
       };
     },
   };

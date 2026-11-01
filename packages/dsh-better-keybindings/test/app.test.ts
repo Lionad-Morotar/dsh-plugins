@@ -18,8 +18,13 @@ const doc = dom.window.document;
 
 const mounted: Array<() => void> = [];
 
+/**
+ * jsdom never implemented document.elementFromPoint, so every case injects a
+ * hit-test stand-in; the default null says "the pointer never entered the
+ * window", and the pointer-paging cases override it with their own hit.
+ */
 function mount(deps: Parameters<typeof createApp>[0] = {}): void {
-  mounted.push(createApp({ window: win, ...deps }).apply());
+  mounted.push(createApp({ window: win, pointerElementAt: () => null, ...deps }).apply());
 }
 
 afterEach(() => {
@@ -28,6 +33,36 @@ afterEach(() => {
 
 function keydown(init: Record<string, unknown>): KeyboardEvent {
   return new dom.window.KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+}
+
+function mousemoveAt(x: number, y: number): MouseEvent {
+  return new dom.window.MouseEvent("mousemove", { clientX: x, clientY: y, bubbles: true });
+}
+
+/**
+ * A transcript scrollport with stubbed metrics (jsdom has no layout), wrapping
+ * the input the way the real DOM does: the composer sits inside the
+ * conversation scrollport, which is exactly why a native PageDown inside it
+ * scrolls the transcript.
+ */
+function scrollport(scrollTop = 1000): HTMLDivElement {
+  const scroller = doc.createElement("div");
+  scroller.setAttribute("data-conversation-scroll", "");
+  Object.defineProperties(scroller, {
+    scrollTop: { value: scrollTop, writable: true, configurable: true },
+    scrollHeight: { value: 3760, configurable: true },
+    clientHeight: { value: 760, configurable: true },
+  });
+  doc.body.append(scroller);
+  return scroller;
+}
+
+/** A textarea already inside the given scrollport, focused like a typing user. */
+function composer(value: string, start = 0, end = start, host?: HTMLElement): HTMLTextAreaElement {
+  const el = textarea(value, start, end);
+  (host ?? doc.body).append(el);
+  el.focus();
+  return el;
 }
 
 function rect(top: number, bottom: number): DOMRect {
@@ -288,32 +323,6 @@ describe("lifecycle", () => {
 });
 
 describe("page scrolling", () => {
-  /**
-   * A transcript scrollport with stubbed metrics (jsdom has no layout), wrapping
-   * the input the way the real DOM does: the composer sits inside the
-   * conversation scrollport, which is exactly why a native PageDown inside it
-   * scrolls the transcript.
-   */
-  function scrollport(scrollTop = 1000): HTMLDivElement {
-    const scroller = doc.createElement("div");
-    scroller.setAttribute("data-conversation-scroll", "");
-    Object.defineProperties(scroller, {
-      scrollTop: { value: scrollTop, writable: true, configurable: true },
-      scrollHeight: { value: 3760, configurable: true },
-      clientHeight: { value: 760, configurable: true },
-    });
-    doc.body.append(scroller);
-    return scroller;
-  }
-
-  /** A textarea already inside the given scrollport. */
-  function composer(value: string, start = 0, end = start, host?: HTMLElement): HTMLTextAreaElement {
-    const el = textarea(value, start, end);
-    (host ?? doc.body).append(el);
-    el.focus();
-    return el;
-  }
-
   it("a focused text field pages the transcript by half a viewport", () => {
     const scroller = scrollport(1000);
     mount();
@@ -464,5 +473,141 @@ describe("page scrolling", () => {
 
     expect(el.selectionStart).toBe(4);
     expect(scroller.scrollTop).toBe(1000);
+  });
+});
+
+describe("pointer paging", () => {
+  /**
+   * A neutral scrollable area (a preview pane, a sidebar list) with stubbed
+   * metrics and an inline overflow, because the pointer branch reads the
+   * computed style and jsdom reports "visible" for unstyled elements.
+   */
+  function scrollArea(scrollTop = 1000): HTMLDivElement {
+    const el = doc.createElement("div");
+    el.style.overflowY = "auto";
+    Object.defineProperties(el, {
+      scrollTop: { value: scrollTop, writable: true, configurable: true },
+      scrollHeight: { value: 3760, configurable: true },
+      clientHeight: { value: 760, configurable: true },
+      scrollLeft: { value: 0, writable: true, configurable: true },
+      scrollWidth: { value: 400, configurable: true },
+      clientWidth: { value: 400, configurable: true },
+    });
+    doc.body.append(el);
+    return el;
+  }
+
+  it("pages the scrollable area under the pointer when nothing is focused", () => {
+    // The preview body is not focusable at all, so the stroke would be
+    // reported against BODY and the old two-level chain paged the transcript
+    // instead; the pointer branch is the only way this surface ever moves.
+    const preview = scrollArea(1000);
+    const hit = doc.createElement("p");
+    preview.append(hit);
+    mount({ pointerElementAt: () => hit });
+    win.dispatchEvent(mousemoveAt(20, 40));
+
+    const e = keydown({ key: "PageDown" });
+    doc.body.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(preview.scrollTop).toBe(1380);
+  });
+
+  it("the pointer parked on the transcript pages the transcript, exclusion list notwithstanding", () => {
+    // The transcript carries the default exclusion selector; the caret reveal
+    // must never move it, but a pointer deliberately hovering it is an
+    // explicit paging request, so the pointer branch does not share that list.
+    const scroller = scrollport(1000);
+    scroller.style.overflowY = "auto";
+    const hit = doc.createElement("p");
+    scroller.append(hit);
+    mount({ pointerElementAt: () => hit });
+    win.dispatchEvent(mousemoveAt(20, 40));
+
+    const e = keydown({ key: "PageDown" });
+    doc.body.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(scroller.scrollTop).toBe(1380);
+  });
+
+  it("falls back to the transcript when the pointer never entered the window", () => {
+    // Initial coordinates are off-screen, so the hit test misses and the old
+    // BODY fallback decides — exactly the pre-feature behaviour.
+    const scroller = scrollport(1000);
+    const seen: Array<[number, number]> = [];
+    mount({
+      pointerElementAt: (x: number, y: number) => {
+        seen.push([x, y]);
+        return null;
+      },
+    });
+
+    const e = keydown({ key: "PageDown" });
+    doc.body.dispatchEvent(e);
+
+    expect(seen).toEqual([[-1, -1]]);
+    expect(e.defaultPrevented).toBe(true);
+    expect(scroller.scrollTop).toBe(1380);
+  });
+
+  it("falls back to the transcript when the hit element has no scrollable ancestor", () => {
+    const scroller = scrollport(1000);
+    const plain = doc.createElement("p");
+    doc.body.append(plain);
+    mount({ pointerElementAt: () => plain });
+    win.dispatchEvent(mousemoveAt(20, 40));
+
+    const e = keydown({ key: "PageDown" });
+    doc.body.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(scroller.scrollTop).toBe(1380);
+  });
+
+  it("a focused composer wins over the pointer: the transcript pages wherever the pointer sits", () => {
+    // Typing semantics come first: the composer's ancestors own the paging
+    // target, and the preview under the pointer must not steal the stroke.
+    const scroller = scrollport(1000);
+    const preview = scrollArea(1000);
+    mount({ pointerElementAt: () => preview });
+    win.dispatchEvent(mousemoveAt(20, 40));
+    const el = composer("hello", 0, 0, scroller);
+
+    const e = keydown({ key: "PageDown" });
+    el.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(scroller.scrollTop).toBe(1380);
+    expect(preview.scrollTop).toBe(1000);
+  });
+
+  it("the paged container follows the pointer as it moves", () => {
+    const first = scrollArea(1000);
+    const second = scrollArea(2000);
+    mount({ pointerElementAt: (x: number) => (x < 100 ? first : second) });
+
+    win.dispatchEvent(mousemoveAt(10, 10));
+    doc.body.dispatchEvent(keydown({ key: "PageDown" }));
+    expect(first.scrollTop).toBe(1380);
+    expect(second.scrollTop).toBe(2000);
+
+    win.dispatchEvent(mousemoveAt(200, 10));
+    doc.body.dispatchEvent(keydown({ key: "PageDown" }));
+    expect(first.scrollTop).toBe(1380);
+    expect(second.scrollTop).toBe(2380);
+  });
+
+  it("the mousemove listener is removed by the symmetric teardown", () => {
+    const addSpy = vi.spyOn(win, "addEventListener");
+    const teardown = createApp({ window: win, pointerElementAt: () => null }).apply();
+    expect(addSpy.mock.calls.filter((c) => c[0] === "mousemove")).toHaveLength(1);
+    addSpy.mockRestore();
+
+    const removeSpy = vi.spyOn(win, "removeEventListener");
+    teardown();
+    expect(removeSpy.mock.calls.filter((c) => c[0] === "mousemove")).toHaveLength(1);
+    removeSpy.mockRestore();
   });
 });

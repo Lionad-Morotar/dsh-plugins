@@ -173,3 +173,49 @@ export function pageTarget(metrics: ScrollMetrics, direction: -1 | 1, fraction: 
   const top = Math.min(Math.max(requested, 0), maxTop);
   return { top, moved: top !== metrics.scrollTop };
 }
+
+/** One link of the hit element's ancestor chain: its overflow style plus scroll metrics. */
+export interface ScrollCandidate {
+  readonly overflowY: string;
+  readonly overflowX: string;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+  readonly scrollWidth: number;
+  readonly clientWidth: number;
+}
+
+/**
+ * Pick where a pointer-driven page step lands: the first candidate in the
+ * chain that both declares a scrollbar (auto/scroll) and actually has room to
+ * move.
+ *
+ * The chain arrives innermost-first, so the winner is the container the user
+ * is visually inside — a nested scroller beats its parent. The pointer branch
+ * deliberately does not share the caret reveal's exclusion list: that list
+ * means "the caret reveal must never move the chat", while a pointer parked on
+ * the chat is the user asking to page it — a different contract.
+ */
+export function pickScrollContainer(candidates: readonly ScrollCandidate[]): number | null {
+  for (const [index, candidate] of candidates.entries()) {
+    const declaresScrollbar =
+      candidate.overflowY === "auto" ||
+      candidate.overflowY === "scroll" ||
+      candidate.overflowX === "auto" ||
+      candidate.overflowX === "scroll";
+    if (!declaresScrollbar) continue;
+    const scrolls = isScrollable({
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0,
+      scrollTop: 0,
+      scrollLeft: 0,
+      scrollHeight: candidate.scrollHeight,
+      clientHeight: candidate.clientHeight,
+      scrollWidth: candidate.scrollWidth,
+      clientWidth: candidate.clientWidth,
+    });
+    if (scrolls) return index;
+  }
+  return null;
+}
