@@ -26,6 +26,7 @@ import type {
 import type { PathEntry } from "../shared.ts";
 import type { PanelMode, SessionScope } from "./panel-state.ts";
 import { displayPath, tildeForm, toAbsolutePath } from "./paths.ts";
+import { sessionTier, workspaceTier, type StatusTier } from "./status.ts";
 
 /** What picking a row does; the runtime maps each variant onto host services. */
 export type RowAction =
@@ -66,6 +67,15 @@ export interface PanelRow {
   readonly alias?: string;
   readonly detail?: string;
   readonly hint?: string;
+  /**
+   * Activity-ladder rung for the title colour, mirrored from the sidebar so
+   * one session never reads at two levels between the two surfaces.
+   */
+  readonly tone?: StatusTier;
+  /** Title emphasis; only workspace rows carry it, never session rows. */
+  readonly weight?: "bold";
+  /** Semantic colour for the trailing badge; the running badge reads green. */
+  readonly hintTone?: "running";
   readonly group?: string;
   /**
    * What the row names. Tree navigation and the file-workbench jump both need
@@ -350,18 +360,22 @@ export function workspaceRows(
   snapshot: WorkspaceSnapshot,
   sessions: SessionListState,
   copy: Copy,
+  now: number,
 ): PanelRow[] {
   const archived = new Set(snapshot.archivedSessionIds);
   const rows: PanelRow[] = [];
 
   for (const workspace of snapshot.items) {
     const count = countVisible(sessions, workspace, archived);
+    const tone = workspaceTier(sessions, workspace.sessionIds, now);
     rows.push({
       key: `workspace:${workspace.workspaceId}`,
       label: workspace.title,
       alias: workspace.path,
       detail: workspace.path,
       hint: copy.sessionsCount(count),
+      tone,
+      weight: tone === "strong" || tone === "mid" ? "bold" : undefined,
       action: {
         kind: "drill",
         scope: { kind: "workspace", workspaceId: workspace.workspaceId },
@@ -443,6 +457,9 @@ export function sessionRows(
       detail: owner === undefined ? age : `${owner} · ${age}`,
       group: archived ? dateBucketLabel(session.updatedAt, now, copy) : undefined,
       hint: archived ? copy.restoreHint : session.running ? copy.running : undefined,
+      hintTone: !archived && session.running ? ("running" as const) : undefined,
+      // 归档行交还宿主的 caption 灰语义，与侧栏「归档会话不计因子但自身不着色」一致
+      tone: archived ? undefined : sessionTier(sessions, session.id, now),
       action: archived
         ? ({ kind: "restore-session", sessionId: session.id } as const)
         : ({ kind: "open-session", sessionId: session.id } as const),

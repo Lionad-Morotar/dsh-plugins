@@ -189,10 +189,10 @@ const ZH: Copy = {
   age: elapsed => {
     const minutes = Math.floor(elapsed / 60_000);
     if (minutes < 1) return "刚刚";
-    if (minutes < 60) return `${minutes} 分钟前`;
+    if (minutes < 60) return `${minutes} 分钟`;
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} 小时前`;
-    return `${Math.floor(hours / 24)} 天前`;
+    if (hours < 24) return `${hours} 小时`;
+    return `${Math.floor(hours / 24)} 天`;
   },
 };
 
@@ -294,10 +294,10 @@ const EN: Copy = {
   age: elapsed => {
     const minutes = Math.floor(elapsed / 60_000);
     if (minutes < 1) return "just now";
-    if (minutes < 60) return `${minutes}m ago`;
+    if (minutes < 60) return `${minutes}m`;
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    return `${Math.floor(hours / 24)}d ago`;
+    if (hours < 24) return `${hours}h`;
+    return `${Math.floor(hours / 24)}d`;
   },
 };
 

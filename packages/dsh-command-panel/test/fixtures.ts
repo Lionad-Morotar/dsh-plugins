@@ -15,6 +15,7 @@ import type {
   GitCommitSummary,
   GitExplorerRemote,
   PathExplorerRemote,
+  ProjectionSnapshotWire,
   SessionListState,
   SessionOpenFace,
   SessionSummary,
@@ -85,6 +86,32 @@ export function sessionList(sessions: readonly SessionSummary[]): SessionListSta
   const byId: Record<string, SessionSummary | undefined> = {};
   for (const session of sessions) byId[session.id] = session;
   return { ids: sessions.map(session => session.id), byId, phase: "ready" };
+}
+
+/**
+ * Attach settled `sessionActivity` readings to a session list, the way the host
+ * rides projection cells onto the snapshot. `null` marks a session whose log
+ * has produced no reading yet (the activity clock itself reads null).
+ */
+export function withActivity(
+  list: SessionListState,
+  readings: Readonly<Record<string, number | null>>,
+): SessionListState {
+  const projectionsBySession: Record<string, ProjectionSnapshotWire> = {};
+  for (const [id, lastActivityAt] of Object.entries(readings)) {
+    projectionsBySession[id] = {
+      state: "ready",
+      values: {
+        sessionActivity: {
+          lastActivityAt,
+          promptCount: 1,
+          turnCount: 1,
+          toolCallCount: 0,
+        },
+      },
+    };
+  }
+  return { ...list, projectionsBySession };
 }
 
 export const WORKSPACE_ONE: WorkspaceView = {

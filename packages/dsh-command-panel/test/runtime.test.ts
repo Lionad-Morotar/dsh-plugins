@@ -38,6 +38,7 @@ import {
   fakeSessionOpen,
   fakeWorkspaces,
   sessionList,
+  withActivity,
   workspaceSnapshot,
 } from "./fixtures.ts";
 import { homedir } from "node:os";
@@ -82,8 +83,11 @@ interface HarnessOptions {
   readonly sessionOpen?: SessionOpenFace | null;
   /** The gitExplorer remote the hex commit plane reads; absent keeps it out. */
   readonly gitExplorer?: GitExplorerRemote;
-  /** The session catalogue rows; defaults to the standard two-session fake. */
-  readonly sessions?: readonly SessionSummary[];
+  /**
+   * The session catalogue rows; an array swaps the list snapshots answer with,
+   * a record replaces the whole sessions fake (for cases that need a live one).
+   */
+  readonly sessions?: readonly SessionSummary[] | Record<string, unknown>;
 }
 
 interface Harness {
@@ -146,7 +150,8 @@ function harness(options: HarnessOptions = {}): Harness {
     sessions: {
       ...fakeSessionsWithScope(),
       list: {
-        getSnapshot: () => sessionList(options.sessions ?? [SESSION_A, SESSION_B]),
+        getSnapshot: () =>
+          sessionList(Array.isArray(options.sessions) ? options.sessions : [SESSION_A, SESSION_B]),
         subscribe: () => () => undefined,
       },
     },
@@ -204,6 +209,9 @@ function harness(options: HarnessOptions = {}): Harness {
       ? {}
       : { "remote.session": options.sessionOpen }),
     ...(options.gitExplorer === undefined ? {} : { "remote.gitExplorer": options.gitExplorer }),
+    ...(options.sessions !== undefined && !Array.isArray(options.sessions)
+      ? { sessions: options.sessions }
+      : {}),
   };
 
   const ctx = {
@@ -720,5 +728,63 @@ describe("archive view", () => {
     await vi.waitFor(() => expect(h.store.getSnapshot().model.archivedOnly).toBe(false));
     expect(h.verbs.crumbLabel()).not.toBe("已归档会话");
     expect(h.store.getSnapshot().open).toBe(true);
+  });
+});
+
+describe("switch-mode status freshness", () => {
+  function liveSessions(initial: ReturnType<typeof sessionList>) {
+    let list = initial;
+    const listeners = new Set<() => void>();
+    const sessions = {
+      ...fakeSessionsWithScope(),
+      list: {
+        getSnapshot: () => list,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+      },
+    };
+    return {
+      sessions,
+      settle: (next: ReturnType<typeof sessionList>) => {
+        list = next;
+        for (const listener of listeners) listener();
+      },
+    };
+  }
+
+  function workspaceRow(h: Harness) {
+    return h.store.getSnapshot().rows.find(row => row.label === "dsh-plugins");
+  }
+
+  it("reloads when an activity projection settles without any summary change", async () => {
+    const live = liveSessions(sessionList([SESSION_A, SESSION_B]));
+    const h = harness({ sessions: live.sessions });
+    h.verbs.switchMode("switch");
+    await vi.waitFor(() => expect(workspaceRow(h)).toBeDefined());
+    expect(workspaceRow(h)?.tone).toBeUndefined();
+
+    live.settle(withActivity(sessionList([SESSION_A, SESSION_B]), { "sess-a": Date.now() - 30 * 60 * 1000 }));
+    await vi.waitFor(() => expect(workspaceRow(h)?.tone).toBe("strong"));
+  });
+
+  it("refreshes the rendered rung when the clock alone crosses a tier boundary", async () => {
+    vi.useFakeTimers();
+    try {
+      const justInsideStrong = Date.now() - (60 * 60 * 1000 - 30_000);
+      const live = liveSessions(withActivity(sessionList([SESSION_A, SESSION_B]), { "sess-a": justInsideStrong }));
+      const h = harness({ sessions: live.sessions });
+      h.verbs.switchMode("switch");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(workspaceRow(h)?.tone).toBe("strong");
+
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(workspaceRow(h)?.tone).toBe("mid");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

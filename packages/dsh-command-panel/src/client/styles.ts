@@ -152,6 +152,19 @@ const CSS = `
   white-space: nowrap;
 }
 
+[${ROOT_ATTR}] [data-dcp-label][data-tone="strong"] {
+  color: var(--dsw-alias-state-business-primary, #2f6fed);
+}
+
+[${ROOT_ATTR}] [data-dcp-label][data-tone="mid"],
+[${ROOT_ATTR}] [data-dcp-label][data-tone="faint"] {
+  color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #2f6fed) 55%, var(--dsw-alias-label-primary, #1b1b1f));
+}
+
+[${ROOT_ATTR}] [data-dcp-row][data-weight="bold"] [data-dcp-label] {
+  font-weight: 600;
+}
+
 [${ROOT_ATTR}] [data-dcp-hint] {
   flex: none;
   padding: 0 4px;
@@ -161,6 +174,11 @@ const CSS = `
   font-size: 10px;
   line-height: 14px;
   font-variant-numeric: tabular-nums;
+}
+
+[${ROOT_ATTR}] [data-dcp-hint][data-tone="running"] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-success, #1f883d) 55%, transparent);
+  color: var(--dsw-alias-state-success, #1f883d);
 }
 
 [${ROOT_ATTR}] [data-dcp-status] {

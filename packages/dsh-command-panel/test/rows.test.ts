@@ -29,6 +29,7 @@ import {
   WORKSPACE_ONE,
   WORKSPACE_TWO,
   sessionList,
+  withActivity,
   workspaceSnapshot,
 } from "./fixtures.ts";
 
@@ -278,7 +279,7 @@ describe("visibleSessions", () => {
 
 describe("workspaceRows", () => {
   const list = sessionList([SESSION_A, SESSION_B, SESSION_C, SESSION_BLANK, SESSION_SUBAGENT, SESSION_ARCHIVED]);
-  const rows = workspaceRows(workspaceSnapshot(), list, copy);
+  const rows = workspaceRows(workspaceSnapshot(), list, copy, now);
 
   it("lists workspaces with visible-session counts, then the aggregate scopes, then the fixed rows", () => {
     expect(labels(rows)).toEqual([
@@ -308,7 +309,7 @@ describe("workspaceRows", () => {
     const owned = workspaceSnapshot([
       { ...workspaceSnapshot().items[0]!, sessionIds: ["sess-a", "sess-b"] },
     ]);
-    expect(labels(workspaceRows(owned, sessionList([SESSION_A, SESSION_B]), copy))).not.toContain(
+    expect(labels(workspaceRows(owned, sessionList([SESSION_A, SESSION_B]), copy, now))).not.toContain(
       copy.ungrouped,
     );
   });
@@ -330,7 +331,7 @@ describe("sessionRows", () => {
   it("shows the workspace when the scope spans workspaces, and only the age when unowned", () => {
     const rows = sessionRows(list, snapshot, { kind: "all" }, copy, now);
     expect(rows[0]?.detail).toContain("other");
-    expect(rows[0]?.detail).toContain("小时前");
+    expect(rows[0]?.detail).toContain("小时");
     expect(rows[1]?.detail).toBe(copy.age(now - SESSION_C.updatedAt));
   });
 
@@ -443,5 +444,65 @@ describe("dateBucketLabel", () => {
     expect(dateBucketLabel(at(8), noon, copy)).toBe(copy.bucketMonth);
     expect(dateBucketLabel(at(30), noon, copy)).toBe(copy.bucketMonth);
     expect(dateBucketLabel(at(31), noon, copy)).toBe(copy.bucketOlder);
+  });
+});
+
+describe("rows with status readings", () => {
+  const HOUR = 60 * 60 * 1000;
+  // 本块自带时间基：fixtures 的 epoch 很小，相对它取「八小时前」会造出负时间戳，
+  // 被 status 的非负守卫拒绝后回落 updatedAt，档位随之失真。
+  const statusNow = 100 * HOUR;
+  const snapshot = workspaceSnapshot();
+
+  it("carries the ladder rung on session rows and the running tone on the badge", () => {
+    const fresh = { ...SESSION_A, updatedAt: SESSION_A.updatedAt };
+    const stale = { ...SESSION_C };
+    const list = withActivity(sessionList([fresh, stale]), {
+      [fresh.id]: statusNow - 30 * 60 * 1000,
+      [stale.id]: statusNow - 8 * HOUR,
+    });
+    const rows = sessionRows(list, snapshot, { kind: "all" }, copy, statusNow);
+    expect(rows.find(row => row.key === "session:sess-a")?.tone).toBe("strong");
+    expect(rows.find(row => row.key === "session:sess-c")?.tone).toBeUndefined();
+  });
+
+  it("paints the running badge green via hintTone", () => {
+    const list = sessionList([SESSION_B]);
+    const rows = sessionRows(list, snapshot, { kind: "all" }, copy, statusNow);
+    expect(rows[0]?.hintTone).toBe("running");
+    const idle = sessionList([{ ...SESSION_B, running: false }]);
+    expect(sessionRows(idle, snapshot, { kind: "all" }, copy, statusNow)[0]?.hintTone).toBeUndefined();
+  });
+
+  it("folds workspace rows from their members: tint always, bold only on the upper rungs", () => {
+    const list = withActivity(sessionList([SESSION_A, SESSION_ARCHIVED]), {
+      "sess-a": statusNow - 90 * 60 * 1000,
+      "sess-archived": null,
+    });
+    const rows = workspaceRows(snapshot, list, copy, statusNow);
+    const workspace = rows[0]!;
+    expect(workspace.tone).toBe("mid");
+    expect(workspace.weight).toBe("bold");
+
+    const faint = withActivity(sessionList([SESSION_A, SESSION_ARCHIVED]), {
+      "sess-a": statusNow - 4 * HOUR,
+      "sess-archived": null,
+    });
+    const faintRow = workspaceRows(snapshot, faint, copy, statusNow)[0]!;
+    expect(faintRow.tone).toBe("faint");
+    expect(faintRow.weight).toBeUndefined();
+
+    const past = withActivity(sessionList([SESSION_A, SESSION_ARCHIVED]), {
+      "sess-a": statusNow - 8 * HOUR,
+      "sess-archived": null,
+    });
+    expect(workspaceRows(snapshot, past, copy, statusNow)[0]?.tone).toBeUndefined();
+  });
+
+  it("never bolds session rows, whatever their rung", () => {
+    const list = withActivity(sessionList([SESSION_A]), { "sess-a": statusNow - 30 * 60 * 1000 });
+    const rows = sessionRows(list, snapshot, { kind: "all" }, copy, statusNow);
+    expect(rows[0]?.tone).toBe("strong");
+    expect(rows[0]?.weight).toBeUndefined();
   });
 });

@@ -131,7 +131,7 @@ function loadSwitch(services: SourceServices, request: LoadRequest): LoadResult 
           services.now(),
           request.archivedOnly === true,
         )
-      : workspaceRows(snapshot, list, request.copy);
+      : workspaceRows(snapshot, list, request.copy, services.now());
   return { rows, status: "ready" };
 }
 
