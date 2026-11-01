@@ -208,6 +208,11 @@ export function createGitExplorerView(wiring: ViewWiring) {
     // snapshot's default selection, so it parks here until the page arrives.
     const pendingFocus = useRef<string | undefined>(undefined);
     const handledRequest = useRef<string | undefined>(undefined);
+    // Entering the view owes the left column one focus claim, served the moment
+    // the first snapshot paints it. The claim lives here rather than in the pane
+    // because a reload unmounts the pane, and a claim that survived that would
+    // fire on data the reader had already moved past.
+    const [claimFocus, setClaimFocus] = useState(true);
 
     // The left column's width: null keeps the stylesheet's fluid track, a
     // pixel count from a past drag pins it. Moves only touch state; the store
@@ -225,6 +230,15 @@ export function createGitExplorerView(wiring: ViewWiring) {
     const selectFromFocus = useCallback((hash: string): void => {
       pendingFocus.current = hash;
       setSelected(hash);
+      // An explicit jump outranks the entry claim: the caller asked for one
+      // commit, so the pane must not also move focus to the changes list.
+      setClaimFocus(false);
+    }, []);
+
+    // Stable identity, or the pane's effect would see a fresh callback on every
+    // render and re-run its claim path after the claim was already spent.
+    const releaseFocusClaim = useCallback((): void => {
+      setClaimFocus(false);
     }, []);
 
     // The left column's divider. The pane left of the handle is the baseline:
@@ -564,7 +578,14 @@ export function createGitExplorerView(wiring: ViewWiring) {
             className="gx-body"
             style={leftWidth === null ? undefined : ({ "--gx-left-col": `${leftWidth}px` } as CSSProperties)}
           >
-            <ChangesPane groups={groups} stats={stats} t={t} onOpen={onOpenFile} />
+            <ChangesPane
+              groups={groups}
+              stats={stats}
+              t={t}
+              onOpen={onOpenFile}
+              claimFocus={claimFocus}
+              onFocusClaimed={releaseFocusClaim}
+            />
             <div
               ref={handleRef}
               className="gx-pane-handle"

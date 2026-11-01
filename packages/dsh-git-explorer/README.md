@@ -35,6 +35,7 @@
 - 提交查询：`git log --topo-order --parents`，多取一条判断 `hasMore` 后丢掉。查询端点支持 `skip` / `limit`、`--grep` 与 `--author`（面板本身只用分页）；ref 只接受分支、标签或提交名，带修订语法或 `..` 的一律拒绝。
 - 泳道布局：单次扫描加最小堆复用泳道，线性历史同泳道、分叉换道、同层不撞道；父提交不在本页时只留悬空边，不占道。3000 commit 的解析与泳道分配在本机是 5ms 量级，判据门槛是 300ms。
 - 两栏视图：左侧变更按目录分组，状态字母（A/M/D/R/C/T/U/!）加每文件 `+n −n`；点非目录文件会跳到文件面板并打开对应行。右侧提交图只渲染视口内的行，选中提交在下方展开父提交、说明与变更文件清单。
+- 进入视图时的焦点：从标签栏点进 Git 面板，键盘焦点落在左侧变更列表的第一个文件行（目录行只做分组，跳过）。这次认领只在视图挂载后的第一份快照渲染时兑现一次，快照刷新不会重来；焦点已经落在变更区内、或列表里没有文件行时不动，免得把读者从已选的行上拽走。显式的 `commit:<hash>` 跳转优先，此时不抢焦点。
 - 焦点跳转：接受 `openView("git-explorer", "commit:<hash>")`（hash 为 4-64 位十六进制，大小写归一为小写），命令面板输入提交前缀跳转即按此协议寻址。焦点有两个来源：宿主经 `openView` 交下来的 `viewRequest`，以及 `workbench.viewFocus` 队列（视图已挂载时命令面板走的通道，挂载时取走等待中的请求并持续订阅）。命中即选中该提交，详情面板按 hash 经 `commit` 端点独立加载，hash 不在已加载列表也能展示；历史列表不插行以保住拓扑泳道序。解析失败也回执完成，宿主才会清掉这条请求。
 - 分页：首屏默认 400 条（Loader 行 `config.maxCommits`），历史列表每点一次"加载更多"取 100 条，单次请求上限 5000。
 - 空态与错误态：未选会话、Git 服务不可用、不是 git 仓库、空仓库、读取失败各有文案与重试；头部有刷新按钮。
@@ -68,7 +69,7 @@ node .nsl/chain/accept-s2-git-data.mjs  # 父边集合对 oracle、泳道不变�
 node .nsl/chain/accept-s3-git-view.mjs  # 变更对真实 status、提交详情对 git show、跳转参数、行窗口
 ```
 
-单包：`pnpm --filter dsh-git-explorer test`（56 用例）、`typecheck`、`build`。`test/real-repo.test.ts` 会直接读本仓库，把快照的父边与 `git log --parents` 对一遍。
+单包：`pnpm --filter dsh-git-explorer test`（88 用例）、`typecheck`、`build`。`test/real-repo.test.ts` 会直接读本仓库，把快照的父边与 `git log --parents` 对一遍。
 
 ## 结构
 
