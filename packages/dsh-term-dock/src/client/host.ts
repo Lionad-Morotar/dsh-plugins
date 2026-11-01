@@ -13,6 +13,7 @@
  */
 import type { TerminalViewLike } from "./binding.ts";
 import type { DockVisibilitySource } from "./dock-controller.ts";
+import type { PanelKindDescriptor } from "./panel-body.ts";
 
 /** The host service that owns browser terminal views. */
 export interface WebTerminalsFace {
@@ -29,6 +30,8 @@ export interface WorkbenchFace {
   readonly views?: { showChat?: (sessionId: string) => boolean };
   /** Announce the dock to the core's own registry; the core owns its ledger. */
   readonly registerDock?: (dock: { readonly id: string; readonly title: string }) => () => void;
+  /** Panel kinds registered by feature packages; absent on an older core. */
+  readonly dockPanelKinds?: () => readonly PanelKindDescriptor[];
 }
 
 /** Everything the dock needs from its host, as plain functions. */
@@ -39,6 +42,8 @@ export interface DockHost {
   showChat(sessionId: string): boolean;
   /** The terminal service, or undefined when this deployment has none. */
   terminals(): WebTerminalsFace | undefined;
+  /** Panel kinds feature packages registered on the core; empty when none. */
+  panelKinds(): readonly PanelKindDescriptor[];
 }
 
 interface ContextLike {
@@ -127,6 +132,14 @@ export function createDockHost(ctx: unknown): DockHost {
       if (typeof service !== "object" && typeof service !== "function") return undefined;
       const view = (service as { view?: unknown }).view;
       return typeof view === "function" ? (service as WebTerminalsFace) : undefined;
+    },
+    panelKinds() {
+      // Resolved per call like every other seam: kinds register after this
+      // dock applied, and the picker reads whatever the core holds now.
+      const read = workbench()?.dockPanelKinds;
+      if (typeof read !== "function") return [];
+      const kinds = read.call(workbench());
+      return Array.isArray(kinds) ? kinds : [];
     },
   };
 }
