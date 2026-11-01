@@ -208,6 +208,58 @@ describe("mountArchChrome", () => {
     dispose();
   });
 
+  it("keeps view switches alive after a failed view mount", async () => {
+    let failFirstMount = true;
+    const flakyMount: typeof mountView = (host, view, state, load, interactions) =>
+      failFirstMount ? Promise.reject(new Error("chunk offline")) : mountView(host, view, state, load, interactions);
+    const { fetch } = fakeFetch({
+      "/arch/api/views": () => jsonResponse(viewsResponse()),
+      "/arch/api/state": () => jsonResponse({ state: null, degraded: false }),
+    });
+    const { host } = mountHost();
+    const dispose = mountArchChrome(host, {
+      sessionId: "s1",
+      fetchImpl: fetch,
+      load: loadRealChunk,
+      mountView: flakyMount,
+    });
+    await until(() => host.querySelector("[data-arch-error]") !== null);
+    expect(host.querySelector("[data-arch-error]")?.textContent).toContain("架构数据加载失败");
+
+    failFirstMount = false;
+    host.querySelector<HTMLButtonElement>('button[data-view-id="skin"]')?.click();
+    await until(() => host.querySelectorAll("[data-arch-body] g[data-id]").length === 16);
+    dispose();
+  });
+
+  it("recovers a failed view mount through the retry note", async () => {
+    let failingMounts = 1;
+    const flakyMount: typeof mountView = (host, view, state, load, interactions) => {
+      if (failingMounts > 0) {
+        failingMounts -= 1;
+        return Promise.reject(new Error("chunk offline"));
+      }
+      return mountView(host, view, state, load, interactions);
+    };
+    const { fetch, calls } = fakeFetch({
+      "/arch/api/views": () => jsonResponse(viewsResponse()),
+      "/arch/api/state": () => jsonResponse({ state: null, degraded: false }),
+    });
+    const { host } = mountHost();
+    const dispose = mountArchChrome(host, {
+      sessionId: "s1",
+      fetchImpl: fetch,
+      load: loadRealChunk,
+      mountView: flakyMount,
+    });
+    await until(() => host.querySelector("[data-arch-error]") !== null);
+
+    host.querySelector<HTMLButtonElement>("button[data-arch-retry]")?.click();
+    await until(() => host.querySelectorAll("[data-arch-body] g[data-id]").length === 10);
+    expect(calls.filter(url => url.includes("/views")).length).toBeGreaterThanOrEqual(2);
+    dispose();
+  });
+
   it("fits on fullscreen enter and returns to the readable fixed zoom on exit", async () => {
     const { fetch } = fakeFetch({
       "/arch/api/views": () => jsonResponse(viewsResponse({ views: [view("index")] })),

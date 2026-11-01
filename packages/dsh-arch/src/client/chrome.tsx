@@ -266,6 +266,25 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
     content.replaceChildren(note);
   };
 
+  /** The loadFailed note with its retry, shared by fetch and mount failures. */
+  const failLoad = (error: unknown): void => {
+    if (disposed) return;
+    const failed = div("archError");
+    failed.style.cssText = noteStyle;
+    const text = document.createElement("span");
+    text.textContent = `${strings.loadFailed}：${error instanceof Error ? error.message : String(error)}`;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.dataset.archRetry = "";
+    retry.textContent = strings.retry;
+    retry.style.cssText = retryStyle;
+    retry.addEventListener("click", () => {
+      void load();
+    });
+    failed.append(text, retry);
+    content.replaceChildren(failed);
+  };
+
   const viewTitle = (candidate: DiagramView): string => candidate.title ?? candidate.id;
 
   const paintTabs = (activeId: string): void => {
@@ -348,22 +367,39 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
 
   const select = (id: string): void => {
     const target = views?.find(candidate => candidate.id === id);
-    if (target === undefined || body === undefined || diagramHost === undefined) return;
+    if (target === undefined) return;
+    if (diagramHost?.isConnected !== true) {
+      // A failed mount swapped the body for the error note; a tab pick after
+      // that must rebuild the body instead of mounting into a detached one.
+      body = div("archBody");
+      body.style.cssText = "flex:1;min-height:0;overflow:hidden;display:flex";
+      diagramHost = div("archDiagram");
+      diagramHost.style.cssText = "flex:1;min-width:0;min-height:0";
+      body.append(diagramHost, detailsHost);
+      content.replaceChildren(body);
+    }
     paintTabs(id);
     currentHash = target.hash ?? "";
     detailsPane.render(null);
     const mountBody = diagramHost;
-    chain = chain.then(async () => {
-      if (disposed) return;
-      handle = undefined;
-      view = target;
-      // An empty beat keeps a switched tab from showing the previous view
-      // while the chunk resolves; the renderer clears its host anyway.
-      mountBody.replaceChildren();
-      handle = await options.mountView(mountBody, target, viewState, options.load, interactions);
-      if (disposed) return;
-      applyDockMode();
-    });
+    chain = chain
+      .then(async () => {
+        if (disposed) return;
+        handle = undefined;
+        view = target;
+        // An empty beat keeps a switched tab from showing the previous view
+        // while the chunk resolves; the renderer clears its host anyway.
+        mountBody.replaceChildren();
+        handle = await options.mountView(mountBody, target, viewState, options.load, interactions);
+        if (disposed) return;
+        applyDockMode();
+      })
+      .catch(error => {
+        // A rejected link would silence every later tab pick; the chain stays
+        // settled and the failure takes the same retry path as a failed fetch.
+        handle = undefined;
+        failLoad(error);
+      });
   };
 
   const renderViews = (payload: WireViewsResponse): void => {
@@ -470,20 +506,7 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
       renderViews(payload);
     } catch (error) {
       if (disposed) return;
-      const failed = div("archError");
-      failed.style.cssText = noteStyle;
-      const text = document.createElement("span");
-      text.textContent = `${strings.loadFailed}：${error instanceof Error ? error.message : String(error)}`;
-      const retry = document.createElement("button");
-      retry.type = "button";
-      retry.dataset.archRetry = "";
-      retry.textContent = strings.retry;
-      retry.style.cssText = retryStyle;
-      retry.addEventListener("click", () => {
-        void load();
-      });
-      failed.append(text, retry);
-      content.replaceChildren(failed);
+      failLoad(error);
     }
   };
 
