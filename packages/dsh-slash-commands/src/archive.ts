@@ -7,8 +7,11 @@
  * narrow: `/archive` accepts nothing or `--stop`, `/unarchive` accepts
  * nothing at all. There is no "archive session X" form because archiving
  * another session is what the sidebar's row menu is for, and there is no
- * "unarchive session X" because the client never loads archived sessions'
- * titles, so a picker would have nothing honest to show.
+ * "unarchive session X" because a bare grammar has no argument to spell the
+ * session with. (Since the host's rc.5 the client catalogue does carry
+ * archived sessions' summaries — the sidebar's archive view and the command
+ * panel's archive view both read them — so a picker is no longer blocked by
+ * the data; this command just stays address-free by design.)
  */
 
 /** Command names without the leading slash, shared with the manifest. */
