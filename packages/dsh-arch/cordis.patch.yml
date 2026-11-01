@@ -1,0 +1,5 @@
+# Arch tab Loader row. The client half waits for the `workbench` service
+# through its plugin `inject`, so row order against the core row is irrelevant.
+- insert:
+    - id: arch
+      name: 'dsh-arch'

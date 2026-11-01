@@ -29,6 +29,7 @@ const repoRoot = join(here, "..");
 const PUBLISHABLE = ["dsh-jump"];
 /** Workspace packages that must stay out of the index, and so must stay private. */
 const UNPUBLISHED = [
+  "dsh-arch",
   "dsh-better-keybindings",
   "dsh-slash-commands",
   "dsh-session-timing",
