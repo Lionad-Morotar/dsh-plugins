@@ -9,14 +9,37 @@
  * stays independent of the composition root.
  *
  * Fetch policy: same-origin relative URLs only (the GUI port changes every
- * host boot), one views fetch plus one state fetch per panel mount, no
- * polling. Model-change refresh is the watch slice's concern, not this one.
+ * host boot), one views fetch plus one state fetch per panel mount. Model
+ * changes reach the panel through a throttled refresh poll; user state
+ * leaves through the trailing write-back pump below.
  */
-import type { ArchViewport, WireStateGetResponse, WireViewsResponse } from "../shared.ts";
+import type {
+  ArchViewport,
+  WireStateGetResponse,
+  WireStatePutResponse,
+  WireViewsResponse,
+  WireModelResponse,
+} from "../shared.ts";
 import { ROUTE_PREFIX } from "../shared.ts";
 import type { DiagramChunkModule } from "./chunk-loader.ts";
-import type { DiagramHandle, DiagramView } from "./chunk/diagram.ts";
+import type { DiagramHandle, DiagramInteractions, DiagramView } from "./chunk/diagram.ts";
+import { mountArchDetailsPane, readElement } from "./details.tsx";
+import { loadLocalState, saveLocalState } from "./local-state.ts";
 import { createViewState, defaultViewport, type DiagramBounds, type ViewStateHandle } from "./view-state.ts";
+
+/**
+ * Trailing write-back window. Pans and drags arrive as pointer-frequency
+ * event streams; one state POST per burst tail keeps the wire quiet while
+ * the unmount flush guarantees the last state still lands.
+ */
+export const WRITE_BACK_DELAY_MS = 500;
+
+/**
+ * Model-change poll interval. The host's watch delivers a re-layout in ~69ms
+ * after a save; the panel picks it up on the next tick of this throttle, so
+ * a save is visible within one interval without any push channel.
+ */
+export const REFRESH_INTERVAL_MS = 2500;
 
 /** The strings the chrome renders; the entry overrides these from its locale. */
 export interface ArchChromeStrings {
@@ -44,6 +67,7 @@ export type MountArchView = (
   view: DiagramView,
   state: ViewStateHandle,
   load?: () => Promise<DiagramChunkModule>,
+  interactions?: DiagramInteractions,
 ) => Promise<DiagramHandle>;
 
 /** Everything the chrome needs from its mount site. */
@@ -60,6 +84,10 @@ export interface ArchChromeOptions {
   readonly viewState?: ViewStateHandle;
   /** Locale-bound strings; defaults to the zh set above. */
   readonly strings?: Partial<ArchChromeStrings>;
+  /** Write-back trailing window; tests shrink it, production uses the default. */
+  readonly writeBackDelayMs?: number;
+  /** Refresh poll interval; tests shrink it, production uses the default. */
+  readonly refreshIntervalMs?: number;
 }
 
 /**
@@ -139,6 +167,7 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
   let handle: DiagramHandle | undefined;
   let view: DiagramView | undefined;
   let body: HTMLDivElement | undefined;
+  let diagramHost: HTMLDivElement | undefined;
   let views: readonly DiagramView[] | undefined;
   // Whether the current diagram was last fitted for fullscreen; the exit edge
   // is the only other transition that rewrites the viewport.
@@ -146,6 +175,89 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
   // Mounts are serialized: a slow chunk load must not land on top of the view
   // the user switched to in the meantime.
   let chain: Promise<void> = Promise.resolve();
+
+  // The details pane outlives body rebuilds (it is re-parented into each new
+  // one) so an open pane survives a view switch's content re-render.
+  const detailsHost = document.createElement("div");
+  const detailsPane = mountArchDetailsPane(detailsHost, {
+    onClose: () => {
+      handle?.select(null);
+    },
+  });
+  let elementsPromise: Promise<Record<string, unknown>> | undefined;
+  const elementsOf = (): Promise<Record<string, unknown>> => {
+    const session = options.sessionId;
+    if (session === undefined) return Promise.resolve({});
+    elementsPromise ??= fetchImpl(`${ROUTE_PREFIX}/model?sessionId=${encodeURIComponent(session)}`)
+      .then(async response => (response.ok ? ((await response.json()) as WireModelResponse).elements : {}))
+      .catch(() => {
+        // The catalogue is an enhancement: a failed fetch downgrades the pane
+        // to the renderer's own node fields, never to an error state.
+        return {};
+      });
+    return elementsPromise;
+  };
+
+  // Write-back pump state: dirty marks unsaved corrections, the timer is the
+  // trailing window, degradedMode routes saves to localStorage instead of a
+  // POST the host already answered "no store" to.
+  let currentHash = "";
+  let degradedMode = false;
+  let dirty = false;
+  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  const writeBackDelay = options.writeBackDelayMs ?? WRITE_BACK_DELAY_MS;
+
+  // Refresh poll state: the signature decides whether a poll changes
+  // anything; the timer only runs while views are on screen.
+  let lastSignature = "";
+  let refreshTimer: ReturnType<typeof setInterval> | undefined;
+  const stopRefresh = (): void => {
+    if (refreshTimer === undefined) return;
+    clearInterval(refreshTimer);
+    refreshTimer = undefined;
+  };
+
+  const scheduleSave = (): void => {
+    dirty = true;
+    if (saveTimer !== undefined || disposed || options.sessionId === undefined) return;
+    saveTimer = setTimeout(() => {
+      saveTimer = undefined;
+      void flushSave();
+    }, writeBackDelay);
+  };
+
+  const flushSave = async (): Promise<void> => {
+    if (!dirty || options.sessionId === undefined) return;
+    dirty = false;
+    const session = options.sessionId;
+    const state = viewState.serialize(currentHash);
+    if (degradedMode) {
+      saveLocalState(session, state);
+      viewState.flush();
+      return;
+    }
+    try {
+      const response = await fetchImpl(`${ROUTE_PREFIX}/state`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: session, ...state }),
+      });
+      if (!response.ok) throw new Error(`state ${String(response.status)}`);
+      const payload = (await response.json()) as WireStatePutResponse;
+      if (payload.degraded) {
+        // The store vanished between mount and this save: keep the state the
+        // user already trusts by switching to the local layer from now on.
+        degradedMode = true;
+        saveLocalState(session, state);
+      }
+      viewState.flush();
+    } catch {
+      // Offline or rejected: the corrections stay queued so the next window
+      // (or the unmount flush) retries instead of silently dropping them.
+      dirty = true;
+    }
+    if (dirty && !disposed) scheduleSave();
+  };
 
   const setNote = (key: string, text: string): void => {
     const note = div(key);
@@ -194,11 +306,53 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
     }
   };
 
+  const interactions: DiagramInteractions = {
+    // The pump serializes viewState, so the new viewport lands there first;
+    // either a pan tail or a finished drag then arms the write-back window.
+    onViewportChange: viewport => {
+      viewState.setViewport(viewport);
+      scheduleSave();
+    },
+    onNodeMove: () => scheduleSave(),
+    onSelect: id => {
+      if (id === null) {
+        detailsPane.render(null);
+        return;
+      }
+      void elementsOf().then(elements => {
+        const decoded = readElement(elements, id);
+        if (decoded !== null) {
+          detailsPane.render(decoded);
+          return;
+        }
+        // No catalogue entry (model route failed or the node is absent from
+        // $data): the laid-out node still carries presentable fields.
+        const node = view?.nodes.find(candidate => candidate.id === id);
+        const nodeDescription = node?.description;
+        detailsPane.render(
+          node === undefined
+            ? null
+            : {
+                id,
+                title: node.title,
+                description:
+                  typeof nodeDescription === "string" ? nodeDescription : (nodeDescription?.txt ?? null),
+                technology: node.technology ?? null,
+                links: [],
+                tags: [],
+              },
+        );
+      });
+    },
+  };
+
   const select = (id: string): void => {
     const target = views?.find(candidate => candidate.id === id);
-    if (target === undefined || body === undefined) return;
+    if (target === undefined || body === undefined || diagramHost === undefined) return;
     paintTabs(id);
-    const mountBody = body;
+    currentHash = target.hash ?? "";
+    detailsPane.render(null);
+    const mountBody = diagramHost;
     chain = chain.then(async () => {
       if (disposed) return;
       handle = undefined;
@@ -206,7 +360,7 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
       // An empty beat keeps a switched tab from showing the previous view
       // while the chunk resolves; the renderer clears its host anyway.
       mountBody.replaceChildren();
-      handle = await options.mountView(mountBody, target, viewState, options.load);
+      handle = await options.mountView(mountBody, target, viewState, options.load, interactions);
       if (disposed) return;
       applyDockMode();
     });
@@ -214,6 +368,8 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
 
   const renderViews = (payload: WireViewsResponse): void => {
     views = payload.views as readonly DiagramView[];
+    lastSignature = signatureOf(payload);
+    stopRefresh();
     toolbar.replaceChildren();
     if (views.length === 0) {
       setNote("archEmpty", strings.empty);
@@ -230,17 +386,54 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
       content.replaceChildren();
     }
     body = div("archBody");
-    body.style.cssText = "flex:1;min-height:0;overflow:hidden";
+    body.style.cssText = "flex:1;min-height:0;overflow:hidden;display:flex";
+    diagramHost = div("archDiagram");
+    diagramHost.style.cssText = "flex:1;min-width:0;min-height:0";
+    body.append(diagramHost, detailsHost);
     content.append(body);
 
     const restored = viewState.viewId;
     const initial = views.some(candidate => candidate.id === restored) ? (restored as string) : ((views[0]?.id ?? "") as string);
+    if (initial !== restored) {
+      // The restored view is gone (deleted from the model, or a first mount
+      // with nothing saved): the fallback view gets the readable default, not
+      // a viewport that belongs to a layout the user is no longer looking at.
+      const first = views[0];
+      if (first !== undefined) viewState.setViewport(defaultViewport(first.bounds, { width: 0, height: 0 }));
+    }
     if (initial !== "") select(initial);
 
     const section = host.closest("[data-workbench-dock]");
     if (section !== null && observer === undefined && typeof MutationObserver === "function") {
       observer = new MutationObserver(applyDockMode);
       observer.observe(section, { attributes: true, attributeFilter: ["data-dock-mode"] });
+    }
+
+    // Views on screen: keep an eye on the model from here on.
+    refreshTimer = setInterval(() => {
+      void pollRefresh();
+    }, options.refreshIntervalMs ?? REFRESH_INTERVAL_MS);
+  };
+
+  /** Everything a refresh decision depends on: view ids, hashes, diagnostics. */
+  const signatureOf = (payload: WireViewsResponse): string => {
+    const viewsPart = (payload.views as readonly DiagramView[])
+      .map(candidate => `${candidate.id}@${candidate.hash ?? ""}`)
+      .join("|");
+    return `${String(payload.hasErrors)}:${String(payload.errors.length)}:${viewsPart}`;
+  };
+
+  const pollRefresh = async (): Promise<void> => {
+    if (disposed || options.sessionId === undefined || document.hidden) return;
+    try {
+      const session = encodeURIComponent(options.sessionId);
+      const response = await fetchImpl(`${ROUTE_PREFIX}/views?sessionId=${session}`);
+      if (!response.ok || disposed) return;
+      const payload = (await response.json()) as WireViewsResponse;
+      if (signatureOf(payload) === lastSignature) return;
+      renderViews(payload);
+    } catch {
+      // A dropped poll is not an error state; the next tick retries.
     }
   };
 
@@ -260,7 +453,14 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
         const stateResponse = await fetchImpl(`${ROUTE_PREFIX}/state?sessionId=${session}`);
         if (stateResponse.ok) {
           const saved = (await stateResponse.json()) as WireStateGetResponse;
-          if (saved.state !== null && saved.state !== undefined) viewState.restore(saved.state);
+          if (saved.degraded) {
+            // No host store: restores (and every later save) live locally.
+            degradedMode = true;
+            const local = loadLocalState(options.sessionId);
+            if (local !== null) viewState.restore(local);
+          } else if (saved.state !== null && saved.state !== undefined) {
+            viewState.restore(saved.state);
+          }
         }
       } catch {
         // A missing state route must not cost the user the diagrams.
@@ -292,6 +492,12 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
   return () => {
     disposed = true;
     observer?.disconnect();
+    stopRefresh();
+    if (saveTimer !== undefined) clearTimeout(saveTimer);
+    // The unmount edge must not swallow the user's last correction: whatever
+    // is still dirty goes out now (fire-and-forget; the panel is gone but
+    // the fetch survives it).
+    if (dirty) void flushSave();
     host.replaceChildren();
   };
 }

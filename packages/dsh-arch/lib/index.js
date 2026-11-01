@@ -99,6 +99,8 @@ async function discoverC4ProjectDirs(root) {
 }
 
 // src/host/render.ts
+var WATCH_BASELINE_WINDOW_MS = 1200;
+var delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 var languageServices;
 async function loadLanguageServices() {
   languageServices ??= await import("@likec4/language-services/node");
@@ -106,7 +108,7 @@ async function loadLanguageServices() {
 }
 async function renderWorkspace(dir) {
   const { fromWorkspace } = await loadLanguageServices();
-  const instance = await fromWorkspace(dir, { graphviz: "wasm", watch: false, printErrors: false });
+  const instance = await fromWorkspace(dir, { graphviz: "wasm", watch: true, printErrors: false });
   const projects = instance.projects();
   const projectId = projects[0];
   if (projectId === void 0) throw new Error(`likec4 workspace ${dir} has no project`);
@@ -140,17 +142,18 @@ function toModelPayload(input) {
     specification: input.model.specification ?? null
   };
 }
-function createRenderer(maxWorkspaces = 3) {
+function createRenderer(maxWorkspaces = 3, boot = renderWorkspace) {
   const cache = /* @__PURE__ */ new Map();
   return {
     async get(dir) {
       const hit = cache.get(dir);
       if (hit !== void 0) {
         hit.at = Date.now();
-        return await renderFromInstance(dir, hit.instance);
+        return await renderFromInstance(dir, hit);
       }
-      const rendered = await renderWorkspace(dir);
-      cache.set(dir, { dir, instance: rendered.instance, at: Date.now() });
+      const rendered = await boot(dir);
+      const now = Date.now();
+      cache.set(dir, { dir, instance: rendered.instance, bootAt: now, at: now });
       while (cache.size > maxWorkspaces) {
         const oldest = [...cache.values()].sort((a, b) => a.at - b.at)[0];
         if (oldest === void 0) break;
@@ -168,17 +171,19 @@ function createRenderer(maxWorkspaces = 3) {
     }
   };
 }
-async function renderFromInstance(dir, instance) {
-  const projects = instance.projects();
+async function renderFromInstance(dir, entry) {
+  const remaining = entry.bootAt + WATCH_BASELINE_WINDOW_MS - Date.now();
+  if (remaining > 0) await delay(remaining);
+  const projects = entry.instance.projects();
   const projectId = projects[0];
   if (projectId === void 0) throw new Error(`likec4 workspace ${dir} has no project`);
-  const views = await instance.diagrams(projectId);
+  const views = await entry.instance.diagrams(projectId);
   return {
     projectId,
     views,
-    hasErrors: instance.hasErrors(),
-    errors: instance.hasErrors() ? instance.getErrors().map((error) => ({ message: error.message, sourcePath: error.sourceFsPath })) : [],
-    instance
+    hasErrors: entry.instance.hasErrors(),
+    errors: entry.instance.hasErrors() ? entry.instance.getErrors().map((error) => ({ message: error.message, sourcePath: error.sourceFsPath })) : [],
+    instance: entry.instance
   };
 }
 

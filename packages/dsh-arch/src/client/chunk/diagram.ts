@@ -40,6 +40,8 @@ export interface DiagramEdge {
 export interface DiagramView {
   readonly id: string;
   readonly title?: string | null;
+  /** Layout-source hash; persisted with the write-back for diagnostics. */
+  readonly hash?: string | null;
   readonly nodes: readonly DiagramNode[];
   readonly edges: readonly DiagramEdge[];
   readonly bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
@@ -60,6 +62,13 @@ export interface DiagramOptions {
   readonly positions?: ReadonlyMap<string, { x: number; y: number }>;
   readonly onSelect?: (id: string | null) => void;
   readonly onMove?: (id: string, x: number, y: number) => void;
+  /**
+   * Fired after every viewport mutation the user or the host triggered
+   * (setViewport/pan/zoomBy). Node drags do not move the viewport and report
+   * through {@link onMove} instead. Consecutive equal viewports are silent,
+   * so the restore edge does not echo a no-op write-back.
+   */
+  readonly onViewportChange?: (viewport: DiagramViewport) => void;
 }
 
 export interface DiagramHandle {
@@ -69,6 +78,17 @@ export interface DiagramHandle {
   zoomBy(factor: number, anchor?: { x: number; y: number }): void;
   select(id: string | null): void;
   dragNode(id: string, dxScreen: number, dyScreen: number): void;
+}
+
+/**
+ * The renderer callbacks a host subscribes to: viewport writes, selection
+ * and node moves. A subset of {@link DiagramOptions} callbacks so the mount
+ * point can forward them without re-declaring signatures.
+ */
+export interface DiagramInteractions {
+  onViewportChange?(viewport: DiagramViewport): void;
+  onSelect?(id: string | null): void;
+  onNodeMove?(id: string, x: number, y: number): void;
 }
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -125,7 +145,13 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
 
   let { scale, tx, ty } = opts.viewport;
   let selected: string | null = null;
+  let lastNotified: DiagramViewport = { scale, tx, ty };
   const apply = (): void => root.setAttribute("transform", `translate(${tx} ${ty}) scale(${scale})`);
+  const notifyViewport = (): void => {
+    if (scale === lastNotified.scale && tx === lastNotified.tx && ty === lastNotified.ty) return;
+    lastNotified = { scale, tx, ty };
+    opts.onViewportChange?.(lastNotified);
+  };
 
   const edgeLayer = el("g", { fill: "none", "stroke-linecap": "round" });
   const labelLayer = el("g");
@@ -235,11 +261,13 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       tx = next.tx;
       ty = next.ty;
       apply();
+      notifyViewport();
     },
     pan(dx, dy) {
       tx += dx;
       ty += dy;
       apply();
+      notifyViewport();
     },
     zoomBy(factor, anchor) {
       const { x: px = 0, y: py = 0 } = anchor ?? {};
@@ -248,6 +276,7 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       ty = py - ((py - ty) / scale) * next;
       scale = next;
       apply();
+      notifyViewport();
     },
     select(id) {
       selected = id;
@@ -269,6 +298,9 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     event.preventDefault();
     svg.setPointerCapture?.(event.pointerId);
     if (target === null) {
+      // Pressing the blank canvas clears the selection (the details pane
+      // closes on this edge) before the same press starts a pan.
+      if (selected !== null) handle.select(null);
       drag = null;
       panFrom = { x: event.clientX, y: event.clientY };
       svg.style.cursor = "grabbing";

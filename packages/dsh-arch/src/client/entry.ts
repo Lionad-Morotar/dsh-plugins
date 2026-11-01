@@ -15,7 +15,7 @@
  *   ledger refuse or stack on a repeat registration, so the module holds the
  *   previous disposers and drops them before registering again.
  */
-import type { DiagramHandle, DiagramView } from "./chunk/diagram.ts";
+import type { DiagramHandle, DiagramInteractions, DiagramView } from "./chunk/diagram.ts";
 import type { DiagramChunkModule, LoaderRequire } from "./chunk-loader.ts";
 import { PACKAGE_NAME } from "../shared.ts";
 import { loadDiagramChunk } from "./chunk-loader.ts";
@@ -28,6 +28,8 @@ export { boot } from "./chunk-loader.ts";
 
 /** The dock panel kind this package registers on the workbench core. */
 export const ARCH_PANEL_KIND = "arch";
+
+export type { DiagramInteractions } from "./chunk/diagram.ts";
 
 /** The slice of the client context this entry uses. */
 export interface ArchClientContext {
@@ -144,6 +146,8 @@ export function apply(ctx: ArchClientContext): () => void {
  *   drags into.
  * @param load - chunk resolver, injectable so tests can wire the real
  *   renderer without the ModuleLoader.
+ * @param interactions - renderer callbacks forwarded to the diagram; the
+ *   chrome subscribes here without ever touching the renderer module.
  * @returns the diagram handle with the viewport applied.
  */
 export async function mountArchDiagram(
@@ -151,6 +155,7 @@ export async function mountArchDiagram(
   view: DiagramView,
   state: ViewStateHandle,
   load: () => Promise<DiagramChunkModule> = loadDiagramChunk,
+  interactions: DiagramInteractions = {},
 ): Promise<DiagramHandle> {
   const chunk = await load();
   const offsets = state.offsetsFor(view.id);
@@ -162,9 +167,12 @@ export async function mountArchDiagram(
   const diagram = chunk.createDiagram(host, view, {
     viewport,
     positions,
+    onSelect: interactions.onSelect,
+    onViewportChange: interactions.onViewportChange,
     onMove: (id, x, y) => {
       const base = view.nodes.find(node => node.id === id);
       if (base !== undefined) state.queueOffset(view.id, id, offsetFromDrag(base, x, y));
+      interactions.onNodeMove?.(id, x, y);
     },
   });
 
