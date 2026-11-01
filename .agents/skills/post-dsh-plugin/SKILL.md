@@ -4,7 +4,7 @@ description: 把 DSH 插件投进各市场并如实标注收录状态
 argument-hint: "[预检 | 索引 | awesome | hub | registry | 徽章] <包目录>"
 disable-model-invocation: true
 metadata:
-  version: alpha2
+  version: alpha3
 ---
 
 # post-dsh-plugin：DSH 插件投稿
@@ -71,9 +71,10 @@ metadata:
 
 1. 确认收录机制：它按 GitHub topic 自动爬取，没有 PR 流程，人工审核。手册见 `references/hub.md`
 2. 核对硬性要求：公开仓库、`dsh-plugin` topic、README 含 `dsh plugin --profile web add <包名>`、导出 apply、仓库根有 package.json
-3. 判断是否已被收录。查详情页 `https://dsh-plugin.org/zh/plugins/<owner>/<repo>` 与目录接口，两者都说没有才需要提交
+3. 判断是否已被收录。判据分层：sitemap 全量命中最快、插件中心可见次之、详情页 200 是对外声明层；目录接口直连受 Cloudflare 缓存影响，查不到不判负。细则见 `references/hub.md`
 4. 需要提交时填 Issue。站点提供一个预填链接，但完整正文的 URL 会过长而加载失败：先打开空表单，再填标题与正文，最后人工点 Create。正文格式与各栏取舍见 `references/hub.md`
-5. 提交后不要把状态写成「已收录」。审核通过的标准是详情页返回 200，在那之前只能写「已提交」
+5. 提交后不要把状态写成「已收录」。收录反馈不回 issue，要用判据定时确认；确认后自己关 issue 留证据，不留悬空
+6. 对外声明（徽章、「已收录」字样）等详情页返回 200 之后再动
 
 ## Workflow registry：投独立入口
 
@@ -106,6 +107,6 @@ metadata:
 - `references/markets.md`：三层结构、五类收录机制的判据、合并与上线的分层、我方失败与对方故障的区分、四类内容的形态差异、monorepo 与独立仓库的判定差异；Workflow preflight 与排障时读
 - `references/registry.md`：独立入口逐条的坐标、投稿动作、硬性要求、已知故障与验证判据；Workflow registry 必读
 - `references/registry-contracts.md`：dshWorkshop 清单、submission v2、Turnstile、deepseek1024 条目 schema、community.json 等机器契约与踩坑原文；Workflow registry 提交前必读
-- `references/hub.md`：dsh-plugin.org 的收录机制、硬性要求清单、Issue 正文格式与各栏写法、收录状态判定；Workflow hub 必读
+- `references/hub.md`：dsh-plugin.org 的收录机制、硬性要求清单、Issue 正文格式与各栏写法、收录判据的四层划分与缓存陷阱、issue 不回执的自收尾纪律；Workflow hub 必读
 - `references/awesome.md`：awesome-dsh-plugin 的条目形状、命名折叠规则、图标与描述约束、提交检查的阻断项、PR 正文模板；Workflow awesome 必读
 - `references/badge.md`：徽章两类划分、收录徽章的启用条件与替代文案、可验证徽章的 URL 形态；Workflow badge 必读
