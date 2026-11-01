@@ -6,3 +6,7 @@
 	path = packages/dsh-jump
 	url = git@github.com:Lionad-Morotar/dsh-jump.git
 	ignore = all
+[submodule "packages/dsh-notify-me"]
+	path = packages/dsh-notify-me
+	url = git@github.com:Lionad-Morotar/dsh-notify-me.git
+	ignore = all
