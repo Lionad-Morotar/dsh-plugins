@@ -71,6 +71,7 @@ import { rankRows } from "./ranking.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
 import { catalogRows, shortcutRows, type PanelRow } from "./rows.ts";
 import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from "./sources.ts";
+import { statusStamp } from "./status.ts";
 import { createPanelStore } from "./store.ts";
 import { directoryQuery, focusPath, parentQuery } from "./tree.ts";
 import { createPathExplorerFace, createGitExplorerFace, createSessionOpenFace, gatewayRpcOf } from "./wire.ts";
@@ -1150,6 +1151,10 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
    * session for discovery changes its `retainedBy` counts, which publishes a new
    * catalogue snapshot, which would ask for another load. Comparing shape instead
    * of identity keeps a load from causing the next one.
+   *
+   * The activity stamp is here because the host refreshes no summary field when
+   * a projection settles or a row crosses a tier boundary — without it, the
+   * panel's ladder would freeze on the first such silent move.
    */
   function catalogSignature(): string {
     const parts: string[] = [];
@@ -1171,6 +1176,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         titleLength += row.displayTitle.length;
       }
       parts.push(`${list.ids.length}:${stamp}:${titleLength}`);
+      parts.push(statusStamp(list));
     }
     return parts.join("|");
   }
@@ -1200,6 +1206,27 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     return () => {
       for (const stop of stops) stop();
     };
+  }
+
+  /**
+   * The minute cadence that keeps rendered time honest while the panel is open.
+   *
+   * Ages and tier rungs are functions of `now`, but no host notification fires
+   * when the clock alone moves a row across a boundary; the tick reloads the
+   * switch mode directly, bypassing the signature gate for the same reason.
+   */
+  function startStatusTick(): () => void {
+    const timer = setInterval(() => {
+      const snapshot = store.getSnapshot();
+      if (!snapshot.open || disposed) return;
+      if (snapshot.model.mode !== "switch") return;
+      if (loading) {
+        queued = true;
+        return;
+      }
+      scheduleLoad(0);
+    }, 60_000);
+    return () => clearInterval(timer);
   }
 
   /** The runtime's side of the view contract, built once for both consumers. */
@@ -1302,6 +1329,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     }),
   );
   disposers.push(insertPanelStyles(doc));
+  disposers.push(startStatusTick());
   disposers.push(
     deps.ctx.inject(["layout", "theme", "sidebarRight"], scope => {
       refs.layout = scope.get<LayoutService>("layout");

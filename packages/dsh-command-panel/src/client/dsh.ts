@@ -181,6 +181,8 @@ export interface SessionSummary {
   readonly updatedAt: number;
   /** Local ownership counts; the sidebar/workspace views mark the main view here. */
   readonly retainedBy?: { readonly mainView?: number };
+  /** Per-session projection values the object layer carries; the fallback cell. */
+  readonly projectionValues?: Readonly<Record<string, unknown>> | null;
 }
 
 export interface SessionListState {
@@ -188,6 +190,20 @@ export interface SessionListState {
   readonly ids: readonly string[];
   readonly byId: Readonly<Record<string, SessionSummary | undefined>>;
   readonly phase?: string;
+  /**
+   * Per-session projection cells the host rides onto this snapshot — the same
+   * container the sidebar's activity tint reads. Optional because the shape is
+   * the host's: an absent or unreadable container reads as no readings.
+   */
+  readonly projectionsBySession?: Readonly<Record<string, ProjectionSnapshotWire | null | undefined>>;
+}
+
+/** One session's projection cell as the session list snapshot carries it. */
+export interface ProjectionSnapshotWire {
+  /** Projected values by key; absent until the host has produced them. */
+  readonly values?: Readonly<Record<string, unknown>> | null;
+  /** Settlement state; only `ready` cells may be trusted. */
+  readonly state: string;
 }
 
 /** One session's face on the Host; the pair of verbs the panel drives directly. */

@@ -222,14 +222,17 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
             "data-dcp-row": "",
             "data-kind": row.action.kind,
             "data-active": index === active ? "true" : undefined,
+            "data-weight": row.weight,
             role: "option",
             "aria-selected": index === active,
             onMouseMove: () => deps.highlight(index),
             onClick: () => deps.accept(row),
           },
-          h("span", { "data-dcp-label": "" }, row.label),
+          h("span", { "data-dcp-label": "", "data-tone": row.tone }, row.label),
           row.detail === undefined ? null : h("span", { "data-dcp-detail": "" }, row.detail),
-          row.hint === undefined ? null : h("span", { "data-dcp-hint": "" }, row.hint),
+          row.hint === undefined
+            ? null
+            : h("span", { "data-dcp-hint": "", "data-tone": row.hintTone }, row.hint),
         ),
       );
     });
