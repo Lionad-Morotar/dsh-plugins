@@ -33,6 +33,7 @@ interface HarnessOptions {
   readonly overlayEntries?: readonly SlotEntry[];
   readonly createThrows?: unknown;
   readonly archiveThrows?: unknown;
+  readonly unarchiveThrows?: unknown;
   readonly openTabThrows?: unknown;
   readonly colorScheme?: "light" | "dark";
   readonly absent?: readonly ("uiWorkspace" | "layout" | "theme" | "pluginNavigation" | "sidebarRight" | "slots" | "workspaces" | "sessions" | "shortcuts")[];
@@ -102,6 +103,9 @@ function harness(options: HarnessOptions = {}): Harness {
     startSession: vi.fn(),
     archiveSession: vi.fn(async () => {
       if (options.archiveThrows !== undefined) throw options.archiveThrows;
+    }),
+    unarchiveSession: vi.fn(async () => {
+      if (options.unarchiveThrows !== undefined) throw options.unarchiveThrows;
     }),
     forkSession: vi.fn(async () => "sess-forked"),
     pinSession: vi.fn(async () => undefined),

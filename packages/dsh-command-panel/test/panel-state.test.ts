@@ -4,6 +4,7 @@ import {
   back,
   clampHighlight,
   drill,
+  drillArchived,
   highlightAt,
   modelFor,
   moveHighlight,
@@ -20,6 +21,38 @@ describe("modelFor", () => {
       scope: null,
       query: "",
       highlight: 0,
+      archivedOnly: false,
+    });
+  });
+});
+
+describe("drillArchived", () => {
+  it("enters the global archive view with a cleared query", () => {
+    const model = { ...modelFor("switch"), query: "leftover", highlight: 3 };
+    expect(drillArchived(model)).toEqual({
+      mode: "switch",
+      level: "sessions",
+      scope: { kind: "all" },
+      query: "",
+      highlight: 0,
+      archivedOnly: true,
+    });
+  });
+});
+
+describe("back", () => {
+  it("returns from the archive view to the ordinary session list first", () => {
+    const archived = drillArchived(modelFor("switch"));
+    expect(back(archived)).toEqual({
+      kind: "model",
+      model: {
+        mode: "switch",
+        level: "sessions",
+        scope: { kind: "all" },
+        query: "",
+        highlight: 0,
+        archivedOnly: false,
+      },
     });
   });
 });

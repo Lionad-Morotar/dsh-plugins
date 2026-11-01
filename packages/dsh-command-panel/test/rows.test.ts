@@ -4,9 +4,11 @@ import { scoreText } from "../src/client/ranking.ts";
 import { copyFor } from "../src/client/copy.ts";
 import { CATALOG } from "../src/client/catalog.ts";
 import {
+  archivedSessions,
   catalogRows,
   commandRows,
   commitRows,
+  dateBucketLabel,
   fileRows,
   filesystemRows,
   sessionRows,
@@ -15,7 +17,7 @@ import {
   workspaceRows,
   type PanelRow,
 } from "../src/client/rows.ts";
-import type { ShortcutCatalogEntry } from "../src/client/dsh.ts";
+import type { SessionSummary, ShortcutCatalogEntry } from "../src/client/dsh.ts";
 import {
   COMMIT_FOCUS,
   SESSION_A,
@@ -24,6 +26,8 @@ import {
   SESSION_BLANK,
   SESSION_C,
   SESSION_SUBAGENT,
+  WORKSPACE_ONE,
+  WORKSPACE_TWO,
   sessionList,
   workspaceSnapshot,
 } from "./fixtures.ts";
@@ -276,10 +280,28 @@ describe("workspaceRows", () => {
   const list = sessionList([SESSION_A, SESSION_B, SESSION_C, SESSION_BLANK, SESSION_SUBAGENT, SESSION_ARCHIVED]);
   const rows = workspaceRows(workspaceSnapshot(), list, copy);
 
-  it("lists workspaces with visible-session counts, then the aggregate scopes", () => {
-    expect(labels(rows)).toEqual(["dsh-plugins", "other", copy.allSessions, copy.ungrouped]);
+  it("lists workspaces with visible-session counts, then the aggregate scopes, then the fixed rows", () => {
+    expect(labels(rows)).toEqual([
+      "dsh-plugins",
+      "other",
+      copy.allSessions,
+      copy.ungrouped,
+      copy.newSession,
+      copy.archivedSessions,
+    ]);
     expect(rows[0]?.hint).toBe(copy.sessionsCount(1));
     expect(rows[2]?.action).toEqual({ kind: "drill", scope: { kind: "all" }, title: copy.allSessions });
+  });
+
+  it("shows the archive count on the fixed archive row", () => {
+    const archiveRow = rows.at(-1);
+    expect(archiveRow?.hint).toBe(copy.sessionsCount(1));
+    expect(archiveRow?.action).toEqual({ kind: "drill-archived" });
+  });
+
+  it("offers a plain new-session row that inherits the current workspace", () => {
+    const newRow = rows.at(-2);
+    expect(newRow?.action).toEqual({ kind: "create-session", scope: "workspace" });
   });
 
   it("omits the ungrouped row when every visible session has an owner", () => {
@@ -321,5 +343,105 @@ describe("sessionRows", () => {
     const rows = sessionRows(list, snapshot, { kind: "all" }, copy, now);
     expect(labels(rows)).not.toContain("归档的会话");
     expect(labels(rows)).not.toContain("子代理");
+  });
+
+  it("appends a new-session row only in a workspace scope", () => {
+    const scoped = sessionRows(list, snapshot, { kind: "workspace", workspaceId: "ws-one" }, copy, now);
+    const across = sessionRows(list, snapshot, { kind: "all" }, copy, now);
+    expect(scoped.at(-1)?.key).toBe("scope:new-session");
+    expect(scoped.at(-1)?.action).toEqual({
+      kind: "create-session",
+      scope: "workspace",
+      workspaceId: "ws-one",
+    });
+    expect(across.at(-1)?.key).not.toBe("scope:new-session");
+  });
+});
+
+describe("archivedSessions", () => {
+  const list = sessionList([SESSION_A, SESSION_ARCHIVED, SESSION_BLANK, SESSION_SUBAGENT, SESSION_C]);
+  const snapshot = workspaceSnapshot(
+    [WORKSPACE_ONE, WORKSPACE_TWO],
+    [SESSION_ARCHIVED.id, SESSION_BLANK.id, SESSION_SUBAGENT.id, SESSION_C.id],
+  );
+
+  it("lists only archived, non-blank, non-subagent sessions in the all scope", () => {
+    expect(archivedSessions(list, snapshot, { kind: "all" }).map(session => session.displayTitle)).toEqual([
+      "归档的会话",
+      "历史对话",
+    ]);
+  });
+
+  it("scopes to a workspace's own archived sessions", () => {
+    const scoped = archivedSessions(list, snapshot, { kind: "workspace", workspaceId: "ws-one" });
+    expect(scoped.map(session => session.displayTitle)).toEqual(["归档的会话"]);
+  });
+});
+
+describe("sessionRows in the archive view", () => {
+  // 本地时区构造：2026-10-20 12:00 起算，dayOffset 天前的同点时刻。
+  const noon = new Date(2026, 9, 20, 12, 0, 0).getTime();
+  const at = (dayOffset: number): number => new Date(2026, 9, 20 - dayOffset, 12, 0, 0).getTime();
+  const archivedAt = (id: string, dayOffset: number): SessionSummary => ({
+    id,
+    displayTitle: `归档 ${id}`,
+    running: false,
+    blank: false,
+    updatedAt: at(dayOffset),
+  });
+
+  const list = sessionList([
+    archivedAt("old-1", 0),
+    archivedAt("old-2", 0),
+    archivedAt("yesterday-1", 1),
+    archivedAt("week-1", 5),
+    archivedAt("month-1", 20),
+    archivedAt("older-1", 40),
+  ]);
+  const snapshot = workspaceSnapshot(
+    [],
+    ["old-1", "old-2", "yesterday-1", "week-1", "month-1", "older-1"],
+  );
+
+  it("groups archived sessions into calendar-day buckets that stay contiguous", () => {
+    const rows = sessionRows(list, snapshot, { kind: "all" }, copy, noon, true);
+    expect(labels(rows)).toEqual([
+      "归档 old-1",
+      "归档 old-2",
+      "归档 yesterday-1",
+      "归档 week-1",
+      "归档 month-1",
+      "归档 older-1",
+    ]);
+    expect(rows.map(row => row.group)).toEqual([
+      copy.bucketToday,
+      copy.bucketToday,
+      copy.bucketYesterday,
+      copy.bucketWeek,
+      copy.bucketMonth,
+      copy.bucketOlder,
+    ]);
+  });
+
+  it("rows restore a session instead of opening it directly", () => {
+    const rows = sessionRows(list, snapshot, { kind: "all" }, copy, noon, true);
+    expect(rows[0]?.action).toEqual({ kind: "restore-session", sessionId: "old-1" });
+    expect(rows[0]?.hint).toBe(copy.restoreHint);
+  });
+});
+
+describe("dateBucketLabel", () => {
+  const noon = new Date(2026, 9, 20, 12, 0, 0).getTime();
+  const at = (dayOffset: number, hour = 12): number =>
+    new Date(2026, 9, 20 - dayOffset, hour, 0, 0).getTime();
+
+  it("buckets by local calendar days, not by elapsed hours", () => {
+    expect(dateBucketLabel(at(0, 6), noon, copy)).toBe(copy.bucketToday);
+    expect(dateBucketLabel(at(1, 23), noon, copy)).toBe(copy.bucketYesterday);
+    expect(dateBucketLabel(at(2), noon, copy)).toBe(copy.bucketWeek);
+    expect(dateBucketLabel(at(7), noon, copy)).toBe(copy.bucketWeek);
+    expect(dateBucketLabel(at(8), noon, copy)).toBe(copy.bucketMonth);
+    expect(dateBucketLabel(at(30), noon, copy)).toBe(copy.bucketMonth);
+    expect(dateBucketLabel(at(31), noon, copy)).toBe(copy.bucketOlder);
   });
 });
