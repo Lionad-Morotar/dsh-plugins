@@ -128,11 +128,38 @@ export const FS_STYLES = `
 .fx-tree-pane {
   display: flex;
   flex-direction: column;
-  flex: 0 0 clamp(220px, 34%, 380px);
+  /* A user-dragged width arrives as the --fx-tree-width inline variable; the
+     fallback keeps the shipped fluid clamp for everyone who never dragged. */
+  flex: 0 0 var(--fx-tree-width, clamp(220px, 34%, 380px));
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--fx-border-soft);
 }
+.fx-pane-handle {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 6px;
+  /* Centre the hit zone on the tree pane's border so the grabbable band sits
+     on the line the eye follows, half of it overlapping the pane. */
+  margin-left: -3px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.fx-pane-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-.5px);
+  background: var(--fx-accent);
+  opacity: 0;
+}
+.fx-pane-handle:hover::before { opacity: .55; }
+/* Applied to the document body while a drag is live: no text selection under a
+   moving pointer and a stable cursor wherever it travels. */
+body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-editor {
   display: flex;
   flex-direction: column;
@@ -700,6 +727,10 @@ export const FS_STYLES = `
     border-right: 0;
     border-bottom: 1px solid var(--fx-border-soft);
   }
+  /* Stacked panes have no horizontal split to resize, so the handle and any
+     persisted width (the media rule above wins the cascade over the variable)
+     both go inert. */
+  .fx-pane-handle { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

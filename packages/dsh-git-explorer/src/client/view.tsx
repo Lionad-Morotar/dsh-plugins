@@ -7,13 +7,20 @@
  * read time so a deployment without the Git service renders an explicit empty
  * state instead of throwing inside the conversation shell.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 
 import { ChangesPane } from "./changes-pane.tsx";
 import { DetailPane } from "./detail-pane.tsx";
 import { HistoryPane, HISTORY_PAGE_SIZE } from "./history-pane.tsx";
 import type { Translate } from "./copy.ts";
 import { createJump, groupChanges, layoutGraph, parseCommitFocus, type GraphRow } from "./model.ts";
+import {
+  clampLeftColumnWidth,
+  readLeftColumnWidth,
+  resetLeftColumnWidth,
+  saveLeftColumnWidth,
+  type PaneWidthStorage,
+} from "./pane-width.ts";
 import { describeFailure, unwrapTransport, type GitRemoteFace, type RemoteResolver } from "./wire.ts";
 import type { GitCommitNode, GitQueryResult, GitSnapshot, GitSnapshotResult } from "../host/types.ts";
 import { VIEW_ID } from "../shared.ts";
@@ -115,6 +122,24 @@ type LoadState =
 
 const statsStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 8 };
 
+/**
+ * localStorage for pane widths; null outside a browser or when access throws.
+ */
+function paneWidthStorage(): PaneWidthStorage | null {
+  if (typeof document === "undefined") return null;
+  try {
+    return document.defaultView?.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Below the 720px breakpoint the stylesheet stacks the two columns and hides
+// the handle; this check keeps the drag hook inert there too, not just
+// unreachable. The query must stay in sync with the media query in styles.ts.
+const stackedLayout = (): boolean =>
+  typeof window === "undefined" || window.matchMedia("(max-width: 720px)").matches;
+
 function StateBlock({
   title,
   description,
@@ -171,10 +196,77 @@ export function createGitExplorerView(wiring: ViewWiring) {
     const pendingFocus = useRef<string | undefined>(undefined);
     const handledRequest = useRef<string | undefined>(undefined);
 
+    // The left column's width: null keeps the stylesheet's fluid track, a
+    // pixel count from a past drag pins it. Moves only touch state; the store
+    // is written once at drag rest.
+    const paneStorage = useMemo(() => paneWidthStorage(), []);
+    const [leftWidth, setLeftWidth] = useState<number | null>(() => readLeftColumnWidth(paneStorage));
+    const handleRef = useRef<HTMLDivElement | null>(null);
+    const dragRef = useRef<{ pointerId: number; startX: number; baseWidth: number } | null>(null);
+
     const selectFromFocus = useCallback((hash: string): void => {
       pendingFocus.current = hash;
       setSelected(hash);
     }, []);
+
+    // The left column's divider. The pane left of the handle is the baseline:
+    // the fluid default has no number in state, so a drag measures the
+    // rendered box and works in pixel deltas from there.
+    const beginPaneDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
+      if (event.button !== 0 || dragRef.current !== null || stackedLayout()) return;
+      const pane = handleRef.current?.previousElementSibling;
+      if (!(pane instanceof HTMLElement)) return;
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        return; // Without capture a pointer leaving the window strands the drag.
+      }
+      dragRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        baseWidth: pane.getBoundingClientRect().width,
+      };
+      document.body.classList.add("gx-pane-resizing");
+    }, []);
+
+    const movePaneDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
+      const drag = dragRef.current;
+      if (drag === null || drag.pointerId !== event.pointerId) return;
+      setLeftWidth(clampLeftColumnWidth(drag.baseWidth + event.clientX - drag.startX));
+    }, []);
+
+    const endPaneDrag = useCallback(
+      (event: ReactPointerEvent<HTMLDivElement>): void => {
+        const drag = dragRef.current;
+        if (drag === null || drag.pointerId !== event.pointerId) return;
+        dragRef.current = null;
+        document.body.classList.remove("gx-pane-resizing");
+        try {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch {
+          // Capture is already gone; pointercancel beats this handler here.
+        }
+        const width = drag.baseWidth + event.clientX - drag.startX;
+        // A click without movement must not pin the fluid default into pixels.
+        if (Math.round(width) === Math.round(drag.baseWidth)) return;
+        setLeftWidth(saveLeftColumnWidth(paneStorage, width));
+      },
+      [paneStorage],
+    );
+
+    const resetPaneWidth = useCallback((): void => {
+      resetLeftColumnWidth(paneStorage);
+      setLeftWidth(null);
+    }, [paneStorage]);
+
+    // A drag that outlives this mount (view switched mid-gesture) must not
+    // leave the document-level resizing class behind.
+    useEffect(
+      () => () => {
+        if (dragRef.current !== null) document.body.classList.remove("gx-pane-resizing");
+      },
+      [],
+    );
 
     // The shell hands the selected-view opener to the entry. Binding it here is
     // what lets a jump from the changes pane land in fs-explorer for this very
@@ -411,8 +503,26 @@ export function createGitExplorerView(wiring: ViewWiring) {
             onAction={retry}
           />
         ) : load.kind === "ready" ? (
-          <div className="gx-body">
+          <div
+            className="gx-body"
+            style={leftWidth === null ? undefined : ({ "--gx-left-col": `${leftWidth}px` } as CSSProperties)}
+          >
             <ChangesPane groups={groups} stats={stats} t={t} onOpen={onOpenFile} />
+            <div
+              ref={handleRef}
+              className="gx-pane-handle"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t("pane.resize")}
+              title={t("pane.resizeHint")}
+              data-testid="gx-pane-handle"
+              onPointerDown={beginPaneDrag}
+              onPointerMove={movePaneDrag}
+              onPointerUp={endPaneDrag}
+              onPointerCancel={endPaneDrag}
+              onLostPointerCapture={endPaneDrag}
+              onDoubleClick={resetPaneWidth}
+            />
             <div className="gx-col">
               <HistoryPane
                 commits={commits}

@@ -8,7 +8,16 @@
  * the file service renders an explicit empty state instead of throwing inside
  * the conversation shell.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import type { Translate } from "./copy.ts";
 import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap } from "./keyboard.ts";
@@ -21,6 +30,13 @@ import {
   type FocusTarget,
   type TreeLevel,
 } from "./model.ts";
+import {
+  clampTreePaneWidth,
+  readTreePaneWidth,
+  resetTreePaneWidth,
+  saveTreePaneWidth,
+  type PaneWidthStorage,
+} from "./pane-width.ts";
 import { PanelEmpty, PanelTabs } from "./panel-tabs.tsx";
 import { consumeViewRequest, createPanelStackRegistry } from "./panels.ts";
 import { headLabel, joinChangeStats, parseStatusZ, type FsGitHead, type StatusMap } from "./status.ts";
@@ -95,6 +111,24 @@ export function initialViewState(sessionId: string | undefined, hasFiles: boolea
 }
 
 const loadingLevel = (): TreeLevel => ({ status: "loading", nodes: [], truncated: false, total: 0 });
+
+/**
+ * localStorage for pane widths; null outside a browser or when access throws.
+ */
+function paneWidthStorage(): PaneWidthStorage | null {
+  if (typeof document === "undefined") return null;
+  try {
+    return document.defaultView?.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Below the 760px breakpoint the stylesheet stacks the two panes and hides the
+// handle; this check keeps the drag hook inert there too, not just unreachable.
+// The query must stay in sync with the media query in styles.ts.
+const stackedLayout = (): boolean =>
+  typeof window === "undefined" || window.matchMedia("(max-width: 760px)").matches;
 
 /** The identity map's empty singleton, so a reset never re-renders the tree. */
 const EMPTY_TAGS: ReadonlyMap<string, WorkspaceTag> = new Map();
@@ -180,6 +214,14 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     const [reveal, setReveal] = useState<FocusTarget | undefined>(undefined);
     const controllers = useRef<Map<string, AbortController>>(new Map());
     const handledRequest = useRef<string | undefined>(undefined);
+
+    // The tree column's width: null keeps the stylesheet's fluid clamp, a
+    // pixel count from a past drag pins it. Moves only touch state; the store
+    // is written once at drag rest.
+    const paneStorage = useMemo(() => paneWidthStorage(), []);
+    const [treeWidth, setTreeWidth] = useState<number | null>(() => readTreePaneWidth(paneStorage));
+    const handleRef = useRef<HTMLDivElement | null>(null);
+    const dragRef = useRef<{ pointerId: number; startX: number; baseWidth: number } | null>(null);
 
     const rootLevel = levels.get("");
     const rootReady = rootLevel?.status === "ready";
@@ -430,6 +472,65 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       return true;
     }, []);
 
+    // The tree column's divider. The pane left of the handle is the baseline:
+    // the fluid default has no number in state, so a drag measures the
+    // rendered box and works in pixel deltas from there.
+    const beginPaneDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
+      if (event.button !== 0 || dragRef.current !== null || stackedLayout()) return;
+      const pane = handleRef.current?.previousElementSibling;
+      if (!(pane instanceof HTMLElement)) return;
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        return; // Without capture a pointer leaving the window strands the drag.
+      }
+      dragRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        baseWidth: pane.getBoundingClientRect().width,
+      };
+      document.body.classList.add("fx-pane-resizing");
+    }, []);
+
+    const movePaneDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
+      const drag = dragRef.current;
+      if (drag === null || drag.pointerId !== event.pointerId) return;
+      setTreeWidth(clampTreePaneWidth(drag.baseWidth + event.clientX - drag.startX));
+    }, []);
+
+    const endPaneDrag = useCallback(
+      (event: ReactPointerEvent<HTMLDivElement>): void => {
+        const drag = dragRef.current;
+        if (drag === null || drag.pointerId !== event.pointerId) return;
+        dragRef.current = null;
+        document.body.classList.remove("fx-pane-resizing");
+        try {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch {
+          // Capture is already gone; pointercancel beats this handler here.
+        }
+        const width = drag.baseWidth + event.clientX - drag.startX;
+        // A click without movement must not pin the fluid default into pixels.
+        if (Math.round(width) === Math.round(drag.baseWidth)) return;
+        setTreeWidth(saveTreePaneWidth(paneStorage, width));
+      },
+      [paneStorage],
+    );
+
+    const resetPaneWidth = useCallback((): void => {
+      resetTreePaneWidth(paneStorage);
+      setTreeWidth(null);
+    }, [paneStorage]);
+
+    // A drag that outlives this mount (view switched mid-gesture) must not
+    // leave the document-level resizing class behind.
+    useEffect(
+      () => () => {
+        if (dragRef.current !== null) document.body.classList.remove("fx-pane-resizing");
+      },
+      [],
+    );
+
     // Panel chords are captured before the conversation's own handlers: ⌘⌥↓
     // turns the editor column, not the transcript, and Ctrl+W must win over
     // the browser tab when a panel is open. Ctrl+W is still only a best-effort
@@ -605,7 +706,10 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
             />
           ) : (
             <>
-              <div className="fx-tree-pane">
+              <div
+                className="fx-tree-pane"
+                style={treeWidth === null ? undefined : ({ "--fx-tree-width": `${treeWidth}px` } as CSSProperties)}
+              >
                 <TreeBody
                   rows={rows}
                   selectedPath={activePath}
@@ -615,6 +719,21 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                   onRetry={retryDirectory}
                 />
               </div>
+              <div
+                ref={handleRef}
+                className="fx-pane-handle"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label={t("pane.resize")}
+                title={t("pane.resizeHint")}
+                data-testid="fs-pane-handle"
+                onPointerDown={beginPaneDrag}
+                onPointerMove={movePaneDrag}
+                onPointerUp={endPaneDrag}
+                onPointerCancel={endPaneDrag}
+                onLostPointerCapture={endPaneDrag}
+                onDoubleClick={resetPaneWidth}
+              />
               <div className="fx-editor">
                 <PanelTabs
                   panels={panels.panels}

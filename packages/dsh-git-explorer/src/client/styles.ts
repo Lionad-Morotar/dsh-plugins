@@ -113,13 +113,40 @@ export const GIT_STYLES = `
 
 .gx-body {
   display: grid;
-  grid-template-columns: minmax(240px, 31%) minmax(0, 1fr);
-  gap: 10px;
+  /* A user-dragged width arrives as the --gx-left-col inline variable; the
+     fallback keeps the shipped fluid track for everyone who never dragged. The
+     middle track carries the divider and replaces the old column gap, so the
+     gutter between the columns stays 10px. */
+  grid-template-columns: var(--gx-left-col, minmax(240px, 31%)) 10px minmax(0, 1fr);
+  row-gap: 10px;
+  column-gap: 0;
   flex: 1;
   min-height: 0;
   padding: 10px 12px 0;
   box-sizing: border-box;
 }
+.gx-pane-handle {
+  position: relative;
+  width: 6px;
+  justify-self: center;
+  cursor: col-resize;
+  touch-action: none;
+}
+.gx-pane-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-.5px);
+  background: var(--gx-accent);
+  opacity: 0;
+}
+.gx-pane-handle:hover::before { opacity: .55; }
+/* Applied to the document body while a drag is live: no text selection under a
+   moving pointer and a stable cursor wherever it travels. */
+body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 .gx-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 10px; }
 .gx-col > .gx-pane { flex: 1; }
 .gx-pane {
@@ -349,6 +376,10 @@ export const GIT_STYLES = `
 
 @media (max-width: 720px) {
   .gx-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(140px, 34%) minmax(0, 1fr); }
+  /* Stacked columns have no horizontal split to resize, so the handle and any
+     persisted width (this rule wins the cascade over the variable) both go
+     inert. */
+  .gx-pane-handle { display: none; }
   .gx-author { display: none; }
 }
 `;
