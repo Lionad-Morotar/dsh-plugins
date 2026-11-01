@@ -277,34 +277,42 @@ export function createApp(deps: AppDeps = {}): KeysApp {
           isComposing: event.isComposing,
         };
 
-        // Page keys come first: they are the only stroke this plugin claims on
-        // a non-editable target, and the caret branch below returns early for
-        // exactly that case.
-        //
-        // Three priority levels decide where a page step lands, in order:
-        // 1. An editable has focus — the stroke's ancestors include the
-        //    scrollport, and paging must never yank the surface the user is
-        //    typing into.
-        // 2. The pointer sits inside a scrollable area — that is the surface
-        //    the user is looking at, so it is what gets paged ("page where the
-        //    pointer is"). This branch deliberately ignores excludeSelector:
-        //    that list protects the caret reveal from moving the transcript,
-        //    while a pointer parked on the transcript is an explicit request
-        //    to page it.
-        // 3. Otherwise the transcript fallback decides, unchanged from before
-        //    the pointer branch existed: BODY (the no-focus reading state) or
-        //    a target inside the scrollport pages the transcript, and any
-        //    other target (a sidebar list, a picker, a menu) keeps its native
-        //    full-page behaviour.
-        const editableFocused = event.target !== null && classifyTarget(event.target) !== "none";
-        const pointerBox = editableFocused ? null : scrollableUnderPointer();
-        const aimedAtTranscript = pointerBox === null && (isBody(event.target) || landsInScrollport(event.target, scrollportSelector));
-        const scroll = editableFocused || pointerBox !== null || aimedAtTranscript ? matchScrollKey(like, true) : null;
+        // The key match runs before any DOM probe: matchScrollKey is a pure
+        // map lookup, and the no-focus reading state sees every keydown
+        // (arrows, letters, Escape), so running the pointer chain per stroke
+        // would pay an elementFromPoint plus a layout read for keys this
+        // plugin never claims.
+        const scroll = matchScrollKey(like, true);
         if (scroll !== null) {
-          event.preventDefault();
-          if (pointerBox !== null) pageContainer(pointerBox, scroll.direction, scroll.fraction);
-          else pageTranscript(event.target as Element, scroll.direction, scroll.fraction);
-          return;
+          // Page keys are the only stroke this plugin claims on a
+          // non-editable target, and the caret branch below takes over when
+          // the stroke lands somewhere the paging contract does not reach.
+          //
+          // Three priority levels decide where a page step lands, in order:
+          // 1. An editable has focus — the stroke's ancestors include the
+          //    scrollport, and paging must never yank the surface the user is
+          //    typing into.
+          // 2. The pointer sits inside a scrollable area — that is the surface
+          //    the user is looking at, so it is what gets paged ("page where
+          //    the pointer is"). This branch deliberately ignores
+          //    excludeSelector: that list protects the caret reveal from
+          //    moving the transcript, while a pointer parked on the
+          //    transcript is an explicit request to page it.
+          // 3. Otherwise the transcript fallback decides, unchanged from
+          //    before the pointer branch existed: BODY (the no-focus reading
+          //    state) or a target inside the scrollport pages the transcript,
+          //    and any other target (a sidebar list, a picker, a menu) keeps
+          //    its native full-page behaviour — the fall-through hands the
+          //    stroke to the caret branch, which rejects it untouched.
+          const editableFocused = event.target !== null && classifyTarget(event.target) !== "none";
+          const pointerBox = editableFocused ? null : scrollableUnderPointer();
+          const aimedAtTranscript = pointerBox === null && (isBody(event.target) || landsInScrollport(event.target, scrollportSelector));
+          if (editableFocused || pointerBox !== null || aimedAtTranscript) {
+            event.preventDefault();
+            if (pointerBox !== null) pageContainer(pointerBox, scroll.direction, scroll.fraction);
+            else pageTranscript(event.target as Element, scroll.direction, scroll.fraction);
+            return;
+          }
         }
 
         const target = classifyTarget(event.target);

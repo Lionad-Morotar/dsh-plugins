@@ -562,6 +562,27 @@ describe("pointer paging", () => {
     expect(wide.scrollLeft).toBe(0);
   });
 
+  it("a non-page keydown probes the pointer chain zero times, a page key exactly once", () => {
+    // The no-focus reading state sees every keydown: letters, arrows and
+    // Escape must not pay an elementFromPoint plus an ancestor-chain walk
+    // just to be told they are not page keys. The pure map lookup decides
+    // first; only a real page stroke pays for the pointer probe.
+    const scroller = scrollport(1000);
+    const probe = vi.fn(() => null);
+    mount({ pointerElementAt: probe });
+
+    doc.body.dispatchEvent(keydown({ key: "a" }));
+    doc.body.dispatchEvent(keydown({ key: "ArrowDown" }));
+    doc.body.dispatchEvent(keydown({ key: "Escape" }));
+    expect(probe).not.toHaveBeenCalled();
+
+    const e = keydown({ key: "PageDown" });
+    doc.body.dispatchEvent(e);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(e.defaultPrevented).toBe(true);
+    expect(scroller.scrollTop).toBe(1380);
+  });
+
   it("falls back to the transcript when the pointer never entered the window", () => {
     // Initial coordinates are off-screen, so the hit test misses and the old
     // BODY fallback decides — exactly the pre-feature behaviour.
