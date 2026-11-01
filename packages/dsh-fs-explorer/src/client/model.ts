@@ -303,6 +303,31 @@ export function computeTreeWindow<Row>(rows: readonly Row[], options: TreeWindow
 }
 
 /**
+ * The scroll offset that brings one row into view with minimum movement.
+ *
+ * A windowed list only mounts the rows around the current offset, so a row
+ * picked from outside the viewport has to be scrolled to before the reader can
+ * see its highlight. Minimum movement rather than centering: the reader is
+ * arriving, and the rows above stay on screen.
+ * @param input - current offset, viewport height, row height and the row index.
+ * @returns the offset to apply; the current one when the row already fits.
+ */
+export function revealScrollTop(input: {
+  readonly scrollTop: number;
+  readonly viewport: number;
+  readonly rowHeight: number;
+  readonly index: number;
+}): number {
+  const rowHeight = Math.max(1, input.rowHeight || 1);
+  const viewport = Math.max(0, input.viewport || 0);
+  const scrollTop = Math.max(0, input.scrollTop);
+  const top = Math.max(0, input.index) * rowHeight;
+  if (top < scrollTop) return top;
+  if (top + rowHeight > scrollTop + viewport) return top + rowHeight - viewport;
+  return scrollTop;
+}
+
+/**
  * Map the tree's level key to the path `workspaceFiles.list` accepts.
  *
  * The ledger keys the root as `""`, but the host refuses an empty path
@@ -537,6 +562,72 @@ export function flattenTree(
 
   visit("", 0);
   return rows;
+}
+
+/**
+ * Basenames that count as a workspace's front page.
+ *
+ * Only the text spellings: entering the view opens the file in a panel, so a
+ * README in a format the previewer cannot paint would greet the reader with a
+ * failure instead of a front page.
+ */
+const README_BASENAMES: ReadonlySet<string> = new Set([
+  "readme",
+  "readme.md",
+  "readme.markdown",
+  "readme.mdx",
+  "readme.txt",
+]);
+
+/** The basename of a workspace path, for both separators the host may return. */
+function basenameOf(path: string): string {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return (cut < 0 ? path : path.slice(cut + 1)).toLowerCase();
+}
+
+/**
+ * The root-level README row a fresh view can open by itself.
+ *
+ * Only the workspace root qualifies: nested READMEs are package docs, and
+ * opening one on arrival would answer a question the reader did not ask. The
+ * row is returned rather than its path so the caller can open and focus from
+ * one value.
+ * @param rows - the flattened tree.
+ * @returns the front-page row, or undefined when the root has none.
+ */
+export function findRootReadme(rows: readonly TreeRow[]): TreeRow | undefined {
+  return rows.find(
+    row => row.type === "entry" && row.depth === 0 && row.kind === "file" && README_BASENAMES.has(basenameOf(row.path)),
+  );
+}
+
+/** What entering the view should do, once per mount. */
+export type EntryIntent =
+  | { readonly kind: "skip"; readonly reason: "modal" | "no-rows" }
+  | { readonly kind: "tree"; readonly open: string | undefined; readonly focus: string | undefined };
+
+/**
+ * Decide the arrival gesture for a freshly mounted view.
+ *
+ * The panel stack outlives the mount, so "empty" is a fact about the session,
+ * not about this render: the first arrival opens the front page, a later one
+ * leaves the reader's panels alone and only hands them the keyboard. A modal
+ * on screen owns the caret; the caller must not spend the claim on it.
+ * @param input - the flattened tree, the open panel count and whether a modal owns focus.
+ * @returns the path to open (if any) and the row the cursor lands on.
+ */
+export function entryIntent(input: {
+  readonly rows: readonly TreeRow[];
+  readonly panelCount: number;
+  readonly hasModal: boolean;
+}): EntryIntent {
+  if (input.hasModal) return { kind: "skip", reason: "modal" };
+  // An empty tree renders a state block, not a scroll container to focus.
+  if (input.rows.length === 0) return { kind: "skip", reason: "no-rows" };
+  if (input.panelCount > 0) return { kind: "tree", open: undefined, focus: undefined };
+  const readme = findRootReadme(input.rows);
+  if (readme === undefined) return { kind: "tree", open: undefined, focus: undefined };
+  return { kind: "tree", open: readme.path, focus: readme.path };
 }
 
 /**

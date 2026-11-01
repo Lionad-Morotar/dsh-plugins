@@ -15,6 +15,7 @@ import {
   computeTreeWindow,
   formatSize,
   iconFor,
+  revealScrollTop,
   type TreeRow,
 } from "./model.ts";
 import { statusBadge, statusLabelKey, statusTone } from "./status.ts";
@@ -247,14 +248,38 @@ export function StatusRowView({ row, top, t, onRetry }: StatusRowViewProps) {
   );
 }
 
+/** The arrival gesture the view hands down once, on entry into the view. */
+export interface TreeEntryFocus {
+  /** Row to highlight before the reader touches anything; undefined means none. */
+  readonly path: string | undefined;
+}
+
+/**
+ * Give the keyboard to the tree.
+ *
+ * DOM focus stays on the scroll container, which is where the key handler lives
+ * and where the next arrow press would put it anyway; the arrival row is shown
+ * by the cursor highlight instead of a second focus ring. Focus already inside
+ * the tree is left alone, so a click that landed first wins.
+ * @param scroller - the scroll container, or null before the first render.
+ */
+export function focusTreeEntry(scroller: HTMLElement | null): void {
+  if (scroller === null) return;
+  const doc = scroller.ownerDocument;
+  if (doc.activeElement !== null && scroller.contains(doc.activeElement)) return;
+  scroller.focus({ preventScroll: true });
+}
+
 /** Props for the virtualized tree body. */
 export interface TreeBodyProps {
   readonly rows: readonly TreeRow[];
   readonly selectedPath: string | undefined;
+  readonly entryFocus: TreeEntryFocus | undefined;
   readonly t: Translate;
   readonly onToggle: (path: string) => void;
   readonly onSelect: (path: string) => void;
   readonly onRetry: (path: string) => void;
+  readonly onEntryFocusSettled: (() => void) | undefined;
 }
 
 /**
@@ -262,13 +287,25 @@ export interface TreeBodyProps {
  * @param props - flattened rows, selection and the tree gestures.
  * @returns the scroll container and the mounted slice.
  */
-export function TreeBody({ rows, selectedPath, t, onToggle, onSelect, onRetry }: TreeBodyProps) {
+export function TreeBody({
+  rows,
+  selectedPath,
+  entryFocus,
+  t,
+  onToggle,
+  onSelect,
+  onRetry,
+  onEntryFocusSettled,
+}: TreeBodyProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
   // The keyboard cursor is an index into `rows` and only ever rests on entry
   // rows; status placeholders (loading, failed, truncated) are skipped.
   const [cursor, setCursor] = useState<number | undefined>(undefined);
+  // The view clears `entryFocus` once it is served; the guard keeps a listing
+  // refresh landing in the same tick from serving the same arrival twice.
+  const servedEntry = useRef<TreeEntryFocus | undefined>(undefined);
   const entryIndexes = useMemo(
     () => rows.flatMap((row, index) => (row.type === "entry" ? [index] : [])),
     [rows],
@@ -293,11 +330,13 @@ export function TreeBody({ rows, selectedPath, t, onToggle, onSelect, onRetry }:
   useEffect(() => {
     const element = scroller.current;
     if (cursor === undefined || element === null) return;
-    const top = cursor * TREE_ROW_HEIGHT;
-    if (top < element.scrollTop) element.scrollTop = top;
-    else if (top + TREE_ROW_HEIGHT > element.scrollTop + element.clientHeight) {
-      element.scrollTop = top + TREE_ROW_HEIGHT - element.clientHeight;
-    }
+    const next = revealScrollTop({
+      scrollTop: element.scrollTop,
+      viewport: element.clientHeight,
+      rowHeight: TREE_ROW_HEIGHT,
+      index: cursor,
+    });
+    if (next !== element.scrollTop) element.scrollTop = next;
   }, [cursor]);
 
   const moveCursor = useCallback(
@@ -402,6 +441,41 @@ export function TreeBody({ rows, selectedPath, t, onToggle, onSelect, onRetry }:
       element.scrollTop = Math.max(0, top - element.clientHeight / 2);
     }
   }, [selectedPath, rows]);
+
+  // Arrival: the view hands down where the keyboard should start on entry.
+  // The highlight is the cursor, not a second focus ring, so an arrow key
+  // continues from the row the reader sees.
+  useEffect(() => {
+    if (entryFocus === undefined || servedEntry.current === entryFocus) return;
+    const element = scroller.current;
+    if (element === null) return;
+    const index =
+      entryFocus.path === undefined
+        ? -1
+        : rows.findIndex(row => row.type === "entry" && row.path === entryFocus.path);
+    // A target the current rows cannot carry yet (a level still listing) keeps
+    // the claim unspent rather than burning it on a row that does not exist.
+    if (entryFocus.path !== undefined && index < 0) return;
+    servedEntry.current = entryFocus;
+    if (index >= 0) {
+      const next = revealScrollTop({
+        scrollTop: element.scrollTop,
+        viewport: element.clientHeight === 0 ? 480 : element.clientHeight,
+        rowHeight: TREE_ROW_HEIGHT,
+        index,
+      });
+      // The scroll state, not the DOM property, drives the window this render
+      // is about to mount; both are written so the row exists before it is
+      // highlighted.
+      if (next !== element.scrollTop) {
+        element.scrollTop = next;
+        setScrollTop(next);
+      }
+      setCursor(index);
+    }
+    focusTreeEntry(element);
+    onEntryFocusSettled?.();
+  }, [entryFocus, rows, onEntryFocusSettled]);
 
   const handleScroll = (event: UIEvent<HTMLDivElement>): void => {
     setScrollTop(event.currentTarget.scrollTop);

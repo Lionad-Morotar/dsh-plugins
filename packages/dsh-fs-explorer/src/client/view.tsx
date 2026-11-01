@@ -26,6 +26,7 @@ import {
   ancestorChain,
   buildTree,
   describeListing,
+  entryIntent,
   flattenTree,
   isAbsolutePath,
   listingPath,
@@ -46,7 +47,7 @@ import { PanelEmpty, PanelTabs } from "./panel-tabs.tsx";
 import { consumeViewRequest, createPanelStackRegistry } from "./panels.ts";
 import { headLabel, joinChangeStats, parseStatusZ, type FsGitHead, type StatusMap } from "./status.ts";
 import { PreviewPane } from "./preview-pane.tsx";
-import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody } from "./tree.tsx";
+import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody, type TreeEntryFocus } from "./tree.tsx";
 import { buildWorkspaceMap, MANIFEST_FILES, type WorkspaceTag } from "./workspace-map.ts";
 import {
   describeFailure,
@@ -607,6 +608,32 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       () => flattenTree(levels, expanded, statuses, workspaceTags),
       [levels, expanded, statuses, workspaceTags],
     );
+
+    // The arrival gesture. The stack outlives the mount, so a first arrival
+    // with nothing open opens the workspace front page and hands the keyboard
+    // to the tree, while a return visit only takes the second half of that.
+    // One claim per mount: a listing refresh must not yank the cursor back.
+    const [entryFocus, setEntryFocus] = useState<TreeEntryFocus | undefined>(undefined);
+    const entryClaimed = useRef(false);
+    useEffect(() => {
+      if (entryClaimed.current || typeof document === "undefined") return;
+      // Read the live stack, not this render's snapshot: a request handed to
+      // the mount above (the Git panel, the address bridge, the focus queue)
+      // has already published a panel by the time this effect runs, and that
+      // target is what the reader asked to see, not the workspace front page.
+      const intent = entryIntent({
+        rows,
+        panelCount: stack.snapshot().panels.length,
+        hasModal: hasOpenModal(document),
+      });
+      // A skip leaves the claim unspent: the rows may simply not have listed
+      // yet, and the effect runs again when they do.
+      if (intent.kind === "skip") return;
+      entryClaimed.current = true;
+      if (intent.open !== undefined) stack.open(intent.open);
+      setEntryFocus({ path: intent.focus });
+    }, [rows, stack]);
+    const releaseEntryFocus = useCallback((): void => setEntryFocus(undefined), []);
     const changeCount = statuses === undefined ? undefined : Object.keys(statuses).length;
     const summaryTone =
       statuses === undefined
@@ -748,10 +775,12 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                 <TreeBody
                   rows={rows}
                   selectedPath={activePath}
+                  entryFocus={entryFocus}
                   t={t}
                   onToggle={toggleDirectory}
                   onSelect={path => stack.open(path)}
                   onRetry={retryDirectory}
+                  onEntryFocusSettled={releaseEntryFocus}
                 />
               </div>
               <div
