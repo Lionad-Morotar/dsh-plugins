@@ -186,36 +186,26 @@ export interface ScrollCandidate {
 
 /**
  * Pick where a pointer-driven page step lands: the first candidate in the
- * chain that both declares a scrollbar (auto/scroll) and actually has room to
- * move.
+ * chain that both declares a vertical scrollbar (overflow-y auto/scroll) and
+ * actually has vertical room to move.
  *
- * The chain arrives innermost-first, so the winner is the container the user
- * is visually inside — a nested scroller beats its parent. The pointer branch
- * deliberately does not share the caret reveal's exclusion list: that list
- * means "the caret reveal must never move the chat", while a pointer parked on
- * the chat is the user asking to page it — a different contract.
+ * Vertical only, unlike the caret reveal's own ancestor walk: a page step
+ * writes `scrollTop` and nothing else, so a container that merely scrolls
+ * sideways (a wide table wrapper) would swallow the stroke as a no-op dead
+ * key. Skipping such a layer keeps the search climbing, and the winner ends
+ * up being the innermost vertically scrollable container the pointer is
+ * visually inside — a nested scroller still beats its parent.
+ *
+ * The pointer branch deliberately does not share the caret reveal's exclusion
+ * list: that list means "the caret reveal must never move the chat", while a
+ * pointer parked on the chat is the user asking to page it — a different
+ * contract.
  */
 export function pickScrollContainer(candidates: readonly ScrollCandidate[]): number | null {
   for (const [index, candidate] of candidates.entries()) {
-    const declaresScrollbar =
-      candidate.overflowY === "auto" ||
-      candidate.overflowY === "scroll" ||
-      candidate.overflowX === "auto" ||
-      candidate.overflowX === "scroll";
-    if (!declaresScrollbar) continue;
-    const scrolls = isScrollable({
-      top: 0,
-      bottom: 0,
-      left: 0,
-      right: 0,
-      scrollTop: 0,
-      scrollLeft: 0,
-      scrollHeight: candidate.scrollHeight,
-      clientHeight: candidate.clientHeight,
-      scrollWidth: candidate.scrollWidth,
-      clientWidth: candidate.clientWidth,
-    });
-    if (scrolls) return index;
+    if (candidate.overflowY !== "auto" && candidate.overflowY !== "scroll") continue;
+    if (candidate.scrollHeight - candidate.clientHeight <= 1) continue;
+    return index;
   }
   return null;
 }

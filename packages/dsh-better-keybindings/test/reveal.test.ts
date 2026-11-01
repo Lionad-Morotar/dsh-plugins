@@ -210,8 +210,21 @@ describe("pickScrollContainer", () => {
     expect(pickScrollContainer([candidate({ overflowY: "auto", scrollHeight: 201 })])).toBeNull();
   });
 
-  it("counts a horizontally scrolling container", () => {
-    expect(pickScrollContainer([candidate({ overflowX: "auto", scrollWidth: 900 })])).toBe(0);
+  it("requires the scrollbar on the vertical axis, not just any axis", () => {
+    // A page step writes scrollTop only, so a sideways declaration on a
+    // vertically visible container is a dead key, not a target.
+    expect(pickScrollContainer([candidate({ overflowX: "auto" })])).toBeNull();
+  });
+
+  it("skips a horizontal-only scroller and climbs to the vertical ancestor", () => {
+    // A wide table wrapper scrolls sideways only (overflow-x: auto, no
+    // vertical overflow); the chain keeps climbing to the panel that can
+    // actually take a vertical page step.
+    const chain = [
+      candidate({ overflowX: "auto", scrollWidth: 900, scrollHeight: 200, clientHeight: 200 }),
+      candidate({ overflowY: "auto" }),
+    ];
+    expect(pickScrollContainer(chain)).toBe(1);
   });
 
   it("returns null for an empty chain", () => {

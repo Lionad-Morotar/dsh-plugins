@@ -532,6 +532,36 @@ describe("pointer paging", () => {
     expect(scroller.scrollTop).toBe(1380);
   });
 
+  it("a vertical panel pages past a horizontal-only layer nested inside it", () => {
+    // A wide-table wrapper scrolls sideways only (overflow-x: auto, no
+    // vertical room); paging it would swallow the stroke with nothing to
+    // move. The pointer branch must climb past such a layer to the vertical
+    // panel the user is actually reading.
+    const panel = scrollArea(1000);
+    const wide = doc.createElement("div");
+    wide.style.overflowX = "auto";
+    Object.defineProperties(wide, {
+      scrollTop: { value: 0, writable: true, configurable: true },
+      scrollHeight: { value: 200, configurable: true },
+      clientHeight: { value: 200, configurable: true },
+      scrollLeft: { value: 0, writable: true, configurable: true },
+      scrollWidth: { value: 900, configurable: true },
+      clientWidth: { value: 400, configurable: true },
+    });
+    const hit = doc.createElement("p");
+    wide.append(hit);
+    panel.append(wide);
+    mount({ pointerElementAt: () => hit });
+    win.dispatchEvent(mousemoveAt(20, 40));
+
+    const e = keydown({ key: "PageDown" });
+    doc.body.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(panel.scrollTop).toBe(1380);
+    expect(wide.scrollLeft).toBe(0);
+  });
+
   it("falls back to the transcript when the pointer never entered the window", () => {
     // Initial coordinates are off-screen, so the hit test misses and the old
     // BODY fallback decides — exactly the pre-feature behaviour.
