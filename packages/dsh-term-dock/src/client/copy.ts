@@ -26,6 +26,8 @@ export const ZH: Record<string, string> = {
   "dock.limitReached": "已达上限，关闭一个终端",
   "dock.missing": "终端进程已不存在",
   "dock.retry": "重试",
+  "dock.newKind": "选择面板种类",
+  "dock.unknownKind": "面板种类未注册",
 };
 
 export const EN: Record<string, string> = {
@@ -52,4 +54,6 @@ export const EN: Record<string, string> = {
   "dock.limitReached": "Terminal limit reached, close one",
   "dock.missing": "The terminal process is gone",
   "dock.retry": "Retry",
+  "dock.newKind": "Choose panel kind",
+  "dock.unknownKind": "Panel kind is not registered",
 };

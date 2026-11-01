@@ -17,8 +17,9 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, 
 import { createTerminalPanel } from "./terminal-panel.tsx";
 import { bleedBetween, pickColumn, type Box } from "./bleed.ts";
 import { createDockController, type DockVisibilitySource } from "./dock-controller.ts";
+import { TERMINAL_PANEL_KIND, type DockPanel, type DockPanelKind, type DockState } from "./dock-state.ts";
+import { kindPickerChoices, planPanelBody, type PanelBodyPlan, type PanelKindDescriptor } from "./panel-body.ts";
 import type { DockHost } from "./host.ts";
-import type { DockPanel, DockState } from "./dock-state.ts";
 import type { TerminalRack } from "./rack.ts";
 import type { Translate } from "./copy.ts";
 
@@ -248,6 +249,106 @@ function IconButton({
   );
 }
 
+const menuStyle: CSSProperties = {
+  position: "absolute",
+  top: "100%",
+  left: 0,
+  zIndex: 30,
+  display: "flex",
+  flexDirection: "column",
+  minWidth: 120,
+  padding: 4,
+  borderRadius: 8,
+  border: "1px solid color-mix(in srgb, currentColor 18%, transparent)",
+  background: "color-mix(in srgb, currentColor 6%, var(--dsh-bg, inherit))",
+  // The dock body scrolls its own panels; the picker must escape it, and the
+  // dock root clips overflow so the popup also has to sit above it in paint.
+  boxShadow: "0 8px 24px rgb(0 0 0 / 0.35)",
+};
+
+/**
+ * The secondary interaction on `+`: pick a registered kind.
+ *
+ * The plain `+` click keeps opening a terminal (muscle memory), so the kinds
+ * live behind this chevron and only while at least one is registered. The
+ * menu is a `role="menu"`, which the dock's Escape routing already treats as
+ * "a popup owns Escape", so closing on Escape here is the whole contract.
+ */
+function PlusPicker({
+  choices,
+  onPick,
+  t,
+}: {
+  readonly choices: readonly { readonly kind: string; readonly title: string }[];
+  readonly onPick: (kind: string) => void;
+  readonly t: Translate;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent): void => {
+      if (rootRef.current === null) return;
+      if (event.target instanceof Node && rootRef.current.contains(event.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [open]);
+
+  if (choices.length === 0) return null;
+  return (
+    <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
+      <IconButton label={t("dock.newKind")} onClick={() => setOpen(value => !value)}>
+        ▾
+      </IconButton>
+      {open && (
+        <div role="menu" aria-label={t("dock.newKind")} style={menuStyle}
+          onKeyDown={event => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setOpen(false);
+            }
+          }}
+        >
+          {choices.map(choice => (
+            <button
+              key={choice.kind}
+              type="button"
+              role="menuitem"
+              data-panel-kind-option={choice.kind}
+              style={buttonStyle}
+              onClick={() => {
+                setOpen(false);
+                onPick(choice.kind);
+              }}
+            >
+              {choice.title}
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The mount lifecycle identity of one kind body: the registered kind, its
+ * mount closure and the session. The plan object itself is rebuilt on every
+ * render (`planPanelBody` re-runs against a fresh registry snapshot), so
+ * keying the mount effect on it would dispose and remount the panel on every
+ * dock state change. The mount closure is the stable stand-in: the core's
+ * kind ledger hands out the same descriptor until the kind is re-registered,
+ * and a new closure is exactly the edge that must remount.
+ */
+export function kindMountIdentity(
+  plan: Extract<PanelBodyPlan, { readonly plan: "kind" }>,
+  sessionId: string,
+): readonly [string, PanelKindDescriptor["mount"], string] {
+  return [plan.kind, plan.mount, sessionId];
+}
+
 /**
  * Build the dock component for one mount.
  * @param wiring - dock state, view rack, host seams and the translate seat.
@@ -256,11 +357,51 @@ function IconButton({
 export function createTermDockView({ dock, rack, host, t, visibility }: DockWiring): ComponentType {
   const TerminalPanel = createTerminalPanel({ t });
   let panelSeq = 0;
-  const nextPanelId = (): string => `terminal-${(panelSeq += 1)}`;
+  const nextPanelId = (kind: DockPanelKind): string => `${kind}-${(panelSeq += 1)}`;
 
-  /** One panel body; owns the first `rack.open` for its panel. */
-  function DockBody({ sessionId, panelId, label }: { sessionId: string; panelId: string; label: string }) {
-    const [binding] = useState(() => rack.open(sessionId, panelId));
+  /** The tab title for one panel: its kind's title, or the terminal ordinal. */
+  const panelLabel = (panel: DockPanel, index: number): string =>
+    panel.kind === TERMINAL_PANEL_KIND
+      ? `${t("dock.panel")} ${String(index + 1)}`
+      : (host.panelKinds().find(entry => entry.kind === panel.kind)?.title ?? panel.kind);
+
+  /** One registered-kind body; the mount owns everything inside its element. */
+  function KindPanelBody({ plan, sessionId, label }: {
+    readonly plan: Extract<PanelBodyPlan, { readonly plan: "kind" }>;
+    readonly sessionId: string;
+    readonly label: string;
+  }) {
+    const hostRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+      const element = hostRef.current;
+      if (element === null) return;
+      const dispose = plan.mount(element, { sessionId });
+      return () => {
+        if (typeof dispose === "function") dispose();
+      };
+    }, kindMountIdentity(plan, sessionId));
+    return (
+      <div
+        ref={hostRef}
+        aria-label={label}
+        data-panel-kind={plan.kind}
+        style={{ width: "100%", height: "100%", minHeight: 0, overflow: "hidden", boxSizing: "border-box" }}
+      />
+    );
+  }
+
+  /** One panel body; owns the first `rack.open` for a terminal panel. */
+  function DockBody({ panel, sessionId, label }: { panel: DockPanel; sessionId: string; label: string }) {
+    const plan = planPanelBody(panel.kind, host.panelKinds());
+    if (plan.plan === "unknown") {
+      return (
+        <div style={emptyStyle} role="note">{`${t("dock.unknownKind")} · ${panel.kind}`}</div>
+      );
+    }
+    if (plan.plan === "kind") {
+      return <KindPanelBody plan={plan} sessionId={sessionId} label={label} />;
+    }
+    const [binding] = useState(() => rack.open(sessionId, panel.id));
     if (binding === undefined) {
       return (
         <div style={emptyStyle}>{t("dock.serviceMissing")}</div>
@@ -282,7 +423,7 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
     useEffect(() => {
       if (sessionId === undefined) return;
       if (dock.snapshot().panels.some(panel => panel.sessionId === sessionId)) return;
-      dock.open(nextPanelId(), { sessionId });
+      dock.open(nextPanelId(TERMINAL_PANEL_KIND), { sessionId });
     }, [dock, sessionId]);
 
     const closePanel = (id: string): void => {
@@ -341,11 +482,12 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
                 type="button"
                 aria-pressed={panel.id === activeId}
                 data-panel-tab={panel.id}
+                data-panel-kind={panel.kind}
                 data-active={panel.id === activeId ? "true" : "false"}
                 onClick={() => dock.activate(panel.id)}
                 style={panel.id === activeId ? tabActiveStyle : tabStyle}
               >
-                {`${t("dock.panel")} ${String(index + 1)}`}
+                {panelLabel(panel, index)}
                 <span
                   role="button"
                   aria-label={t("dock.closePanel")}
@@ -360,9 +502,19 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
                 </span>
               </button>
             ))}
-            <IconButton label={t("dock.new")} onClick={() => dock.open(nextPanelId(), sessionId === undefined ? {} : { sessionId })}>
+            <IconButton
+              label={t("dock.new")}
+              onClick={() => dock.open(nextPanelId(TERMINAL_PANEL_KIND), sessionId === undefined ? {} : { sessionId })}
+            >
               +
             </IconButton>
+            <PlusPicker
+              choices={kindPickerChoices(host.panelKinds())}
+              t={t}
+              onPick={kind =>
+                dock.open(nextPanelId(kind), { kind, ...(sessionId === undefined ? {} : { sessionId }) })
+              }
+            />
           </div>
           <div style={actionsStyle}>
             <IconButton label={minimized ? t("dock.restore") : t("dock.minimize")} onClick={() => (minimized ? dock.restore() : dock.minimize())}>
@@ -411,9 +563,9 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
             {panels.map((panel: DockPanel, index: number) => (
               <DockBody
                 key={`${sessionId}:${panel.id}`}
+                panel={panel}
                 sessionId={sessionId}
-                panelId={panel.id}
-                label={`${t("dock.panel")} ${String(index + 1)}`}
+                label={panelLabel(panel, index)}
               />
             ))}
           </div>
