@@ -40,6 +40,17 @@ export interface Copy {
   readonly allSessions: string;
   readonly allSessionsDetail: string;
   readonly ungrouped: string;
+  /** The two fixed rows at the bottom of the switch mode's lists. */
+  readonly newSession: string;
+  readonly archivedSessions: string;
+  /** Calendar-day bucket headers for the archive view. */
+  readonly bucketToday: string;
+  readonly bucketYesterday: string;
+  readonly bucketWeek: string;
+  readonly bucketMonth: string;
+  readonly bucketOlder: string;
+  /** Hint on an archived row: Enter restores and opens it. */
+  readonly restoreHint: string;
   readonly sessionsCount: (count: number) => string;
   readonly running: string;
   readonly needsInput: string;
@@ -70,6 +81,11 @@ export interface Copy {
     readonly sessionBusy: string;
     readonly forked: (title: string) => string;
     readonly pinned: (pinned: boolean) => string;
+    readonly restored: (title: string) => string;
+    /** Restored on the host but the open hand-off failed. */
+    readonly restoreOpenFailed: string;
+    /** The unarchive write itself failed; the session stays archived. */
+    readonly restoreFailed: (code: string | undefined) => string;
     readonly themeSwitched: (dark: boolean) => string;
     readonly failed: (what: string, code: string | undefined) => string;
   };
@@ -101,6 +117,14 @@ const ZH: Copy = {
   allSessions: "全部会话",
   allSessionsDetail: "跨工作区搜索会话",
   ungrouped: "未分组",
+  newSession: "新会话",
+  archivedSessions: "已归档会话",
+  bucketToday: "今天",
+  bucketYesterday: "昨天",
+  bucketWeek: "七天内",
+  bucketMonth: "三十天内",
+  bucketOlder: "更早",
+  restoreHint: "↵ 恢复并打开",
   sessionsCount: count => `${count} 个会话`,
   running: "运行中",
   needsInput: "需要参数",
@@ -156,6 +180,9 @@ const ZH: Copy = {
     sessionBusy: "会话还在运行，先中断回复或稍后再归档",
     forked: title => `已 Fork 到新会话「${title}」`,
     pinned: pinned => (pinned ? "已置顶当前会话" : "已取消置顶"),
+    restored: title => `已恢复「${title}」`,
+    restoreOpenFailed: "已恢复该会话，但打开失败；请从侧栏进入",
+    restoreFailed: code => `恢复会话失败${code === undefined || code === "" ? "" : `：${code}`}`,
     themeSwitched: dark => (dark ? "已切到深色主题" : "已切到浅色主题"),
     failed: (what, code) => `${what}失败${code === undefined || code === "" ? "" : `：${code}`}`,
   },
@@ -195,6 +222,14 @@ const EN: Copy = {
   allSessions: "All sessions",
   allSessionsDetail: "Search sessions across workspaces",
   ungrouped: "Ungrouped",
+  newSession: "New session",
+  archivedSessions: "Archived sessions",
+  bucketToday: "Today",
+  bucketYesterday: "Yesterday",
+  bucketWeek: "This week",
+  bucketMonth: "This month",
+  bucketOlder: "Earlier",
+  restoreHint: "↵ restore",
   sessionsCount: count => `${count} session${count === 1 ? "" : "s"}`,
   running: "running",
   needsInput: "takes input",
@@ -250,6 +285,9 @@ const EN: Copy = {
     sessionBusy: "The session is still running; stop the reply or archive later",
     forked: title => `Forked into “${title}”`,
     pinned: pinned => (pinned ? "Pinned this session" : "Unpinned this session"),
+    restored: title => `Restored “${title}”`,
+    restoreOpenFailed: "The session was restored, but opening it failed; use the sidebar",
+    restoreFailed: code => `Restore failed${code === undefined || code === "" ? "" : `: ${code}`}`,
     themeSwitched: dark => (dark ? "Switched to the dark theme" : "Switched to the light theme"),
     failed: (what, code) => `${what} failed${code === undefined || code === "" ? "" : `: ${code}`}`,
   },

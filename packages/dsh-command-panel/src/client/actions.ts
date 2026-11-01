@@ -70,7 +70,11 @@ function fail(deps: ActionDeps, what: string, code: string | undefined): void {
 
 // ── session lifecycle ──────────────────────────────────────────────────────
 
-async function createSession(scope: "workspace" | "ungrouped", deps: ActionDeps): Promise<void> {
+async function createSession(
+  scope: "workspace" | "ungrouped",
+  deps: ActionDeps,
+  workspaceId?: string,
+): Promise<void> {
   const ui = deps.uiWorkspace();
   const copy = deps.copy();
   if (ui === undefined) {
@@ -80,8 +84,11 @@ async function createSession(scope: "workspace" | "ungrouped", deps: ActionDeps)
 
   if (scope === "workspace") {
     try {
-      // Inherits the current session's workspace, else the most recent one.
-      ui.startSession();
+      // A named workspace (the second level's fixed row) lands there; an
+      // unnamed one (the first level's fixed row) inherits the current
+      // workspace, or the most recent one.
+      if (workspaceId === undefined) ui.startSession();
+      else ui.startSession(workspaceId);
       deps.close();
     } catch (error) {
       fail(deps, describe(deps, "session.newInWorkspace"), failureCode(error));
@@ -114,6 +121,40 @@ function titleOf(deps: ActionDeps, sessionId: string): string {
   const sessions = deps.sessions();
   const row = sessions?.list.getSnapshot().byId[sessionId];
   return row?.displayTitle ?? sessionId;
+}
+
+/**
+ * Bring one archived session back, then open it.
+ *
+ * The host's own sidebar refuses to open an archived session (archiving means
+ * "put away", and its open guard says so), so a palette row that promises the
+ * session back has to pair the restore write with the open hand-off. The
+ * unarchive write is idempotent; the two failure surfaces stay distinct
+ * because they leave the reader in different places — a failed restore leaves
+ * the session archived, a failed open leaves it restored but invisible.
+ */
+async function restoreSession(sessionId: string, deps: ActionDeps): Promise<void> {
+  const copy = deps.copy();
+  const ui = deps.uiWorkspace();
+  if (ui?.unarchiveSession === undefined) {
+    deps.notify(copy.actions.restoreFailed(undefined), "error");
+    return;
+  }
+  try {
+    await ui.unarchiveSession(sessionId);
+  } catch (error) {
+    deps.notify(copy.actions.restoreFailed(failureCode(error)), "error");
+    return;
+  }
+  try {
+    ui.openSession(sessionId);
+    deps.close();
+    deps.notify(copy.actions.restored(titleOf(deps, sessionId)));
+  } catch {
+    // The restore already landed: staying open with a sentence beats closing
+    // as if nothing happened, and the sidebar now holds the session.
+    deps.notify(copy.actions.restoreOpenFailed, "error");
+  }
 }
 
 async function sessionCommand(
@@ -349,7 +390,10 @@ function invokeShortcut(id: string, deps: ActionDeps): void {
 export async function runCatalogAction(action: RowAction, deps: ActionDeps): Promise<boolean> {
   switch (action.kind) {
     case "create-session":
-      await createSession(action.scope, deps);
+      await createSession(action.scope, deps, action.workspaceId);
+      return true;
+    case "restore-session":
+      await restoreSession(action.sessionId, deps);
       return true;
     case "insert-command":
       insertCommand(action.name, deps);

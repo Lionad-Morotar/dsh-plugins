@@ -34,7 +34,14 @@ export type RowAction =
   | { readonly kind: "open-mode"; readonly mode: PanelMode }
   | { readonly kind: "drill"; readonly scope: SessionScope; readonly title: string }
   | { readonly kind: "open-session"; readonly sessionId: string }
-  | { readonly kind: "create-session"; readonly scope: "workspace" | "ungrouped" }
+  | { readonly kind: "create-session"; readonly scope: "workspace" | "ungrouped"; readonly workspaceId?: string }
+  /**
+   * Enter the switch mode's archive view: the registry-global archive set,
+   * reachable from the fixed bottom row of the workspace list.
+   */
+  | { readonly kind: "drill-archived" }
+  /** Restore one archived session to its list, then open it. */
+  | { readonly kind: "restore-session"; readonly sessionId: string }
   /** Write `/name ` into the composer and let the host command take the argument. */
   | { readonly kind: "insert-command"; readonly name: string }
   | { readonly kind: "session-command"; readonly command: "archive" | "fork" | "cancel" | "pin" }
@@ -236,7 +243,33 @@ export function visibleSessions(
   snapshot: WorkspaceSnapshot,
   scope: SessionScope,
 ): readonly SessionSummary[] {
-  const archived = new Set(snapshot.archivedSessionIds);
+  return scopeSessions(sessions, snapshot, scope, false);
+}
+
+/**
+ * The scope's archived sessions: the mirror image of `visibleSessions`.
+ *
+ * The host keeps archived summaries inside the ordinary session catalogue (the
+ * sidebar's archive view reads the same rows), so this filter needs no second
+ * data plane — the panel's ordinary lists just skip them, and this one keeps
+ * only them.
+ */
+export function archivedSessions(
+  sessions: SessionListState,
+  snapshot: WorkspaceSnapshot,
+  scope: SessionScope,
+): readonly SessionSummary[] {
+  return scopeSessions(sessions, snapshot, scope, true);
+}
+
+/** One scope pass over the catalogue, picking the live side or the archive side. */
+function scopeSessions(
+  sessions: SessionListState,
+  snapshot: WorkspaceSnapshot,
+  scope: SessionScope,
+  archived: boolean,
+): readonly SessionSummary[] {
+  const archiveSet = new Set(snapshot.archivedSessionIds);
   const owned = scope.kind === "workspace" ? workspaceOwnership(snapshot).get(scope.workspaceId) : undefined;
 
   const rows: SessionSummary[] = [];
@@ -244,12 +277,31 @@ export function visibleSessions(
     const session = sessions.byId[id];
     if (session === undefined) continue;
     if (session.blank || session.origin === "subagent") continue;
-    if (archived.has(id)) continue;
+    if (archiveSet.has(id) !== archived) continue;
     if (scope.kind === "workspace" && (owned === undefined || !owned.has(id))) continue;
     if (scope.kind === "ungrouped" && isGrouped(snapshot, id)) continue;
     rows.push(session);
   }
   return rows;
+}
+
+/**
+ * The calendar-day bucket an archived session lands in.
+ *
+ * Local calendar days, not elapsed hours: a session last touched at 23:00
+ * reads as "yesterday" the next morning even though fewer than 24 hours
+ * passed, which is what the bucket label promises.
+ */
+export function dateBucketLabel(updatedAt: number, now: number, copy: Copy): string {
+  const then = new Date(updatedAt);
+  const today = new Date(now);
+  const day = (date: Date): number => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((day(today) - day(then)) / 86_400_000);
+  if (diffDays <= 0) return copy.bucketToday;
+  if (diffDays === 1) return copy.bucketYesterday;
+  if (diffDays <= 7) return copy.bucketWeek;
+  if (diffDays <= 30) return copy.bucketMonth;
+  return copy.bucketOlder;
 }
 
 /** session id → owning workspace id, from the host's one-owner ledger. */
@@ -341,6 +393,21 @@ export function workspaceRows(
     });
   }
 
+  // The two fixed rows close the list: creating a session and reaching the
+  // archive are both "the list I see is not the session I want" intents, and
+  // their data is already in hand, so neither row costs a host round trip.
+  rows.push({
+    key: "scope:new-session",
+    label: copy.newSession,
+    action: { kind: "create-session", scope: "workspace" },
+  });
+  rows.push({
+    key: "scope:archived",
+    label: copy.archivedSessions,
+    hint: copy.sessionsCount(archivedSessions(sessions, snapshot, { kind: "all" }).length),
+    action: { kind: "drill-archived" },
+  });
+
   return rows;
 }
 
@@ -349,6 +416,12 @@ export function workspaceRows(
  *
  * The host's list order is a manual order, not recency, so a palette that wants
  * "the one I was just in" has to sort by `updatedAt` itself.
+ *
+ * In the archive view the same list becomes the archived side: rows restore
+ * instead of switching, and calendar-day buckets keep a long archive readable.
+ * The fixed new-session row rides along only in a workspace scope's ordinary
+ * view — creating a session from inside the archive is not an intention the
+ * view should guess.
  */
 export function sessionRows(
   sessions: SessionListState,
@@ -356,19 +429,32 @@ export function sessionRows(
   scope: SessionScope,
   copy: Copy,
   now: number,
+  archived = false,
 ): PanelRow[] {
-  const visible = [...visibleSessions(sessions, snapshot, scope)];
+  const visible = [...(archived ? archivedSessions(sessions, snapshot, scope) : visibleSessions(sessions, snapshot, scope))];
   visible.sort((left, right) => right.updatedAt - left.updatedAt);
 
-  return visible.map(session => {
+  const rows: PanelRow[] = visible.map(session => {
     const owner = scope.kind === "all" ? workspaceTitle(snapshot, session.id) : undefined;
     const age = copy.age(now - session.updatedAt);
     return {
-      key: `session:${session.id}`,
+      key: archived ? `archive:${session.id}` : `session:${session.id}`,
       label: session.displayTitle,
       detail: owner === undefined ? age : `${owner} · ${age}`,
-      hint: session.running ? copy.running : undefined,
-      action: { kind: "open-session", sessionId: session.id },
+      group: archived ? dateBucketLabel(session.updatedAt, now, copy) : undefined,
+      hint: archived ? copy.restoreHint : session.running ? copy.running : undefined,
+      action: archived
+        ? ({ kind: "restore-session", sessionId: session.id } as const)
+        : ({ kind: "open-session", sessionId: session.id } as const),
     };
   });
+
+  if (!archived && scope.kind === "workspace") {
+    rows.push({
+      key: "scope:new-session",
+      label: copy.newSession,
+      action: { kind: "create-session", scope: "workspace", workspaceId: scope.workspaceId },
+    });
+  }
+  return rows;
 }

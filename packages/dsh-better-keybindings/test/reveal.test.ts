@@ -4,7 +4,15 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { isScrollable, pageTarget, revealDelta, textFieldScroll, type ScrollBox } from "../src/client/reveal.ts";
+import {
+  isScrollable,
+  pageTarget,
+  pickScrollContainer,
+  revealDelta,
+  textFieldScroll,
+  type ScrollBox,
+  type ScrollCandidate,
+} from "../src/client/reveal.ts";
 
 function box(over: Partial<ScrollBox> = {}): ScrollBox {
   return {
@@ -168,5 +176,58 @@ describe("page landing", () => {
   it("honours a different fraction without changing the shape", () => {
     expect(pageTarget(box(0), 1, 1).top).toBe(760);
     expect(pageTarget(box(0), 1, 0.25).top).toBe(190);
+  });
+});
+
+describe("pickScrollContainer", () => {
+  /** One link of the hit element's ancestor chain: overflow style plus metrics. */
+  const candidate = (over: Partial<ScrollCandidate> = {}): ScrollCandidate => ({
+    overflowY: "visible",
+    overflowX: "visible",
+    scrollHeight: 1000,
+    clientHeight: 200,
+    scrollWidth: 400,
+    clientWidth: 400,
+    ...over,
+  });
+
+  it("picks the first candidate that declares a scrollbar and has room to move", () => {
+    // The chain arrives innermost-first, so index 0 is the container the
+    // pointer is visually inside: a nested scroller beats its parent.
+    const chain = [candidate({ overflowY: "auto" }), candidate({ overflowY: "scroll" })];
+    expect(pickScrollContainer(chain)).toBe(0);
+  });
+
+  it("skips an overflow that never scrolls, even when the metrics overflow", () => {
+    // A plain wrapper can carry large scroll metrics without owning a
+    // scrollbar; only auto/scroll is a paging target.
+    const chain = [candidate({ scrollHeight: 5000 }), candidate({ overflowY: "auto" })];
+    expect(pickScrollContainer(chain)).toBe(1);
+  });
+
+  it("skips a scrollbar with nothing to scroll", () => {
+    // 201 vs 200 is the sub-pixel dead zone isScrollable already defines.
+    expect(pickScrollContainer([candidate({ overflowY: "auto", scrollHeight: 201 })])).toBeNull();
+  });
+
+  it("requires the scrollbar on the vertical axis, not just any axis", () => {
+    // A page step writes scrollTop only, so a sideways declaration on a
+    // vertically visible container is a dead key, not a target.
+    expect(pickScrollContainer([candidate({ overflowX: "auto" })])).toBeNull();
+  });
+
+  it("skips a horizontal-only scroller and climbs to the vertical ancestor", () => {
+    // A wide table wrapper scrolls sideways only (overflow-x: auto, no
+    // vertical overflow); the chain keeps climbing to the panel that can
+    // actually take a vertical page step.
+    const chain = [
+      candidate({ overflowX: "auto", scrollWidth: 900, scrollHeight: 200, clientHeight: 200 }),
+      candidate({ overflowY: "auto" }),
+    ];
+    expect(pickScrollContainer(chain)).toBe(1);
+  });
+
+  it("returns null for an empty chain", () => {
+    expect(pickScrollContainer([])).toBeNull();
   });
 });
