@@ -175,6 +175,23 @@ describe("interaction seams", () => {
     expect(nodeG("user").getAttribute("transform")).toBe(`translate(${movedX} ${(user as DumpNode).y})`);
   });
 
+  it("drags a container with its descendants and reports every moved node", () => {
+    const onMove = vi.fn();
+    const view = structuredClone(dump.views.skin as DumpView);
+    const container = view.nodes.find(node => node.id === "dshPlugins.skin");
+    expect(container).toBeDefined();
+    const childIds = (container as DumpNode).children ?? [];
+    expect(childIds.length).toBeGreaterThan(0);
+    createDiagram(host, view, { viewport: VIEWPORT, onMove }).dragNode("dshPlugins.skin", 75, 0);
+    const dx = 75 / VIEWPORT.scale;
+    for (const id of ["dshPlugins.skin", ...childIds]) {
+      const node = view.nodes.find(candidate => candidate.id === id) as DumpNode;
+      expect(nodeG(id).getAttribute("transform")).toBe(`translate(${node.x + dx} ${node.y})`);
+      expect(onMove).toHaveBeenCalledWith(id, node.x + dx, node.y);
+    }
+    expect(onMove).toHaveBeenCalledTimes(childIds.length + 1);
+  });
+
   it("restores a persisted viewport through setViewport", () => {
     const diagram = createDiagram(host, structuredClone(dump.views.index as DumpView), { viewport: VIEWPORT });
     diagram.setViewport({ scale: 0.6, tx: -40, ty: 12 });
@@ -219,5 +236,27 @@ describe("event binding thin layer", () => {
     expect(nodeG("user").getAttribute("transform")).toBe(
       `translate(${(user as DumpNode).x + 100} ${(user as DumpNode).y})`,
     );
+  });
+
+  it("drags a container through pointer events with its descendants following", () => {
+    const onMove = vi.fn();
+    const view = structuredClone(dump.views.skin as DumpView);
+    const container = view.nodes.find(node => node.id === "dshPlugins.skin");
+    expect(container).toBeDefined();
+    const childIds = (container as DumpNode).children ?? [];
+    createDiagram(host, view, { viewport: VIEWPORT, onMove });
+    const svg = host.querySelector("svg");
+    expect(svg).not.toBeNull();
+
+    nodeG("dshPlugins.skin").dispatchEvent(
+      new PointerEvent("pointerdown", { clientX: 300, clientY: 300, cancelable: true, bubbles: true }),
+    );
+    (svg as SVGSVGElement).dispatchEvent(new PointerEvent("pointermove", { clientX: 375, clientY: 300 }));
+    (svg as SVGSVGElement).dispatchEvent(new PointerEvent("pointerup", {}));
+    for (const id of ["dshPlugins.skin", ...childIds]) {
+      const node = view.nodes.find(candidate => candidate.id === id) as DumpNode;
+      expect(nodeG(id).getAttribute("transform")).toBe(`translate(${node.x + 100} ${node.y})`);
+      expect(onMove).toHaveBeenCalledWith(id, node.x + 100, node.y);
+    }
   });
 });

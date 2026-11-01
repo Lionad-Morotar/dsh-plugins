@@ -246,12 +246,44 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     }
   };
 
-  const moveNodeBy = (id: string, dxView: number, dyView: number): void => {
-    const node = nodes.find(n => n.id === id);
-    if (node === undefined) return;
-    node.x += dxView;
-    node.y += dyView;
-    nodeEls.get(id)?.setAttribute("transform", `translate(${node.x} ${node.y})`);
+  const nodeById = new Map(nodes.map(node => [node.id, node] as const));
+
+  /**
+   * The dragged node plus every descendant, in move order: coordinates are
+   * absolute, so a container drag that leaves children behind tears the
+   * picture apart. The visited set is cycle insurance against a malformed
+   * dump; a healthy LikeC4 tree never revisits an id.
+   */
+  const moveGroupOf = (id: string) => {
+    const group: (typeof nodes)[number][] = [];
+    const seen = new Set<string>();
+    const visit = (current: DiagramNode): void => {
+      for (const childId of current.children ?? []) {
+        if (seen.has(childId)) continue;
+        seen.add(childId);
+        const child = nodeById.get(childId);
+        if (child === undefined) continue;
+        group.push(child);
+        visit(child);
+      }
+    };
+    const root = nodeById.get(id);
+    if (root === undefined) return group;
+    seen.add(id);
+    group.push(root);
+    visit(root);
+    return group;
+  };
+
+  /** Translate one move group; returns the members actually moved. */
+  const moveNodeBy = (id: string, dxView: number, dyView: number) => {
+    const group = moveGroupOf(id);
+    for (const member of group) {
+      member.x += dxView;
+      member.y += dyView;
+      nodeEls.get(member.id)?.setAttribute("transform", `translate(${member.x} ${member.y})`);
+    }
+    return group;
   };
 
   const handle: DiagramHandle = {
@@ -284,9 +316,10 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       opts.onSelect?.(selected);
     },
     dragNode(id, dxScreen, dyScreen) {
-      moveNodeBy(id, dxScreen / scale, dyScreen / scale);
-      const node = nodes.find(n => n.id === id);
-      if (node !== undefined) opts.onMove?.(node.id, node.x, node.y);
+      const moved = moveNodeBy(id, dxScreen / scale, dyScreen / scale);
+      // Every moved node reports its own absolute position: the write-back
+      // baselines each offset against that node's laid-out coordinates.
+      for (const member of moved) opts.onMove?.(member.id, member.x, member.y);
     },
   };
 
@@ -317,9 +350,9 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     if (drag !== null) {
       const node = nodes.find(n => n.id === drag?.id);
       if (node === undefined) return;
-      node.x = drag.gx + (event.clientX - drag.ox) / scale;
-      node.y = drag.gy + (event.clientY - drag.oy) / scale;
-      nodeEls.get(node.id)?.setAttribute("transform", `translate(${node.x} ${node.y})`);
+      const nextX = drag.gx + (event.clientX - drag.ox) / scale;
+      const nextY = drag.gy + (event.clientY - drag.oy) / scale;
+      moveNodeBy(node.id, nextX - node.x, nextY - node.y);
       return;
     }
     if (panFrom !== null) {
@@ -329,8 +362,7 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
   });
   svg.addEventListener("pointerup", () => {
     if (drag !== null) {
-      const node = nodes.find(n => n.id === drag?.id);
-      if (node !== undefined) opts.onMove?.(node.id, node.x, node.y);
+      for (const member of moveGroupOf(drag.id)) opts.onMove?.(member.id, member.x, member.y);
       drag = null;
     }
     panFrom = null;
