@@ -10,3 +10,7 @@
 	path = packages/dsh-notify-me
 	url = git@github.com:Lionad-Morotar/dsh-notify-me.git
 	ignore = all
+[submodule "refs/vscode-wakatime"]
+	path = refs/vscode-wakatime
+	url = https://github.com/wakatime/vscode-wakatime
+	ignore = all
