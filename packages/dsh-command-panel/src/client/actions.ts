@@ -26,6 +26,7 @@ import type {
 } from "./dsh.ts";
 import type { Copy } from "./copy.ts";
 import type { RowAction } from "./rows.ts";
+import { requestShutdown, type ShutdownContext } from "../host/shutdown.ts";
 import { PANEL_SOURCE } from "./sources.ts";
 
 /** Collaborators the executors read; every one may be absent on a trimmed host. */
@@ -41,6 +42,8 @@ export interface ActionDeps {
   readonly sidebarRight: () => SidebarRightService | undefined;
   readonly slots: () => SlotService | undefined;
   readonly shortcuts: () => ShortcutsService | undefined;
+  /** Where the shutdown request probes for the host's `appExit`. */
+  readonly shutdownCtx: () => ShutdownContext;
   readonly currentSessionId: () => string | null;
   /** Write into the composer through the panel's existing insertion path. */
   readonly insert: (text: string) => "ok" | "no-session" | "failed";
@@ -346,6 +349,23 @@ function toggleTheme(deps: ActionDeps): void {
   }
 }
 
+/**
+ * Quit the whole host through its `appExit`.
+ *
+ * Only reached after the panel's own confirmation: the runtime fires this on
+ * the second accept, and the host half never throws, so the two outcomes are
+ * the whole contract. `requested` means the host is already tearing down and
+ * closing the panel is the last thing left to do; `unavailable` keeps it open
+ * with the reason on the notice line instead of failing silently.
+ */
+function requestQuit(deps: ActionDeps): void {
+  if (requestShutdown(deps.shutdownCtx()) === "unavailable") {
+    deps.notify(deps.copy().actions.shutdownUnavailable, "error");
+    return;
+  }
+  deps.close();
+}
+
 function insertCommand(name: string, deps: ActionDeps): void {
   const outcome = deps.insert(`/${name} `);
   if (outcome === "ok") {
@@ -409,6 +429,9 @@ export async function runCatalogAction(action: RowAction, deps: ActionDeps): Pro
       return true;
     case "invoke-shortcut":
       invokeShortcut(action.id, deps);
+      return true;
+    case "request-shutdown":
+      requestQuit(deps);
       return true;
     default:
       return false;

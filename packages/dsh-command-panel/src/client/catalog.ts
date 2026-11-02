@@ -72,6 +72,12 @@ export interface CatalogEntry {
    * are separable and can be switched off without losing the rest.
    */
   readonly seat?: boolean;
+  /**
+   * Quits the whole host through its `appExit`; listed only when the runtime's
+   * soft probe says the capability exists. Like `seat`, a host without it
+   * loses one row and nothing else.
+   */
+  readonly hostShutdown?: boolean;
 }
 
 /**
@@ -100,6 +106,12 @@ export const CATALOG: readonly CatalogEntry[] = [
     category: "panel",
     action: { kind: "open-mode", mode: "switch" },
     shortcutId: PANEL_COMMAND_IDS.switch,
+  },
+  {
+    id: "app.quit",
+    category: "panel",
+    action: { kind: "request-shutdown" },
+    hostShutdown: true,
   },
 
   // 会话：生命周期
@@ -201,6 +213,8 @@ function satisfied(requirement: Requirement, context: ActionContext): boolean {
 export interface AvailabilityOptions {
   /** Turn off the seat-backed entries (settings, shortcut reference). */
   readonly seatSurfaces: boolean;
+  /** Whether the host answers the `appExit` probe; off hides the quit row. */
+  readonly hostShutdown?: boolean;
   /** Host slash commands known to exist for this session. */
   readonly hostCommands?: ReadonlySet<string>;
 }
@@ -217,6 +231,7 @@ export function availableCatalog(
   options: AvailabilityOptions,
 ): readonly CatalogEntry[] {
   return CATALOG.filter(entry => {
+    if (entry.hostShutdown === true && options.hostShutdown !== true) return false;
     if (entry.seat === true && !options.seatSurfaces) return false;
     if (entry.requiresHostCommand !== undefined) {
       if (options.hostCommands === undefined) return false;

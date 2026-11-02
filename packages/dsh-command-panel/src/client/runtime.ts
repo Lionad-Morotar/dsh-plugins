@@ -62,6 +62,7 @@ import {
   modelFor,
   moveHighlight,
   readPrefix,
+  readQuitAccept,
   withQuery,
   type PanelMode,
   type SessionScope,
@@ -69,7 +70,7 @@ import {
 import { composeInsertion } from "./paths.ts";
 import { rankRows } from "./ranking.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
-import { catalogRows, shortcutRows, type PanelRow } from "./rows.ts";
+import { catalogRows, shortcutRows, withConfirmLabel, type PanelRow } from "./rows.ts";
 import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from "./sources.ts";
 import { statusStamp } from "./status.ts";
 import { createPanelStore } from "./store.ts";
@@ -395,6 +396,20 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   }
 
   /**
+   * Soft probe for the host's `appExit`, the same gate the shutdown request
+   * itself uses. Probed live on every composition rather than cached: the
+   * capability has no injection announcement to listen for, and a get that
+   * misses or refuses simply costs one row.
+   */
+  function hostShutdownAvailable(): boolean {
+    try {
+      return typeof deps.ctx.get("appExit") === "function";
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * The panel's own rows, ahead of the host's slash commands.
    *
    * Built synchronously so the command mode can show content on the very first
@@ -406,6 +421,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   function composeCommandRows(hostRows: readonly PanelRow[]): PanelRow[] {
     const entries = availableCatalog(actionContext(), {
       seatSurfaces: deps.config?.seatSurfaces !== false,
+      hostShutdown: hostShutdownAvailable(),
       hostCommands: knownHostCommands,
     });
     const shortcuts = services.shortcuts();
@@ -430,6 +446,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       sidebarRight: () => refs.sidebarRight,
       slots: () => refs.slots,
       shortcuts: () => refs.shortcuts,
+      shutdownCtx: () => deps.ctx,
       currentSessionId,
       insert,
       close,
@@ -460,7 +477,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   /** Re-project the rows already in hand for the current query, without a round trip. */
   function rankLocal(): void {
     const snapshot = store.getSnapshot();
-    const ranked = rankRows(rawRows, snapshot.model.query).slice(0, MAX_ROWS);
+    const ranked = rankRows(withConfirmLabel(rawRows, snapshot.model.confirmQuit, copy()), snapshot.model.query).slice(0, MAX_ROWS);
     store.set({ rows: ranked });
   }
 
@@ -495,7 +512,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       rawRows = composed;
       cache.set(keyOf(latest), composed);
       store.set({
-        rows: rankRows(composed, latest.model.query).slice(0, MAX_ROWS),
+        rows: rankRows(withConfirmLabel(composed, latest.model.confirmQuit, copy()), latest.model.query).slice(0, MAX_ROWS),
         status: result.status,
         message: result.message ?? null,
         // A degraded catalogue still leaves usable rows, so its reason rides the
@@ -582,7 +599,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     store.set({
       open: true,
       model,
-      rows: rankRows(seeded, initialQuery).slice(0, MAX_ROWS),
+      rows: rankRows(withConfirmLabel(seeded, model.confirmQuit, copy()), initialQuery).slice(0, MAX_ROWS),
       status: "loading",
       message: null,
       notice: null,
@@ -784,6 +801,18 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       case "open-session":
         acceptSession(row.action.sessionId);
         return;
+      case "request-shutdown": {
+        const reading = readQuitAccept(store.getSnapshot().model);
+        if (reading.kind === "arm") {
+          // The first press only arms: the row becomes its own confirmation,
+          // and nothing is asked of the host yet.
+          store.set({ model: reading.model });
+          rankLocal();
+          return;
+        }
+        void runCatalogAction(row.action, actionDeps());
+        return;
+      }
       default:
         // Catalogue kinds (session lifecycle, surfaces, theme) run in their own
         // layer, which owns their notices and their failure vocabulary.

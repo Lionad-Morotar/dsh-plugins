@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { failureCode, runCatalogAction, seatActions, type ActionDeps } from "../src/client/actions.ts";
 import { copyFor } from "../src/client/copy.ts";
+import type { ShutdownContext } from "../src/host/shutdown.ts";
 import type { RemoteResult, SlotEntry } from "../src/client/dsh.ts";
 import { SESSION_A, SESSION_B, fakeSessions, fakeWorkspaces, sessionList, workspaceSnapshot } from "./fixtures.ts";
 
@@ -36,6 +37,8 @@ interface HarnessOptions {
   readonly unarchiveThrows?: unknown;
   readonly openTabThrows?: unknown;
   readonly colorScheme?: "light" | "dark";
+  /** The host's appExit capability; absent means the shutdown probe finds nothing. */
+  readonly appExit?: (code: number) => void;
   readonly absent?: readonly ("uiWorkspace" | "layout" | "theme" | "pluginNavigation" | "sidebarRight" | "slots" | "workspaces" | "sessions" | "shortcuts")[];
   readonly invokeThrows?: unknown;
 }
@@ -112,6 +115,10 @@ function harness(options: HarnessOptions = {}): Harness {
     unpinSession: vi.fn(async () => undefined),
   };
 
+  const shutdownCtx: ShutdownContext = {
+    get: name => (name === "appExit" ? options.appExit : undefined),
+  };
+
   const deps: ActionDeps = {
     sessions: () => sessions,
     workspaces: () => workspaces,
@@ -122,6 +129,7 @@ function harness(options: HarnessOptions = {}): Harness {
     sidebarRight: () => sidebarRight,
     slots: () => slots,
     shortcuts: () => shortcuts as never,
+    shutdownCtx: () => shutdownCtx,
     currentSessionId: () => options.currentSessionId === undefined ? SESSION_A.id : options.currentSessionId,
     insert: text => {
       inserted.push(text);
@@ -328,6 +336,25 @@ describe("invoke-shortcut", () => {
     await runCatalogAction({ kind: "invoke-shortcut", id: "inspector.toggle" }, h.deps);
     expect(h.closed()).toBe(0);
     expect(h.notices).toEqual([{ text: copy.actions.failed("inspector.toggle", "shortcuts/boom"), tone: "error" }]);
+  });
+});
+
+describe("request-shutdown", () => {
+  it("fires appExit with 0 exactly once and closes", async () => {
+    const appExit = vi.fn();
+    const h = harness({ appExit });
+    expect(await runCatalogAction({ kind: "request-shutdown" }, h.deps)).toBe(true);
+    expect(appExit).toHaveBeenCalledTimes(1);
+    expect(appExit).toHaveBeenCalledWith(0);
+    expect(h.closed()).toBe(1);
+    expect(h.notices).toEqual([]);
+  });
+
+  it("keeps the panel open and says why when the host has no appExit", async () => {
+    const h = harness();
+    await runCatalogAction({ kind: "request-shutdown" }, h.deps);
+    expect(h.notices).toEqual([{ text: copy.actions.shutdownUnavailable, tone: "error" }]);
+    expect(h.closed()).toBe(0);
   });
 });
 
