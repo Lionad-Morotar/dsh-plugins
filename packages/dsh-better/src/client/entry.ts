@@ -36,6 +36,8 @@ import {
   type ShortcutRegistryLike,
 } from "./focus.ts";
 import { insertStyles } from "./styles.ts";
+import { createWidthWatcher, restoreLayoutWidths, type LayoutScopeLike } from "./layout-adapter.ts";
+import { readLayoutWidths } from "./layout-widths.ts";
 import { CompactionStat } from "./compaction-stat.tsx";
 import { COMPACTION_ID, COMPACTION_ORDER, COMPACTION_SLOT } from "./compaction-registration.ts";
 import { installCompactionStyles } from "./compaction-styles.ts";
@@ -319,6 +321,26 @@ export const clientPlugin = {
     // entry rather than the picker, so the two surfaces stay independent.
     ctx.effect(() => installCompactionStyles(doc), "dsh-better: compaction count stylesheet");
 
+    // The two panel widths. The layout store is memory-only: every load rebuilds
+    // it from the contract literals (left sidebar 280px, right panel null → 45%
+    // of the frame), so a dragged width is gone on restart. This seeds the store
+    // from the remembered geometry before the frame's first render, then keeps
+    // the memory current after each drag. The service is a soft probe rather than
+    // an `inject` declaration so a host that moved it still gets every other
+    // feature in this package.
+    ctx.effect(() => {
+      const storage = deviceStorage();
+      const remembered = readLayoutWidths(storage);
+      ctx.inject?.<LayoutScopeLike>(["layout"], scope => {
+        restoreLayoutWidths(scope, remembered);
+      });
+      const watcher = doc === undefined ? undefined : createWidthWatcher({ document: doc, storage });
+      const detach = watcher?.attach();
+      return () => {
+        detach?.();
+      };
+    }, "dsh-better: panel width memory");
+
     // The compression count beside the context meter. Nothing is injected: the
     // slot hands every entry `useProjection` and a namespace-bound `t`, which is
     // the whole contract this reading needs.
@@ -484,7 +506,7 @@ export const clientPlugin = {
     // choice, and the header is where the host's pin seam actually lives.
     const tabs = createTabController({
       ledger: viewLedger(ctx.slots),
-      storage: tabStorage(),
+      storage: deviceStorage(),
     });
     ctx.effect(
       () =>
@@ -701,8 +723,8 @@ function viewLedger(slots: SlotsLike): ViewLedger {
   };
 }
 
-/** Page storage. Absent under a runtime without `localStorage`, which the controller treats as memory only. */
-function tabStorage(): Storage | undefined {
+/** Device storage. Absent under a runtime without `localStorage`, which its consumers treat as memory only. */
+function deviceStorage(): Storage | undefined {
   try {
     return globalThis.localStorage;
   } catch {

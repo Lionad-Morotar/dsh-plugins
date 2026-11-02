@@ -137,6 +137,8 @@ pnpm --filter dsh-better build      # 产出 lib/
 
 `src/compaction.ts` 是 `sessionCompaction` 投影单元（折叠、schema、wire view），`src/index.ts` 只做注册；`test/compaction.test.ts` 把口径钉死：`compaction/end` 无 error 记落地、带 error 记失败、`start` 与 `summary` 都不计、`seq` 小于继承前缀的事件整段跳过；另外还断言无关事件返回同一个引用（每个 token chunk 都会过这个折叠，换新对象会让 registry 的 `Object.is` 变更检查每次都触发）。`client/compaction-stat.tsx` 的 `compactionReading` 是纯函数（零次静默、单复数、失败说明），`client/compaction-styles.ts` 的样式规则由 `test/compaction-stat.test.ts` 断言 `order: 1` 与 slot 顺序的配对——这两半必须一起成立才能落在占用环右边。
 
+`client/layout-widths.ts` 是面板宽度记忆的纯决策（文档编解码、computed grid 列解析、一次拖拽该记哪根栏、恢复计划），`test/layout-widths.test.ts` 钉住四件事：坏文档只丢坏字段、折叠栏不写成 0、拖左栏不会把右栏被挤压的让步值记进去、宿主没有那组私有 action 时恢复静默降级。`client/layout-adapter.ts` 是宿主接线（读私有 bound action、找 frame、监听原生 pointer 序列），行为靠真机验证：两栏拖宽后刷新页面与服务重启都保留。
+
 ## 会话标签栏
 
 插件往 `conversation.view` 注册一条，标签栏就多一个标签：WakaTime、文件、Git、轨迹都是这么来的。宿主自己只有一个隐藏手段，就是头部「更多」菜单里的取消固定，而且那份名单只活在内存里，刷新即丢，这个菜单在当前宿主上又不会出现。于是标签一旦注册，就没有地方把它关掉。
@@ -150,3 +152,16 @@ pnpm --filter dsh-better build      # 产出 lib/
 规划规则前先读一遍标签条的真实 DOM：位置模型要求「按钮数 = 对话 + ledger 行数、每个标签文本与 ledger 解析出的 label 逐位相等」，全对上才按位寻址（对话占第 1 格，ledger 第 i 行占第 i+2 格）；宿主按开发者工具开关会滤掉轨迹标签，位对不上时退化为按 label 文本在按钮里找唯一匹配，找不到或有歧义就一个都不藏——藏错邻居比不藏更糟。宿主还没渲染头部时（本包 apply 早于 React 挂载）按帧重试而不是瞎猜。规则在 ledger 变动与勾选切换时重排，所以后注册的插件插入中间也会让后续按钮跟着挪。
 
 选择存在 `localStorage` 的 `dsh-better.tabs` 里，是一份隐藏 id 的列表，跟宿主按会话存的草稿文档分开。坏掉或读不出的文档当成「什么都不隐藏」，避免一次损坏把所有标签藏掉。后装上的插件照常出现、默认勾选；只有名单里点过名的才会被藏。名单是唯一事实：样式表每次加载都照它重排，宿主自己的取消固定名单既然没有入口可写，也就不存在要迁就的并发改动。
+
+## 面板宽度记忆
+
+宿主的布局 store 是内存态：每次加载左栏从 280px、右栏从「空」重建，右栏第一次展开才按窗口宽度的 45% 定下宽度。于是拖好的宽度一重启就没了，左栏跳回 280，右栏跳回大半个窗口。这不是 bug，宿主文档里明写了「面板几何是暂态的，刷新恢复默认」，持久化只能落在外部。
+
+本包维护一份全局文档 `localStorage` 的 `dsh-better.layout-widths`，形如 `{"sidebar":390,"rightbar":700}`，两根栏各一项。两份宽度都是整窗偏好而不是会话事实，所以是全局一份；右侧栏自己的布局（标签树、选中、展开态）仍由 `dsh.sidebar-right.v1.<sessionId>` 按会话保存，本包不碰。没拖过的栏不写进文档，空文档等于「什么都不恢复」，新装用户看到的仍是宿主默认几何。
+
+恢复走 layout store 自己的 action，不是覆盖 grid：`ctx.layout` 公开面只有导航（`selectPanel`、`toggleSidebar`、`openRightbar`、`closeRightbar`），宽度写入在根 store 的 bound action 集合里，只在服务实例的 `panels` 字段上可达。那是私有字段，包内按运行时特性检测使用，宿主改名或删掉就静默降级为「不恢复」。走 action 的收益是三方一致：store、frame 的 inline `grid-template-columns`、拖拽手柄说的永远是同一个数；如果改成注入一张 `!important` 样式表盖上 grid，宿主下一次拖拽就会与覆盖层打架，用户拖不动、store 与视觉还会分叉。
+
+写入时机是拖拽结束时，监听的是浏览器原生的 pointer 序列而不是 frame 的 `data-dragging`。那个属性是 React 状态投影，快拖有可能在一次 commit 里起止，属性从未变过，宽度就永远记不下来。手柄自己捕获指针，所以松手事件一定拿得到，`data-side` 还顺带说明了拖的是哪根栏。松开后等一帧再量：store 的写入在宿主自己的 pointerup 里，frame 的 inline grid 要等那次 commit 落地。拖左栏时右栏会被挤窄，但那是 frame 算出来的让步、不是右栏的偏好，按 `data-side` 结算就不会把挤压值写进右栏记忆。
+
+不记忆的边界：折叠态归宿主（左栏折叠即忘记宽度，展开回默认宽度，这是宿主的产品决定，本包不改）；窗口变窄时 store 的 clamp 与 frame 的让步照常生效，记忆值只在宿主允许的范围内落地。桌面端与 web 端是两个 origin，各自记忆各自的宽度。
+
