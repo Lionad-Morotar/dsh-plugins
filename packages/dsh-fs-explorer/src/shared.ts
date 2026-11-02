@@ -16,6 +16,15 @@ export const VIEW_ORDER = 100;
 export const LOCALE_NAMESPACE = "fs-explorer";
 
 /**
+ * Host service key of the whole-document channel.
+ *
+ * The client half reaches it through the Typert gateway rather than by
+ * importing the host half, so this name and the wire types in `host/types.ts`
+ * are the entire contract between the two surfaces.
+ */
+export const DOCUMENTS_SERVICE = "fsExplorerDocuments";
+
+/**
  * Prefix for a host-truncated directory listing.
  *
  * `workspaceFiles.list` caps each level and has no paging parameter, so the
