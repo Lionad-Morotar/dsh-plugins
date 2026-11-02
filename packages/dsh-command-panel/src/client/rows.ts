@@ -37,8 +37,9 @@ export type RowAction =
   | { readonly kind: "open-session"; readonly sessionId: string }
   | { readonly kind: "create-session"; readonly scope: "workspace" | "ungrouped"; readonly workspaceId?: string }
   /**
-   * Enter the switch mode's archive view: the registry-global archive set,
-   * reachable from the fixed bottom row of the workspace list.
+   * Enter the switch mode's archive view; which archive it lists is the scope
+   * the caller was in — the root workspace row reaches the registry-global
+   * set, a workspace session list reaches that workspace's own archive.
    */
   | { readonly kind: "drill-archived" }
   /** Restore one archived session to its list, then open it. */
@@ -453,9 +454,10 @@ export function workspaceRows(
  *
  * In the archive view the same list becomes the archived side: rows restore
  * instead of switching, and calendar-day buckets keep a long archive readable.
- * The fixed new-session row rides along only in a workspace scope's ordinary
- * view — creating a session from inside the archive is not an intention the
- * view should guess.
+ * A workspace scope's ordinary view closes with two fixed rows — new session,
+ * then that workspace's archived sessions — while the archive itself grows
+ * neither: creating or drilling from inside the archive is not an intention
+ * the view should guess.
  */
 export function sessionRows(
   sessions: SessionListState,
@@ -487,10 +489,19 @@ export function sessionRows(
   });
 
   if (!archived && scope.kind === "workspace") {
+    // The trailing pair both answer "the list I see is not the session I want";
+    // the archive count reads the same workspace scope so the hint never
+    // promises a larger archive than the drilled list delivers.
     rows.push({
       key: "scope:new-session",
       label: copy.newSession,
       action: { kind: "create-session", scope: "workspace", workspaceId: scope.workspaceId },
+    });
+    rows.push({
+      key: "scope:archived",
+      label: copy.archivedSessions,
+      hint: copy.sessionsCount(archivedSessions(sessions, snapshot, scope).length),
+      action: { kind: "drill-archived" },
     });
   }
   return rows;

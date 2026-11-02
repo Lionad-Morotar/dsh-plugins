@@ -794,11 +794,20 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     scheduleLoad(0);
   }
 
-  /** The archive view is the all-scope list with its filter state on. */
+  /**
+   * The archive view keeps the list it was opened from: the root-level row
+   * lands on the registry-global set, a workspace row on that workspace's own
+   * archive — the null root scope falls back to the global set.
+   */
   function drillArchivedTo(): void {
     const snapshot = store.getSnapshot();
     rawRows = [];
-    store.set({ model: drillArchived(snapshot.model), status: "loading", rows: [], notice: null });
+    store.set({
+      model: drillArchived(snapshot.model, snapshot.model.scope ?? { kind: "all" }),
+      status: "loading",
+      rows: [],
+      notice: null,
+    });
     scheduleLoad(0);
   }
 
