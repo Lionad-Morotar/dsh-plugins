@@ -1,0 +1,6 @@
+# Markdown reader Loader row. The client half waits for the `fsExplorer`
+# service through its plugin `inject`, so row order against the file explorer
+# is irrelevant.
+- insert:
+    - id: fs-markdown
+      name: 'dsh-fs-markdown'
