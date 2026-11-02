@@ -21,6 +21,7 @@ import type {
   CommandDescriptor,
   FileReferenceCandidate,
   GitExplorerRemote,
+  HostShutdownRemote,
   PathExplorerRemote,
   SessionInput,
   SessionOpenFace,
@@ -83,6 +84,8 @@ interface HarnessOptions {
   readonly sessionOpen?: SessionOpenFace | null;
   /** The gitExplorer remote the hex commit plane reads; absent keeps it out. */
   readonly gitExplorer?: GitExplorerRemote;
+  /** The remote shutdown face; null keeps the namespace out of the context. */
+  readonly hostShutdown?: HostShutdownRemote | null;
   /**
    * The session catalogue rows; an array swaps the list snapshots answer with,
    * a record replaces the whole sessions fake (for cases that need a live one).
@@ -105,6 +108,7 @@ interface Harness {
   };
   readonly input: SessionInput;
   readonly inserted: string[];
+  readonly shutdownRequest: ReturnType<typeof vi.fn>;
   readonly verbs: PanelVerbs;
   readonly store: ReturnType<typeof createRuntime>["__test"]["store"];
 }
@@ -145,6 +149,9 @@ function harness(options: HarnessOptions = {}): Harness {
     request: vi.fn(),
     take: vi.fn(),
   };
+
+  const shutdownRequest = vi.fn(async () => ({ ok: true as const, value: "requested" as const }));
+  const shutdownFace: HostShutdownRemote = { request: shutdownRequest };
 
   const fakes: Record<string, unknown> = {
     sessions: {
@@ -205,6 +212,7 @@ function harness(options: HarnessOptions = {}): Harness {
     pluginNavigation: { openList: vi.fn(), openBundle: vi.fn() },
     workbench,
     ...(options.pathExplorer === null ? {} : { "remote.pathExplorer": options.pathExplorer ?? defaultPathExplorer() }),
+    ...(options.hostShutdown === null ? {} : { "remote.hostShutdown": options.hostShutdown ?? shutdownFace }),
     ...(options.sessionOpen === undefined || options.sessionOpen === null
       ? {}
       : { "remote.session": options.sessionOpen }),
@@ -257,6 +265,7 @@ function harness(options: HarnessOptions = {}): Harness {
     inserted,
     verbs: runtime.__test.verbs,
     store: runtime.__test.store,
+    shutdownRequest,
   };
 }
 
@@ -376,6 +385,44 @@ describe("panel lifecycle", () => {
     const labels = h.store.getSnapshot().rows.map(row => row.label);
     expect(labels).not.toContain("导航：打开设置");
     expect(labels).toContain("导航：打开插件页面");
+  });
+});
+
+describe("quit row availability", () => {
+  /** The quit row exists only where the remote shutdown face is in hand. */
+  function quitRow(h: Harness): boolean {
+    return h.store.getSnapshot().rows.some(row => row.action.kind === "request-shutdown");
+  }
+
+  it("lists the quit row when the remote shutdown face is mounted", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.commands");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    expect(quitRow(h)).toBe(true);
+  });
+
+  it("keeps the quit row hidden without the remote face, though the context reads no appExit", async () => {
+    const h = harness({ hostShutdown: null });
+    runCommand(h, "command-panel.commands");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    // The fake context's get answers undefined for everything, so this case
+    // also pins that the row never came from a client-context appExit probe.
+    expect(quitRow(h)).toBe(false);
+  });
+
+  it("arms on the first accept and fires the remote shutdown on the second", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.commands");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.accept(h.store.getSnapshot().rows.find(row => row.action.kind === "request-shutdown")!);
+    // Still open after arming, and the host has heard nothing yet.
+    expect(h.store.getSnapshot().open).toBe(true);
+    expect(h.shutdownRequest).not.toHaveBeenCalled();
+
+    h.verbs.accept(h.store.getSnapshot().rows.find(row => row.action.kind === "request-shutdown")!);
+    await vi.waitFor(() => expect(h.shutdownRequest).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(h.store.getSnapshot().open).toBe(false));
   });
 });
 

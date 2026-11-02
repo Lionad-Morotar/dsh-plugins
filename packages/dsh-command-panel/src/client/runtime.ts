@@ -23,6 +23,7 @@ import type {
   ConversationService,
   FileReferencesRemote,
   GitExplorerRemote,
+  HostShutdownRemote,
   InputActions,
   LayoutService,
   LocaleService,
@@ -40,7 +41,7 @@ import type {
   Unsubscribe,
   WorkspacesService,
 } from "./dsh.ts";
-import { isGitExplorerFace, isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
+import { isGitExplorerFace, isHostShutdownFace, isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
 import { runCatalogAction, type ActionDeps } from "./actions.ts";
 import { createBridgeView, type BridgeState } from "./bridge.ts";
 import { planClaim, type ClaimProbe, type ClaimTarget } from "./claims.ts";
@@ -195,6 +196,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     commands?: CommandsRemote;
     pathExplorer?: PathExplorerRemote;
     gitExplorer?: GitExplorerRemote;
+    hostShutdown?: HostShutdownRemote;
     sessionOpen?: SessionOpenFace;
     sessions?: SessionsService;
     workspaces?: WorkspacesService;
@@ -396,17 +398,16 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   }
 
   /**
-   * Soft probe for the host's `appExit`, the same gate the shutdown request
-   * itself uses. Probed live on every composition rather than cached: the
-   * capability has no injection announcement to listen for, and a get that
-   * misses or refuses simply costs one row.
+   * Whether the host half's remote shutdown face is in hand.
+   *
+   * The face is the whole availability story: `appExit` lives only on the host
+   * process's Cordis tree, so no client-context read can ever see it (the
+   * defect this seam once had). The injected face arrives and leaves through
+   * the injection below, and a composition that misses it simply costs one
+   * row — no caching, no stale row after a namespace goes away.
    */
   function hostShutdownAvailable(): boolean {
-    try {
-      return typeof deps.ctx.get("appExit") === "function";
-    } catch {
-      return false;
-    }
+    return isHostShutdownFace(refs.hostShutdown);
   }
 
   /**
@@ -446,7 +447,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       sidebarRight: () => refs.sidebarRight,
       slots: () => refs.slots,
       shortcuts: () => refs.shortcuts,
-      shutdownCtx: () => deps.ctx,
+      shutdownRequest: () => (isHostShutdownFace(refs.hostShutdown) ? refs.hostShutdown : undefined),
       currentSessionId,
       insert,
       close,
@@ -1331,6 +1332,17 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       if (isPathExplorerFace(face)) refs.pathExplorer = face;
       return () => {
         refs.pathExplorer = undefined;
+      };
+    }),
+  );
+  // The quit row's channel, published by this package's own host half in the
+  // same way. A host without it loses one row and nothing else.
+  disposers.push(
+    deps.ctx.inject(["remote.hostShutdown"], scope => {
+      const face = scope.get("remote.hostShutdown");
+      if (isHostShutdownFace(face)) refs.hostShutdown = face;
+      return () => {
+        refs.hostShutdown = undefined;
       };
     }),
   );

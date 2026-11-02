@@ -9,6 +9,12 @@
 /** Cordis service key and Typert wire namespace of the host half. */
 export const PATH_SERVICE = "pathExplorer";
 
+/** Cordis service key and Typert wire namespace of the shutdown host half. */
+export const SHUTDOWN_SERVICE = "hostShutdown";
+
+/** Answer of one remote shutdown request; never a throw, never more. */
+export type ShutdownRequestResult = "requested" | "unavailable";
+
 /** One filesystem location the explorer can name. */
 export interface PathEntry {
   readonly path: string;

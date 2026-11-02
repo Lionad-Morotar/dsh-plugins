@@ -13,7 +13,7 @@
  * fallback somewhere in the panel.
  */
 
-import type { PathResolveResult } from "../shared.ts";
+import type { PathResolveResult, ShutdownRequestResult } from "../shared.ts";
 
 export type Unsubscribe = () => void;
 
@@ -106,6 +106,25 @@ export interface PathExplorerRemote {
 export function isPathExplorerFace(value: unknown): value is PathExplorerRemote {
   if (value === null || typeof value !== "object") return false;
   return typeof (value as Record<string, unknown>).resolve === "function";
+}
+
+// ── Host shutdown (this package's host half) ───────────────────────────────
+
+/**
+ * The one endpoint the quit row calls.
+ *
+ * The answer travels from the host process, where `appExit` actually lives;
+ * the client half never names that capability itself, so a host without the
+ * namespace simply never hands the row out.
+ */
+export interface HostShutdownRemote {
+  request(): Promise<RemoteResult<ShutdownRequestResult>>;
+}
+
+/** Whether a value structurally answers the hostShutdown face. */
+export function isHostShutdownFace(value: unknown): value is HostShutdownRemote {
+  if (value === null || typeof value !== "object") return false;
+  return typeof (value as Record<string, unknown>).request === "function";
 }
 
 /**

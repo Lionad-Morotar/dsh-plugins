@@ -1,6 +1,10 @@
+import { Context } from "@deepseek-ai/cordis";
+import { remoteMethods } from "@deepseek-ai/dsh-typert-protocol";
 import { describe, expect, it, vi } from "vitest";
 
+import { HostShutdownService } from "../src/host/shutdown-remote.ts";
 import { requestShutdown } from "../src/host/shutdown.ts";
+import { SHUTDOWN_SERVICE } from "../src/shared.ts";
 
 describe("requestShutdown", () => {
   it("calls appExit once with 0 and answers requested", () => {
@@ -39,6 +43,43 @@ describe("requestShutdown", () => {
 
     expect(requestShutdown(ctx)).toBe("requested");
     expect(requestShutdown(ctx)).toBe("requested");
+    expect(appExit).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("HostShutdownService", () => {
+  it("publishes one request endpoint and waits on no host service", () => {
+    expect(HostShutdownService.inject).toEqual([]);
+    const markers = remoteMethods(new HostShutdownService(new Context()));
+    expect(markers.map(marker => marker.exportName ?? marker.method)).toEqual(["request"]);
+    expect(SHUTDOWN_SERVICE).toBe("hostShutdown");
+  });
+
+  it("answers requested by firing the host context's appExit with 0", async () => {
+    const ctx = new Context();
+    const appExit = vi.fn();
+    ctx.provide("appExit", appExit);
+    const service = new HostShutdownService(ctx);
+
+    await expect(service.request()).resolves.toBe("requested");
+    expect(appExit).toHaveBeenCalledTimes(1);
+    expect(appExit).toHaveBeenCalledWith(0);
+  });
+
+  it("answers unavailable on a host context without appExit, firing nothing", async () => {
+    const service = new HostShutdownService(new Context());
+
+    await expect(service.request()).resolves.toBe("unavailable");
+  });
+
+  it("keeps answering across calls: no dedup at the endpoint either", async () => {
+    const ctx = new Context();
+    const appExit = vi.fn();
+    ctx.provide("appExit", appExit);
+    const service = new HostShutdownService(ctx);
+
+    await expect(service.request()).resolves.toBe("requested");
+    await expect(service.request()).resolves.toBe("requested");
     expect(appExit).toHaveBeenCalledTimes(2);
   });
 });

@@ -13,6 +13,7 @@
  */
 
 import type {
+  HostShutdownRemote,
   LayoutService,
   PluginNavigationService,
   RemoteResult,
@@ -26,7 +27,6 @@ import type {
 } from "./dsh.ts";
 import type { Copy } from "./copy.ts";
 import type { RowAction } from "./rows.ts";
-import { requestShutdown, type ShutdownContext } from "../host/shutdown.ts";
 import { PANEL_SOURCE } from "./sources.ts";
 
 /** Collaborators the executors read; every one may be absent on a trimmed host. */
@@ -42,8 +42,11 @@ export interface ActionDeps {
   readonly sidebarRight: () => SidebarRightService | undefined;
   readonly slots: () => SlotService | undefined;
   readonly shortcuts: () => ShortcutsService | undefined;
-  /** Where the shutdown request probes for the host's `appExit`. */
-  readonly shutdownCtx: () => ShutdownContext;
+  /**
+   * The host half's remote shutdown face; absent where the namespace never
+   * mounted, which is also why the quit row itself is hidden up in the runtime.
+   */
+  readonly shutdownRequest: () => HostShutdownRemote | undefined;
   readonly currentSessionId: () => string | null;
   /** Write into the composer through the panel's existing insertion path. */
   readonly insert: (text: string) => "ok" | "no-session" | "failed";
@@ -350,20 +353,32 @@ function toggleTheme(deps: ActionDeps): void {
 }
 
 /**
- * Quit the whole host through its `appExit`.
+ * Quit the whole host through the remote shutdown face.
  *
- * Only reached after the panel's own confirmation: the runtime fires this on
- * the second accept, and the host half never throws, so the two outcomes are
- * the whole contract. `requested` means the host is already tearing down and
- * closing the panel is the last thing left to do; `unavailable` keeps it open
- * with the reason on the notice line instead of failing silently.
+ * Only reached after the panel's own confirmation, and only when the runtime
+ * saw the namespace at all. The host half answers business results, the
+ * transport answers carrier failures, and both fold into the same two
+ * outcomes: `requested` means the host is already tearing down and closing the
+ * panel is the last thing left to do; anything else keeps it open with the
+ * reason on the notice line instead of failing silently.
  */
-function requestQuit(deps: ActionDeps): void {
-  if (requestShutdown(deps.shutdownCtx()) === "unavailable") {
+async function requestQuit(deps: ActionDeps): Promise<void> {
+  const face = deps.shutdownRequest();
+  if (face === undefined) {
     deps.notify(deps.copy().actions.shutdownUnavailable, "error");
     return;
   }
-  deps.close();
+  try {
+    const result = await face.request();
+    if (result.ok && result.value === "requested") {
+      deps.close();
+      return;
+    }
+  } catch {
+    // A rejecting transport is an unreachable host, not a caller error: the
+    // panel stays open either way, so the reason is all that differs.
+  }
+  deps.notify(deps.copy().actions.shutdownUnavailable, "error");
 }
 
 function insertCommand(name: string, deps: ActionDeps): void {
@@ -431,7 +446,7 @@ export async function runCatalogAction(action: RowAction, deps: ActionDeps): Pro
       invokeShortcut(action.id, deps);
       return true;
     case "request-shutdown":
-      requestQuit(deps);
+      await requestQuit(deps);
       return true;
     default:
       return false;
