@@ -122,6 +122,19 @@ const pathOf = (edge: DiagramEdge): string => {
   return d;
 };
 
+/**
+ * Approximate line width in ems: CJK sits on a full em, latin near 0.55.
+ * Only used to pick a font size that keeps a label inside its measured plate;
+ * no layout engine is available when the SVG is built.
+ */
+const measureEm = (line: string): number => {
+  let width = 0;
+  for (const char of line) {
+    width += /[\u2e80-\u9fff\uf900-\ufaff\uff00-\uffef]/u.test(char) ? 1 : 0.62;
+  }
+  return width;
+};
+
 const descriptionText = (node: DiagramNode): string | null => {
   const d = node.description;
   if (d === null || d === undefined) return null;
@@ -176,15 +189,30 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
           opacity: 0.85,
         }),
       );
-      const text = el("text", {
-        x: box.x,
-        y: box.y + box.height * 0.78,
-        fill: "#c9ccd2",
-        "font-size": box.height * 0.86,
-        "font-family": "system-ui,sans-serif",
-      });
-      text.textContent = edge.label;
-      g.append(text);
+      // LikeC4 lays multi-line labels out inside `labelBBox`; SVG collapses a
+      // literal newline into a space, so rendering the whole string as one
+      // <text> made a three-line label run far past its dark plate and the
+      // tail fell onto the white canvas.
+      const lines = String(edge.label).split("\n");
+      const lineHeight = box.height / lines.length;
+      // LikeC4 measured `labelBBox` at its own type size, so the height alone
+      // overshoots: a line of latin text at 0.78·lineHeight runs past the
+      // plate. Fit the widest line instead, and keep the height bound only as
+      // an upper limit.
+      const widest = Math.max(...lines.map(line => measureEm(line)), 1);
+      const fontSize = Math.min(lineHeight * 0.78, (box.width * 0.92) / widest);
+      for (const [index, line] of lines.entries()) {
+        const attrs: Record<string, string | number> = {
+          x: box.x,
+          y: box.y + lineHeight * (index + 0.8),
+          fill: "#c9ccd2",
+          "font-size": fontSize,
+          "font-family": "system-ui,sans-serif",
+        };
+        const text = el("text", attrs);
+        text.textContent = line;
+        g.append(text);
+      }
       labelLayer.append(g);
     }
   }
@@ -196,6 +224,8 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     const g = el("g", { transform: `translate(${node.x} ${node.y})`, style: "cursor:move" });
     g.setAttribute("data-id", node.id);
     const isContainer = (node.children ?? []).length > 0;
+    // Containers stay opaque. A translucent fill over the light canvas reads as
+    // near-white, and the light text drawn on it disappears.
     const fill = isContainer ? "#1e3a8a" : node.color === "secondary" ? "#475569" : "#3b82f6";
     g.append(
       el("rect", {
@@ -203,8 +233,7 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
         height: node.height,
         rx: 8,
         fill,
-        "fill-opacity": isContainer ? 0.28 : 1,
-        stroke: "#2563eb",
+        stroke: isContainer ? "#60a5fa" : "#2563eb",
         "stroke-width": 1.5,
       }),
     );
@@ -329,6 +358,10 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
   svg.addEventListener("pointerdown", event => {
     const target = (event.target as Element).closest("g[data-id]") as SVGGElement | null;
     event.preventDefault();
+    // preventDefault suppresses the browser's implicit focus, so a press that
+    // starts a pan or a drag would leave the arrow-key handler deaf. Hand the
+    // focus over explicitly; the container is the tabbable element.
+    if (document.activeElement !== host) host.focus({ preventScroll: true });
     svg.setPointerCapture?.(event.pointerId);
     if (target === null) {
       // Pressing the blank canvas clears the selection (the details pane

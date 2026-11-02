@@ -176,6 +176,22 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
   // the user switched to in the meantime.
   let chain: Promise<void> = Promise.resolve();
 
+  // Arrow keys walk the view tabs while the diagram owns focus. Bound once to
+  // the chrome root: the diagram element is rebuilt on some paths (a failed
+  // mount retried from a tab pick), and a listener on the old node would die
+  // with it. `contains` keeps fields elsewhere in the panel in charge of their
+  // own keys.
+  root.addEventListener("keydown", event => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (diagramHost === undefined || !(event.target instanceof Node) || !diagramHost.contains(event.target)) return;
+    const current = views?.findIndex(candidate => candidate.id === view?.id) ?? -1;
+    if (views === undefined || current < 0) return;
+    const target = views[current + (event.key === "ArrowRight" ? 1 : -1)];
+    if (target === undefined) return;
+    event.preventDefault();
+    select(target.id);
+  });
+
   // The details pane outlives body rebuilds (it is re-parented into each new
   // one) so an open pane survives a view switch's content re-render.
   const detailsHost = document.createElement("div");
@@ -424,7 +440,9 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
     body = div("archBody");
     body.style.cssText = "flex:1;min-height:0;overflow:hidden;display:flex";
     diagramHost = div("archDiagram");
-    diagramHost.style.cssText = "flex:1;min-width:0;min-height:0";
+    diagramHost.style.cssText = "flex:1;min-width:0;min-height:0;outline:none";
+    // A plain div cannot take focus, so arrow keys would never land here.
+    diagramHost.tabIndex = 0;
     body.append(diagramHost, detailsHost);
     content.append(body);
 

@@ -53,6 +53,7 @@ flow-dx 的 `agents-md` 流程派 `c4-mapper` 子代理产出的正是本包要�
 ## 已知限制
 
 - 默认不往用户仓库写文件：拖拽与视口只写宿主存储（`~/.dsh/storages/` 下人类可读 JSON），`git status` 干净；完全不使用 `.likec4/*.snap`。
+- 存储域记录 schema 是 zod 不是 schemastery：宿主 `storageDomain.open()` 逐条 `tables[name].valueSchema.parse` 重读存量记录，经典 schemastery schema 根本没有 `parse` 方法；表规范要 `domainTable()` 的 `{ valueSchema }` 包装，裸传 schema 在表为空时不可见、第一条记录落盘后的下一次启动就是 fatal load failure。spec 已选 `invalidRecords: "backup-and-skip"`：未来 schema 演进时坏记录被移到一旁按不存在处理，不再打挂宿主启动。
 - 宿主缺 `storageDomain` 时降级：状态写客户端 localStorage（按 sessionId 键控，不跨设备、不跨 profile，清缓存即丢），此时面板不发无谓的 POST。
 - 300px 高的 dock 默认视口是固定可读缩放（0.75）居中，不是 fitView——fitView 在这个高度把 12px 文字缩到 1.5px 不可读；要看全景开 dock 的 fullscreen（此时才 fitView，退出时回到可读缩放）。
 - 不做 DSL 编辑与 LikeC4 Edit 模式；不做 SSR；不接管其他插件的 `.c4` 预览诉求；布局状态不跨工作区共享。

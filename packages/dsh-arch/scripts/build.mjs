@@ -44,8 +44,8 @@ const manifest = require(join(packageRoot, "package.json"));
  */
 const DIAGRAM_CHUNK = "client.diagram.js";
 
-/** Host-half platform packages: the Harness install provides its own copies. */
-const HOST_EXTERNALS = ["@deepseek-ai/*", "@likec4/*", "bundle-require"];
+/** Host-half platform packages: the Harness install provides its own copies. `zod` rides along because the storage-domain contract needs its schemas at runtime. */
+const HOST_EXTERNALS = ["@deepseek-ai/*", "@likec4/*", "bundle-require", "zod"];
 
 /** Platform modules the host seeds for a third-party client bundle. */
 const CLIENT_EXTERNALS = ["react", "react/jsx-runtime", "react-dom", "@deepseek-ai/dsh-client-ui-primitives"];

@@ -43,7 +43,8 @@
     "@deepseek-ai/schemastery": "^3.18.5",
     "@likec4/language-services": "^1.60.0",
     "bundle-require": "^5.0.0",
-    "dsh-workbench-core": "workspace:*"
+    "dsh-workbench-core": "workspace:*",
+    "zod": "^4.4.3"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1"

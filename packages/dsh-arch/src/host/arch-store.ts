@@ -6,7 +6,7 @@
  * product promise is "dragging a node never dirties `git status`". A missing
  * service degrades to null here and the client half falls back to localStorage.
  */
-import Schema from "@deepseek-ai/schemastery";
+import { z } from "zod";
 
 import type { ArchWorkspaceState } from "../shared.ts";
 
@@ -15,24 +15,29 @@ export const ARCH_DOMAIN_NAME = "dsh_arch";
 
 export const ARCH_TABLE_NAME = "workspaces";
 
-const nodeOffsetSchema = Schema.object({
-  dx: Schema.number(),
-  dy: Schema.number(),
-  baseX: Schema.number(),
-  baseY: Schema.number(),
+const nodeOffsetSchema = z.object({
+  dx: z.number(),
+  dy: z.number(),
+  baseX: z.number(),
+  baseY: z.number(),
 });
 
-const workspaceStateSchema = Schema.object({
-  viewId: Schema.string(),
-  viewport: Schema.object({
-    scale: Schema.number(),
-    tx: Schema.number(),
-    ty: Schema.number(),
+const workspaceStateSchema = z.object({
+  viewId: z.string(),
+  viewport: z.object({
+    scale: z.number(),
+    tx: z.number(),
+    ty: z.number(),
   }),
-  viewHash: Schema.string(),
-  offsets: Schema.dict(Schema.dict(nodeOffsetSchema)),
-  updatedAt: Schema.string(),
+  viewHash: z.string(),
+  offsets: z.record(z.string(), z.record(z.string(), nodeOffsetSchema)),
+  updatedAt: z.string(),
 });
+
+/** Both directions assignable, so the zod schema and `ArchWorkspaceState` cannot drift apart silently. */
+type MirrorOf<T, U> = [T] extends [U] ? ([U] extends [T] ? unknown : never) : never;
+const _stateSchemaMirrorsSharedType: MirrorOf<z.infer<typeof workspaceStateSchema>, ArchWorkspaceState> = undefined;
+void _stateSchemaMirrorsSharedType;
 
 /**
  * Domain declaration handed to `storageDomain.open()`.
@@ -40,11 +45,21 @@ const workspaceStateSchema = Schema.object({
  * Keyed by workspace realpath (the same join key the renderer caches under),
  * so a symlinked session cwd and the registry's canonical path converge on one
  * record.
+ *
+ * Record schemas are zod, not schemastery: `open()` re-parses every stored
+ * record through `tables[name].valueSchema.parse`, and a classic schemastery
+ * schema has no `parse` method at all. The `{ valueSchema }` wrapper is the
+ * host's `domainTable()` shape — a bare schema leaves `valueSchema` undefined,
+ * which stays hidden while the table is empty and turns the first boot after a
+ * record lands into a fatal load failure. `invalidRecords: "backup-and-skip"`
+ * opts into quarantine, so a future schema change degrades to a moved-aside
+ * record instead of a host boot failure.
  */
 export const ARCH_DOMAIN_SPEC = {
   name: ARCH_DOMAIN_NAME,
   version: 1,
-  tables: { [ARCH_TABLE_NAME]: workspaceStateSchema },
+  invalidRecords: "backup-and-skip",
+  tables: { [ARCH_TABLE_NAME]: { valueSchema: workspaceStateSchema } },
 } as const;
 
 /** Structural slice of one storage-domain table. */
@@ -85,10 +100,10 @@ export async function openArchStore(storageDomain?: StorageDomainFace): Promise<
       return stored === undefined || stored === null ? null : (stored as ArchWorkspaceState);
     },
     async saveWorkspace(key, state) {
-      // Parse before persisting: the domain validates on load and quarantines
-      // bad records, so writing an invalid shape would silently drop the
-      // whole workspace state on the next boot.
-      await table.put(key, workspaceStateSchema(state));
+      // Parse before persisting: the write path does not validate, and a
+      // record the load-time schema rejects gets quarantined (moved aside,
+      // treated as absent) on the next boot.
+      await table.put(key, workspaceStateSchema.parse(state));
     },
     async close() {
       await domain.close();

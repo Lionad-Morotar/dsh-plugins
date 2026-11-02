@@ -22,6 +22,7 @@ import {
 
 import type { Translate } from "./copy.ts";
 import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap } from "./keyboard.ts";
+import type { DocumentStore } from "./document-session.ts";
 import {
   ancestorChain,
   buildTree,
@@ -43,10 +44,11 @@ import {
   saveTreePaneWidth,
   type PaneWidthStorage,
 } from "./pane-width.ts";
-import { PanelEmpty, PanelTabs } from "./panel-tabs.tsx";
-import { consumeViewRequest, createPanelStackRegistry } from "./panels.ts";
+import { CloseConfirm, PanelEmpty, PanelTabs } from "./panel-tabs.tsx";
+import { consumeViewRequest, createPanelStackRegistry, panelTitle } from "./panels.ts";
 import { headLabel, joinChangeStats, parseStatusZ, type FsGitHead, type StatusMap } from "./status.ts";
-import { PreviewPane } from "./preview-pane.tsx";
+import { PreviewPane, saveFailureReason } from "./preview-pane.tsx";
+import type { RendererRegistry } from "./renderer-registry.ts";
 import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody, type TreeEntryFocus } from "./tree.tsx";
 import { buildWorkspaceMap, MANIFEST_FILES, type WorkspaceTag } from "./workspace-map.ts";
 import {
@@ -104,6 +106,10 @@ export interface ViewWiring {
   readonly status: StatusResolver;
   /** Resolves the Git `show` reader used by commit-version panels. */
   readonly git?: GitShowResolver;
+  /** The renderer registry the client service exposes; absent mounts the built-ins alone. */
+  readonly renderers?: RendererRegistry;
+  /** The shared drafts; absent hides the save affordance and the close confirmation. */
+  readonly documents?: DocumentStore;
 }
 
 /** The first-paint state without waiting for an effect. */
@@ -189,6 +195,32 @@ function StateBlock({
   );
 }
 
+/** The keyboard fields the save chord reads; a real event satisfies all of them. */
+export interface SaveChordLike {
+  readonly code?: string;
+  readonly metaKey?: boolean;
+  readonly ctrlKey?: boolean;
+  readonly altKey?: boolean;
+  readonly shiftKey?: boolean;
+  readonly isComposing?: boolean;
+}
+
+/**
+ * Whether one event is the save chord (⌘S on macOS, Ctrl+S elsewhere).
+ *
+ * It is deliberately outside {@link KEYMAP}: the panel chords are offered to the
+ * host's shortcut settings, while save belongs to the document and must not be
+ * remappable to a combination the editor also owns.
+ * @param event - the keyboard event, or a test double.
+ * @returns true for the exact chord with no extra modifier held.
+ */
+export function isSaveChord(event: SaveChordLike): boolean {
+  if (event.isComposing === true) return false;
+  if (event.code !== "KeyS") return false;
+  const primary = event.metaKey === true || event.ctrlKey === true;
+  return primary && event.altKey !== true && event.shiftKey !== true;
+}
+
 /**
  * Build the view component for one mount.
  * @param wiring - the core service, contract version, copy and file resolver.
@@ -201,6 +233,8 @@ export function createFsExplorerView({
   files: resolveFiles,
   status: resolveStatus,
   git: resolveGit = () => undefined,
+  renderers,
+  documents,
 }: ViewWiring) {
   // One registry per registered view: the host mounts and unmounts this
   // component on every view switch, while the factory itself lives on.
@@ -234,6 +268,16 @@ export function createFsExplorerView({
     const controllers = useRef<Map<string, AbortController>>(new Map());
     const handledRequest = useRef<string | undefined>(undefined);
 
+    // Closing a dirty panel is a question, not a gesture: the bar keeps the
+    // panel path so every answer still addresses the tab the reader asked to
+    // drop, even if another tab became active meanwhile.
+    const [pendingClose, setPendingClose] = useState<{ readonly path: string } | null>(null);
+    const [closeSaving, setCloseSaving] = useState(false);
+    const [closeError, setCloseError] = useState<string | null>(null);
+    // The Escape handler is registered once; the flag tells it a bar is open.
+    const pendingCloseRef = useRef<string | null>(null);
+    pendingCloseRef.current = pendingClose?.path ?? null;
+
     // The tree column's width: null keeps the stylesheet's fluid clamp, a
     // pixel count from a past drag pins it. Moves only touch state; the store
     // is written once at drag rest.
@@ -263,6 +307,80 @@ export function createFsExplorerView({
       },
       [stack],
     );
+
+    /**
+     * Close one panel, asking first when a draft would be lost.
+     *
+     * Every closing gesture — the tab button, Delete on the strip, Ctrl+W —
+     * lands here, so the one place that knows what a dirty draft means also
+     * decides when the bar has to appear.
+     */
+    const requestClose = useCallback(
+      (path?: string): void => {
+        const target = path ?? stack.snapshot().active ?? undefined;
+        if (target === undefined) return;
+        const draft = sessionId === undefined ? undefined : documents?.peek(sessionId, target);
+        if (draft?.dirty === true) {
+          setCloseError(null);
+          setPendingClose({ path: target });
+          return;
+        }
+        setPendingClose(null);
+        setCloseError(null);
+        // Nobody is holding the draft any more, and a closed panel must not
+        // resurrect it on the next open of the same path.
+        if (sessionId !== undefined) documents?.forget(sessionId, target);
+        stack.close(target);
+      },
+      [documents, sessionId, stack],
+    );
+
+    /** Answer "save and close": the panel only leaves once the write landed. */
+    const confirmSaveAndClose = useCallback((): void => {
+      const target = pendingClose;
+      if (target === null) return;
+      const session = sessionId === undefined ? undefined : documents?.find(sessionId, target.path);
+      if (session === undefined) {
+        setPendingClose(null);
+        if (sessionId !== undefined) documents?.forget(sessionId, target.path);
+        stack.close(target.path);
+        return;
+      }
+      setCloseSaving(true);
+      setCloseError(null);
+      void session.save().then(outcome => {
+        setCloseSaving(false);
+        if (!outcome.ok) {
+          const failure = session.getSnapshot().error;
+          setCloseError(
+            t("panel.confirm.failed").replace(
+              "{message}",
+              saveFailureReason(outcome.code, failure?.message ?? "", t),
+            ),
+          );
+          return;
+        }
+        setPendingClose(null);
+        // The write landed, so the draft is the disk now; dropping the session
+        // keeps a stale copy from shadowing the file the next time it opens.
+        if (sessionId !== undefined) documents?.forget(sessionId, target.path);
+        stack.close(target.path);
+      });
+    }, [documents, pendingClose, sessionId, stack, t]);
+
+    const discardAndClose = useCallback((): void => {
+      const target = pendingClose;
+      setPendingClose(null);
+      setCloseError(null);
+      if (target === null) return;
+      if (sessionId !== undefined) documents?.forget(sessionId, target.path);
+      stack.close(target.path);
+    }, [documents, pendingClose, sessionId, stack]);
+
+    const cancelClose = useCallback((): void => {
+      setPendingClose(null);
+      setCloseError(null);
+    }, []);
 
     /**
      * Read one directory level and write it into the ledger.
@@ -590,6 +708,22 @@ export function createFsExplorerView({
       if (typeof document === "undefined") return;
       const onKeyDown = (event: KeyboardEvent): void => {
         if (event.isComposing || isEditableTarget(event.target)) return;
+        // The editor owns the chord while it has focus: its own keymap saves the
+        // document it shows and prevents the default itself. Everywhere else in
+        // the panel this handler answers, which is what keeps ⌘S away from the
+        // host's save dialog while a draft is open.
+        if (isSaveChord(event)) {
+          const target = stack.snapshot().active;
+          const session =
+            target === null || documents === undefined || sessionId === undefined
+              ? undefined
+              : documents.find(sessionId, target);
+          if (session === undefined) return;
+          event.preventDefault();
+          event.stopPropagation();
+          void session.save();
+          return;
+        }
         for (const entry of KEYMAP) {
           if (!matchesKeymap(event, entry)) continue;
           if (entry.action === "closePanel" && stack.snapshot().active === null) return;
@@ -597,13 +731,13 @@ export function createFsExplorerView({
           event.stopPropagation();
           if (entry.action === "nextPanel") stack.next();
           else if (entry.action === "previousPanel") stack.previous();
-          else stack.close();
+          else requestClose();
           return;
         }
       };
       document.addEventListener("keydown", onKeyDown, true);
       return () => document.removeEventListener("keydown", onKeyDown, true);
-    }, [stack]);
+    }, [documents, requestClose, sessionId, stack]);
 
     // Escape returns the caret to the composer unless a dialog is open. The
     // DOM probe is broader than a class check because the shell, the command
@@ -612,12 +746,26 @@ export function createFsExplorerView({
       if (typeof document === "undefined") return;
       const handler = createEscapeHandler({
         focusComposer,
-        hasModal: () => hasOpenModal(document),
+        hasModal: () => pendingCloseRef.current !== null || hasOpenModal(document),
       });
       const listener = (event: KeyboardEvent): void => handler(event);
       document.addEventListener("keydown", listener, true);
       return () => document.removeEventListener("keydown", listener, true);
     }, [focusComposer]);
+
+    // Escape belongs to the bar while it is up: dismissing the question must
+    // not double as "return to the composer" and drop the reader's context.
+    useEffect(() => {
+      if (pendingClose === null || typeof document === "undefined") return;
+      const onKeyDown = (event: KeyboardEvent): void => {
+        if (event.key !== "Escape" || event.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        cancelClose();
+      };
+      document.addEventListener("keydown", onKeyDown, true);
+      return () => document.removeEventListener("keydown", onKeyDown, true);
+    }, [pendingClose, cancelClose]);
 
     const rows = useMemo(
       () => flattenTree(levels, expanded, statuses, workspaceTags),
@@ -824,9 +972,22 @@ export function createFsExplorerView({
                   active={panels.active}
                   t={t}
                   onActivate={key => stack.activate(key)}
-                  onClose={key => stack.close(key)}
+                  onClose={requestClose}
                   onStep={delta => (delta === 1 ? stack.next() : stack.previous())}
+                  documents={documents}
+                  sessionId={sessionId}
                 />
+                {pendingClose === null ? null : (
+                  <CloseConfirm
+                    name={panelTitle(pendingClose.path)}
+                    t={t}
+                    saving={closeSaving}
+                    error={closeError}
+                    onSave={confirmSaveAndClose}
+                    onDiscard={discardAndClose}
+                    onCancel={cancelClose}
+                  />
+                )}
                 <div className="fx-editor-body">
                   {panels.panels.length === 0 ? (
                     <PanelEmpty t={t} />
@@ -855,6 +1016,8 @@ export function createFsExplorerView({
                             git={gitFace}
                             t={t}
                             visible={isActive}
+                            renderers={renderers}
+                            documents={documents}
                           />
                         </div>
                       );

@@ -201,6 +201,35 @@ describe("interaction seams", () => {
   });
 });
 
+describe("edge labels", () => {
+  it("renders each line of a multi-line label as its own text, inside the plate", () => {
+    const view = structuredClone(dump.views.index as DumpView);
+    // A real label from the model: three lines in the dump, one long span on screen.
+    const multi = view.edges.find(edge => typeof edge.label === "string" && edge.label.includes("\n"));
+    expect(multi).toBeDefined();
+    createDiagram(host, view, { viewport: VIEWPORT });
+
+    const texts = [...host.querySelectorAll("text")];
+    expect(texts.filter(text => (text.textContent ?? "").includes("\n"))).toEqual([]);
+    for (const line of (multi as DumpEdge).label!.split("\n")) {
+      expect(
+        texts.some(text => text.textContent === line),
+        `line ${JSON.stringify(line)} should have its own text node`,
+      ).toBe(true);
+    }
+  });
+
+  it("hands focus to the diagram container on pointerdown despite preventDefault", () => {
+    host.tabIndex = 0;
+    createDiagram(host, structuredClone(dump.views.index as DumpView), { viewport: VIEWPORT });
+    expect(document.activeElement).not.toBe(host);
+    host.querySelector("svg")?.dispatchEvent(
+      new PointerEvent("pointerdown", { clientX: 10, clientY: 10, cancelable: true, bubbles: true }),
+    );
+    expect(document.activeElement).toBe(host);
+  });
+});
+
 describe("event binding thin layer", () => {
   it("zooms from the pointer position on wheel", () => {
     const diagram = createDiagram(host, structuredClone(dump.views.index as DumpView), { viewport: VIEWPORT });

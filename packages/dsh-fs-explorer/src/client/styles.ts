@@ -229,6 +229,15 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   font-size: 9px;
   line-height: 13px;
 }
+/* The unsaved dot sits where an editor puts it: after the caption, before the
+   close button, so sweeping for the close target does not land on it. */
+.fx-tab-dirty {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fx-modified);
+}
 .fx-tab-close {
   display: inline-flex;
   align-items: center;
@@ -642,6 +651,48 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   color: var(--fx-caption);
   font-size: 10.5px;
 }
+.fx-conflict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-height: 30px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--fx-border-soft);
+  background: color-mix(in oklab, var(--fx-modified) 14%, transparent);
+  color: var(--fx-text);
+  font-size: 11px;
+}
+.fx-conflict strong { font-weight: 600; }
+.fx-conflict-hint { color: var(--fx-text-2); }
+.fx-save-error {
+  flex: none;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--fx-border-soft);
+  color: var(--fx-deleted);
+  font-size: 10.5px;
+}
+.fx-close-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-height: 34px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--fx-border-soft);
+  background: var(--fx-panel-2);
+  color: var(--fx-text);
+  font-size: 11px;
+}
+.fx-close-confirm-text,
+.fx-close-confirm-error {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fx-close-confirm-error { color: var(--fx-deleted); }
+.fx-conflict .fx-spacer,
+.fx-close-confirm .fx-spacer { flex: 1; }
 .fx-preview-body { flex: 1; min-height: 0; position: relative; }
 .fx-preview-body[data-scroll="y"] {
   overflow: auto;

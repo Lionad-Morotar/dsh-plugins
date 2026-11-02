@@ -1,0 +1,80 @@
+{
+  "name": "dsh-fs-markdown",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness Markdown editor: registers a Typora-style whole-document editor for .md files into the file explorer",
+  "license": "MIT",
+  "author": "Lionad <1806234223@qq.com>",
+  "homepage": "https://github.com/Lionad-Morotar/dsh-plugins/tree/main/packages/dsh-fs-markdown#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lionad-Morotar/dsh-plugins",
+    "directory": "packages/dsh-fs-markdown"
+  },
+  "bugs": {
+    "url": "https://github.com/Lionad-Morotar/dsh-plugins/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "markdown",
+    "editor",
+    "codemirror"
+  ],
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "locale",
+    "cordis.patch.yml",
+    "README.md",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.3 <0.3.0-0"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "dsh-fs-explorer"
+      ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/build.mjs --check && vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "check:lib": "node scripts/build.mjs --check"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.1.3",
+    "vitest": "^3.2.0"
+  }
+}

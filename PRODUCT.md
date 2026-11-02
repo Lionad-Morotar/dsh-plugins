@@ -25,6 +25,7 @@ Lionad 个人的 DeepSeek Harness（DSH）插件集合。产品线从单一皮�
 | `dsh-jump` | Web GUI 键盘跳跃导航：组合键打 label 即点或即聚焦，Esc 退出；两个激活键在设置页「跳跃导航快捷键」一行里可录制改键（存 localStorage，不写包配置）；纯 client 半边 |
 | `dsh-better-keybindings` | Web 与 desktop 共用的键盘修正：输入框聚焦时 Home/End / Ctrl+Home/End / Shift+Home/End 按行或按文档移动光标，并抑制浏览器的滚动副作用；纯 client 半边 |
 | `dsh-slash-commands` | 三端 slash 命令：TUI 的 `/copy` 把最近 n 轮最终回复进系统剪贴板（`--all` 连真人发言一起带），web 与 desktop 的 `/rename` 改当前会话标题、`/resume` 切换会话；host 半按终端能力分派命令，client 半注册 `/resume` 并给页面剪贴板写入加上限 |
+| `dsh-fs-markdown` | 文件浏览器的 Markdown 编辑器：把 `.md` / `.markdown` 正文接管为可编辑的 CodeMirror 6，光标块显示 Markdown 标记、其他块恢复排版，源码模式复用同一个编辑器实例 |
 
 ## 品牌承诺与体验目标
 
