@@ -121,6 +121,40 @@ describe("collectShow", () => {
     }
   });
 
+  it("answers a non-UTF-8 blob inside the byte budget as binary, not too-large", async () => {
+    const lossy: GitRunResult = {
+      argv: ["git"],
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      cancelled: false,
+      stdoutLossy: true,
+    };
+    const runner = runnerFor({
+      "cat-file -t aaaa:latin1.txt": ok("blob\n"),
+      "cat-file -s aaaa:latin1.txt": ok("12\n"),
+      "cat-file -p aaaa:latin1.txt": lossy,
+      "rev-parse aaaa:latin1.txt": ok(`${BLOB}\n`),
+    });
+    const result = await collectShow({ runner, cwd: "/repo", maxBytes: 1024 }, { hash: "aaaa", path: "latin1.txt" });
+    expect(result).toEqual({
+      ok: true,
+      page: {
+        path: "latin1.txt",
+        revision: BLOB,
+        source: "commit",
+        offset: 1,
+        lines: 0,
+        text: "",
+        eof: true,
+        bytes: 12,
+        binary: true,
+        kind: "binary",
+      },
+    });
+  });
+
   it("answers binary without a body", async () => {
     const runner = runnerFor({
       "cat-file -t aaaa:bin.png": ok("blob\n"),

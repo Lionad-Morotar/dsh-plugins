@@ -121,9 +121,10 @@ function pageOf(path: string, revision: string, source: "commit" | "first-parent
  *
  * Order of decisions: validate the address, probe the object type in the
  * commit, fall back once to the first parent, refuse a submodule or oversized
- * blob before reading content, and only then page the text. Binary is decided
- * by the NUL byte git wrote, not by the extension, so the answer cannot
- * disagree with the bytes the same command returns for the working tree.
+ * blob before reading content, and only then page the text. Binary is a NUL
+ * byte, or bytes that are not valid UTF-8 once the size is known to fit the
+ * budget. The extension is not consulted, so the answer cannot disagree with
+ * the bytes the same command returns for the working tree.
  */
 export async function collectShow(
   options: ShowOptions,
@@ -196,10 +197,11 @@ export async function collectShow(
   if (contentResult.exitCode !== 0) {
     return fail("git-failed", contentResult.stderr.trim() === "" ? "git could not read the blob" : contentResult.stderr.trim());
   }
-  if (contentResult.stdoutLossy) return fail("too-large", "the blob exceeded the collection budget while being read");
-
   const text = contentResult.stdout;
-  if (text.includes("\0")) {
+  // Size was already checked with `cat-file -s`. `stdoutLossy` here means the
+  // bytes are not valid UTF-8: the collector flags that even under the budget.
+  // That is the same answer as a NUL, an empty binary page, not `too-large`.
+  if (contentResult.stdoutLossy || text.includes("\0")) {
     return {
       ok: true,
       page: {

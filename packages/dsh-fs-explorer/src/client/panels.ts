@@ -12,7 +12,7 @@ import { parseFocus } from "./model.ts";
 
 /** One open file panel. */
 export interface PanelEntry {
-  /** Stable identity: the path for a workspace file, `git:<revision>:<path>` otherwise. */
+  /** Stable identity: the workspace path, or `git` + NUL + revision + NUL + path. */
   readonly key: string;
   readonly path: string;
   /** The 1-based line the opener asked for; the tab keeps it for later jumps. */
@@ -82,12 +82,19 @@ function normalizePath(path: string, absolute: boolean): string | undefined {
 
 const EMPTY: PanelSnapshot = Object.freeze({ panels: Object.freeze([] as PanelEntry[]), active: null });
 
-/** The stable identity of one panel: a path for the working tree, revision-scoped otherwise. */
+/**
+ * The stable identity of one panel.
+ *
+ * A commit version is not keyed by `git:<revision>:<path>`: that string is a
+ * legal workspace path, so the two panels would dedupe into each other. NUL
+ * cannot occur in a path, so the stored key is `git` + NUL + revision + NUL +
+ * path. Callers may still spell a commit panel as `git:<revision>:<path>`.
+ */
 export function panelKey(path: string, revision?: string): string {
-  return revision === undefined ? path : `git:${revision}:${path}`;
+  return revision === undefined ? path : `git\u0000${revision}\u0000${path}`;
 }
 
-/** `git:<revision>:<path>`, the only spelling that addresses a commit version. */
+/** Caller spelling `git:<revision>:<path>` for a commit version. The stored key uses NULs. */
 const GIT_KEY = /^git:([0-9a-f]{4,64}):(.+)$/iu;
 
 /**
@@ -113,11 +120,11 @@ export function createPanelStack(): PanelStack {
   /**
    * Resolve one caller-supplied key or path to the key the ledger stores.
    *
-   * The exact key is tried first because the tab strip hand-back is already
-   * normalized, including the optional `git:` prefix. Without a `git:` prefix
-   * the lookup is a workspace path: an absolute panel of that name wins, and
-   * only its absence lets the relative row answer. A commit version never
-   * answers a path spelling — it is another panel and is addressed by its key.
+   * The exact stored key is tried first because the tab strip hands that back.
+   * A `git:<revision>:<path>` spelling names a commit version and is mapped
+   * onto the stored key. Anything else is a workspace path: an absolute panel
+   * of that name wins, and only its absence lets the relative row answer. A
+   * commit version never answers a plain path spelling.
    * @param spelling - key or path as the caller spells it.
    * @returns the key of an open row, or undefined when nothing matches.
    */

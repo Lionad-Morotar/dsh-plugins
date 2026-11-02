@@ -803,9 +803,8 @@ async function collectShow(options, request, signal) {
   if (contentResult.exitCode !== 0) {
     return fail("git-failed", contentResult.stderr.trim() === "" ? "git could not read the blob" : contentResult.stderr.trim());
   }
-  if (contentResult.stdoutLossy) return fail("too-large", "the blob exceeded the collection budget while being read");
   const text = contentResult.stdout;
-  if (text.includes("\0")) {
+  if (contentResult.stdoutLossy || text.includes("\0")) {
     return {
       ok: true,
       page: {
