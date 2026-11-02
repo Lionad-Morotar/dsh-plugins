@@ -151,11 +151,49 @@ function row(name: string): HTMLButtonElement | null {
   return document.querySelector<HTMLButtonElement>(`[data-testid="gx-branch-row-${name}"]`);
 }
 
-async function renderReady(decide?: (name: string) => Promise<boolean>): Promise<FakeStore> {
-  const fake = createFakeStore({ status: "ready", list: LIST, revision: 0, sessionId: "s1" }, decide);
+async function renderReady(
+  decide?: (name: string) => Promise<boolean>,
+  list: GitBranchList = LIST,
+): Promise<FakeStore> {
+  const fake = createFakeStore({ status: "ready", list, revision: 0, sessionId: "s1" }, decide);
   const Action = createBranchAction({ store: fake.store, t });
   await mount(<Action sessionId="s1" />);
   return fake;
+}
+
+function searchBox(): HTMLInputElement | null {
+  return document.querySelector<HTMLInputElement>('[data-testid="gx-branch-search"]');
+}
+
+async function typeQuery(value: string): Promise<void> {
+  const input = searchBox();
+  if (input === null) throw new Error("search box is missing");
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  await act(async () => {
+    // React tracks the value through the element instance; going through the
+    // prototype setter makes the dispatched input event look like a real edit.
+    setter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+interface KeyModifiers {
+  readonly metaKey?: boolean;
+  readonly ctrlKey?: boolean;
+  readonly altKey?: boolean;
+  readonly isComposing?: boolean;
+}
+
+async function press(key: string, modifiers: KeyModifiers = {}): Promise<void> {
+  const target: EventTarget = searchBox() ?? document;
+  await act(async () => {
+    target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...modifiers }));
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
+}
+
+function activeRow(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-testid^="gx-branch-row-"][data-active="true"]');
 }
 
 describe("header branch action", () => {
@@ -274,6 +312,126 @@ describe("header branch action", () => {
 
     expect(panel()).toBeNull();
     expect(fake.loads).toContain("s2");
+  });
+});
+
+describe("branch popover search and keyboard", () => {
+  it("focuses the search box on open and names it for assistive tech", async () => {
+    await renderReady();
+
+    await click(trigger());
+
+    const input = searchBox();
+    expect(input).not.toBeNull();
+    expect(document.activeElement).toBe(input);
+    expect(input?.placeholder).toBe("branch.search");
+    expect(input?.getAttribute("aria-label")).toBe("branch.search");
+    expect(input?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("filters on a case-insensitive subsequence and highlights every hit", async () => {
+    await renderReady();
+    await click(trigger());
+
+    await typeQuery("mn");
+
+    expect(row("main")).not.toBeNull();
+    expect(row("feature")).toBeNull();
+    expect(row("taken")).toBeNull();
+    const hit = [...document.querySelectorAll(".gx-branch-match")].map(node => node.textContent).join("");
+    expect(hit).toBe("mn");
+    expect(activeRow()?.getAttribute("data-testid")).toBe("gx-branch-row-main");
+  });
+
+  it("moves the cursor with the arrow keys and switches the row Enter lands on", async () => {
+    const fake = await renderReady();
+    await click(trigger());
+    expect(activeRow()?.getAttribute("data-testid")).toBe("gx-branch-row-main");
+
+    await press("ArrowDown");
+
+    expect(activeRow()?.getAttribute("data-testid")).toBe("gx-branch-row-feature");
+
+    await press("Enter");
+
+    expect(fake.switches).toEqual([{ sessionId: "s1", name: "feature" }]);
+    expect(panel()).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it("skips a row another worktree holds in both directions", async () => {
+    await renderReady(undefined, {
+      ...LIST,
+      branches: [LIST.branches[0]!, LIST.branches[2]!, LIST.branches[1]!],
+    });
+    await click(trigger());
+
+    await press("ArrowDown");
+    expect(activeRow()?.getAttribute("data-testid")).toBe("gx-branch-row-feature");
+    expect(row("taken")?.getAttribute("data-active")).toBeNull();
+
+    await press("ArrowUp");
+    expect(activeRow()?.getAttribute("data-testid")).toBe("gx-branch-row-main");
+  });
+
+  it("keeps the cursor at the end instead of wrapping", async () => {
+    await renderReady(undefined, {
+      ...LIST,
+      branches: [LIST.branches[0]!, LIST.branches[1]!],
+    });
+    await click(trigger());
+
+    await press("ArrowDown");
+    await press("ArrowDown");
+
+    expect(activeRow()?.getAttribute("data-testid")).toBe("gx-branch-row-feature");
+  });
+
+  it("leaves modifier chords to the host shortcuts", async () => {
+    const fake = await renderReady();
+    await click(trigger());
+
+    await press("ArrowDown", { metaKey: true });
+    expect(activeRow()?.getAttribute("data-testid")).toBe("gx-branch-row-main");
+
+    await press("Enter", { metaKey: true });
+    expect(fake.switches).toHaveLength(0);
+  });
+
+  it("does not treat an IME confirmation as a switch", async () => {
+    const fake = await renderReady();
+    await click(trigger());
+
+    await press("Enter", { isComposing: true });
+
+    expect(fake.switches).toHaveLength(0);
+    expect(panel()).not.toBeNull();
+  });
+
+  it("closes on Escape and hands focus back to the trigger", async () => {
+    await renderReady();
+    await click(trigger());
+
+    await press("Escape");
+
+    expect(panel()).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it("shows one centered hint when nothing matches and keeps Enter inert", async () => {
+    const fake = await renderReady();
+    await click(trigger());
+
+    await typeQuery("zzz");
+
+    expect(document.querySelector('[data-testid="gx-branch-no-match"]')?.textContent).toBe("branch.noMatch");
+    expect(document.querySelectorAll('[data-testid^="gx-branch-row-"]')).toHaveLength(0);
+    expect(activeRow()).toBeNull();
+
+    await press("Enter");
+
+    expect(fake.switches).toHaveLength(0);
+    expect(panel()).not.toBeNull();
   });
 });
 

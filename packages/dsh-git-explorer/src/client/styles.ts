@@ -449,6 +449,26 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
   line-height: 1.45;
 }
 .gx-branch-list { display: flex; flex-direction: column; gap: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+/* The search seat keeps the row's horizontal padding so the caret lines up with
+   the names below; a single hairline separates it without adding a second
+   surface inside the popover. */
+.gx-branch-search {
+  flex: none;
+  width: 100%;
+  height: 28px;
+  padding: 4px 8px;
+  box-sizing: border-box;
+  border: 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 10%, transparent));
+  border-radius: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, inherit);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.gx-branch-search::placeholder { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); }
+.gx-branch-search:focus-visible { border-bottom-color: var(--dsw-alias-brand-primary, currentColor); }
 .gx-branch-row {
   display: flex;
   align-items: center;
@@ -466,6 +486,9 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
   cursor: pointer;
 }
 .gx-branch-row:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent)); }
+/* The arrow-key cursor outlives the pointer leaving the row, so it reuses the
+   hover wash instead of inventing a second selection colour. */
+.gx-branch-row[data-active="true"]:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent)); }
 .gx-branch-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, currentColor); outline-offset: -2px; }
 .gx-branch-row[data-current="true"] { color: var(--dsw-alias-brand-primary, inherit); }
 .gx-branch-row:disabled { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); opacity: .55; cursor: default; }
@@ -477,6 +500,7 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
+.gx-branch-match { color: var(--dsw-alias-label-primary, inherit); font-weight: 500; }
 .gx-branch-tag {
   flex: none;
   padding: 0 6px;
@@ -513,6 +537,7 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 }
 .gx-branch-retry:hover { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 10%, transparent)); }
 .gx-branch-hint { padding: 8px 9px; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); font-size: 12px; }
+.gx-branch-nomatch { padding: 12px 9px; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); font-size: 12px; text-align: center; }
 
 
 @media (max-width: 720px) {
