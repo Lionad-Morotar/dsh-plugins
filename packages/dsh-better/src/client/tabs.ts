@@ -293,14 +293,63 @@ export interface StripStyleTag {
   remove(): void;
 }
 
+/** A node a mutation record can point at. Structural so tests can stand in. */
+export interface StripMutationNode {
+  matches?(selector: string): boolean;
+  querySelector?(selector: string): unknown;
+  contains?(node: unknown): boolean;
+}
+
+/** The slice of a `MutationRecord` the strip watcher reads. */
+export interface StripMutation {
+  readonly target: unknown;
+  readonly addedNodes?: ArrayLike<StripMutationNode>;
+  readonly removedNodes?: ArrayLike<StripMutationNode>;
+}
+
 /** The document face `attach` needs: create a sheet, mount it, schedule retries. */
 export interface StripHostDocument extends StripDocument {
   createElement(tag: string): StripStyleTag;
   head: { append(node: StripStyleTag): void };
+  /** The node the strip watcher observes. Absent in tests that drive the watcher themselves. */
+  readonly documentElement?: StripMutationNode | undefined;
   readonly defaultView?: {
     requestAnimationFrame?(callback: () => void): number;
     cancelAnimationFrame?(handle: number): void;
+    MutationObserver?: new (callback: (mutations: readonly StripMutation[]) => void) => {
+      observe(target: StripMutationNode, options: { childList: boolean; subtree: boolean }): void;
+      disconnect(): void;
+    };
   } | undefined;
+}
+
+/**
+ * Whether a mutation batch can have rebuilt the tab strip.
+ *
+ * The host re-renders the header on its own and replaces the tab buttons. The
+ * marker lives on the button, so a replaced button is born visible and the
+ * hidden tab comes back until something restamps it. A mutation elsewhere,
+ * such as the chat stream appending a token, is not one of those rebuilds.
+ */
+export function stripMutationsTouchTabs(mutations: readonly StripMutation[], strip: StripMutationNode | null): boolean {
+  for (const mutation of mutations) {
+    if (strip !== null && (mutation.target === strip || strip.contains?.(mutation.target) === true)) return true;
+    if (nodesHoldStrip(mutation.addedNodes, strip) || nodesHoldStrip(mutation.removedNodes, strip)) return true;
+  }
+  return false;
+}
+
+/** Whether any node in a mutation list is, or contains, the tab strip. */
+function nodesHoldStrip(nodes: ArrayLike<StripMutationNode> | undefined, strip: StripMutationNode | null): boolean {
+  if (nodes === undefined) return false;
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    if (node === undefined) continue;
+    if (node.matches?.(STRIP_CONTAINER_SELECTOR) === true) return true;
+    if (node.querySelector?.(STRIP_CONTAINER_SELECTOR) != null) return true;
+    if (strip !== null && node.contains?.(strip) === true) return true;
+  }
+  return false;
 }
 
 /**
@@ -391,9 +440,15 @@ export function createTabController(deps: {
   storage?: TabStorage;
   /** The strip reader; defaults to the DOM walk and stands in for tests. */
   readButtons?: (doc: StripDocument) => readonly ReadableStripButton[] | undefined;
+  /**
+   * Notified when the host may have rebuilt the strip. Defaults to a
+   * MutationObserver on the document; tests fire it by hand.
+   */
+  watch?: (doc: StripHostDocument, onChange: () => void) => () => void;
 }): TabController {
   const { ledger, storage } = deps;
   const readButtons = deps.readButtons ?? readStripButtons;
+  const watch = deps.watch ?? watchStrip;
   const hidden = new Set(readHidden(storage));
   const listeners = new Set<() => void>();
   /** The attached document's planner, so a checkbox flip re-emits rules at once. */
@@ -450,15 +505,22 @@ export function createTabController(deps: {
           }
           return;
         }
+        // The strip is on screen, so a later gap gets a fresh wait. The host
+        // takes it down while it swaps sessions and puts it back afterwards.
+        attempts = RENDER_ATTEMPTS;
         frame = undefined;
         applyHiddenButtons(buttons, planHiddenButtons(entries, hidden, buttons));
       };
 
       const unsubscribe = ledger.subscribe(VIEW_SLOT, refresh);
+      // The ledger does not move when the host re-renders the header, and that
+      // re-render is what drops the marker. The watcher is how it gets put back.
+      const unwatch = watch(doc, refresh);
       replan = refresh;
       refresh();
       return () => {
         unsubscribe();
+        unwatch();
         replan = undefined;
         if (frame !== undefined) cancel?.(frame);
         tag.remove();
@@ -485,3 +547,25 @@ export const HIDDEN_TAB_ATTR = "data-dsh-better-tab-hidden";
 
 /** The one rule the sheet holds: a marked button is not in the strip. */
 export const HIDDEN_TAB_RULE = `${STRIP_CONTAINER_SELECTOR} > button[${HIDDEN_TAB_ATTR}] { display: none; }`;
+
+/**
+ * Restamp the strip after the host rebuilds it.
+ *
+ * Observes child-list changes only. Stamping a button sets an attribute, which
+ * is not a child-list change, so the callback does not observe its own write.
+ * A document without an observer, which is every test double, watches nothing;
+ * the caller passes its own `watch` when it wants to drive a rebuild.
+ */
+function watchStrip(doc: StripHostDocument, onChange: () => void): () => void {
+  const Observer = doc.defaultView?.MutationObserver;
+  const root = doc.documentElement;
+  if (Observer === undefined || root === undefined) return () => {};
+  const observer = new Observer(mutations => {
+    const found = doc.querySelector(STRIP_CONTAINER_SELECTOR);
+    const strip = found !== null && typeof found === "object" ? (found as StripMutationNode) : null;
+    if (!stripMutationsTouchTabs(mutations, strip)) return;
+    onChange();
+  });
+  observer.observe(root, { childList: true, subtree: true });
+  return () => observer.disconnect();
+}

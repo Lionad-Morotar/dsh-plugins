@@ -27,6 +27,7 @@ import {
   planHiddenButtons,
   readHidden,
   readStripButtons,
+  stripMutationsTouchTabs,
   resolveViewLabel,
   stripRows,
   tabRows,
@@ -248,6 +249,37 @@ describe("planHiddenButtons", () => {
   });
 });
 
+describe("stripMutationsTouchTabs", () => {
+  /** A node the predicate can recognise as the tab strip, or as something else. */
+  function node(holdsStrip: boolean): {
+    matches(selector: string): boolean;
+    querySelector(selector: string): object | null;
+    contains(target: unknown): boolean;
+  } {
+    return {
+      matches: selector => holdsStrip && selector === STRIP_CONTAINER_SELECTOR,
+      querySelector: selector => (holdsStrip && selector === STRIP_CONTAINER_SELECTOR ? {} : null),
+      contains: () => false,
+    };
+  }
+
+  it("notices a change inside the tab strip", () => {
+    const strip = node(true);
+    expect(stripMutationsTouchTabs([{ target: strip }], strip)).toBe(true);
+  });
+
+  it("ignores a change that never touches the tab strip", () => {
+    const strip = node(true);
+    const chat = node(false);
+    expect(stripMutationsTouchTabs([{ target: chat, addedNodes: [node(false)] }], strip)).toBe(false);
+  });
+
+  it("notices the header being replaced, which takes the strip with it", () => {
+    const strip = node(true);
+    expect(stripMutationsTouchTabs([{ target: node(false), removedNodes: [node(true)] }], strip)).toBe(true);
+  });
+});
+
 describe("applyHiddenButtons", () => {
   it("marks only the buttons whose state disagrees with the plan", () => {
     const marks: [number, boolean][] = [];
@@ -396,6 +428,43 @@ describe("createTabController", () => {
     // Repeating a choice that already holds changes nothing.
     expect(controller.setEnabled("wakatime", true)).toBe(false);
     stop();
+  });
+
+  it("restamps a hidden tab after the host rebuilds the strip, and stops once detached", () => {
+    const views = ledger([view("files", "文件"), view("wakatime", "WakaTime")]);
+    const doc = stripDoc(stripTexts(["文件", "WakaTime"]));
+    let watching = true;
+    let rebuilt: (() => void) | undefined;
+    const controller = createTabController({
+      ledger: views,
+      storage: memoryStorage(),
+      readButtons: () => (doc.buttons.length === 0 ? undefined : doc.buttons),
+      watch(_doc, onChange) {
+        rebuilt = () => {
+          if (watching) onChange();
+        };
+        return () => {
+          watching = false;
+        };
+      },
+    });
+    const stop = controller.attach(doc);
+    controller.setEnabled("wakatime", false);
+    expect(hiddenLabels(doc)).toEqual(["WakaTime"]);
+
+    // The host re-renders the header. The new buttons are born without the
+    // marker, which is the tab coming back on its own.
+    const fresh = stripTexts(["文件", "WakaTime"]).map(label => liveButton(label));
+    doc.buttons.splice(0, doc.buttons.length, ...fresh);
+    expect(hiddenLabels(doc)).toEqual([]);
+    rebuilt?.();
+    expect(hiddenLabels(doc)).toEqual(["WakaTime"]);
+
+    stop();
+    const again = stripTexts(["文件", "WakaTime"]).map(label => liveButton(label));
+    doc.buttons.splice(0, doc.buttons.length, ...again);
+    rebuilt?.();
+    expect(hiddenLabels(doc)).toEqual([]);
   });
 
   it("stops following the ledger once detached, and removes the sheet", () => {
