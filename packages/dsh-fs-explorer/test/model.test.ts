@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  adoptsOpenFile,
   ancestorChain,
   badgeFor,
   buildTree,
@@ -346,5 +347,22 @@ describe("ancestorChain", () => {
   it("normalizes `./` prefixes and backslashes the way panel keys are normalized", () => {
     expect(ancestorChain("./a/b/c.md")).toEqual(["a", "a/b"]);
     expect(ancestorChain(".\\./a\\b.ts")).toEqual(["a"]);
+  });
+});
+
+describe("adoptsOpenFile", () => {
+  it("keeps the cursor where the reader left it when only the row list changed", () => {
+    // Left arrow on an open folder collapses it. The panel still shows the
+    // file opened on arrival, but the cursor was moved on purpose.
+    expect(adoptsOpenFile({ cursorPath: "assets", selectionMoved: false })).toBe(false);
+  });
+
+  it("follows the open file when the reader opens one", () => {
+    expect(adoptsOpenFile({ cursorPath: "assets", selectionMoved: true })).toBe(true);
+  });
+
+  it("adopts the open file when the cursor's row is gone", () => {
+    // A collapse or a refreshed listing can remove the row the cursor named.
+    expect(adoptsOpenFile({ cursorPath: undefined, selectionMoved: false })).toBe(true);
   });
 });
