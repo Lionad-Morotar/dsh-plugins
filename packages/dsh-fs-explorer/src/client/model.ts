@@ -459,6 +459,31 @@ export function adoptsOpenFile(input: {
   return input.cursorPath === undefined;
 }
 
+/**
+ * The first entry row directly inside one directory, once its listing is on screen.
+ *
+ * Drilling into a directory with the right arrow lands the keyboard cursor
+ * here. The answer is an index rather than a path because the cursor is an
+ * index, and a directory that is still loading, empty or collapsed has no row
+ * to land on yet, so it answers `undefined` and the caller waits for the next
+ * render instead of guessing.
+ * @param rows - the flattened tree.
+ * @param path - the directory just opened.
+ * @returns the index of its first child entry, or undefined when none is visible.
+ */
+export function firstChildIndex(rows: readonly TreeRow[], path: string): number | undefined {
+  const parent = rows.findIndex(row => row.type === "entry" && row.path === path);
+  const row = rows[parent];
+  if (row?.type !== "entry" || !row.expanded) return undefined;
+  for (let index = parent + 1; index < rows.length; index += 1) {
+    const candidate = rows[index];
+    if (candidate?.type !== "entry") continue;
+    if (candidate.depth <= row.depth) return undefined;
+    if (candidate.depth === row.depth + 1) return index;
+  }
+  return undefined;
+}
+
 /** One loaded directory level as the view stores it. */
 export interface TreeLevel {
   readonly status: "loading" | "ready" | "failed";
