@@ -209,3 +209,39 @@ export function pickScrollContainer(candidates: readonly ScrollCandidate[]): num
   }
   return null;
 }
+
+/** One ancestor of a session row, as far as finding the sidebar scroller needs. */
+export interface SidebarCandidate {
+  /** The element is the session tree itself, not merely something inside it. */
+  readonly tree: boolean;
+  readonly overflowY: string;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+}
+
+/**
+ * Pick the session list's scroller out of a row's ancestor chain.
+ *
+ * The chain arrives innermost-first and starts at the row, so the tree itself
+ * is one of the links. The host renders that tree as the scroller (overflow-y
+ * auto, the session rows inside it) and gives it no stable data attribute —
+ * only `role="tree"` plus a locale-dependent label — so the tree flag is what
+ * distinguishes it from every other scrollbar on the page. A chain whose tree
+ * is not the scroller (a search-results tree nested inside the same scroller)
+ * climbs past it to the first scrollbar above.
+ *
+ * Unlike {@link pickScrollContainer} this does not require the scroller to
+ * have room: a session list shorter than the sidebar is still the list, and
+ * the page step's own clamping turns that stroke into a no-op write skip.
+ */
+export function pickSidebarScroller(candidates: readonly SidebarCandidate[]): number | null {
+  const treeAt = candidates.findIndex((candidate) => candidate.tree);
+  if (treeAt === -1) return null;
+  for (let index = treeAt; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (candidate === undefined) continue;
+    if (candidate.overflowY !== "auto" && candidate.overflowY !== "scroll") continue;
+    return index;
+  }
+  return null;
+}

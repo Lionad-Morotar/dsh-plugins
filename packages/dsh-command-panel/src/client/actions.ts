@@ -13,6 +13,7 @@
  */
 
 import type {
+  HostShutdownRemote,
   LayoutService,
   PluginNavigationService,
   RemoteResult,
@@ -41,6 +42,11 @@ export interface ActionDeps {
   readonly sidebarRight: () => SidebarRightService | undefined;
   readonly slots: () => SlotService | undefined;
   readonly shortcuts: () => ShortcutsService | undefined;
+  /**
+   * The host half's remote shutdown face; absent where the namespace never
+   * mounted, which is also why the quit row itself is hidden up in the runtime.
+   */
+  readonly shutdownRequest: () => HostShutdownRemote | undefined;
   readonly currentSessionId: () => string | null;
   /** Write into the composer through the panel's existing insertion path. */
   readonly insert: (text: string) => "ok" | "no-session" | "failed";
@@ -346,6 +352,35 @@ function toggleTheme(deps: ActionDeps): void {
   }
 }
 
+/**
+ * Quit the whole host through the remote shutdown face.
+ *
+ * Only reached after the panel's own confirmation, and only when the runtime
+ * saw the namespace at all. The host half answers business results, the
+ * transport answers carrier failures, and both fold into the same two
+ * outcomes: `requested` means the host is already tearing down and closing the
+ * panel is the last thing left to do; anything else keeps it open with the
+ * reason on the notice line instead of failing silently.
+ */
+async function requestQuit(deps: ActionDeps): Promise<void> {
+  const face = deps.shutdownRequest();
+  if (face === undefined) {
+    deps.notify(deps.copy().actions.shutdownUnavailable, "error");
+    return;
+  }
+  try {
+    const result = await face.request();
+    if (result.ok && result.value === "requested") {
+      deps.close();
+      return;
+    }
+  } catch {
+    // A rejecting transport is an unreachable host, not a caller error: the
+    // panel stays open either way, so the reason is all that differs.
+  }
+  deps.notify(deps.copy().actions.shutdownUnavailable, "error");
+}
+
 function insertCommand(name: string, deps: ActionDeps): void {
   const outcome = deps.insert(`/${name} `);
   if (outcome === "ok") {
@@ -409,6 +444,9 @@ export async function runCatalogAction(action: RowAction, deps: ActionDeps): Pro
       return true;
     case "invoke-shortcut":
       invokeShortcut(action.id, deps);
+      return true;
+    case "request-shutdown":
+      await requestQuit(deps);
       return true;
     default:
       return false;

@@ -437,6 +437,53 @@ export function parseFocus(focus: string | undefined): FocusTarget | undefined {
   return { path, line: lineOf(match[2]), absolute: false };
 }
 
+/**
+ * Whether a rebuilt row list should copy the open file back onto the cursor.
+ *
+ * The open panel is one fact and the keyboard cursor is another. They meet when
+ * the reader opens a file, and they part when the reader navigates: collapsing
+ * a directory or stepping up to its parent rebuilds the rows while the panel
+ * still shows the file they came from. Copying that file back would undo the
+ * key they just pressed, which is exactly what a left arrow on a folder must
+ * not do. A row list that no longer contains the cursor (a collapse that hid
+ * it, a refreshed listing) still adopts the open file, because there is no
+ * cursor left to protect.
+ * @param input - the cursor before this row list, and whether the open file moved.
+ * @returns true when the cursor should become the open file's row.
+ */
+export function adoptsOpenFile(input: {
+  readonly cursorPath: string | undefined;
+  readonly selectionMoved: boolean;
+}): boolean {
+  if (input.selectionMoved) return true;
+  return input.cursorPath === undefined;
+}
+
+/**
+ * The first entry row directly inside one directory, once its listing is on screen.
+ *
+ * Drilling into a directory with the right arrow lands the keyboard cursor
+ * here. The answer is an index rather than a path because the cursor is an
+ * index, and a directory that is still loading, empty or collapsed has no row
+ * to land on yet, so it answers `undefined` and the caller waits for the next
+ * render instead of guessing.
+ * @param rows - the flattened tree.
+ * @param path - the directory just opened.
+ * @returns the index of its first child entry, or undefined when none is visible.
+ */
+export function firstChildIndex(rows: readonly TreeRow[], path: string): number | undefined {
+  const parent = rows.findIndex(row => row.type === "entry" && row.path === path);
+  const row = rows[parent];
+  if (row?.type !== "entry" || !row.expanded) return undefined;
+  for (let index = parent + 1; index < rows.length; index += 1) {
+    const candidate = rows[index];
+    if (candidate?.type !== "entry") continue;
+    if (candidate.depth <= row.depth) return undefined;
+    if (candidate.depth === row.depth + 1) return index;
+  }
+  return undefined;
+}
+
 /** One loaded directory level as the view stores it. */
 export interface TreeLevel {
   readonly status: "loading" | "ready" | "failed";

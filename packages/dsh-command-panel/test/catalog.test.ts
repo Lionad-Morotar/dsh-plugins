@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { CATALOG, availableCatalog, type ActionContext } from "../src/client/catalog.ts";
+import { rankRows } from "../src/client/ranking.ts";
+
+import { CATALOG, availableCatalog, type ActionContext, type AvailabilityOptions } from "../src/client/catalog.ts";
 import { copyFor } from "../src/client/copy.ts";
+import { catalogRows, withConfirmLabel } from "../src/client/rows.ts";
 
 /** Availability is a pure solve, so every state is one literal away. */
 const idle: ActionContext = {
@@ -20,7 +23,7 @@ const noSession: ActionContext = {
 
 const options = { seatSurfaces: true, hostCommands: new Set(["rename"]) };
 
-function ids(context: ActionContext, overrides: Partial<typeof options> = {}): readonly string[] {
+function ids(context: ActionContext, overrides: Partial<AvailabilityOptions> = {}): readonly string[] {
   return availableCatalog(context, { ...options, ...overrides }).map(entry => entry.id);
 }
 
@@ -82,6 +85,37 @@ describe("availableCatalog", () => {
     const categoryOf = new Map(CATALOG.map(entry => [entry.id, entry.category]));
     const order = [...new Set(listed.map(id => categoryOf.get(id)))];
     expect(order).toEqual(["panel", "session", "navigate", "view"]);
+  });
+});
+
+describe("app.quit", () => {
+  it("stays absent until the option says the host can quit", () => {
+    expect(ids(idle)).not.toContain("app.quit");
+    expect(ids(noSession)).not.toContain("app.quit");
+  });
+
+  it("shows up with no session on screen once the option is on", () => {
+    const listed = ids(noSession, { hostShutdown: true });
+    expect(listed).toContain("app.quit");
+    // It rides right after the switch row, still inside the panel category.
+    expect(listed.indexOf("app.quit")).toBe(listed.indexOf("panel.switch") + 1);
+  });
+
+  it("speaks the confirmation wording while armed, the plain label otherwise", () => {
+    const zh = copyFor("zh");
+    const entries = availableCatalog(noSession, { seatSurfaces: true, hostShutdown: true });
+    const rows = catalogRows(zh, entries, new Map());
+    const plain = rows.find(row => row.action.kind === "request-shutdown");
+    expect(plain?.label).toBe("面板：关闭 DSH");
+    // The label is Chinese, so the English verbs a reader types ride as aliases.
+    for (const query of ["close", "quit", "exit"]) {
+      const matched = rankRows(rows, query).filter(row => row.action.kind === "request-shutdown");
+      expect(matched, query).toHaveLength(1);
+    }
+    const armed = withConfirmLabel(rows, true, zh).find(row => row.action.kind === "request-shutdown");
+    expect(armed?.label).toBe(zh.confirmQuit);
+    // Disarming drops the wording; untouched rows come back as the same array.
+    expect(withConfirmLabel(rows, false, zh)).toBe(rows);
   });
 });
 

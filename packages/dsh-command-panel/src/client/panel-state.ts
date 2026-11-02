@@ -41,6 +41,13 @@ export interface PanelModel {
    * returns to the same scope's ordinary list before it returns to the root.
    */
   readonly archivedOnly: boolean;
+  /**
+   * Whether the quit row is armed: the first accept sets it, the second one
+   * asks the host to exit. It only ever arms in command mode, where the quit
+   * row exists, and `modelFor`, `withQuery` and `back` clear it, so the mark
+   * never outlives the exact list it was armed on.
+   */
+  readonly confirmQuit: boolean;
 }
 
 /** What a back gesture leads to. */
@@ -50,12 +57,12 @@ export type BackResult =
 
 /** The model for a freshly opened mode: no query, first row highlighted. */
 export function modelFor(mode: PanelMode): PanelModel {
-  return { mode, level: "root", scope: null, query: "", highlight: 0, archivedOnly: false };
+  return { mode, level: "root", scope: null, query: "", highlight: 0, archivedOnly: false, confirmQuit: false };
 }
 
 /** A retyped query always moves the highlight to the strongest row. */
 export function withQuery(model: PanelModel, query: string): PanelModel {
-  return { ...model, query, highlight: 0 };
+  return { ...model, query, highlight: 0, confirmQuit: false };
 }
 
 /** Clamp an index into a row count; an empty list has no highlight. */
@@ -127,12 +134,12 @@ export function back(model: PanelModel): BackResult {
     if (model.archivedOnly) {
       return {
         kind: "model",
-        model: { ...model, archivedOnly: false, query: "", highlight: 0 },
+        model: { ...model, archivedOnly: false, query: "", highlight: 0, confirmQuit: false },
       };
     }
     return {
       kind: "model",
-      model: { ...model, level: "root", scope: null, query: "", highlight: 0 },
+      model: { ...model, level: "root", scope: null, query: "", highlight: 0, confirmQuit: false },
     };
   }
   return { kind: "close" };
@@ -168,4 +175,24 @@ export interface PrefixReading {
 export function readPrefix(text: string, mode: PanelMode): PrefixReading {
   if (!text.startsWith(">")) return { query: text, enterCommand: false };
   return { query: text.slice(1), enterCommand: mode !== "command" };
+}
+
+/** What accepting the quit row means, before any side effect. */
+export type QuitAccept =
+  /** Arm the row: the model carries the mark, nothing is asked of the host. */
+  | { readonly kind: "arm"; readonly model: PanelModel }
+  /** The mark was already set: the caller may now request the shutdown. */
+  | { readonly kind: "fire" };
+
+/**
+ * Read the quit row's two-step confirmation.
+ *
+ * The first accept only arms: quitting the host must survive one fat-fingered
+ * Enter, so the row turns into its own confirmation and a second accept is
+ * what fires. Arming is data, which is why this lives beside the other pure
+ * readings and the runtime only executes what `fire` tells it to.
+ */
+export function readQuitAccept(model: PanelModel): QuitAccept {
+  if (!model.confirmQuit) return { kind: "arm", model: { ...model, confirmQuit: true } };
+  return { kind: "fire" };
 }

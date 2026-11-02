@@ -12,7 +12,7 @@
  */
 import { GLOBAL_COMMANDS, type KeyBinding, type WorkbenchCommandSpec } from "./keymap.ts";
 import type { WorkbenchService } from "./service.ts";
-import { VIEW_DIGIT_COMMANDS, type ViewDigitPreference, type ViewDigitSpec } from "./view-digits.ts";
+import { VIEW_LAST_INDEX, VIEW_TAB_COMMANDS, type ViewDigitPreference, type ViewDigitSpec } from "./view-digits.ts";
 
 /** The localized label seat; digit rows pass their index through it. */
 export type CommandLabel = (key: string, params?: Record<string, string | number>) => string;
@@ -177,16 +177,16 @@ export interface ViewDigitRuntime {
 }
 
 /**
- * Register the nine digit chords while the preference says so.
+ * Register the digit chords, including the last-tab chord, while the preference says so.
  *
  * The registration is live, not a mount-time decision: flipping the settings
- * switch installs or releases the nine commands immediately, so a disabled
+ * switch installs or releases the commands immediately, so a disabled
  * workbench holds no digit binding and the host catalog stops advertising them.
  *
- * Desktop only, deliberately. The web shell receives `⌥1 … ⌥9` through the
+ * Desktop only, deliberately. The web shell receives `⌥0 … ⌥9` through the
  * bundle's own capture-phase router (`view-digits.ts`): the host refuses a
  * digit binding there, and declaring one would put a chord in the catalog that
- * the browser answers first.
+ * the browser answers first. `0` is the last visible tab, not a position.
  *
  * @param shortcuts - host shortcut service, or undefined outside a capable host.
  * @param service - the workbench service, read for the current session.
@@ -227,12 +227,14 @@ export function registerViewDigitCommands(
 
   const install = (): void => {
     if (disposers.length > 0) return;
-    for (const spec of VIEW_DIGIT_COMMANDS) {
+    for (const spec of VIEW_TAB_COMMANDS) {
       try {
         disposers.push(
           shortcuts.register({
             id: spec.id,
-            label: () => label(spec.labelKey, { index: spec.index }),
+            // The last-tab label has no `{index}` slot; passing 0 would print it.
+            label: () =>
+              spec.index === VIEW_LAST_INDEX ? label(spec.labelKey) : label(spec.labelKey, { index: spec.index }),
             aliases: [],
             defaults: desktopDefaults(spec.desktop),
             regions: ["page", "editable", "terminal"],

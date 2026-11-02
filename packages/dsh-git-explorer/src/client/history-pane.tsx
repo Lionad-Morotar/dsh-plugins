@@ -63,8 +63,11 @@ function CommitRow({
       <span className="gx-hash">{commit.hash.slice(0, 7)}</span>
       <span className="gx-subject">{commit.subject}</span>
       {commit.refs.slice(0, 2).map(ref => (
-        <span key={`${ref.kind}:${ref.name}`} className="gx-ref" data-kind={ref.kind} title={ref.name}>
-          {ref.name}
+        // The row is one button, and a button's own title wins over a child's,
+        // so the chip carries its full name in a hover label instead.
+        <span key={`${ref.kind}:${ref.name}`} className="gx-ref" data-kind={ref.kind}>
+          <span className="gx-ref-name">{ref.name}</span>
+          <span className="gx-ref-tip" role="tooltip">{ref.name}</span>
         </span>
       ))}
       <span className="gx-author">{commit.author}</span>

@@ -79,17 +79,19 @@ describe("buildSettingsGroups", () => {
   });
 
   it("keeps the generated digit rows out of the matrix", () => {
-    // The nine view-digit chords are one toggle, not nine editable rows: the
-    // section explains them next to the switch and the matrix stays a list of
-    // commands the feature packages mounted.
+    // The view-digit chords, including the last-tab chord, are one toggle, not
+    // ten editable rows: the section explains them next to the switch and the
+    // matrix stays a list of commands the feature packages mounted.
     const groups = buildSettingsGroups([
       ...CATALOG,
       { id: "workbench.view.digit1", label: "切换到第 1 个会话视图", keys: ["⌘1"], issue: null, conflicts: [] },
       { id: "workbench.view.digit9", label: "切换到第 9 个会话视图", keys: ["⌘9"], issue: null, conflicts: [] },
+      { id: "workbench.view.last", label: "切换到最后一个会话视图", keys: ["⌘0"], issue: null, conflicts: [] },
     ]);
     const ids = groups.flatMap(group => group.rows).map(row => row.id);
     expect(ids).not.toContain("workbench.view.digit1");
     expect(ids).not.toContain("workbench.view.digit9");
+    expect(ids).not.toContain("workbench.view.last");
     expect(ids).toContain("workbench.files.toggle");
   });
 
@@ -130,8 +132,8 @@ describe("checkBindings", () => {
 
   it("checks the digit chords only while they are installed", () => {
     const describeBinding = vi.fn(() => ({ binding: null, keys: [], issue: null, conflicts: [] }));
-    expect(checkBindings({ describeBinding }, { digits: true }).checked).toBe(12);
-    expect(describeBinding).toHaveBeenCalledTimes(12);
+    expect(checkBindings({ describeBinding }, { digits: true }).checked).toBe(13);
+    expect(describeBinding).toHaveBeenCalledTimes(13);
   });
 
   it("surfaces a foreign digit conflict instead of hiding it", () => {

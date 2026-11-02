@@ -11,14 +11,17 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 
 import type { Translate } from "./copy.ts";
 import {
+  adoptsOpenFile,
   badgeFor,
   computeTreeWindow,
+  firstChildIndex,
   formatSize,
   iconFor,
   revealScrollTop,
   type TreeRow,
 } from "./model.ts";
 import { statusBadge, statusLabelKey, statusTone } from "./status.ts";
+import { entriesInScope, liveTypeaheadQuery, typeaheadScopeKey, typeaheadStep } from "./typeahead.ts";
 
 /** Row height shared by the virtual window, the CSS and the scroll math. */
 export const TREE_ROW_HEIGHT = 22;
@@ -306,18 +309,61 @@ export function TreeBody({
   // The view clears `entryFocus` once it is served; the guard keeps a listing
   // refresh landing in the same tick from serving the same arrival twice.
   const servedEntry = useRef<TreeEntryFocus | undefined>(undefined);
+  // The prefix the reader is spelling. It lives in a ref because the window is
+  // measured against the clock, not against a render, and a miss must not move it.
+  const typed = useRef({ query: "", at: 0 });
+  // A directory the right arrow just opened. Its listing arrives a render
+  // later, and the cursor should land on the first child then rather than stay
+  // on the directory the reader already left.
+  const pendingDrill = useRef<string | undefined>(undefined);
+  // The panel path the adoption effect last saw. A rebuilt row list (a folder
+  // collapsing, a listing landing) must not be mistaken for the reader opening
+  // a file: only a path that actually changed earns the cursor back.
+  const seenSelection = useRef<string | undefined>(undefined);
+  // The row the cursor names. The effect below reads it without subscribing,
+  // so deciding whether to follow the open file never feeds back into itself.
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
   const entryIndexes = useMemo(
     () => rows.flatMap((row, index) => (row.type === "entry" ? [index] : [])),
     [rows],
   );
 
   // A click or an outside jump keeps the cursor honest so the very first arrow
-  // key press continues from where the user is looking.
+  // key press continues from where the user is looking. A rebuilt row list is
+  // not such a jump: left arrow collapses a folder while the panel still shows
+  // the file opened on arrival, and copying that file back would undo the key.
+  // A drill in progress is the same exception from the other direction.
   useEffect(() => {
-    if (selectedPath === undefined) return;
+    const selectionMoved = seenSelection.current !== selectedPath;
+    seenSelection.current = selectedPath;
+    if (pendingDrill.current !== undefined || selectedPath === undefined) return;
+    const resting = cursorRef.current === undefined ? undefined : rows[cursorRef.current];
+    if (!adoptsOpenFile({
+      cursorPath: resting?.type === "entry" ? resting.path : undefined,
+      selectionMoved,
+    })) return;
     const index = rows.findIndex(row => row.type === "entry" && row.path === selectedPath);
     if (index >= 0) setCursor(index);
   }, [selectedPath, rows]);
+
+  // Finish a drill once the opened directory's first child is actually a row.
+  // The listing is async, so the key handler can only record the intent; this
+  // is where the cursor moves, and where a failed or empty listing gives up.
+  useEffect(() => {
+    const path = pendingDrill.current;
+    if (path === undefined) return;
+    const parent = rows.findIndex(row => row.type === "entry" && row.path === path);
+    const row = rows[parent];
+    if (row?.type !== "entry" || row.kind !== "directory" || !row.expanded) {
+      pendingDrill.current = undefined;
+      return;
+    }
+    const child = firstChildIndex(rows, path);
+    if (child === undefined) return;
+    pendingDrill.current = undefined;
+    setCursor(child);
+  }, [rows]);
 
   // Discard a cursor that pointed into a row the outside world removed (a
   // directory collapse from a cross-panel jump, a refreshed listing).
@@ -381,8 +427,12 @@ export function TreeBody({
       if (row === undefined || row.type !== "entry") return;
       if (event.key === "ArrowRight") {
         event.preventDefault();
-        if (row.kind === "directory" && !row.expanded) onToggle(row.path);
-        else {
+        if (row.kind === "directory" && !row.expanded) {
+          // The children do not exist until the listing lands, so the cursor
+          // moves in the effect above rather than here.
+          pendingDrill.current = row.path;
+          onToggle(row.path);
+        } else {
           const next = entryIndexes.find(index => index > cursor);
           if (next !== undefined && rows[next]?.depth === row.depth + 1) moveCursor(next);
         }
@@ -412,7 +462,45 @@ export function TreeBody({
       if (event.key === "End") {
         event.preventDefault();
         if (last !== undefined) moveCursor(last);
+        return;
       }
+      // A printable character jumps within the cursor's level: a directory's
+      // children, or a file's siblings. The prefix accumulates across quick
+      // keystrokes, so `docs` is one name rather than four separate jumps.
+      const now = Date.now();
+      const scope = typeaheadScopeKey(rows, cursor);
+      const indexes = entriesInScope(rows, scope);
+      const names = indexes.map(index => {
+        const candidate = rows[index];
+        return candidate?.type === "entry" ? candidate.name : "";
+      });
+      const step = typeaheadStep({
+        query: liveTypeaheadQuery(typed.current.query, typed.current.at, now),
+        key: event.key,
+        composing: false,
+        alt: false,
+        meta: false,
+        ctrl: false,
+        repeat: event.nativeEvent.repeat,
+        names,
+        active: cursor === undefined ? -1 : indexes.indexOf(cursor),
+      });
+      if (step.kind === "clear") {
+        typed.current = { query: "", at: 0 };
+        return;
+      }
+      if (step.kind !== "jump") return;
+      const target = indexes[step.index];
+      if (target === undefined) return;
+      const landed = rows[target];
+      if (landed?.type !== "entry") return;
+      typed.current = { query: step.query, at: now };
+      event.preventDefault();
+      moveCursor(target);
+      // A directory only moves the cursor: opening it is what the next
+      // keystroke searches, and a preview has no directory to show. A file is
+      // the preview, which is the whole point of the jump.
+      if (landed.kind !== "directory") onSelect(landed.path);
     },
     [cursor, entryIndexes, moveCursor, onToggle, onSelect, rows],
   );

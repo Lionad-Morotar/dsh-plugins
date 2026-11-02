@@ -7,12 +7,20 @@ import {
   VIEW_DIGIT_COMMANDS,
   VIEW_DIGIT_COUNT,
   VIEW_DIGIT_STORAGE_KEY,
+  VIEW_LAST_COMMAND,
+  VIEW_TAB_COMMANDS,
   viewDigitChord,
   viewDigitCommandId,
   viewDigitIndexFromCode,
   type ViewDigitKeyEvent,
 } from "../src/client/view-digits.ts";
-import { listViewTabs, switchToViewTab, type ViewSwitcherDocument, type ViewSwitcherElement } from "../src/client/view-switcher.ts";
+import {
+  listViewTabs,
+  switchToLastViewTab,
+  switchToViewTab,
+  type ViewSwitcherDocument,
+  type ViewSwitcherElement,
+} from "../src/client/view-switcher.ts";
 
 /** A storage that keeps its document in memory and records writes. */
 function memoryStorage(seed?: string) {
@@ -117,6 +125,13 @@ describe("view digit table", () => {
       expect(command.id).toBe(viewDigitCommandId(command.index));
     }
     expect(viewDigitCommandId(3)).toBe("workbench.view.digit3");
+    expect(VIEW_TAB_COMMANDS).toEqual([...VIEW_DIGIT_COMMANDS, VIEW_LAST_COMMAND]);
+    expect(VIEW_LAST_COMMAND).toMatchObject({
+      index: 0,
+      id: "workbench.view.last",
+      labelKey: "keymap.viewLast",
+      desktop: { code: "Digit0", modifiers: ["primary"] },
+    });
   });
 
   it("prints the chord the runtime actually delivers", () => {
@@ -126,11 +141,12 @@ describe("view digit table", () => {
     expect(viewDigitChord("web", "other")).toBe("Alt");
   });
 
-  it("reads a 1-based index from a physical digit code and nothing else", () => {
+  it("reads a position from Digit1–9 and the last-tab sentinel from Digit0", () => {
     expect(viewDigitIndexFromCode("Digit1")).toBe(1);
     expect(viewDigitIndexFromCode("Digit9")).toBe(9);
-    expect(viewDigitIndexFromCode("Digit0")).toBeNull();
+    expect(viewDigitIndexFromCode("Digit0")).toBe(0);
     expect(viewDigitIndexFromCode("Key1")).toBeNull();
+    expect(viewDigitIndexFromCode("Numpad0")).toBeNull();
     expect(viewDigitIndexFromCode("Numpad1")).toBeNull();
     expect(viewDigitIndexFromCode(undefined)).toBeNull();
   });
@@ -161,6 +177,22 @@ describe("switching by tab index", () => {
     const doc = documentWith(["对话", "轨迹"], clicked);
     expect(switchToViewTab(doc, 3)).toBe(false);
     expect(switchToViewTab(doc, 0)).toBe(false);
+    expect(clicked).toEqual([]);
+  });
+
+  it("clicks the last visible tab, including when that tab is not the ninth", () => {
+    const clicked: string[] = [];
+    expect(switchToLastViewTab(documentWith(["对话", "轨迹", "文件", "Git"], clicked))).toBe(true);
+    expect(clicked).toEqual(["Git"]);
+    expect(switchToLastViewTab(documentWith(["对话"], clicked))).toBe(true);
+    expect(clicked).toEqual(["Git", "对话"]);
+  });
+
+  it("answers false for the last tab when the strip is empty or missing", () => {
+    const clicked: string[] = [];
+    expect(switchToLastViewTab(documentWith([], clicked))).toBe(false);
+    expect(switchToLastViewTab(undefined)).toBe(false);
+    expect(switchToLastViewTab({ querySelector: () => null, querySelectorAll: () => [] })).toBe(false);
     expect(clicked).toEqual([]);
   });
 
@@ -215,14 +247,22 @@ describe("web digit router", () => {
     expect(preventDefault).not.toHaveBeenCalled();
   });
 
-  it("rejects every other modifier, digit 0 and keys that are not digits", () => {
+  it("switches to the last tab on alt+0 and consumes the event", () => {
+    const { instance, switched } = router();
+    const preventDefault = vi.fn();
+    expect(instance.handle(altDigit(0, { preventDefault }))).toBe(true);
+    expect(switched).toEqual([0]);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects every other modifier and keys that are not number-row digits", () => {
     const { instance, switched } = router();
     const misses: Array<Partial<ViewDigitKeyEvent>> = [
       { ctrlKey: true },
       { metaKey: true },
       { shiftKey: true },
       { altKey: false },
-      { code: "Digit0" },
+      { code: "Numpad0" },
       { code: "Key1" },
       { code: undefined },
       { defaultPrevented: true },

@@ -662,3 +662,144 @@ describe("pointer paging", () => {
     removeSpy.mockRestore();
   });
 });
+
+describe("sidebar paging", () => {
+  /**
+   * The host's session list: a role=tree that scrolls, holding data-row-key
+   * rows. The class name is a build hash and the label follows the locale, so
+   * the fixture carries neither — the lookup must not depend on them.
+   */
+  function sessionList(scrollTop = 1000): HTMLDivElement {
+    const list = doc.createElement("div");
+    list.setAttribute("role", "tree");
+    list.style.overflowY = "auto";
+    Object.defineProperties(list, {
+      scrollTop: { value: scrollTop, writable: true, configurable: true },
+      scrollHeight: { value: 3760, configurable: true },
+      clientHeight: { value: 760, configurable: true },
+    });
+    const row = doc.createElement("div");
+    row.setAttribute("role", "treeitem");
+    row.setAttribute("data-row-key", "session:1");
+    list.append(row);
+    doc.body.append(list);
+    return list;
+  }
+
+  it("Shift+PageDown pages the session list and leaves the transcript alone", () => {
+    const scroller = scrollport(1000);
+    const list = sessionList(1000);
+    mount();
+    const el = composer("hello", 0, 0, scroller);
+
+    const e = keydown({ key: "PageDown", shiftKey: true });
+    el.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(list.scrollTop).toBe(1380);
+    expect(scroller.scrollTop).toBe(1000);
+  });
+
+  it("Shift+PageUp walks the session list backward", () => {
+    const list = sessionList(1000);
+    mount();
+
+    doc.body.dispatchEvent(keydown({ key: "PageUp", shiftKey: true }));
+
+    expect(list.scrollTop).toBe(620);
+  });
+
+  it("without Shift the session list is not touched", () => {
+    // The unshifted stroke keeps the three-level decision: a focused field
+    // pages the transcript, and the sidebar only moves when Shift names it.
+    const scroller = scrollport(1000);
+    const list = sessionList(1000);
+    mount();
+    const el = composer("hello", 0, 0, scroller);
+
+    el.dispatchEvent(keydown({ key: "PageDown" }));
+
+    expect(scroller.scrollTop).toBe(1380);
+    expect(list.scrollTop).toBe(1000);
+  });
+
+  it("Shift wins over the pointer: the preview under it does not move", () => {
+    const list = sessionList(1000);
+    const preview = doc.createElement("div");
+    preview.style.overflowY = "auto";
+    Object.defineProperties(preview, {
+      scrollTop: { value: 1000, writable: true, configurable: true },
+      scrollHeight: { value: 3760, configurable: true },
+      clientHeight: { value: 760, configurable: true },
+      scrollLeft: { value: 0, writable: true, configurable: true },
+      scrollWidth: { value: 400, configurable: true },
+      clientWidth: { value: 400, configurable: true },
+    });
+    doc.body.append(preview);
+    mount({ pointerElementAt: () => preview });
+    win.dispatchEvent(mousemoveAt(20, 40));
+
+    const e = keydown({ key: "PageDown", shiftKey: true });
+    doc.body.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(list.scrollTop).toBe(1380);
+    expect(preview.scrollTop).toBe(1000);
+  });
+
+  it("a search tree nested in the scroller still pages the scroller", () => {
+    // Searching replaces the data-row-key rows with bare treeitems inside a
+    // tree that does not scroll; the scrollbar is the wrapper around it.
+    const scroller = doc.createElement("div");
+    scroller.style.overflowY = "auto";
+    Object.defineProperties(scroller, {
+      scrollTop: { value: 1000, writable: true, configurable: true },
+      scrollHeight: { value: 3760, configurable: true },
+      clientHeight: { value: 760, configurable: true },
+    });
+    const tree = doc.createElement("div");
+    tree.setAttribute("role", "tree");
+    const row = doc.createElement("div");
+    row.setAttribute("role", "treeitem");
+    tree.append(row);
+    scroller.append(tree);
+    doc.body.append(scroller);
+    mount();
+
+    doc.body.dispatchEvent(keydown({ key: "PageDown", shiftKey: true }));
+
+    expect(scroller.scrollTop).toBe(1380);
+  });
+
+  it("a tree inside the transcript is not the session list", () => {
+    // The host's JSON viewer is also a role=tree of treeitems, and it renders
+    // inside the conversation. Paging it would move the chat.
+    const transcript = scrollport(1000);
+    const viewer = doc.createElement("div");
+    viewer.setAttribute("role", "tree");
+    const item = doc.createElement("div");
+    item.setAttribute("role", "treeitem");
+    viewer.append(item);
+    transcript.append(viewer);
+    mount();
+
+    const e = keydown({ key: "PageDown", shiftKey: true });
+    doc.body.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(transcript.scrollTop).toBe(1000);
+  });
+
+  it("with no session list mounted the stroke is swallowed and nothing moves", () => {
+    // Falling through would page the transcript, which is the opposite of
+    // naming the sidebar.
+    const scroller = scrollport(1000);
+    mount();
+
+    const e = keydown({ key: "PageDown", shiftKey: true });
+    doc.body.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(scroller.scrollTop).toBe(1000);
+  });
+});

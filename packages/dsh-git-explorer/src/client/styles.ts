@@ -286,10 +286,9 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 .gx-hash { flex: none; color: var(--gx-caption); font-family: var(--gx-mono); font-size: 10.5px; }
 .gx-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
 .gx-ref {
+  position: relative;
   flex: none;
   max-width: 12ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
   padding: 0 5px;
   border: 1px solid color-mix(in srgb, var(--gx-accent) 35%, transparent);
   border-radius: 999px;
@@ -298,6 +297,30 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
   font-size: 9.5px;
   line-height: 15px;
 }
+.gx-ref-name { display: block; overflow: hidden; text-overflow: ellipsis; }
+/* The chip lives inside the row button, whose title suppresses a child's native
+   tooltip, so the full ref name is a hover label of its own. */
+.gx-ref-tip {
+  display: none;
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  right: 0;
+  max-width: 48ch;
+  padding: 2px 6px;
+  border: 1px solid var(--gx-border);
+  border-radius: 6px;
+  background: var(--gx-panel-2);
+  color: var(--gx-text);
+  font-size: 10.5px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--gx-text) 16%, transparent);
+  pointer-events: none;
+}
+.gx-ref:hover .gx-ref-tip { display: block; }
 .gx-ref[data-kind="tag"] { color: var(--gx-modified); border-color: color-mix(in srgb, var(--gx-modified) 35%, transparent); }
 .gx-author, .gx-time { flex: none; color: var(--gx-caption); font-size: 10.5px; }
 .gx-author { max-width: 12ch; overflow: hidden; text-overflow: ellipsis; }

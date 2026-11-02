@@ -11,7 +11,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { failureCode, runCatalogAction, seatActions, type ActionDeps } from "../src/client/actions.ts";
 import { copyFor } from "../src/client/copy.ts";
-import type { RemoteResult, SlotEntry } from "../src/client/dsh.ts";
+import type { HostShutdownRemote, RemoteResult, SlotEntry } from "../src/client/dsh.ts";
+import type { ShutdownRequestResult } from "../src/shared.ts";
 import { SESSION_A, SESSION_B, fakeSessions, fakeWorkspaces, sessionList, workspaceSnapshot } from "./fixtures.ts";
 
 const copy = copyFor("zh");
@@ -22,6 +23,7 @@ interface Harness {
   readonly closed: () => number;
   readonly inserted: () => readonly string[];
   readonly shortcutInvoke: ReturnType<typeof vi.fn>;
+  readonly shutdownRequest: ReturnType<typeof vi.fn>;
 }
 
 interface HarnessOptions {
@@ -36,6 +38,17 @@ interface HarnessOptions {
   readonly unarchiveThrows?: unknown;
   readonly openTabThrows?: unknown;
   readonly colorScheme?: "light" | "dark";
+  /**
+   * The remote shutdown face; `null` means the namespace is absent, `undefined`
+   * (left out) installs a face answering `requested`.
+   */
+  readonly shutdownFace?: HostShutdownRemote | null;
+  /** What the installed face answers; meaningless without a face. */
+  readonly shutdownResult?: ShutdownRequestResult;
+  /** Make the installed face reject, standing in for a transport failure. */
+  readonly shutdownThrows?: unknown;
+  /** Make the installed face answer a business failure instead of a value. */
+  readonly shutdownError?: { readonly code: string };
   readonly absent?: readonly ("uiWorkspace" | "layout" | "theme" | "pluginNavigation" | "sidebarRight" | "slots" | "workspaces" | "sessions" | "shortcuts")[];
   readonly invokeThrows?: unknown;
 }
@@ -112,6 +125,19 @@ function harness(options: HarnessOptions = {}): Harness {
     unpinSession: vi.fn(async () => undefined),
   };
 
+  /**
+   * The remote shutdown call, recorded so cases can assert exactly one fire.
+   * The harness installs no other channel: there is no `appExit` anywhere in
+   * reach, which is the point of the executor contract.
+   */
+  const shutdownRequest = vi.fn(async (): Promise<RemoteResult<ShutdownRequestResult>> => {
+    if (options.shutdownThrows !== undefined) throw options.shutdownThrows;
+    if (options.shutdownError !== undefined) return { ok: false, error: { code: options.shutdownError.code } };
+    return { ok: true, value: options.shutdownResult ?? "requested" };
+  });
+  const shutdownFace: HostShutdownRemote | undefined =
+    options.shutdownFace === null ? undefined : (options.shutdownFace ?? { request: shutdownRequest });
+
   const deps: ActionDeps = {
     sessions: () => sessions,
     workspaces: () => workspaces,
@@ -122,6 +148,7 @@ function harness(options: HarnessOptions = {}): Harness {
     sidebarRight: () => sidebarRight,
     slots: () => slots,
     shortcuts: () => shortcuts as never,
+    shutdownRequest: () => shutdownFace,
     currentSessionId: () => options.currentSessionId === undefined ? SESSION_A.id : options.currentSessionId,
     insert: text => {
       inserted.push(text);
@@ -136,7 +163,7 @@ function harness(options: HarnessOptions = {}): Harness {
     copy: () => copy,
   };
 
-  return { deps, notices, closed: () => closedCount, inserted: () => inserted, shortcutInvoke };
+  return { deps, notices, closed: () => closedCount, inserted: () => inserted, shortcutInvoke, shutdownRequest };
 }
 
 /** A seat whose `create()` returns the given actions. */
@@ -328,6 +355,62 @@ describe("invoke-shortcut", () => {
     await runCatalogAction({ kind: "invoke-shortcut", id: "inspector.toggle" }, h.deps);
     expect(h.closed()).toBe(0);
     expect(h.notices).toEqual([{ text: copy.actions.failed("inspector.toggle", "shortcuts/boom"), tone: "error" }]);
+  });
+});
+
+describe("request-shutdown", () => {
+  it("fires the remote shutdown exactly once and closes", async () => {
+    const h = harness();
+    expect(await runCatalogAction({ kind: "request-shutdown" }, h.deps)).toBe(true);
+    expect(h.shutdownRequest).toHaveBeenCalledTimes(1);
+    expect(h.closed()).toBe(1);
+    expect(h.notices).toEqual([]);
+  });
+
+  it("keeps the panel open and says why when the remote face answers unavailable", async () => {
+    const h = harness({ shutdownResult: "unavailable" });
+    await runCatalogAction({ kind: "request-shutdown" }, h.deps);
+    expect(h.shutdownRequest).toHaveBeenCalledTimes(1);
+    expect(h.notices).toEqual([{ text: copy.actions.shutdownUnavailable, tone: "error" }]);
+    expect(h.closed()).toBe(0);
+  });
+
+  it("keeps the panel open when the transport rejects, without throwing", async () => {
+    const h = harness({ shutdownThrows: new Error("socket gone") });
+    await runCatalogAction({ kind: "request-shutdown" }, h.deps);
+    expect(h.notices).toEqual([{ text: copy.actions.shutdownUnavailable, tone: "error" }]);
+    expect(h.closed()).toBe(0);
+  });
+
+  it("keeps the panel open on a business failure too", async () => {
+    const h = harness({ shutdownError: { code: "typert/refused" } });
+    await runCatalogAction({ kind: "request-shutdown" }, h.deps);
+    expect(h.notices).toEqual([{ text: copy.actions.shutdownUnavailable, tone: "error" }]);
+    expect(h.closed()).toBe(0);
+  });
+
+  /**
+   * The decision this suite pins: the client never reads `appExit`. That name
+   * only exists on the host process's Cordis tree, so a context read always
+   * answers undefined and the row could never appear (the defect this fix
+   * closes). The remote face is the whole contract: `requested` through it
+   * closes even though no `appExit` is in reach, and a missing face reads as
+   * "no row, no capability".
+   */
+  it("never reads the client context for appExit: the remote face is the whole contract", async () => {
+    // The closing half: requested comes back through the face, not the context.
+    const closing = harness({ shutdownResult: "requested" });
+    await runCatalogAction({ kind: "request-shutdown" }, closing.deps);
+    expect(closing.shutdownRequest).toHaveBeenCalledTimes(1);
+    expect(closing.closed()).toBe(1);
+
+    // The hiding half: with no face there is nothing to call and no row to
+    // reach this executor; a stray call still cannot close the panel.
+    const missing = harness({ shutdownFace: null });
+    await runCatalogAction({ kind: "request-shutdown" }, missing.deps);
+    expect(missing.shutdownRequest).not.toHaveBeenCalled();
+    expect(missing.notices).toEqual([{ text: copy.actions.shutdownUnavailable, tone: "error" }]);
+    expect(missing.closed()).toBe(0);
   });
 });
 

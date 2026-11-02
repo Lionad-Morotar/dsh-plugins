@@ -261,6 +261,9 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* The keyboard cursor lives here, so the container itself must not grow a
+     second ring on top of the row it already outlines. */
+  outline: none;
   overscroll-behavior: contain;
   padding: 4px 0;
   scrollbar-width: thin;

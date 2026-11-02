@@ -93,8 +93,8 @@ describe("target typing", () => {
 
 describe("page keys", () => {
   it("maps PageDown forward and PageUp backward over half a viewport", () => {
-    expect(matchScrollKey(key("PageDown"), true)).toEqual({ direction: 1, fraction: HALF_PAGE });
-    expect(matchScrollKey(key("PageUp"), true)).toEqual({ direction: -1, fraction: HALF_PAGE });
+    expect(matchScrollKey(key("PageDown"), true)).toEqual({ direction: 1, fraction: HALF_PAGE, target: "pointer" });
+    expect(matchScrollKey(key("PageUp"), true)).toEqual({ direction: -1, fraction: HALF_PAGE, target: "pointer" });
   });
 
   it("half a viewport is literally one half", () => {
@@ -118,9 +118,14 @@ describe("page keys", () => {
   it("accepts modifier variants, which terminals and shells do deliver", () => {
     // Unlike Home/End there is no modifier meaning to preserve here, so a
     // Ctrl/Meta-carrying PageDown is still the same request.
-    expect(matchScrollKey(key("PageDown", { ctrlKey: true }), true)).toEqual({ direction: 1, fraction: HALF_PAGE });
-    expect(matchScrollKey(key("PageDown", { metaKey: true }), true)).toEqual({ direction: 1, fraction: HALF_PAGE });
-    expect(matchScrollKey(key("PageDown", { shiftKey: true }), true)).toEqual({ direction: 1, fraction: HALF_PAGE });
+    expect(matchScrollKey(key("PageDown", { ctrlKey: true }), true)).toEqual({ direction: 1, fraction: HALF_PAGE, target: "pointer" });
+    expect(matchScrollKey(key("PageDown", { metaKey: true }), true)).toEqual({ direction: 1, fraction: HALF_PAGE, target: "pointer" });
+  });
+
+  it("Shift retargets the stroke at the session list", () => {
+    // Shift is the one modifier with a meaning: the session list, both ways.
+    expect(matchScrollKey(key("PageDown", { shiftKey: true }), true)).toEqual({ direction: 1, fraction: HALF_PAGE, target: "sidebar" });
+    expect(matchScrollKey(key("PageUp", { shiftKey: true }), true)).toEqual({ direction: -1, fraction: HALF_PAGE, target: "sidebar" });
   });
 
   it("every other key is ignored", () => {
