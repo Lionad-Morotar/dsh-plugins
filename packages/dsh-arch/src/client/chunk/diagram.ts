@@ -196,6 +196,8 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     const g = el("g", { transform: `translate(${node.x} ${node.y})`, style: "cursor:move" });
     g.setAttribute("data-id", node.id);
     const isContainer = (node.children ?? []).length > 0;
+    // Containers stay opaque. A translucent fill over the light canvas reads as
+    // near-white, and the light text drawn on it disappears.
     const fill = isContainer ? "#1e3a8a" : node.color === "secondary" ? "#475569" : "#3b82f6";
     g.append(
       el("rect", {
@@ -203,8 +205,7 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
         height: node.height,
         rx: 8,
         fill,
-        "fill-opacity": isContainer ? 0.28 : 1,
-        stroke: "#2563eb",
+        stroke: isContainer ? "#60a5fa" : "#2563eb",
         "stroke-width": 1.5,
       }),
     );
