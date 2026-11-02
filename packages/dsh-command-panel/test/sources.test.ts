@@ -247,17 +247,20 @@ describe("loadRows: switch", () => {
     ]);
   });
 
-  it("returns one workspace's sessions at the second level, with a new-session row", async () => {
+  it("closes a workspace's sessions with a new-session row and an archived-sessions row", async () => {
     const result = await loadRows(
       services(),
       request({ mode: "switch", level: "sessions", scope: { kind: "workspace", workspaceId: "ws-one" } }),
     );
-    expect(result.rows.map(row => row.label)).toEqual(["重构命令面板", copy.newSession]);
-    expect(result.rows.at(-1)?.action).toEqual({
+    expect(result.rows.map(row => row.label)).toEqual(["重构命令面板", copy.newSession, copy.archivedSessions]);
+    expect(result.rows.at(-2)?.action).toEqual({
       kind: "create-session",
       scope: "workspace",
       workspaceId: "ws-one",
     });
+    expect(result.rows.at(-1)?.action).toEqual({ kind: "drill-archived" });
+    // ws-one's only archived session is sess-archived in the fixture.
+    expect(result.rows.at(-1)?.hint).toBe(copy.sessionsCount(1));
   });
 
   it("needs no session and no remote at all", async () => {
