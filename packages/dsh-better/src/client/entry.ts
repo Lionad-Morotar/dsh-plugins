@@ -723,9 +723,7 @@ function reactOf(require: LoaderRequire | null): PageReact | null {
     const loaded = require("react");
     if (typeof loaded !== "object" || loaded === null) return null;
     const candidate = loaded as Partial<PageReact>;
-    return typeof candidate.createElement === "function" && typeof candidate.useSyncExternalStore === "function"
-      ? (candidate as PageReact)
-      : null;
+    return typeof candidate.createElement === "function" ? (candidate as PageReact) : null;
   } catch {
     return null;
   }

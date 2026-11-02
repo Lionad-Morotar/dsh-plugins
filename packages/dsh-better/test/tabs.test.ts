@@ -8,9 +8,10 @@
  * as rules for buttons the plan could actually identify, and Chat is never
  * offered as a choice.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { DICTIONARIES } from "../src/client/dictionaries.ts";
+import { paintRows, TabSettingsPage, type PageReact, type TabCopy } from "../src/client/tabs-page.tsx";
 import {
   FIXED_VIEW_ID,
   STRIP_CONTAINER_SELECTOR,
@@ -315,6 +316,152 @@ describe("createTabController", () => {
     controller.attach(doc);
     expect(doc.sheet?.dataset.plugin).toBe("dsh-better");
     expect(doc.sheet?.dataset.pluginCss).toBe(STRIP_STYLE_TAG);
+  });
+});
+
+/**
+ * One element, with exactly the surface the page paints through.
+ *
+ * The test runtime has no DOM and the package does not take one on to get it.
+ * This stands in for `Element` at the four calls the paint makes: create,
+ * attribute, text, append, and a query back by attribute. It is a fake, so the
+ * assertions stay on what the page decided to write, not on browser behaviour.
+ */
+class FakeElement {
+  readonly ownerDocument: FakeDocument;
+  readonly children: FakeElement[] = [];
+  readonly attrs = new Map<string, string>();
+  textContent = "";
+  type = "";
+  checked = false;
+  readonly listeners = new Map<string, () => void>();
+
+  constructor(
+    readonly tag: string,
+    ownerDocument: FakeDocument,
+  ) {
+    this.ownerDocument = ownerDocument;
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attrs.set(name, value);
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attrs.get(name) ?? null;
+  }
+
+  append(...nodes: FakeElement[]): void {
+    this.children.push(...nodes);
+  }
+
+  replaceChildren(): void {
+    this.children.length = 0;
+  }
+
+  addEventListener(type: string, listener: () => void): void {
+    this.listeners.set(type, listener);
+  }
+
+  querySelector(selector: string): FakeElement | null {
+    return this.queryAll(selector)[0] ?? null;
+  }
+
+  querySelectorAll(selector: string): FakeElement[] {
+    return this.queryAll(selector);
+  }
+
+  private queryAll(selector: string): FakeElement[] {
+    const found: FakeElement[] = [];
+    const match = (element: FakeElement): void => {
+      if (matches(element, selector)) found.push(element);
+      for (const child of element.children) match(child);
+    };
+    for (const child of this.children) match(child);
+    return found;
+  }
+}
+
+/** `[name]` or `[name='value']`, the only selectors the page tests use. */
+function matches(element: FakeElement, selector: string): boolean {
+  const parsed = /^\[([a-z-]+)(?:='([^']*)')?\]$/u.exec(selector);
+  if (parsed === null) return element.tag === selector;
+  const [, name, value] = parsed;
+  return element.attrs.has(name ?? "") && (value === undefined || element.attrs.get(name ?? "") === value);
+}
+
+class FakeDocument {
+  createElement(tag: string): FakeElement {
+    return new FakeElement(tag, this);
+  }
+}
+
+/** A section the page can paint into and a test can read back. */
+function pageSection(): FakeElement {
+  return new FakeDocument().createElement("section");
+}
+
+const COPY: TabCopy = {
+  heading: "Tab 管理",
+  empty: "还没有插件注册会话标签。",
+  checkboxLabel: (label, enabled) => (enabled ? `隐藏${label}` : `显示${label}`),
+};
+
+describe("settings page paint", () => {
+  it("writes one row per registered view, and never calls a hook", () => {
+    const hooks = { useState: vi.fn(), useSyncExternalStore: vi.fn(), useEffect: vi.fn() };
+    const React: PageReact = { createElement: (type, props) => ({ type, props }), ...hooks };
+    const controller = createTabController({
+      ledger: ledger([view("chat", "对话"), view("wakatime", "WakaTime"), view("files", "文件")]),
+    });
+    const element = TabSettingsPage({ React, controller, copy: COPY }) as {
+      type: unknown;
+      props: { ref?: (node: Element | null) => void };
+    };
+    expect(element.type).toBe("section");
+    // The render itself must not have touched a hook: the host calls this
+    // function with no dispatcher, and a hook there is what blanks the panel.
+    expect(hooks.useState).not.toHaveBeenCalled();
+    expect(hooks.useSyncExternalStore).not.toHaveBeenCalled();
+    expect(hooks.useEffect).not.toHaveBeenCalled();
+
+    const section = pageSection();
+    element.props.ref?.(section as unknown as Element);
+    const rows = [...section.querySelectorAll("[data-dsh-better-tabs-row]")].map(row => row.getAttribute("data-dsh-better-tabs-row"));
+    expect(rows).toEqual(["wakatime", "files"]);
+    expect(section.querySelector("h2")?.textContent).toBe("Tab 管理");
+    const box = section.querySelector("[data-dsh-better-tabs-check='files']");
+    expect(box?.tag).toBe("input");
+    expect(box?.checked).toBe(true);
+  });
+
+  it("says so when nothing has registered, and repaints when a view arrives", () => {
+    const views = ledger([]);
+    const controller = createTabController({ ledger: views });
+    const section = pageSection();
+    paintRows(section as unknown as Element, { React: { createElement: () => null }, controller, copy: COPY });
+    expect(section.querySelector("[data-dsh-better-tabs-empty]")?.textContent).toBe(COPY.empty);
+
+    views.set([view("git", "Git")]);
+    paintRows(section as unknown as Element, { React: { createElement: () => null }, controller, copy: COPY });
+    expect(section.querySelector("[data-dsh-better-tabs-empty]")).toBeNull();
+    expect(section.querySelector("[data-dsh-better-tabs-row]")?.getAttribute("data-dsh-better-tabs-row")).toBe("git");
+  });
+
+  it("stops repainting once the host unmounts the section", () => {
+    const views = ledger([view("files", "文件")]);
+    const controller = createTabController({ ledger: views });
+    const React: PageReact = { createElement: (_type, props) => ({ props }) };
+    const element = TabSettingsPage({ React, controller, copy: COPY }) as {
+      props: { ref?: (node: Element | null) => void };
+    };
+    const section = pageSection();
+    element.props.ref?.(section as unknown as Element);
+    element.props.ref?.(null);
+    views.set([view("files", "文件"), view("git", "Git")]);
+    // The detached section keeps its last paint. A subscription that outlived
+    // the page would throw on the node it no longer owns.
+    expect(section.querySelectorAll("[data-dsh-better-tabs-row]")).toHaveLength(1);
   });
 });
 
