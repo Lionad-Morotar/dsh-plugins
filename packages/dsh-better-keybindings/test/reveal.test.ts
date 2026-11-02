@@ -8,10 +8,12 @@ import {
   isScrollable,
   pageTarget,
   pickScrollContainer,
+  pickSidebarScroller,
   revealDelta,
   textFieldScroll,
   type ScrollBox,
   type ScrollCandidate,
+  type SidebarCandidate,
 } from "../src/client/reveal.ts";
 
 function box(over: Partial<ScrollBox> = {}): ScrollBox {
@@ -229,5 +231,46 @@ describe("pickScrollContainer", () => {
 
   it("returns null for an empty chain", () => {
     expect(pickScrollContainer([])).toBeNull();
+  });
+});
+
+describe("pickSidebarScroller", () => {
+  /** One ancestor of a session row: whether it is the tree, plus its overflow. */
+  const link = (over: Partial<SidebarCandidate> = {}): SidebarCandidate => ({
+    tree: false,
+    overflowY: "visible",
+    scrollHeight: 4000,
+    clientHeight: 800,
+    ...over,
+  });
+
+  it("picks the tree itself when the tree is the scroller", () => {
+    // The browser's own list: the role=tree div carries overflow-y: auto and
+    // the rows live inside it, so the walk stops on the tree.
+    const chain = [link(), link({ tree: true, overflowY: "auto" }), link({ overflowY: "auto" })];
+    expect(pickSidebarScroller(chain)).toBe(1);
+  });
+
+  it("climbs past a tree that does not scroll to the scrollbar above it", () => {
+    // Search results: the role=tree is a plain wrapper nested inside the
+    // scroller, so the walk continues upward from the tree.
+    const chain = [link(), link({ tree: true }), link({ overflowY: "auto" })];
+    expect(pickSidebarScroller(chain)).toBe(2);
+  });
+
+  it("accepts a scroller with nothing to scroll", () => {
+    // A short session list is still the list. Requiring room here would make
+    // Shift+Page fall through to whatever else the pointer sits on.
+    const chain = [link({ tree: true, overflowY: "scroll", scrollHeight: 400, clientHeight: 800 })];
+    expect(pickSidebarScroller(chain)).toBe(0);
+  });
+
+  it("returns null when the chain has no tree", () => {
+    // No session list is mounted; a scrollbar alone is not the sidebar.
+    expect(pickSidebarScroller([link({ overflowY: "auto" })])).toBeNull();
+  });
+
+  it("returns null when nothing from the tree upward scrolls", () => {
+    expect(pickSidebarScroller([link({ tree: true })])).toBeNull();
   });
 });

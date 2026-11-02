@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Better keybindings",
-    "description": "Home and End move the caret inside text fields instead of scrolling the conversation; PageUp and PageDown page by half a screen."
+    "description": "Home and End move the caret inside text fields instead of scrolling the conversation; PageUp and PageDown page by half a screen, and Shift pages the session list."
   }
 }

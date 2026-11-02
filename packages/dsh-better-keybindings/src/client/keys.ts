@@ -82,12 +82,24 @@ const TEXT_INPUT_TYPES = new Set(["text", "search", "url", "tel", "email", "pass
 /** The one scroll fraction this plugin implements; see {@link matchScrollKey}. */
 export const HALF_PAGE = 0.5;
 
-/** One page-scroll request: which way, and over how much of the viewport. */
+/**
+ * Which surface a page stroke addresses.
+ *
+ * `pointer` keeps the existing three-level decision (focused field, the
+ * scrollable area under the pointer, else the transcript). `sidebar` is the
+ * Shift chord: it pages the session list and nothing else, wherever the
+ * pointer happens to sit.
+ */
+export type ScrollTarget = "pointer" | "sidebar";
+
+/** One page-scroll request: which way, over how much of the viewport, and where. */
 export interface ScrollAction {
   /** Negative walks toward the start, positive toward the end. */
   direction: -1 | 1;
   /** Fraction of the viewport height to move. */
   fraction: number;
+  /** Which surface the stroke addresses. */
+  target: ScrollTarget;
 }
 
 const SCROLL_KEY_DIRECTION = new Map<string, -1 | 1>([
@@ -109,7 +121,9 @@ const SCROLL_KEY_DIRECTION = new Map<string, -1 | 1>([
  * Alt is excluded like the caret keys (history navigation, host chords); IME
  * composition is excluded because the input method owns the surface. Ctrl/Meta
  * are NOT excluded: PageUp/PageDown have no modifier meaning here, and some
- * terminals and desktop shells deliver them with a modifier attached.
+ * terminals and desktop shells deliver them with a modifier attached. Shift is
+ * the one modifier that changes the target: held, the stroke pages the session
+ * list instead of following the pointer.
  */
 export function matchScrollKey(event: CaretKeyEvent, fromInput: boolean): ScrollAction | null {
   if (!fromInput) return null;
@@ -117,7 +131,7 @@ export function matchScrollKey(event: CaretKeyEvent, fromInput: boolean): Scroll
   if (event.altKey) return null;
   const direction = SCROLL_KEY_DIRECTION.get(event.key);
   if (direction === undefined) return null;
-  return { direction, fraction: HALF_PAGE };
+  return { direction, fraction: HALF_PAGE, target: event.shiftKey ? "sidebar" : "pointer" };
 }
 
 /**
