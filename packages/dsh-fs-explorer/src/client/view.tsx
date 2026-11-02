@@ -47,6 +47,7 @@ import { PanelEmpty, PanelTabs } from "./panel-tabs.tsx";
 import { consumeViewRequest, createPanelStackRegistry } from "./panels.ts";
 import { headLabel, joinChangeStats, parseStatusZ, type FsGitHead, type StatusMap } from "./status.ts";
 import { PreviewPane } from "./preview-pane.tsx";
+import type { RendererRegistry } from "./renderer-registry.ts";
 import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody, type TreeEntryFocus } from "./tree.tsx";
 import { buildWorkspaceMap, MANIFEST_FILES, type WorkspaceTag } from "./workspace-map.ts";
 import {
@@ -100,6 +101,8 @@ export interface ViewWiring {
   readonly files: FilesResolver;
   /** Resolves the Git namespace whose snapshot carries the raw status text. */
   readonly status: StatusResolver;
+  /** The renderer registry the client service exposes; absent mounts the built-ins alone. */
+  readonly renderers?: RendererRegistry;
 }
 
 /** The first-paint state without waiting for an effect. */
@@ -190,7 +193,14 @@ function StateBlock({
  * @param wiring - the core service, contract version, copy and file resolver.
  * @returns the component registered into `conversation.view`.
  */
-export function createFsExplorerView({ workbench, version, t, files: resolveFiles, status: resolveStatus }: ViewWiring) {
+export function createFsExplorerView({
+  workbench,
+  version,
+  t,
+  files: resolveFiles,
+  status: resolveStatus,
+  renderers,
+}: ViewWiring) {
   // One registry per registered view: the host mounts and unmounts this
   // component on every view switch, while the factory itself lives on.
   const stacks = createPanelStackRegistry();
@@ -832,7 +842,14 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                           data-line={panel.line}
                           data-testid="fs-panel"
                         >
-                          <PreviewPane sessionId={sessionId} files={files} path={panel.path} t={t} visible={isActive} />
+                          <PreviewPane
+                            sessionId={sessionId}
+                            files={files}
+                            path={panel.path}
+                            t={t}
+                            visible={isActive}
+                            renderers={renderers}
+                          />
                         </div>
                       );
                     })

@@ -43,6 +43,12 @@
 - 地址桥：宿主原生打开面（聊天里的文件链接、工具行的 `file:line`、`@` 引用、present 卡片）都经 `ctx.sidebarRight.openResource(address)` 落到右侧栏 tab。本包在 `sidebarRightTabs` 注册一个「转发 tab」（`dsh-fs-explorer:bridge`，`dsh-resource://file/**`，extension 档），正文把 `dsh-resource://file/session/<sid>/<path>` 转成上面的 focus、切到本视图并自关，所以这些入口最终落在同一套树、标签栈与家族渲染器里。认领范围是允许清单：共享格式目录的家族后缀 + 文本后缀 + 无后缀白名单（Makefile / Dockerfile / LICENSE / README / CHANGELOG），宿主更强的后缀（pdf、Office、图片、csv 等）即使出现在清单里也不认领，留给内置预览。会话不一致时保留 tab 并打一条诊断，绝不把别的会话的文件开进当前视图。
 - 焦点有两个来源：宿主经 `openView` 交下来的 `viewRequest`，以及 `workbench.viewFocus` 队列。后者给"宿主没交出 focus 能力"的调用方（如命令面板 `⌘↵` 与地址桥）用：视图挂载时取走等待的请求，挂载后收到新请求也立刻消费，所以懒挂载不会丢目标。地址桥先入队再切换：宿主回退到自己的视图切换器时不携带 focus，队列是那条路上唯一的通道。
 
+## 渲染器注册
+
+客户端半边用 `ctx.provide("fsExplorer", service)` 暴露渲染器注册表，别的插件注入 `fsExplorer` 后调用 `registerRenderer(contribution)` 就能接管一类文件的正文，返回的注销函数把它摘掉。contribution 声明 `id`、`label`、`match`（`extensions` 后缀与 `families` 家族，任一命中即候选，两者都不写就是兜底）、`priority` 与懒加载的 `load()`；`load()` 解析出 `{ Body }`，正文拿到的 props 含 `path`、`sessionId`、`files`、`t`、`visible`、`mode`，文字路径还会带上当前页 `page`。
+
+选择是同步纯函数：后缀按小写含点比较，家族走 `familyOf`，命中多条时 `priority` 大者胜、同优先级按 id 字典序，只有胜出者会被 `load()`。重复 id 保留先注册者并报告一次。内置的 Markdown、源码与三个二进制家族就在同一张表里（`builtin.markdown`、`builtin.source` 与 `builtin.family.*`，源码是 priority -1000 的兜底），所以没装任何渲染器插件时行为不变；没有候选或 `load()` 失败时回到内置的降级正文（Markdown 走零依赖元素树、源码走纯文本、家族显示失败块）。引擎仍然只在选中文件时才取，入口 bundle 里没有编辑器或引擎符号。
+
 ## 快捷键
 
 | 动作 | 键 | 说明 |

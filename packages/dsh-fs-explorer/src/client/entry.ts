@@ -40,6 +40,14 @@ import {
   normalizePreviewPage,
 } from "./preview.ts";
 import { boot, previewChunkRoute } from "./preview-chunk.ts";
+import { createBuiltinRenderers } from "./preview-pane.tsx";
+import {
+  createRendererRegistry,
+  FS_EXPLORER_SERVICE,
+  FS_EXPLORER_SERVICE_VERSION,
+  type FsExplorerService,
+  type RendererRegistry,
+} from "./renderer-registry.ts";
 import { insertStyles } from "./styles.ts";
 import { parseStatusZ, statusBadge, statusTone } from "./status.ts";
 import { buildWorkspaceMap, workspaceTagFor } from "./workspace-map.ts";
@@ -61,6 +69,9 @@ export interface ClientContextLike extends FilesContextLike, BridgeContextLike {
     getSnapshot?(): { readonly active?: string };
   };
   readonly workbench: WorkbenchFace;
+  /** Cordis service registration; absent on hosts that do not expose it. */
+  provide?(name: string, value: unknown): () => void;
+  readonly logger?: { warn?(message: string): void };
 }
 
 /** Services this plugin waits for before applying. */
@@ -89,6 +100,34 @@ function activeLocale(ctx: ClientContextLike): string {
 * removable by the very disposer that registered them. */
 let registeredDictionaries: (() => void) | undefined;
 
+/** Disposer of the `fsExplorer` service currently provided to the host.
+ * A repeat apply replaces the service rather than leaving the first one bound;
+ * the registry behind it is module state, so a plugin that registered through
+ * the earlier service keeps its renderer across the swap. */
+let providedService: (() => void) | undefined;
+
+/** The registry every pane in this package draws from, created once per module. */
+let sharedRegistry: RendererRegistry | undefined;
+
+/** Updated on every apply so a late host logger still hears about refusals. */
+let reportWarning: ((message: string) => void) | undefined;
+
+/**
+ * The renderer registry, shared by every pane and every plugin in this host.
+ *
+ * Module state on purpose: the desktop host applies this entry twice (a sync
+ * pass and a mount pass), and a renderer plugin that registered between the two
+ * would lose its contribution if the second apply created a second registry.
+ * The built-ins are installed the same way a plugin is, once.
+ */
+function rendererRegistry(): RendererRegistry {
+  if (sharedRegistry !== undefined) return sharedRegistry;
+  const registry = createRendererRegistry({ warn: message => reportWarning?.(message) });
+  for (const contribution of createBuiltinRenderers()) registry.register(contribution);
+  sharedRegistry = registry;
+  return registry;
+}
+
 /** Disposer of the address bridge currently registered on the host.
  * The tab-type registry throws on a second registration of one id, and a repeat
  * apply on a live host meets its own earlier registration, so the previous
@@ -99,6 +138,25 @@ let registeredBridge: (() => void) | undefined;
 export function apply(ctx: ClientContextLike): () => void {
   const workbench = ctx.workbench;
   if (workbench === undefined || workbench === null) return () => {};
+
+  reportWarning = message => ctx.logger?.warn?.(message);
+  const registry = rendererRegistry();
+  const service: FsExplorerService = {
+    version: FS_EXPLORER_SERVICE_VERSION,
+    renderers: registry,
+    registerRenderer: contribution => registry.register(contribution),
+  };
+  // Provided before the view registers: a renderer plugin that injects the
+  // service has to find it before its own apply runs.
+  providedService?.();
+  const offService = ctx.provide?.(FS_EXPLORER_SERVICE, service);
+  if (offService === undefined) {
+    // Without the service only the built-in renderers exist; the pane still
+    // works, but no plugin can take a format over. A warning is the only
+    // report this half can make.
+    ctx.logger?.warn?.(`${LOCALE_NAMESPACE}: ctx.provide unavailable, ${FS_EXPLORER_SERVICE} service not registered`);
+  }
+  providedService = offService;
 
   // Register before binding: the label thunk may run during slot registration,
   // and a dictionary that arrives afterwards would paint the English fallback.
@@ -113,6 +171,7 @@ export function apply(ctx: ClientContextLike): () => void {
     t,
     files: createFilesResolver(ctx),
     status: createGitStatusResolver(ctx),
+    renderers: registry,
   });
 
   // The address bridge hangs off the optional right sidebar; it registers
@@ -135,6 +194,8 @@ export function apply(ctx: ClientContextLike): () => void {
   );
 
   return () => {
+    offService?.();
+    if (providedService === offService) providedService = undefined;
     offBridge();
     if (registeredBridge === offBridge) registeredBridge = undefined;
     offStyles();
