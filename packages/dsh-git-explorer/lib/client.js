@@ -524,8 +524,26 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
   box-sizing: border-box;
   overflow: hidden;
   border-radius: var(--dsw-radius-lg, 10px);
-  background: var(--dsw-menu-surface-fill, var(--dsw-alias-bg-layer-1, transparent));
-  box-shadow: var(--dsw-elevation-prominent, 0 8px 24px color-mix(in srgb, var(--dsw-alias-label-primary, currentColor) 16%, transparent));
+  /* Frosted glass: the sidebar's own fill kept slightly translucent over a
+     blurred backdrop, plus a top-light gradient so the pane reads as a sheet
+     of glass rather than a flat tint. Both colours come from theme tokens, so
+     the light and dark themes each get their own version of the material. */
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--dsw-alias-label-primary, #000) 4%, transparent),
+      transparent 42%
+    ),
+    color-mix(
+      in srgb,
+      var(--dsw-specific-sidebar-fill, var(--dsw-menu-surface-fill, #f8f9fa)) 84%,
+      transparent
+    );
+  backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
+  -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
+  box-shadow:
+    var(--dsw-elevation-prominent, 0 8px 24px color-mix(in srgb, var(--dsw-alias-label-primary, currentColor) 16%, transparent)),
+    inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, #fff) 6%, transparent);
   color: var(--dsw-alias-label-primary, inherit);
   font-size: 13px;
   line-height: 1.45;

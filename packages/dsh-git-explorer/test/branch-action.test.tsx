@@ -719,6 +719,12 @@ describe("branch popover width and full names", () => {
     expect(GIT_STYLES).toMatch(/\.gx-branch-row-name \{[^}]*text-overflow: ellipsis/u);
     expect(GIT_STYLES).toMatch(/\.gx-branch-row \{[^}]*box-sizing: border-box/u);
   });
+
+  it("paints the panel as frosted glass over the sidebar fill", () => {
+    expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*backdrop-filter/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*dsw-specific-sidebar-fill/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*linear-gradient\(\s*180deg/u);
+  });
 });
 
 describe("branch store", () => {
