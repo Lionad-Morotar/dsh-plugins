@@ -23,7 +23,18 @@ import {
   type CaretKeyEvent,
 } from "./keys.ts";
 import { moveRichText, moveTextField, type CaretSelection, type TextFieldLike } from "./caret.ts";
-import { isScrollable, pageTarget, pickScrollContainer, revealDelta, textFieldScroll, type Rect, type ScrollBox, type ScrollCandidate } from "./reveal.ts";
+import {
+  isScrollable,
+  pageTarget,
+  pickScrollContainer,
+  pickSidebarScroller,
+  revealDelta,
+  textFieldScroll,
+  type Rect,
+  type ScrollBox,
+  type ScrollCandidate,
+  type SidebarCandidate,
+} from "./reveal.ts";
 
 /** The window events this plugin wires, keyed like the DOM's own event maps. */
 interface KeysWindowEventMap {
@@ -83,6 +94,18 @@ const DEFAULT_EXCLUDE_SELECTOR = "[data-conversation-scroll]";
  * key is about".
  */
 const DEFAULT_SCROLLPORT_SELECTOR = "[data-conversation-scroll]";
+
+/**
+ * A row of the session list, the only stable mark the host gives that surface.
+ *
+ * The list's own scroller is a `role="tree"` whose class name carries a build
+ * hash and whose accessible name follows the locale, so neither is safe to
+ * select on. The browser's own rows (workspace, session, empty, overflow) carry
+ * `data-row-key`; a search replaces that tree with one whose rows are bare
+ * `treeitem`s inside the same scroller. The scroller is that row's tree, or the
+ * first scrollbar above it when the tree itself does not scroll.
+ */
+const SIDEBAR_ROW_SELECTOR = "[data-row-key], [role=tree] > [role=treeitem]";
 
 export interface KeysApp {
   /** Mount the window listener. Returns the symmetric teardown. */
@@ -190,6 +213,49 @@ export function createApp(deps: AppDeps = {}): KeysApp {
     return picked === null ? null : (nodes[picked] as HTMLElement);
   }
 
+  /** The first session-list row that is not part of the transcript. */
+  function sidebarAnchor(): Element | null {
+    for (const candidate of win.document.querySelectorAll(SIDEBAR_ROW_SELECTOR)) {
+      if (candidate.closest(scrollportSelector) !== null) continue;
+      return candidate;
+    }
+    return null;
+  }
+
+  /**
+   * The session list's scroller, or null when the sidebar is not mounted.
+   *
+   * Resolved from a row rather than a selector: the host gives the scroller no
+   * data attribute, and the search-results tree shares `role="tree"` with the
+   * list while being nested inside the same scroller. The first row anchors the
+   * walk; which link of that walk actually scrolls is {@link pickSidebarScroller}.
+   *
+   * Rows inside the transcript are skipped. The host's JSON viewer is also a
+   * `role="tree"` of `treeitem`s, and it lives in the conversation, so without
+   * this filter a collapsed sidebar would page that viewer.
+   */
+  function sidebarScroller(): HTMLElement | null {
+    const row = sidebarAnchor();
+    if (row === null) return null;
+    const candidates: SidebarCandidate[] = [];
+    const nodes: Element[] = [];
+    let node: Element | null = row;
+    while (node !== null) {
+      const style = win.getComputedStyle?.(node);
+      const box = node as HTMLElement;
+      candidates.push({
+        tree: node.getAttribute("role") === "tree",
+        overflowY: style === undefined ? "auto" : style.overflowY,
+        scrollHeight: box.scrollHeight,
+        clientHeight: box.clientHeight,
+      });
+      nodes.push(node);
+      node = node.parentElement;
+    }
+    const picked = pickSidebarScroller(candidates);
+    return picked === null ? null : (nodes[picked] as HTMLElement);
+  }
+
   function revealRichText(target: Element): void {
     const rect = richCaretRect();
     if (rect === null) return;
@@ -283,6 +349,18 @@ export function createApp(deps: AppDeps = {}): KeysApp {
         // would pay an elementFromPoint plus a layout read for keys this
         // plugin never claims.
         const scroll = matchScrollKey(like, true);
+        if (scroll !== null && scroll.target === "sidebar") {
+          // Shift names the session list outright, so none of the three
+          // levels below run: a focused composer, the pointer and the
+          // transcript fallback must not steal a stroke the user aimed at
+          // the sidebar. With no list mounted the stroke is still swallowed,
+          // because letting it through would page whatever the pointer sits
+          // on — the opposite of what Shift asks for.
+          event.preventDefault();
+          const box = sidebarScroller();
+          if (box !== null) pageContainer(box, scroll.direction, scroll.fraction);
+          return;
+        }
         if (scroll !== null) {
           // Page keys are the only stroke this plugin claims on a
           // non-editable target, and the caret branch below takes over when
