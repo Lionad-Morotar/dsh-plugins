@@ -108,15 +108,16 @@ export function drill(model: PanelModel, scope: SessionScope): PanelModel {
 }
 
 /**
- * Enter the global archive view.
+ * Enter one scope's archive view, the all scope by default.
  *
- * The archive set is registry-global rather than per workspace, so the entry
- * point is always the all-scope session list with the archive filter on. The
- * query is cleared for the same reason `drill` clears it: the row that was
- * picked was the search.
+ * The root-level row lands on the registry-global archive set; a workspace's
+ * session list reuses the same filter state to open that workspace's own
+ * archive, so `back` returns to the list the row came from. The query is
+ * cleared for the same reason `drill` clears it: the row that was picked was
+ * the search.
  */
-export function drillArchived(model: PanelModel): PanelModel {
-  return { ...model, level: "sessions", scope: { kind: "all" }, query: "", highlight: 0, archivedOnly: true };
+export function drillArchived(model: PanelModel, scope: SessionScope = { kind: "all" }): PanelModel {
+  return { ...model, level: "sessions", scope, query: "", highlight: 0, archivedOnly: true };
 }
 
 /**
