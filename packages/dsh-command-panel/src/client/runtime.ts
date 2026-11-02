@@ -670,14 +670,14 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     const scope = model.scope;
     if (scope === null) return null;
     const transcript = copy();
-    // The archive filter replaces the scope's name: what the reader is looking
-    // at is the registry-global archive set, not "all sessions".
-    if (model.archivedOnly) return transcript.archivedSessions;
-    if (scope.kind === "all") return transcript.allSessions;
-    if (scope.kind === "ungrouped") return transcript.ungrouped;
+    if (scope.kind === "all") return model.archivedOnly ? transcript.archivedSessions : transcript.allSessions;
+    if (scope.kind === "ungrouped") return model.archivedOnly ? transcript.archivedSessions : transcript.ungrouped;
     const workspaces = services.workspaces();
     const view = workspaces?.list.getSnapshot().items.find(item => item.workspaceId === scope.workspaceId);
-    return view?.title ?? transcript.modeNames.switch;
+    const title = view?.title ?? transcript.modeNames.switch;
+    // A workspace's archive keeps the scope name in front: without it the workspace
+    // view would read identically to the registry-global archive reached from level one.
+    return model.archivedOnly ? `${title} · ${transcript.archivedSessions}` : title;
   }
 
   // ── side effects ────────────────────────────────────────────────────────
