@@ -317,6 +317,10 @@ describe("header branch action", () => {
     const taken = row("taken");
     expect(taken?.disabled).toBe(true);
     expect(taken?.title).toContain("/repo/.worktrees/taken");
+    // A grey row alone reads as a glitch, so the row carries the reason itself.
+    const takenTag = taken?.querySelector('[data-testid="gx-branch-row-taken"]');
+    expect(takenTag?.textContent).toBe("其他工作树");
+    expect(row("feature")?.querySelector('[data-testid="gx-branch-row-taken"]')).toBeNull();
     expect(row("feature")?.disabled).toBe(false);
   });
 
@@ -724,6 +728,10 @@ describe("branch popover width and full names", () => {
     expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*backdrop-filter/u);
     expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*dsw-specific-sidebar-fill/u);
     expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*linear-gradient\(\s*180deg/u);
+    // Focus underline used brand-primary, which is near-black in the light
+    // theme and read as a stray rule between search and list.
+    expect(GIT_STYLES).toMatch(/\.gx-branch-search:focus-visible \{[^}]*--dsw-alias-link/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-taken \{[^}]*border: 1px dashed/u);
   });
 });
 

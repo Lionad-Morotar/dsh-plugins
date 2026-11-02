@@ -594,7 +594,7 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
   outline: none;
 }
 .gx-branch-search::placeholder { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); }
-.gx-branch-search:focus-visible { border-bottom-color: var(--dsw-alias-brand-primary, currentColor); }
+.gx-branch-search:focus-visible { border-bottom-color: var(--dsw-alias-link, var(--dsw-alias-state-business-primary, currentColor)); }
 .gx-branch-row {
   display: flex;
   align-items: center;
@@ -620,6 +620,18 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 .gx-branch-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, currentColor); outline-offset: -2px; }
 .gx-branch-row[data-current="true"] { color: var(--dsw-alias-brand-primary, inherit); }
 .gx-branch-row:disabled { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); opacity: .55; cursor: default; }
+/* A disabled row only greys out, which reads as a rendering glitch; the tag
+   names the reason without needing the title tooltip. */
+.gx-branch-taken {
+  flex: none;
+  padding: 0 6px;
+  border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
+  border-radius: 999px;
+  color: inherit;
+  font-size: 10px;
+  line-height: 15px;
+  white-space: nowrap;
+}
 .gx-branch-row-name {
   flex: 1;
   min-width: 0;

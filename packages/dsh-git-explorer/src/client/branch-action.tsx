@@ -549,6 +549,11 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
                   }}
                 >
                   <span className="gx-branch-row-name">{highlightName(branch.name, match.ranges)}</span>
+                  {branch.worktreePath === undefined ? null : (
+                    <span className="gx-branch-taken" data-testid="gx-branch-row-taken">
+                      {t("branch.taken")}
+                    </span>
+                  )}
                   {branch.current ? <span className="gx-branch-tag">{t("branch.current")}</span> : null}
                 </button>
               );
