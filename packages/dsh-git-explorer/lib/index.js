@@ -69,18 +69,28 @@ function runFailure(result) {
 }
 
 // src/host/branches.ts
-var BRANCH_FORMAT = "--format=%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream:short)";
+var HEADS_PREFIX = "refs/heads/";
+var REMOTES_PREFIX = "refs/remotes/";
+var BRANCH_FORMAT = "--format=%(refname)%00%(objectname)%00%(HEAD)%00%(upstream)";
 var WORKTREE_PREFIX = "worktree ";
+function shortRef(ref) {
+  if (ref.startsWith(HEADS_PREFIX)) return ref.slice(HEADS_PREFIX.length);
+  if (ref.startsWith(REMOTES_PREFIX)) return ref.slice(REMOTES_PREFIX.length);
+  return ref;
+}
 function parseBranchRefs(text) {
   const branches = [];
   for (const raw of text.split("\n")) {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     if (line === "") continue;
     const fields = line.split("\0");
-    const name2 = fields[0] ?? "";
+    const ref = fields[0] ?? "";
     const hash = fields[1] ?? "";
-    if (name2 === "" || hash === "") continue;
-    const upstream = fields[3] ?? "";
+    if (!ref.startsWith(HEADS_PREFIX) || hash === "") continue;
+    const name2 = shortRef(ref);
+    if (name2 === "") continue;
+    const upstreamRef = fields[3] ?? "";
+    const upstream = upstreamRef === "" ? "" : shortRef(upstreamRef);
     branches.push({
       name: name2,
       hash,
@@ -923,7 +933,7 @@ async function collectSnapshot(options, request = {}, signal) {
 
 // src/host/switch.ts
 var REF_FORMAT2 = "--format=%(refname)";
-var HEADS_PREFIX = "refs/heads/";
+var HEADS_PREFIX2 = "refs/heads/";
 var MAX_NAME_LENGTH = 255;
 var MAX_DETAIL_LINES = 3;
 var NAME_RULES = [
@@ -948,7 +958,7 @@ function localBranchNames(text) {
   const names = /* @__PURE__ */ new Set();
   for (const raw of text.split("\n")) {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
-    if (line.startsWith(HEADS_PREFIX)) names.add(line.slice(HEADS_PREFIX.length));
+    if (line.startsWith(HEADS_PREFIX2)) names.add(line.slice(HEADS_PREFIX2.length));
   }
   return names;
 }

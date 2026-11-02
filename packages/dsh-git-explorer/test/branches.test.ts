@@ -1,14 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { collectBranches, parseBranchRefs, parseWorktreeList } from "../src/host/branches.ts";
 import type { GitRunner, GitRunResult } from "../src/host/git.ts";
 
-const BRANCH_FORMAT = "--format=%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream:short)";
+const BRANCH_FORMAT = "--format=%(refname)%00%(objectname)%00%(HEAD)%00%(upstream)";
 
 function ok(argv: readonly string[], stdout: string): GitRunResult {
   return { argv, exitCode: 0, stdout, stderr: "", timedOut: false, cancelled: false, stdoutLossy: false };
@@ -35,9 +36,9 @@ function fakeRunner(reply: (args: readonly string[]) => GitRunResult): { runner:
 }
 
 const REFS = [
-  "feat/one\0bbb\0 \0origin/feat/one",
-  "main\0aaa\0*\0origin/main",
-  "no-upstream\0ccc\0 \0",
+  "refs/heads/feat/one\0bbb\0 \0refs/remotes/origin/feat/one",
+  "refs/heads/main\0aaa\0*\0refs/remotes/origin/main",
+  "refs/heads/no-upstream\0ccc\0 \0",
 ].join("\n");
 
 const WORKTREES = [
@@ -65,8 +66,10 @@ describe("parseBranchRefs", () => {
   });
 
   it("tolerates CRLF and drops malformed records", () => {
-    expect(parseBranchRefs("main\0aaa\0*\0\r\n")).toEqual([{ name: "main", hash: "aaa", current: true }]);
-    expect(parseBranchRefs("\nsolo\n\0aaa\0*\0\n")).toEqual([]);
+    expect(parseBranchRefs("refs/heads/main\0aaa\0*\0\r\n")).toEqual([{ name: "main", hash: "aaa", current: true }]);
+    expect(parseBranchRefs("refs/heads/no-hash\0\0*\0\n")).toEqual([]);
+    // A short name is not a branch inventory record: the endpoint reads full refs.
+    expect(parseBranchRefs("heads/topic\0aaa\0*\0\n")).toEqual([]);
   });
 });
 
@@ -143,7 +146,10 @@ describe("collectBranches", () => {
   });
 
   it("counts the current linked worktree as the home of its own branch", async () => {
-    const linkedRefs = ["feat/one\0bbb\0*\0origin/feat/one", "main\0aaa\0 \0origin/main"].join("\n");
+    const linkedRefs = [
+      "refs/heads/feat/one\0bbb\0*\0refs/remotes/origin/feat/one",
+      "refs/heads/main\0aaa\0 \0refs/remotes/origin/main",
+    ].join("\n");
     const { runner, calls } = fakeRunner(args => {
       if (args[0] === "rev-parse") return ok(["git", ...args], "/tmp/feature one\n");
       if (args[0] === "for-each-ref") return ok(["git", ...args], linkedRefs);
@@ -165,7 +171,13 @@ describe("collectBranches", () => {
       if (args[0] === "rev-parse" && args[1] === "--short") return ok(["git", ...args], "aaa1234\n");
       if (args[0] === "rev-parse") return ok(["git", ...args], "/repo\n");
       if (args[0] === "for-each-ref") {
-        return ok(["git", ...args], "feat/one\0bbb\0 \0origin/feat/one\nmain\0aaa\0 \0origin/main\n");
+        return ok(
+          ["git", ...args],
+          [
+            "refs/heads/feat/one\0bbb\0 \0refs/remotes/origin/feat/one",
+            "refs/heads/main\0aaa\0 \0refs/remotes/origin/main",
+          ].join("\n"),
+        );
       }
       if (args[0] === "worktree") return ok(["git", ...args], ["worktree /repo", "HEAD aaa", "detached", ""].join("\n"));
       throw new Error(`unexpected command ${args[0]}`);
@@ -220,18 +232,22 @@ describe("collectBranches", () => {
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const hasGit = existsSync(resolve(repoRoot, ".git"));
 
-const localRunner: GitRunner = {
-  async run(args): Promise<GitRunResult> {
-    const argv = ["git", ...args];
-    try {
-      const stdout = execFileSync("git", args, { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-      return ok(argv, stdout);
-    } catch (error) {
-      const failedRun = error as { status?: number; stderr?: string };
-      return failed(argv, failedRun.status ?? 1, failedRun.stderr ?? String(error));
-    }
-  },
-};
+function localRunnerAt(cwd: string): GitRunner {
+  return {
+    async run(args): Promise<GitRunResult> {
+      const argv = ["git", ...args];
+      try {
+        const stdout = execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+        return ok(argv, stdout);
+      } catch (error) {
+        const failedRun = error as { status?: number; stderr?: string };
+        return failed(argv, failedRun.status ?? 1, failedRun.stderr ?? String(error));
+      }
+    },
+  };
+}
+
+const localRunner = localRunnerAt(repoRoot);
 
 describe.runIf(hasGit)("real repository branch list", () => {
   it("agrees with git branch --show-current and never claims this worktree's own branch", async () => {
@@ -247,7 +263,7 @@ describe.runIf(hasGit)("real repository branch list", () => {
     expect(list.headHash).toBeNull();
     expect(list.branches.find(branch => branch.current)?.name).toBe(current);
     expect(list.branches).toHaveLength(
-      execFileSync("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads"], { cwd: repoRoot, encoding: "utf8" })
+      execFileSync("git", ["for-each-ref", "--format=%(refname)", "refs/heads"], { cwd: repoRoot, encoding: "utf8" })
         .split("\n")
         .filter(Boolean).length,
     );
@@ -255,5 +271,55 @@ describe.runIf(hasGit)("real repository branch list", () => {
       expect(branch.hash).toMatch(/^[0-9a-f]{40,64}$/u);
       expect(branch.worktreePath).not.toBe(list.root);
     }
+  });
+});
+
+function canRunGit(): boolean {
+  try {
+    execFileSync("git", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe.runIf(canRunGit())("branch name shadowed by a tag", () => {
+  let dir = "";
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "dsh-git-explorer-"));
+    const git = (args: readonly string[]): string =>
+      execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    git(["init", "-q"]);
+    git(["config", "user.email", "qa@example.com"]);
+    git(["config", "user.name", "qa"]);
+    git(["commit", "-q", "--allow-empty", "-m", "seed"]);
+    git(["branch", "topic"]);
+    git(["tag", "topic"]);
+    const branch = git(["branch", "--show-current"]).trim();
+    // A local upstream is the shortest shape that also gets a `heads/` prefix
+    // from `%(upstream:short)` once the tag above exists.
+    git(["config", `branch.${branch}.remote`, "."]);
+    git(["config", `branch.${branch}.merge`, "refs/heads/topic"]);
+  });
+
+  afterAll(() => {
+    if (dir !== "") rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("lists topic instead of heads/topic", async () => {
+    const result = await collectBranches({ runner: localRunnerAt(dir), cwd: dir });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const names = result.list.branches.map(branch => branch.name);
+    expect(names).toContain("topic");
+    expect(names).not.toContain("heads/topic");
+  });
+
+  it("normalizes the same ambiguous prefix on the upstream", async () => {
+    const result = await collectBranches({ runner: localRunnerAt(dir), cwd: dir });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.list.branches.find(branch => branch.current)?.upstream).toBe("topic");
   });
 });

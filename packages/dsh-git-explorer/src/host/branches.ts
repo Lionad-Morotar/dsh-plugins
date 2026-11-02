@@ -32,8 +32,25 @@ export interface GitWorktree {
   readonly prunable: boolean;
 }
 
-const BRANCH_FORMAT = "--format=%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream:short)";
+const HEADS_PREFIX = "refs/heads/";
+const REMOTES_PREFIX = "refs/remotes/";
+const BRANCH_FORMAT = "--format=%(refname)%00%(objectname)%00%(HEAD)%00%(upstream)";
 const WORKTREE_PREFIX = "worktree ";
+
+/**
+ * Drop the full ref's namespace.
+ *
+ * The inventory reads full refs because the short forms are ambiguous when a
+ * tag shares the name: git then prints `heads/<name>` for a branch and
+ * `remotes/<remote>/<name>` for an upstream, neither of which a switch accepts.
+ * A local upstream (`branch.<name>.remote` is `.`) lives under `refs/heads`
+ * and shortens to the branch name just like the branch field.
+ */
+function shortRef(ref: string): string {
+  if (ref.startsWith(HEADS_PREFIX)) return ref.slice(HEADS_PREFIX.length);
+  if (ref.startsWith(REMOTES_PREFIX)) return ref.slice(REMOTES_PREFIX.length);
+  return ref;
+}
 
 interface WorktreeDraft {
   path: string;
@@ -50,7 +67,9 @@ interface WorktreeDraft {
  *
  * The format uses NUL separators, so a branch name with spaces survives; the
  * upstream field is the empty string when the branch has none, which is why it
- * is dropped rather than carried as an empty string.
+ * is dropped rather than carried as an empty string. Records outside
+ * `refs/heads` are not branch inventory and are skipped, matching the full-ref
+ * contract `switchBranch` checks names against.
  */
 export function parseBranchRefs(text: string): GitBranch[] {
   const branches: GitBranch[] = [];
@@ -58,10 +77,13 @@ export function parseBranchRefs(text: string): GitBranch[] {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     if (line === "") continue;
     const fields = line.split("\0");
-    const name = fields[0] ?? "";
+    const ref = fields[0] ?? "";
     const hash = fields[1] ?? "";
-    if (name === "" || hash === "") continue;
-    const upstream = fields[3] ?? "";
+    if (!ref.startsWith(HEADS_PREFIX) || hash === "") continue;
+    const name = shortRef(ref);
+    if (name === "") continue;
+    const upstreamRef = fields[3] ?? "";
+    const upstream = upstreamRef === "" ? "" : shortRef(upstreamRef);
     branches.push({
       name,
       hash,
