@@ -122,6 +122,15 @@ const pathOf = (edge: DiagramEdge): string => {
   return d;
 };
 
+/** Rough rendered width in model units: CJK sits on a full em, latin near 0.55. */
+const estimateTextWidth = (line: string, fontSize: number): number => {
+  let width = 0;
+  for (const char of line) {
+    width += /[\u2e80-\u9fff\uf900-\ufaff\uff00-\uffef]/u.test(char) ? fontSize : fontSize * 0.55;
+  }
+  return width;
+};
+
 const descriptionText = (node: DiagramNode): string | null => {
   const d = node.description;
   if (d === null || d === undefined) return null;
@@ -176,15 +185,31 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
           opacity: 0.85,
         }),
       );
-      const text = el("text", {
-        x: box.x,
-        y: box.y + box.height * 0.78,
-        fill: "#c9ccd2",
-        "font-size": box.height * 0.86,
-        "font-family": "system-ui,sans-serif",
-      });
-      text.textContent = edge.label;
-      g.append(text);
+      // LikeC4 lays multi-line labels out inside `labelBBox`; SVG collapses a
+      // literal newline into a space, so rendering the whole string as one
+      // <text> made a three-line label run far past its dark plate and the
+      // tail fell onto the white canvas.
+      const lines = String(edge.label).split("\n");
+      const lineHeight = box.height / lines.length;
+      const fontSize = lineHeight * 0.78;
+      for (const [index, line] of lines.entries()) {
+        const attrs: Record<string, string | number> = {
+          x: box.x,
+          y: box.y + lineHeight * (index + 0.8),
+          fill: "#c9ccd2",
+          "font-size": fontSize,
+          "font-family": "system-ui,sans-serif",
+        };
+        // A line wider than the plate would still spill; squeeze it to the
+        // measured width instead of letting the background fall short.
+        if (estimateTextWidth(line, fontSize) > box.width) {
+          attrs.textLength = box.width;
+          attrs.lengthAdjust = "spacingAndGlyphs";
+        }
+        const text = el("text", attrs);
+        text.textContent = line;
+        g.append(text);
+      }
       labelLayer.append(g);
     }
   }
@@ -330,6 +355,10 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
   svg.addEventListener("pointerdown", event => {
     const target = (event.target as Element).closest("g[data-id]") as SVGGElement | null;
     event.preventDefault();
+    // preventDefault suppresses the browser's implicit focus, so a press that
+    // starts a pan or a drag would leave the arrow-key handler deaf. Hand the
+    // focus over explicitly; the container is the tabbable element.
+    if (document.activeElement !== host) host.focus({ preventScroll: true });
     svg.setPointerCapture?.(event.pointerId);
     if (target === null) {
       // Pressing the blank canvas clears the selection (the details pane
