@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { GitRunner, GitRunResult } from "../src/host/git.ts";
 import { collectCommit } from "../src/host/detail.ts";
 import { collectQuery } from "../src/host/query.ts";
+import { collectShow } from "../src/host/show.ts";
 import { collectSnapshot } from "../src/host/snapshot.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -78,6 +79,28 @@ describe.runIf(hasGit)("real repository smoke", () => {
     if (!result.ok) return;
     expect(result.detail.subject).toBe(subject);
     expect(result.detail.files.map(file => file.path)).toEqual(changed);
+  });
+
+  it("reads the HEAD package.json first screen byte-for-byte from the commit", async () => {
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
+    const expected = execFileSync("git", ["cat-file", "-p", `${head}:package.json`], { cwd: repoRoot, encoding: "utf8" });
+    const expectedLines = (expected.endsWith("\n") ? expected.slice(0, -1) : expected).split("\n");
+    const firstScreen = expectedLines.slice(0, 40);
+
+    const result = await collectShow(
+      { runner: localRunner, cwd: repoRoot, maxBytes: 4 * 1024 * 1024 },
+      { hash: head, path: "package.json", offset: 1, limit: 40 },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.page.source).toBe("commit");
+    expect(result.page.revision).toBe(
+      execFileSync("git", ["rev-parse", `${head}:package.json`], { cwd: repoRoot, encoding: "utf8" }).trim(),
+    );
+    expect(result.page.text.split("\n")[0]).toBe(firstScreen[0]);
+    expect(result.page.text).toBe(firstScreen.join("\n"));
+    expect(result.page.lines).toBe(firstScreen.length);
+    expect(result.page.eof).toBe(firstScreen.length === expectedLines.length);
   });
 
   it("pages history and reports hasMore from a limit-plus-one fetch", async () => {

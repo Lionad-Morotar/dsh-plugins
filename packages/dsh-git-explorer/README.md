@@ -28,15 +28,17 @@
 
 ## 核心能力
 
-- 宿主服务 `GitExplorerService`：Typert Remote 服务，服务名与线命名空间都是 `gitExplorer`，向客户端暴露 `snapshot` / `query` / `commit` / `run` 四个端点。`run` 是类型化占位，当前一律回 `not-implemented`——数据层是只读的。
+- 宿主服务 `GitExplorerService`：Typert Remote 服务，服务名与线命名空间都是 `gitExplorer`，向客户端暴露 `snapshot` / `query` / `commit` / `show` / `run` 五个端点。`show` 按 `<hash>:<path>` 只读读取某个提交版本的单文件内容页；`run` 是类型化占位，当前一律回 `not-implemented`——数据层是只读的。
 - 客户端传输走连接服务的原生 RPC：`ctx.get("connection").rpc.call(rpc, "/api", "gitExplorer/<method>", { args: { request } }, signal)`，返回值是 `{ ok, value }` 传输封套。之所以不用 `ctx.remote.gitExplorer`：那个类型化命名空间只存在于「用 `ctx.remote.$mount()` 挂载了生成贡献物」的包里，第三方包没有生成物；宿主侧的 `typertRemote` 绑定会被网关的 source-mode 发现枚举，路由 `/api/gitExplorer/<method>` 因此开箱可用。
 - 只走 argv：所有 git 调用都是数组，从 `git` 开始，不拼 shell；每条命令 20s 超时、4MB 输出预算，超出走 spill 回读，stdout 有损时明确失败而不是交出半页数据。
 - 仓库快照：仓库根、当前分支与 HEAD（含游离 HEAD、领先 / 落后）、按 hash 分组的引用、工作区变更、逐文件增删行数、首页提交与泳道、原始 `git status --porcelain=v2 -z` 文本（供文件树着色复用）。
 - 提交查询：`git log --topo-order --parents`，多取一条判断 `hasMore` 后丢掉。查询端点支持 `skip` / `limit`、`--grep` 与 `--author`（面板本身只用分页）；ref 只接受分支、标签或提交名，带修订语法或 `..` 的一律拒绝。
 - 泳道布局：单次扫描加最小堆复用泳道，线性历史同泳道、分叉换道、同层不撞道；父提交不在本页时只留悬空边，不占道。3000 commit 的解析与泳道分配在本机是 5ms 量级，判据门槛是 300ms。
 - 两栏视图：左侧变更按目录分组，状态字母（A/M/D/R/C/T/U/!）加每文件 `+n −n`；点非目录文件会跳到文件面板并打开对应行。右侧提交图只渲染视口内的行，选中提交在下方展开父提交、说明与变更文件清单。
+- 提交详情文件行：悬浮 200 毫秒后显示该提交版本的轻量预览卡，移出、滚动或 `Esc` 收起；点击打开文件工作台的面板，内容同样来自该提交，标签带短哈希。删除的文件读第一父版本并在卡片与面板标注；重命名按新路径读取，标题用新路径；子模块显示对象 id 并明确不可预览；二进制与超限各有状态，不渲染半份正文。
 - 进入视图时的焦点：从标签栏点进 Git 面板，键盘焦点落在左侧变更列表的第一个文件行（目录行只做分组，跳过）。这次认领只在视图挂载后的第一份快照渲染时兑现一次，快照刷新不会重来；焦点已经落在变更区内、或列表里没有文件行时不动，免得把读者从已选的行上拽走。显式的 `commit:<hash>` 跳转优先，此时不抢焦点。
 - 焦点跳转：接受 `openView("git-explorer", "commit:<hash>")`（hash 为 4-64 位十六进制，大小写归一为小写），命令面板输入提交前缀跳转即按此协议寻址。焦点有两个来源：宿主经 `openView` 交下来的 `viewRequest`，以及 `workbench.viewFocus` 队列（视图已挂载时命令面板走的通道，挂载时取走等待中的请求并持续订阅）。命中即选中该提交，详情面板按 hash 经 `commit` 端点独立加载，hash 不在已加载列表也能展示；历史列表不插行以保住拓扑泳道序。解析失败也回执完成，宿主才会清掉这条请求。
+- 提交版本跳转协议：提交详情文件行向文件工作台发 `git:<hash>:<line>:<path>`，行号段必填，路径取剩余全部内容（因此路径可以含冒号）。文件工作台按 `(revision, path)` 建标签，同一路径在不同提交下各占一条标签。宿主缺 `show` 端点时文件行仍可点，悬浮卡降级为“预览不可用”。
 - 分页：首屏默认 400 条（Loader 行 `config.maxCommits`），历史列表每点一次"加载更多"取 100 条，单次请求上限 5000。
 - 空态与错误态：未选会话、Git 服务不可用、不是 git 仓库、空仓库、读取失败各有文案与重试；头部有刷新按钮。
 
@@ -46,7 +48,7 @@
 | --- | --- | --- |
 | 打开 Git 面板 | `⌘⇧G` | 由核心包注册，desktop 承诺；web 点标签栏「Git」 |
 | 刷新快照 | — | 头部 `↻` 按钮；刻意不占全局刷新键 |
-| 选择提交 / 跳转文件 | — | 指针操作（提交行、变更行、父提交 chip） |
+| 选择提交 / 跳转文件 | — | 指针操作（提交行、变更行、父提交 chip、提交详情文件行）；文件行是原生按钮，Tab 可达，Enter / Space 与触屏单击同样触发打开 |
 | 看完整引用名 | 悬浮 | 历史行上的分支 / 标签 chip 最多显示两个、超出 12ch 截断；悬浮弹出完整名字 |
 
 面板内没有自己的 keydown 表：这里的交互都是点选，给它们编快捷键会和宿主的命令目录打架。
@@ -58,7 +60,7 @@
 - 首屏只取 400 条提交；更早的历史要点"加载更多"，按 100 条递增，单次请求硬上限 5000，`skip` 上限 1000000。
 - ref 过滤是白名单：分支、标签、提交名可用，`HEAD~3` 这类修订语法与 `..` 范围不进来。
 - 宿主半需要 `subprocess`、`sessions`、`sessionPersistence` 三个服务；缺 `subprocess` 时服务构造即失败，客户端会显示"Git 服务不可用"。
-- 提交详情里的文件清单是信息展示，不可点；只有左侧工作区变更能跳到文件面板。
+- 提交详情文件清单是可读入口：悬浮给该提交版本的轻量预览，点击交给文件工作台打开同版本面板；两条路径都只读。
 - 仓库目录取自会话的工作目录，会话没绑定目录时回落到宿主默认目录；不是仓库就给空态，不猜父目录。
 
 ## 验证
@@ -74,4 +76,4 @@ node .nsl/chain/accept-s3-git-view.mjs  # 变更对真实 status、提交详情�
 
 ## 结构
 
-宿主半在 `src/host/`：`parse.ts`（log / refs / porcelain v2）、`lanes.ts`（泳道）、`git.ts`（argv runner 与预算）、`snapshot.ts` / `query.ts` / `detail.ts`（三个端点）、`failure.ts`（错误码）。客户端 `model.ts` 负责分组、图布局与行窗口，`view.tsx` 只做装配与跳转。判据脚本从 `lib/index.js` 取 `__test`，在没有宿主上下文的情况下驱动解析与泳道。
+宿主半在 `src/host/`：`parse.ts`（log / refs / porcelain v2）、`lanes.ts`（泳道）、`git.ts`（argv runner 与预算）、`snapshot.ts` / `query.ts` / `detail.ts` / `show.ts`（数据端点）、`failure.ts`（错误码）。客户端 `model.ts` 负责分组、图布局与行窗口，`view.tsx` 只做装配与跳转。判据脚本从 `lib/index.js` 取 `__test`，在没有宿主上下文的情况下驱动解析与泳道。

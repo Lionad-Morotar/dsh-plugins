@@ -253,7 +253,14 @@ export function createGitPreviewReader(face: GitShowFace, sessionId: string, rev
         typeof page.offset === "number" && Number.isFinite(page.offset) && page.offset > 0
           ? Math.trunc(page.offset)
           : (range.offset ?? 1);
-      return { text: page.text, lines, offset, eof: page.eof === true };
+      const source = page.source === "first-parent" ? "first-parent" : page.source === "commit" ? "commit" : undefined;
+      return {
+        text: page.text,
+        lines,
+        offset,
+        eof: page.eof === true,
+        ...(source === undefined ? {} : { source }),
+      };
     },
   };
 }

@@ -337,7 +337,7 @@ describe("createGitPreviewReader", () => {
     expect(calls).toEqual([
       { sessionId: "s1", hash: "17b6a55", path: "src/a.ts", offset: 41, limit: 200 },
     ]);
-    expect(page).toEqual({ text: "alpha\nbeta", lines: 2, offset: 41, eof: false });
+    expect(page).toEqual({ text: "alpha\nbeta", lines: 2, offset: 41, eof: false, source: "commit" });
   });
 
   it("omits paging fields the caller did not ask for", async () => {

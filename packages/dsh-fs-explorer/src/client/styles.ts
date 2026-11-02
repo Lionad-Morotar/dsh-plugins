@@ -635,6 +635,13 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-pbtn:hover:not(:disabled) { background: var(--fx-hover); color: var(--fx-text); border-color: var(--fx-border); }
 .fx-pbtn:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -2px; }
 .fx-pbtn:disabled { opacity: .35; cursor: default; }
+.fx-preview-notice {
+  flex: none;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--fx-border-soft);
+  color: var(--fx-caption);
+  font-size: 10.5px;
+}
 .fx-preview-body { flex: 1; min-height: 0; position: relative; }
 .fx-preview-body[data-scroll="y"] {
   overflow: auto;

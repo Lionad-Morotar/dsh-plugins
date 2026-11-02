@@ -413,6 +413,11 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
           {busy ? <span className="fx-spinner" aria-hidden="true" /> : null}
         </div>
       </header>
+      {snapshot.source === "first-parent" ? (
+        <div className="fx-preview-notice" data-testid="fs-preview-deleted">
+          {t("preview.deletedCommit")}
+        </div>
+      ) : null}
       <div className="fx-preview-body" data-scroll={reading ? "y" : "none"}>
         {body}
       </div>

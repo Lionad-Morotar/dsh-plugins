@@ -383,6 +383,65 @@ describe("DetailPane hover preview", () => {
     expect(card()?.textContent).toContain("gateway down");
   });
 
+  it("labels a deleted file and previews its first-parent content", async () => {
+    const deleted: GitBlobPage = {
+      ...TEXT_PAGE,
+      source: "first-parent",
+      text: "kept before deletion",
+    };
+    const face = remoteWith(async () => okPage(deleted));
+    await mount(face);
+    const row = rows()[0];
+    if (row === undefined) return;
+
+    await mouseOver(row);
+    await advance(200);
+    expect(card()?.textContent).toContain("该提交删除了此文件");
+    expect(card()?.textContent).toContain("kept before deletion");
+  });
+
+  it("renders an empty commit file as an explicit empty state", async () => {
+    const empty: GitBlobPage = {
+      ...TEXT_PAGE,
+      lines: 0,
+      text: "",
+      eof: true,
+    };
+    const face = remoteWith(async () => okPage(empty));
+    await mount(face);
+    const row = rows()[0];
+    if (row === undefined) return;
+
+    await mouseOver(row);
+    await advance(200);
+    expect(card()?.textContent).toContain("（空文件）");
+    expect(document.body.querySelector('[data-testid="gx-preview-card"] pre')).toBeNull();
+  });
+
+  it("titles a renamed file by its new path, never the path it came from", async () => {
+    const renamedDetail = {
+      ...DETAIL,
+      files: [{ path: "src/new-name.ts", origPath: "src/old-name.ts", status: "renamed" as const, additions: 1, deletions: 0 }],
+    };
+    const face = remoteWith(async () => okPage({ ...TEXT_PAGE, path: "src/new-name.ts" }));
+    (face.commit as unknown as { mockImplementation: (impl: () => Promise<unknown>) => void }).mockImplementation(async () => ({
+      ok: true,
+      value: { ok: true, detail: renamedDetail },
+    }));
+    await mount(face);
+    const row = rows()[0];
+    if (row === undefined) return;
+
+    await mouseOver(row);
+    await advance(200);
+    expect(card()?.textContent).toContain("new-name.ts");
+    expect(card()?.textContent).not.toContain("old-name.ts");
+    expect(face.show).toHaveBeenCalledWith(
+      { sessionId: "s1", hash: "17b6a55", path: "src/new-name.ts", offset: 1, limit: 40 },
+      expect.any(AbortSignal),
+    );
+  });
+
   it("keeps the row click working while the card is up", async () => {
     const onOpenFile = vi.fn();
     const face = remoteWith(async () => okPage(TEXT_PAGE));

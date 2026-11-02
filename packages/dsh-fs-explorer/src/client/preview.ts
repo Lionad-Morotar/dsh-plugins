@@ -138,6 +138,8 @@ export interface PreviewPage {
   readonly offset: number;
   readonly totalLines?: number;
   readonly eof: boolean;
+  /** `first-parent` when a commit deleted the path and this page shows the parent. */
+  readonly source?: "commit" | "first-parent";
 }
 
 /** A thrown page read, with the host's error code kept for triage. */
@@ -198,13 +200,28 @@ export function normalizePreviewPage(response: unknown, offset: number): Preview
     typeof page.offset === "number" && Number.isFinite(page.offset) && page.offset > 0 ? Math.trunc(page.offset) : offset;
   const eof =
     page.eof === true || (totalLines !== undefined && lines > 0 && start + lines - 1 >= totalLines);
-  return totalLines === undefined
-    ? { text: page.text, lines, offset: start, eof }
-    : { text: page.text, lines, offset: start, totalLines, eof };
+  const source = page.source === "first-parent" ? "first-parent" : page.source === "commit" ? "commit" : undefined;
+  const folded = {
+    text: page.text,
+    lines,
+    offset: start,
+    eof,
+    ...(source === undefined ? {} : { source }),
+  } satisfies PreviewPage;
+  return totalLines === undefined ? folded : { ...folded, totalLines };
 }
 
 /** Why a preview could not read a file. */
-export type PreviewFailureKind = "deleted" | "denied" | "symlink" | "binary" | "too-large" | "unavailable" | "unknown";
+export type PreviewFailureKind =
+  | "deleted"
+  | "denied"
+  | "symlink"
+  | "binary"
+  | "commit-binary"
+  | "submodule"
+  | "too-large"
+  | "unavailable"
+  | "unknown";
 
 /** One classified failure, ready for a title and an action. */
 export interface PreviewFailure {
@@ -229,6 +246,12 @@ export function classifyPreviewFailure(error: unknown): PreviewFailure {
   const message = typeof record.message === "string" && record.message !== "" ? record.message : "读取文件失败";
   const haystack = `${code} ${detail} ${message}`.toLowerCase();
   if (haystack.includes("symlink")) return { kind: "symlink", code, message };
+  // Git object kinds have their own copy: a submodule is not a text failure,
+  // and a binary blob in a commit may not have a family renderer to fall back on.
+  if (haystack.includes("git/submodule") || haystack.includes("子模块")) return { kind: "submodule", code, message };
+  if (haystack.includes("git/binary") || haystack.includes("提交版本中的文件是二进制")) {
+    return { kind: "commit-binary", code, message };
+  }
   if (
     haystack.includes("eacces") ||
     haystack.includes("eperm") ||
@@ -276,6 +299,8 @@ export interface PreviewSnapshot {
   readonly lines: number;
   readonly totalLines?: number;
   readonly eof: boolean;
+  /** `first-parent` when a commit deleted the path and the page shows the parent. */
+  readonly source?: "commit" | "first-parent";
   readonly failure?: PreviewFailure;
 }
 
@@ -344,6 +369,7 @@ export function createPreviewLoader({ files, maxLines = PREVIEW_MAX_LINES }: Pre
       offset,
       lines: snapshot.path === path ? snapshot.lines : 0,
       ...(snapshot.path === path && snapshot.totalLines !== undefined ? { totalLines: snapshot.totalLines } : {}),
+      ...(snapshot.path === path && snapshot.source !== undefined ? { source: snapshot.source } : {}),
       eof: snapshot.path === path ? snapshot.eof : false,
     });
     try {
@@ -354,19 +380,16 @@ export function createPreviewLoader({ files, maxLines = PREVIEW_MAX_LINES }: Pre
         emit({ ...snapshot, status: "ready", eof: true, text: "", lines: 0 });
         return;
       }
-      emit(
-        page.totalLines === undefined
-          ? { status: "ready", path, text: page.text, offset: page.offset, lines: page.lines, eof: page.eof }
-          : {
-              status: "ready",
-              path,
-              text: page.text,
-              offset: page.offset,
-              lines: page.lines,
-              totalLines: page.totalLines,
-              eof: page.eof,
-            },
-      );
+      const ready: PreviewSnapshot = {
+        status: "ready",
+        path,
+        text: page.text,
+        offset: page.offset,
+        lines: page.lines,
+        eof: page.eof,
+        ...(page.source === undefined ? {} : { source: page.source }),
+      };
+      emit(page.totalLines === undefined ? ready : { ...ready, totalLines: page.totalLines });
     } catch (error) {
       if (mine !== generation) return;
       if (active.signal.aborted) return;

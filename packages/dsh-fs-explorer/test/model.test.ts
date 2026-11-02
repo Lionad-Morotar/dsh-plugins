@@ -341,9 +341,11 @@ describe("paths, focus and size", () => {
       absolute: false,
       revision: "17b6a55",
     });
-    // A missing line or a revision shorter than four hex digits is not ours.
+    // A missing line or an illegal revision is not ours.
     expect(parseFocus("git:17b6a55:src/a.ts")).toBeUndefined();
     expect(parseFocus("git:ab:12:src/a.ts")).toBeUndefined();
+    expect(parseFocus("git:zzzzzz:12:src/a.ts")).toBeUndefined();
+    expect(parseFocus("git:17b6a55:12:")).toBeUndefined();
     expect(parseFocus("git:17b6a55:0:")).toBeUndefined();
   });
 

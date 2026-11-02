@@ -26,6 +26,10 @@ function failureTitle(failure: PreviewFailure, t: Translate): string {
       return t("preview.symlink.title");
     case "binary":
       return t("preview.binary.title");
+    case "commit-binary":
+      return t("preview.commitBinary.title");
+    case "submodule":
+      return t("preview.submodule.title");
     case "too-large":
       return t("preview.tooLarge.title");
     case "unavailable":
@@ -45,6 +49,10 @@ function failureDescription(failure: PreviewFailure, t: Translate): string {
       return t("preview.symlink.description");
     case "binary":
       return t("preview.binary.description");
+    case "commit-binary":
+      return t("preview.commitBinary.description");
+    case "submodule":
+      return t("preview.submodule.description");
     case "too-large":
       return t("preview.tooLarge.description");
     case "unavailable":
