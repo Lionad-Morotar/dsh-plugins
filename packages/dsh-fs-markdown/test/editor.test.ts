@@ -117,6 +117,44 @@ describe("EditorBody", () => {
     expect(changes).toEqual([]);
   });
 
+  it("keeps CRLF line endings when a user edit is reported", async () => {
+    await show({ text: "a\r\nb\r\n" });
+
+    await act(async () => {
+      view().dispatch({ changes: { from: view().state.doc.length, insert: "x" } });
+    });
+
+    // CM6 splits lines on \r\n and rejoins with \n by default; a whole-file
+    // rewrite of a CRLF document turns every line into a diff.
+    expect(changes.at(-1)).toBe("a\r\nb\r\nx");
+  });
+
+  it("leaves a pure LF document on LF", async () => {
+    await show({ text: "a\nb\n" });
+
+    await act(async () => {
+      view().dispatch({ changes: { from: view().state.doc.length, insert: "x" } });
+    });
+
+    expect(changes.at(-1)).toBe("a\nb\nx");
+  });
+
+  it("does not treat the CRLF text it just reported as an external replacement", async () => {
+    await show({ text: "a\r\nb\r\n" });
+    await act(async () => {
+      view().dispatch({
+        changes: { from: 0, insert: "x" },
+        selection: { anchor: 1 },
+      });
+    });
+
+    const reported = changes.at(-1) ?? "";
+    await show({ text: reported });
+
+    // A full-document replacement would drag the cursor to the end of the file.
+    expect(view().state.selection.main.anchor).toBe(1);
+  });
+
   it("registers the save chord so it never reaches the host", async () => {
     let saves = 0;
     await show({ onSave: () => { saves += 1; } });

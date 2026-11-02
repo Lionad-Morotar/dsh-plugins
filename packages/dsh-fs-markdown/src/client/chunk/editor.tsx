@@ -101,11 +101,16 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
   useEffect(() => {
     const element = host.current;
     if (element === null) return;
+    // CodeMirror normalizes every line break to \n when it builds a state.
+    // Remembering the document's own separator here is what keeps a one-character
+    // edit in a CRLF file from rewriting every line of it.
+    const lineSeparator = text.includes("\r\n") ? "\r\n" : undefined;
     const created = new EditorView({
       parent: element,
       state: EditorState.create({
         doc: text,
         extensions: [
+          ...(lineSeparator === undefined ? [] : [EditorState.lineSeparator.of(lineSeparator)]),
           history(),
           keymap.of([saveKeyBinding(() => onSave.current?.())]),
           keymap.of(defaultKeymap),
@@ -116,7 +121,9 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
           EditorView.updateListener.of(update => {
             if (!update.docChanged) return;
             if (update.transactions.some(transaction => transaction.annotation(ExternalChange) === true)) return;
-            onChange.current(update.state.doc.toString());
+            // `toString()` always joins with \n; sliceDoc rebuilds the text with
+            // the separator the state was created with.
+            onChange.current(update.state.sliceDoc());
           }),
         ],
       }),
@@ -134,7 +141,7 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
   useEffect(() => {
     const current = view.current;
     if (current === null) return;
-    if (current.state.doc.toString() === text) return;
+    if (current.state.sliceDoc() === text) return;
     current.dispatch({
       changes: { from: 0, to: current.state.doc.length, insert: text },
       annotations: ExternalChange.of(true),
