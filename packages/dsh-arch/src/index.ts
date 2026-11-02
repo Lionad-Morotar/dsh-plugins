@@ -52,7 +52,12 @@ export const inject: string[] = [];
 /** Structural slice of the Cordis context this package reads. */
 interface HostContext {
   get?(name: string): unknown;
-  effect?(onCleanup: () => void | Promise<void>): void;
+  /**
+   * Runs `setup` immediately and keeps the function it returns until the
+   * fiber unloads. The return type mirrors cordis: a plain function is the
+   * deferred teardown, a promise settles before its result is treated as one.
+   */
+  effect?(setup: () => (() => void | Promise<void>) | Promise<void> | void): void;
 }
 
 /**
@@ -201,7 +206,10 @@ function mountRoutes(host: HostContext, webServer: WebServerFace): void {
     saveState,
   });
 
-  host.effect?.(() => {
+  // The body runs immediately; only the function it returns is deferred
+  // until the fiber unloads. Calling the teardown directly here unregistered
+  // the routes in the same turn they were added.
+  host.effect?.(() => () => {
     unregister();
     void renderer.dispose();
     void storePromise.then(store => store?.close());

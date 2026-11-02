@@ -418,7 +418,7 @@ function mountRoutes(host, webServer) {
     loadState,
     saveState
   });
-  host.effect?.(() => {
+  host.effect?.(() => () => {
     unregister();
     void renderer.dispose();
     void storePromise.then((store) => store?.close());
