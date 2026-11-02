@@ -99,6 +99,10 @@ export const PREVIEW_COPY = {
     "preview.conflict.title": "磁盘文件已变化",
     "preview.conflict.hint": "你的草稿还在内存里，没有被覆盖。",
     "preview.conflict.reload": "重新载入",
+    "preview.conflict.discard": "确认丢弃草稿",
+    "preview.conflict.discardedTitle": "已载入磁盘版本",
+    "preview.conflict.discardedHint": "被丢弃的草稿还留在内存里，可以恢复。",
+    "preview.conflict.restore": "恢复草稿",
     "preview.conflict.copy": "复制草稿",
     "preview.conflict.copied": "已复制",
   },
@@ -112,6 +116,10 @@ export const PREVIEW_COPY = {
     "preview.conflict.title": "The file changed on disk",
     "preview.conflict.hint": "Your draft is still in memory; it was not overwritten.",
     "preview.conflict.reload": "Reload",
+    "preview.conflict.discard": "Discard draft",
+    "preview.conflict.discardedTitle": "The on-disk version is loaded",
+    "preview.conflict.discardedHint": "The discarded draft is still in memory; you can restore it.",
+    "preview.conflict.restore": "Restore draft",
     "preview.conflict.copy": "Copy draft",
     "preview.conflict.copied": "Copied",
   },
@@ -387,6 +395,8 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
   const [mode, setMode] = useState<PreviewMode>("reading");
   const [copied, setCopied] = useState(false);
   const [draftCopied, setDraftCopied] = useState(false);
+  // The reload button becomes a confirmation before it drops a dirty draft.
+  const [discardArmed, setDiscardArmed] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const draftCopyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -434,6 +444,7 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
   useEffect(() => {
     setMode("reading");
     setCopied(false);
+    setDiscardArmed(false);
   }, [path]);
 
   useEffect(
@@ -449,6 +460,7 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
   useEffect(() => {
     if (draft?.conflict === true) return;
     setDraftCopied(false);
+    setDiscardArmed(false);
     if (draftCopyTimer.current !== undefined) clearTimeout(draftCopyTimer.current);
   }, [draft?.conflict]);
 
@@ -567,6 +579,11 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
 
   const saveError = draft?.error;
   const showSaveError = saveError !== null && saveError !== undefined && draft?.conflict !== true;
+  const conflict = draft?.conflict === true;
+  const discarded = draft?.discarded ?? null;
+  // After a confirmed reload the bar stays for the one action that still has
+  // something to offer: putting the discarded text back as a draft.
+  const offerRestore = !conflict && discarded !== null && draft?.dirty !== true;
 
   let body: ReactElement;
   if (binary) {
@@ -674,17 +691,54 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
           {busy ? <span className="fx-spinner" aria-hidden="true" /> : null}
         </div>
       </header>
-      {draft?.conflict === true ? (
-        <div className="fx-conflict" role="alert" data-testid="fs-preview-conflict">
-          <strong>{t("preview.conflict.title")}</strong>
-          <span className="fx-conflict-hint">{t("preview.conflict.hint")}</span>
+      {conflict || offerRestore ? (
+        <div
+          className="fx-conflict"
+          role="alert"
+          data-testid="fs-preview-conflict"
+          data-state={conflict ? "conflict" : "discarded"}
+        >
+          <strong>{conflict ? t("preview.conflict.title") : t("preview.conflict.discardedTitle")}</strong>
+          <span className="fx-conflict-hint">
+            {conflict ? t("preview.conflict.hint") : t("preview.conflict.discardedHint")}
+          </span>
           <span className="fx-spacer" />
-          <button type="button" className="fx-pbtn" data-testid="fs-conflict-reload" onClick={() => void draftSession?.reload()}>
-            {t("preview.conflict.reload")}
-          </button>
-          <button type="button" className="fx-pbtn" data-testid="fs-conflict-copy" onClick={copyDraft}>
-            {draftCopied ? t("preview.conflict.copied") : t("preview.conflict.copy")}
-          </button>
+          {conflict ? (
+            <button
+              type="button"
+              className="fx-pbtn"
+              data-testid="fs-conflict-reload"
+              data-confirm={discardArmed ? "discard" : undefined}
+              onClick={() => {
+                // A clean draft has nothing to lose, so one click is enough.
+                if (!discardArmed && draft?.dirty === true) {
+                  setDiscardArmed(true);
+                  return;
+                }
+                setDiscardArmed(false);
+                void draftSession?.reload({ force: true });
+              }}
+            >
+              {discardArmed ? t("preview.conflict.discard") : t("preview.conflict.reload")}
+            </button>
+          ) : null}
+          {offerRestore ? (
+            <button
+              type="button"
+              className="fx-pbtn"
+              data-testid="fs-conflict-restore"
+              onClick={() => {
+                if (discarded !== null) draftSession?.setDraft(discarded);
+              }}
+            >
+              {t("preview.conflict.restore")}
+            </button>
+          ) : null}
+          {conflict ? (
+            <button type="button" className="fx-pbtn" data-testid="fs-conflict-copy" onClick={copyDraft}>
+              {draftCopied ? t("preview.conflict.copied") : t("preview.conflict.copy")}
+            </button>
+          ) : null}
         </div>
       ) : null}
       {showSaveError ? (

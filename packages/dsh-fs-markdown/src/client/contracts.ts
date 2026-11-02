@@ -69,6 +69,8 @@ export interface DocumentSnapshotFace {
   /** Absent on an explorer half that predates the write channel. */
   readonly saving?: boolean;
   readonly conflict?: boolean;
+  /** Text a forced reload replaced; the pane offers it back as a draft. */
+  readonly discarded?: string | null;
   readonly error: DocumentErrorFace | null;
 }
 
@@ -78,7 +80,7 @@ export interface DocumentSessionFace {
   subscribe(listener: () => void): () => void;
   setDraft(text: string): void;
   save(): Promise<SaveOutcomeFace>;
-  reload(): Promise<void>;
+  reload(options?: { readonly force?: boolean }): Promise<void>;
   dispose(): void;
 }
 

@@ -85,6 +85,8 @@ export interface DocumentSnapshot {
   readonly saving: boolean;
   /** The last write lost the version guard; only a reload may clear it. */
   readonly conflict: boolean;
+  /** Text a forced reload replaced; the conflict bar offers it back. */
+  readonly discarded: string | null;
   readonly error: DocumentError | null;
 }
 
@@ -97,11 +99,21 @@ export interface DocumentSession {
   setDraft(text: string): void;
   /** Write the draft through the transport and advance the baseline with its answer. */
   save(): Promise<SaveOutcome>;
-  /** Re-read the document, replacing the draft on success. */
-  reload(): Promise<void>;
+  /**
+   * Re-read the document, replacing the draft on success.
+   *
+   * A dirty draft is left untouched unless `force` is set: the only caller
+   * that forces is the conflict bar after the reader confirmed the discard.
+   */
+  reload(options?: { readonly force?: boolean }): Promise<void>;
   /** The live draft, for a copy action that must not depend on the transport. */
   copyDraft(): string;
-  /** Release this acquisition; the session is dropped when the count reaches zero. */
+  /**
+   * Release this acquisition.
+   *
+   * A clean session is dropped when the count reaches zero; a dirty one stays,
+   * because the panel that held it was the only owner of the reader's text.
+   */
   dispose(): void;
 }
 
@@ -143,6 +155,7 @@ const IDLE: DocumentSnapshot = Object.freeze({
   dirty: false,
   saving: false,
   conflict: false,
+  discarded: null,
   error: null,
 });
 
@@ -471,8 +484,11 @@ class Session implements DocumentSession {
     }
   }
 
-  async reload(): Promise<void> {
+  async reload(options?: { readonly force?: boolean }): Promise<void> {
     if (this.closed) return;
+    // A reload is a read, not a decision: overwriting a dirty draft here would
+    // discard the one copy of what the reader typed without asking.
+    if (this.snapshot.dirty && options?.force !== true) return;
     const generation = ++this.generation;
     // A re-read of a document already on screen must not blank the editor: the
     // reader may have a draft in it and only the disk may be missing.
@@ -489,6 +505,10 @@ class Session implements DocumentSession {
         });
         return;
       }
+      // Taken at settlement, not at request time: anything typed while the
+      // read was in flight is part of what this reload discards.
+      const discarded =
+        options?.force === true && this.snapshot.text !== result.text ? this.snapshot.text : null;
       this.publish({
         ...this.snapshot,
         status: "ready",
@@ -498,6 +518,7 @@ class Session implements DocumentSession {
         dirty: false,
         saving: false,
         conflict: false,
+        discarded,
         error: null,
       });
     } catch (error) {

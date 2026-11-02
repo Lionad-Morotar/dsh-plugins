@@ -347,7 +347,7 @@ describe("a refused save in the pane", () => {
     });
   });
 
-  it("replaces the draft when the reader reloads from the conflict bar", async () => {
+  it("asks before the conflict bar reload discards a dirty draft, then restores it", async () => {
     mounted = await mountView({ dirty: true });
     mounted.stale = true;
     await act(async () => {
@@ -359,15 +359,36 @@ describe("a refused save in the pane", () => {
     await act(async () => {
       testId("fs-conflict-reload")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
+
+    // First click only arms the confirmation; the draft is untouched.
+    const reload = testId("fs-conflict-reload");
+    expect(reload?.getAttribute("data-confirm")).toBe("discard");
+    expect(mounted.session.getSnapshot()).toMatchObject({ text: "# hello, edited", dirty: true });
+
+    await act(async () => {
+      testId("fs-conflict-reload")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     await flush();
 
-    expect(testId("fs-preview-conflict")).toBeNull();
     expect(mounted.session.getSnapshot()).toMatchObject({
       text: "# theirs",
       savedText: "# theirs",
       dirty: false,
       conflict: false,
+      discarded: "# hello, edited",
     });
+    expect(testId("fs-conflict-restore")).not.toBeNull();
+
+    await act(async () => {
+      testId("fs-conflict-restore")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mounted.session.getSnapshot()).toMatchObject({
+      text: "# hello, edited",
+      savedText: "# theirs",
+      dirty: true,
+    });
+    expect(testId("fs-conflict-restore")).toBeNull();
   });
 });
 

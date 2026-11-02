@@ -52,6 +52,7 @@ describe("document store", () => {
       dirty: false,
       saving: false,
       conflict: false,
+      discarded: null,
       error: null,
     });
 
@@ -65,6 +66,7 @@ describe("document store", () => {
       dirty: false,
       saving: false,
       conflict: false,
+      discarded: null,
       error: null,
     });
     session.dispose();
@@ -117,6 +119,7 @@ describe("document store", () => {
       dirty: false,
       saving: false,
       conflict: false,
+      discarded: null,
       error: null,
     });
     session.dispose();
@@ -184,7 +187,7 @@ describe("document store", () => {
     session.dispose();
   });
 
-  it("replaces the draft and clears the conflict only when the reader reloads", async () => {
+  it("replaces the draft and clears the conflict only when the reader confirms the discard", async () => {
     let reads = 0;
     const store = storeWith(
       async () => {
@@ -199,7 +202,11 @@ describe("document store", () => {
     await session.save();
     expect(session.getSnapshot().conflict).toBe(true);
 
+    // The bar's first click only arms the confirmation; nothing moves yet.
     await session.reload();
+    expect(session.getSnapshot()).toMatchObject({ text: "my draft", dirty: true, conflict: true });
+
+    await session.reload({ force: true });
 
     expect(session.getSnapshot()).toMatchObject({
       status: "ready",
@@ -208,8 +215,49 @@ describe("document store", () => {
       version: "v2",
       dirty: false,
       conflict: false,
+      discarded: "my draft",
       error: null,
     });
+    session.dispose();
+  });
+
+  it("refuses to reload over an unsaved draft unless the discard is forced", async () => {
+    let disk = "one";
+    const store = storeWith(async () => success(disk));
+    const session = store.acquire("s1", "docs/a.md");
+    await session.reload();
+    session.setDraft("my draft");
+    disk = "two";
+
+    await session.reload();
+
+    expect(session.getSnapshot()).toMatchObject({ text: "my draft", savedText: "one", dirty: true });
+    session.dispose();
+  });
+
+  it("force reload replaces the draft and keeps the old text for recovery", async () => {
+    let disk = "one";
+    const store = storeWith(async () => success(disk));
+    const session = store.acquire("s1", "docs/a.md");
+    await session.reload();
+    session.setDraft("my draft");
+    disk = "two";
+
+    await session.reload({ force: true });
+
+    expect(session.getSnapshot()).toMatchObject({
+      text: "two",
+      savedText: "two",
+      dirty: false,
+      conflict: false,
+      discarded: "my draft",
+    });
+
+    // The conflict bar's restore action writes the kept text back as a draft.
+    const discarded = session.getSnapshot().discarded;
+    if (discarded === null) throw new Error("the discarded draft was not kept");
+    session.setDraft(discarded);
+    expect(session.getSnapshot()).toMatchObject({ text: "my draft", dirty: true });
     session.dispose();
   });
 
@@ -306,15 +354,14 @@ describe("document store", () => {
     });
     const session = store.acquire("s1", "docs/a.md");
     await session.reload();
-    session.setDraft("draft");
 
     await session.reload();
 
     expect(session.getSnapshot()).toMatchObject({
       status: "ready",
-      text: "draft",
+      text: "one",
       savedText: "one",
-      dirty: true,
+      dirty: false,
       error: { code: "io-error", message: "gone" },
     });
     session.dispose();
