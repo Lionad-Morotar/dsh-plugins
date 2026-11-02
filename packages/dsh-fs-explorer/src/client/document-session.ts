@@ -112,6 +112,8 @@ export interface DocumentStore {
   peek(sessionId: string, path: string): DocumentSnapshot | undefined;
   /** An existing draft, for an action; the caller must not dispose what it did not acquire. */
   find(sessionId: string, path: string): DocumentSession | undefined;
+  /** Drop one draft for good: discarded, saved and closed, or its file is gone. */
+  forget(sessionId: string, path: string): void;
   /** Observe every draft; the listener is not called on subscription. */
   subscribe(listener: () => void): () => void;
   /** Monotonic count of publications, so a subscriber can cache its own read. */
@@ -361,6 +363,12 @@ export function createDocumentStore(options: {
 
     find,
 
+    forget(sessionId, path) {
+      // `abandon` runs the release path, which is also what deletes the entry
+      // and announces it; deleting here first would announce the change twice.
+      entries.get(keyOf(sessionId, path))?.session.abandon();
+    },
+
     subscribe(listener) {
       listeners.add(listener);
       return () => {
@@ -502,10 +510,27 @@ class Session implements DocumentSession {
     }
   }
 
+  /**
+   * Release one reference.
+   *
+   * A dirty draft survives a zero reference count: switching the host view
+   * unmounts every panel at once, and the text the reader typed exists nowhere
+   * else. A clean draft has nothing to lose, so it goes.
+   */
   dispose(): void {
-    if (this.closed) return;
+    if (this.closed || this.references <= 0) return;
     this.references -= 1;
-    if (this.references > 0) return;
+    if (this.references > 0 || this.snapshot.dirty) return;
+    this.close();
+  }
+
+  /** Drop this draft for good, whatever it holds. */
+  abandon(): void {
+    if (this.closed) return;
+    this.close();
+  }
+
+  private close(): void {
     this.closed = true;
     this.listeners.clear();
     this.onRelease();

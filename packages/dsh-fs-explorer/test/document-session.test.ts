@@ -341,6 +341,35 @@ describe("document store", () => {
     expect(store.acquire("s1", "docs/a.md")).not.toBe(first);
   });
 
+  it("keeps a dirty draft alive after its last reference goes away", async () => {
+    // Switching views unmounts every panel at once. The draft is the only copy
+    // of what the reader typed, so releasing the last reference must not drop it.
+    const store = storeWith(async () => success("one"));
+    const first = store.acquire("s1", "docs/a.md");
+    await first.reload();
+    first.setDraft("unsaved");
+
+    first.dispose();
+
+    const second = store.acquire("s1", "docs/a.md");
+    expect(second).toBe(first);
+    expect(second.getSnapshot()).toMatchObject({ text: "unsaved", savedText: "one", dirty: true });
+  });
+
+  it("forgets a draft unconditionally, even when it is dirty", async () => {
+    const store = storeWith(async () => success("one"));
+    const first = store.acquire("s1", "docs/a.md");
+    await first.reload();
+    first.setDraft("unsaved");
+
+    store.forget("s1", "docs/a.md");
+
+    expect(store.peek("s1", "docs/a.md")).toBeUndefined();
+    const second = store.acquire("s1", "docs/a.md");
+    expect(second).not.toBe(first);
+    expect(second.getSnapshot()).toMatchObject({ status: "idle", text: "", dirty: false });
+  });
+
   it("notifies subscribers until they unsubscribe", async () => {
     const store = storeWith(async () => success("one"));
     const session = store.acquire("s1", "docs/a.md");

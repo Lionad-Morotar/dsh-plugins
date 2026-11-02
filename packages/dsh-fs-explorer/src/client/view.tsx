@@ -319,6 +319,9 @@ export function createFsExplorerView({
         }
         setPendingClose(null);
         setCloseError(null);
+        // Nobody is holding the draft any more, and a closed panel must not
+        // resurrect it on the next open of the same path.
+        if (sessionId !== undefined) documents?.forget(sessionId, target);
         stack.close(target);
       },
       [documents, sessionId, stack],
@@ -331,6 +334,7 @@ export function createFsExplorerView({
       const session = sessionId === undefined ? undefined : documents?.find(sessionId, target.path);
       if (session === undefined) {
         setPendingClose(null);
+        if (sessionId !== undefined) documents?.forget(sessionId, target.path);
         stack.close(target.path);
         return;
       }
@@ -349,6 +353,9 @@ export function createFsExplorerView({
           return;
         }
         setPendingClose(null);
+        // The write landed, so the draft is the disk now; dropping the session
+        // keeps a stale copy from shadowing the file the next time it opens.
+        if (sessionId !== undefined) documents?.forget(sessionId, target.path);
         stack.close(target.path);
       });
     }, [documents, pendingClose, sessionId, stack, t]);
@@ -357,8 +364,10 @@ export function createFsExplorerView({
       const target = pendingClose;
       setPendingClose(null);
       setCloseError(null);
-      if (target !== null) stack.close(target.path);
-    }, [pendingClose, stack]);
+      if (target === null) return;
+      if (sessionId !== undefined) documents?.forget(sessionId, target.path);
+      stack.close(target.path);
+    }, [documents, pendingClose, sessionId, stack]);
 
     const cancelClose = useCallback((): void => {
       setPendingClose(null);

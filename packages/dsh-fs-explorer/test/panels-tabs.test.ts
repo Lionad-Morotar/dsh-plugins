@@ -280,6 +280,7 @@ describe("closing a dirty panel", () => {
 
     expect(tabs()).toBe(0);
     expect(testId("fs-close-confirm")).toBeNull();
+    expect(mounted.store.peek("s1", "a.md")).toBeUndefined();
   });
 
   it("drops the draft when the reader discards it", async () => {
@@ -291,6 +292,8 @@ describe("closing a dirty panel", () => {
     });
 
     expect(tabs()).toBe(0);
+    // Discarding is the one answer that promises the draft is gone for good.
+    expect(mounted.store.peek("s1", "a.md")).toBeUndefined();
   });
 
   it("lets Escape dismiss the confirmation before it reaches the composer", async () => {
@@ -302,6 +305,7 @@ describe("closing a dirty panel", () => {
     expect(escape.defaultPrevented).toBe(true);
     expect(testId("fs-close-confirm")).toBeNull();
     expect(tabs()).toBe(1);
+    expect(mounted.store.peek("s1", "a.md")).toMatchObject({ text: "# hello, edited", dirty: true });
   });
 });
 
