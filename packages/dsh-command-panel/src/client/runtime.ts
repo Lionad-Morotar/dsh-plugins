@@ -68,6 +68,7 @@ import {
   type PanelMode,
   type SessionScope,
 } from "./panel-state.ts";
+import { GIT_VIEW_ID, GIT_VIEW_SLOT, gitViewPresent, installCommitLinks } from "./commit-ref.ts";
 import { composeInsertion } from "./paths.ts";
 import { rankRows } from "./ranking.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
@@ -1029,18 +1030,24 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
    * copy dropped again. A view that never opened leaves nothing to take it, so
    * the queue is cleared and the reader is told why, not left in silence.
    */
-  function openCommit(hash: string): void {
+  function openCommit(hash: string, options?: { readonly quiet?: boolean }): void {
     const workbench = refs.workbench;
     const focus = `commit:${hash}`;
-    if (workbench === undefined) {
+    // A click in the prose has no panel to hang a notice on, and the underline
+    // was only offered because the view was registered, so a miss stays quiet.
+    const missing = (): void => {
+      if (options?.quiet === true) return;
       notice(copy().noticeGitPanelMissing, "error");
+    };
+    if (workbench === undefined) {
+      missing();
       return;
     }
     if (workbench.openViewOrSwitch !== undefined) {
-      workbench.viewFocus?.request("git-explorer", focus);
-      const result = workbench.openViewOrSwitch("git-explorer", focus);
+      workbench.viewFocus?.request(GIT_VIEW_ID, focus);
+      const result = workbench.openViewOrSwitch(GIT_VIEW_ID, focus);
       if (result.focused) {
-        workbench.viewFocus?.take("git-explorer");
+        workbench.viewFocus?.take(GIT_VIEW_ID);
         close();
         return;
       }
@@ -1050,15 +1057,15 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         close();
         return;
       }
-      workbench.viewFocus?.take("git-explorer");
-      notice(copy().noticeGitPanelMissing, "error");
+      workbench.viewFocus?.take(GIT_VIEW_ID);
+      missing();
       return;
     }
-    if (workbench.openView("git-explorer", focus)) {
+    if (workbench.openView(GIT_VIEW_ID, focus)) {
       close();
       return;
     }
-    notice(copy().noticeGitPanelMissing, "error");
+    missing();
   }
 
   function goBack(): void {
@@ -1403,6 +1410,22 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     }),
   );
   disposers.push(insertPanelStyles(doc));
+  // The chat body has no slot between its link pass and its file mentions, so a
+  // commit hash in the prose is recognised here, against the whole document.
+  disposers.push(
+    installCommitLinks(doc, {
+      sessionId: currentSessionId,
+      query: async (sessionId, ref) => {
+        const gitExplorer = gitExplorerFace();
+        if (gitExplorer === undefined) return { ok: false };
+        const transport = await gitExplorer.query({ sessionId, ref, limit: 5 });
+        if (!transport.ok || !transport.value.ok) return { ok: false };
+        return { ok: true, commits: transport.value.page.commits };
+      },
+      open: hash => openCommit(hash, { quiet: true }),
+      gitViewPresent: () => gitViewPresent(refs.slots?.entries?.(GIT_VIEW_SLOT)),
+    }),
+  );
   disposers.push(startStatusTick());
   disposers.push(
     deps.ctx.inject(["layout", "theme", "sidebarRight"], scope => {
