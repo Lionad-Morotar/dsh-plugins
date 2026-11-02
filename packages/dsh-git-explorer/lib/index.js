@@ -68,6 +68,129 @@ function runFailure(result) {
   return null;
 }
 
+// src/host/branches.ts
+var BRANCH_FORMAT = "--format=%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream:short)";
+var WORKTREE_PREFIX = "worktree ";
+function parseBranchRefs(text) {
+  const branches = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line === "") continue;
+    const fields = line.split("\0");
+    const name2 = fields[0] ?? "";
+    const hash = fields[1] ?? "";
+    if (name2 === "" || hash === "") continue;
+    const upstream = fields[3] ?? "";
+    branches.push({
+      name: name2,
+      hash,
+      current: (fields[2] ?? "") === "*",
+      ...upstream === "" ? {} : { upstream }
+    });
+  }
+  return branches;
+}
+function parseWorktreeList(text) {
+  const worktrees = [];
+  let draft = null;
+  const flush = () => {
+    if (draft !== null && draft.path !== "") {
+      worktrees.push({
+        path: draft.path,
+        ...draft.head === void 0 ? {} : { head: draft.head },
+        ...draft.branch === void 0 ? {} : { branch: draft.branch },
+        detached: draft.detached,
+        bare: draft.bare,
+        locked: draft.locked,
+        prunable: draft.prunable
+      });
+    }
+    draft = null;
+  };
+  for (const raw of text.split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line === "") {
+      flush();
+      continue;
+    }
+    if (line.startsWith(WORKTREE_PREFIX)) {
+      flush();
+      draft = {
+        path: line.slice(WORKTREE_PREFIX.length),
+        detached: false,
+        bare: false,
+        locked: false,
+        prunable: false
+      };
+      continue;
+    }
+    if (draft === null) continue;
+    if (line.startsWith("HEAD ")) draft.head = line.slice("HEAD ".length);
+    else if (line.startsWith("branch ")) draft.branch = line.slice("branch ".length).replace(/^refs\/heads\//u, "");
+    else if (line === "detached") draft.detached = true;
+    else if (line === "bare") draft.bare = true;
+    else if (line === "locked" || line.startsWith("locked ")) draft.locked = true;
+    else if (line === "prunable" || line.startsWith("prunable ")) draft.prunable = true;
+  }
+  flush();
+  return worktrees;
+}
+function emptyList(root) {
+  return { root, isRepository: false, detached: false, headHash: null, branches: [] };
+}
+async function collectBranches(options, request = {}, signal) {
+  const cwd = request.cwd ?? options.cwd;
+  const probe = await options.runner.run(["rev-parse", "--show-toplevel"], { cwd, signal });
+  const probeFailure = runFailure(probe);
+  if (probeFailure !== null) {
+    if (probeFailure.code === "git-failed") return { ok: true, list: emptyList(cwd) };
+    return { ok: false, error: probeFailure };
+  }
+  const root = probe.stdout.trim();
+  if (root === "") return { ok: true, list: emptyList(cwd) };
+  const [refsRun, worktreesRun] = await Promise.all([
+    options.runner.run(["for-each-ref", BRANCH_FORMAT, "refs/heads"], { cwd: root, signal }),
+    options.runner.run(["worktree", "list", "--porcelain"], { cwd: root, signal })
+  ]);
+  for (const result of [refsRun, worktreesRun]) {
+    const failure = runFailure(result);
+    if (failure !== null) return { ok: false, error: failure };
+    if (result.stdoutLossy) return fail("git-failed", "command output exceeded the collection budget");
+  }
+  const refs = parseBranchRefs(refsRun.stdout);
+  const occupied = /* @__PURE__ */ new Map();
+  for (const worktree of parseWorktreeList(worktreesRun.stdout)) {
+    if (worktree.branch === void 0 || worktree.path === root) continue;
+    if (!occupied.has(worktree.branch)) occupied.set(worktree.branch, worktree.path);
+  }
+  const branches = refs.map((branch) => {
+    const worktreePath = occupied.get(branch.name);
+    return worktreePath === void 0 ? branch : { ...branch, worktreePath };
+  });
+  if (branches.some((branch) => branch.current)) {
+    return { ok: true, list: { root, isRepository: true, detached: false, headHash: null, branches } };
+  }
+  const headRun = await options.runner.run(["rev-parse", "--short", "HEAD"], { cwd: root, signal });
+  const headFailure = runFailure(headRun);
+  if (headFailure !== null) {
+    if (headFailure.code === "git-failed") {
+      return { ok: true, list: { root, isRepository: true, detached: false, headHash: null, branches } };
+    }
+    return { ok: false, error: headFailure };
+  }
+  const headHash = headRun.stdout.trim();
+  return {
+    ok: true,
+    list: {
+      root,
+      isRepository: true,
+      detached: true,
+      headHash: headHash === "" ? null : headHash,
+      branches
+    }
+  };
+}
+
 // src/host/parse.ts
 var LOG_FIELDS = 5;
 var MAX_REF_NAME = 512;
@@ -824,8 +947,8 @@ function normalizeConfig(config) {
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
-var _run_dec, _commit_dec, _query_dec, _snapshot_dec, _a, _init;
-var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec = [Remote("snapshot")], _query_dec = [Remote("query")], _commit_dec = [Remote("commit")], _run_dec = [Remote("run")], _a) {
+var _branches_dec, _run_dec, _commit_dec, _query_dec, _snapshot_dec, _a, _init;
+var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec = [Remote("snapshot")], _query_dec = [Remote("query")], _commit_dec = [Remote("commit")], _run_dec = [Remote("run")], _branches_dec = [Remote("branches")], _a) {
   constructor(ctx, config) {
     super(ctx, GIT_SERVICE);
     __runInitializers(_init, 5, this);
@@ -911,12 +1034,21 @@ var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec 
       error: { code: "not-implemented", message: "actions arrive in a later slice; the data layer is read-only" }
     };
   }
+  async branches(request, signal) {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
+    try {
+      return await collectBranches({ runner: this.runnerFor(cwd), cwd }, request, signal);
+    } catch (error) {
+      return fail("internal", messageOf(error));
+    }
+  }
 };
 _init = __decoratorStart(_a);
 __decorateElement(_init, 1, "snapshot", _snapshot_dec, GitExplorerService);
 __decorateElement(_init, 1, "query", _query_dec, GitExplorerService);
 __decorateElement(_init, 1, "commit", _commit_dec, GitExplorerService);
 __decorateElement(_init, 1, "run", _run_dec, GitExplorerService);
+__decorateElement(_init, 1, "branches", _branches_dec, GitExplorerService);
 __decoratorMetadata(_init, GitExplorerService);
 __publicField(GitExplorerService, "inject", inject);
 __publicField(GitExplorerService, "Config", Schema.object({
@@ -924,7 +1056,14 @@ __publicField(GitExplorerService, "Config", Schema.object({
   maxBytes: Schema.number().default(DEFAULT_CONFIG.maxBytes).description("\u5355\u6761 git \u547D\u4EE4\u7684\u8F93\u51FA\u4E0A\u9650\uFF08\u5B57\u8282\uFF09"),
   maxCommits: Schema.number().default(DEFAULT_CONFIG.maxCommits).description("\u5FEB\u7167\u4E0E\u67E5\u8BE2\u9ED8\u8BA4\u7684\u63D0\u4EA4\u6761\u6570\u4E0A\u9650")
 }));
-var __test = { parseLog, parseRefs, parseStatusZ, assignLanes };
+var __test = {
+  parseLog,
+  parseRefs,
+  parseStatusZ,
+  assignLanes,
+  parseBranchRefs,
+  parseWorktreeList
+};
 var index_default = GitExplorerService;
 export {
   DEFAULT_CONFIG,

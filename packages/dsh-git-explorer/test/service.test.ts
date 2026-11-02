@@ -16,12 +16,37 @@ describe("GitExplorerService", () => {
     expect(GitExplorerService.inject).toEqual(["subprocess", "sessions", "sessionPersistence"]);
   });
 
-  it("marks snapshot, query and run as Remote endpoints", () => {
+  it("marks every data endpoint as Remote in source order", () => {
     const ctx = new Context();
     ctx.provide("subprocess", { spawn: () => { throw new Error("unused in this test"); } });
     const service = new GitExplorerService(ctx, {});
     const markers = remoteMethods(service);
-    expect(markers.map(marker => marker.exportName ?? marker.method)).toEqual(["snapshot", "query", "commit", "run"]);
+    expect(markers.map(marker => marker.exportName ?? marker.method)).toEqual([
+      "snapshot",
+      "query",
+      "commit",
+      "run",
+      "branches",
+    ]);
+  });
+
+  it("answers the branches endpoint with an empty list outside a repository", async () => {
+    const ctx = new Context();
+    ctx.provide("subprocess", {
+      spawn: () => ({
+        done: Promise.resolve({ exitCode: 128, signal: null }),
+        collected: {
+          stdout: { readFrom: () => ({ text: "", lossy: false }) },
+          stderr: { readFrom: () => ({ text: "fatal: not a git repository", lossy: false }) },
+        },
+      }),
+    });
+    ctx.provide("sessions", { get: () => sessionWith("/missing/repo") });
+    const service = new GitExplorerService(ctx, {});
+    await expect(service.branches({ sessionId: "s1" })).resolves.toEqual({
+      ok: true,
+      list: { root: "/missing/repo", isRepository: false, detached: false, headHash: null, branches: [] },
+    });
   });
 
   it("normalizes hostile config values into the allowed ranges", () => {

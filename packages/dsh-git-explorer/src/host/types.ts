@@ -201,3 +201,40 @@ export interface GitRunRequest {
 export type GitRunResult =
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly error: GitFailure };
+
+/** One local branch as the branch switcher lists it. */
+export interface GitBranch {
+  readonly name: string;
+  readonly hash: string;
+  /** True for the branch HEAD points at; false for every branch when detached. */
+  readonly current: boolean;
+  /** Absolute path of another worktree holding this branch; absent when free. */
+  readonly worktreePath?: string;
+  /** Upstream as git spells it (`origin/main`); absent when the branch has none. */
+  readonly upstream?: string;
+}
+
+/**
+ * Branch inventory for one session working directory.
+ *
+ * `headHash` is the short object id only when HEAD is detached: on a branch the
+ * client already has `current`, and an unborn repository has no commit to show.
+ */
+export interface GitBranchList {
+  readonly root: string;
+  readonly isRepository: boolean;
+  readonly detached: boolean;
+  readonly headHash: string | null;
+  readonly branches: readonly GitBranch[];
+}
+
+export type GitBranchListResult =
+  | { readonly ok: true; readonly list: GitBranchList }
+  | { readonly ok: false; readonly error: GitFailure };
+
+export interface GitBranchListRequest {
+  /** Session whose working directory backs this call; resolved server-side. */
+  readonly sessionId: string;
+  /** Absolute directory override; when absent the session's cwd is used. */
+  readonly cwd?: string;
+}

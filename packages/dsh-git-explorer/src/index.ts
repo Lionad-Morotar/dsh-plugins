@@ -1,10 +1,11 @@
 /**
  * Host half: the Git data service behind the workbench panel.
  *
- * `GitExplorerService` owns four Remote endpoints. `snapshot`, `query` and
- * `commit` are real; `run` is a typed placeholder until the action slice lands.
- * The heavy lifting lives in `host/`: parsers and the lane layout are pure, the
- * runner is the only place that touches the host subprocess service.
+ * `GitExplorerService` owns five Remote endpoints. `snapshot`, `query`,
+ * `commit` and `branches` are real reads; `run` is a typed placeholder until
+ * the action slice lands. The heavy lifting lives in `host/`: parsers, the lane
+ * layout and the branch inventory are pure, the runner is the only place that
+ * touches the host subprocess service.
  */
 import { isAbsolute } from "node:path";
 
@@ -12,6 +13,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import Schema from "@deepseek-ai/schemastery";
 
+import { collectBranches, parseBranchRefs, parseWorktreeList } from "./host/branches.ts";
 import { collectCommit } from "./host/detail.ts";
 import { fail } from "./host/failure.ts";
 import { createGitRunner, type GitRunner, type SubprocessLike } from "./host/git.ts";
@@ -20,6 +22,8 @@ import { parseLog, parseRefs, parseStatusZ } from "./host/parse.ts";
 import { collectQuery } from "./host/query.ts";
 import { collectSnapshot } from "./host/snapshot.ts";
 import type {
+  GitBranchListRequest,
+  GitBranchListResult,
   GitCommitRequest,
   GitCommitResult,
   GitQueryRequest,
@@ -33,6 +37,10 @@ import { GIT_SERVICE, PACKAGE_NAME } from "./shared.ts";
 
 export { PACKAGE_NAME, GIT_SERVICE };
 export type {
+  GitBranch,
+  GitBranchList,
+  GitBranchListRequest,
+  GitBranchListResult,
   GitChange,
   GitChangeStat,
   GitCommit,
@@ -227,6 +235,16 @@ export class GitExplorerService extends TypertRemoteService {
       error: { code: "not-implemented", message: "actions arrive in a later slice; the data layer is read-only" },
     };
   }
+
+  @Remote("branches")
+  async branches(request: GitBranchListRequest, signal?: AbortSignal): Promise<GitBranchListResult> {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
+    try {
+      return await collectBranches({ runner: this.runnerFor(cwd), cwd }, request, signal);
+    } catch (error) {
+      return fail("internal", messageOf(error));
+    }
+  }
 }
 
 /**
@@ -235,6 +253,13 @@ export class GitExplorerService extends TypertRemoteService {
  * These are exported from the host bundle because the acceptance harness
  * imports `lib/index.js` in plain Node and drives them without a host context.
  */
-export const __test = { parseLog, parseRefs, parseStatusZ, assignLanes };
+export const __test = {
+  parseLog,
+  parseRefs,
+  parseStatusZ,
+  assignLanes,
+  parseBranchRefs,
+  parseWorktreeList,
+};
 
 export default GitExplorerService;
