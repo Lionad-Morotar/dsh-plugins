@@ -12,4 +12,4 @@ export const LOCALE_NAMESPACE = "fs-markdown";
  * build script that emits the file. The build fails when they drift apart,
  * because the pane would otherwise wait forever on a chunk nobody built.
  */
-export const MARKDOWN_CHUNK = "client.markdown.js";
+export const EDITOR_CHUNK = "client.editor.js";

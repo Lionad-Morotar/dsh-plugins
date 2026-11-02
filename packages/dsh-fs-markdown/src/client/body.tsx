@@ -1,23 +1,30 @@
 /**
- * The Markdown body: one whole document, two modes.
+ * The Markdown body: one document session, two presentation modes.
  *
- * Reading mode is the GFM renderer from the lazy chunk; source mode is the
- * literal text in a scrolling `<pre>`. Both modes read the same document, so
- * it is cached per session and path and a mode switch never re-opens the
- * file.
- * The cache is a ref rather than state because reading it must not schedule a
- * render: the effect uses it to decide whether the open call is needed at all.
+ * The body owns the lifecycle around a draft — acquire it, reload it when the
+ * panel first becomes visible, release it on unmount — and hands the text to
+ * the lazy editor chunk. Reading and source modes are the same editor; the
+ * difference is only whether the decoration compartment is switched on.
+ *
+ * The session, not this component, is the source of truth for the text. The
+ * body subscribes to it and never keeps a second copy that could drift after a
+ * reload or a save.
  */
 import { useEffect, useRef, useState, type ReactElement } from "react";
 
-import { loadMarkdownChunk, type MarkdownChunkModule } from "./chunk-loader.ts";
-import type { RendererBodyProps } from "./contracts.ts";
+import { loadEditorChunk, type EditorChunkModule } from "./chunk-loader.ts";
+import type {
+  DocumentSessionFace,
+  DocumentSnapshotFace,
+  DocumentStoreFace,
+  RendererBodyProps,
+} from "./contracts.ts";
 import { translatorFor, type Translate } from "./copy.ts";
-import { describeFailure, normalizeOpenDocument, type DocumentsResolver } from "./documents.ts";
 
 /** What the body needs from the applied row. */
 export interface BodyDeps {
-  readonly documents: DocumentsResolver;
+  /** Resolved on every acquire so a late service mount starts working. */
+  readonly documents: () => DocumentStoreFace | undefined;
   readonly t: Translate;
 }
 
@@ -35,20 +42,6 @@ let deps: BodyDeps = { documents: () => undefined, t: translatorFor(undefined) }
 export function configureBody(next: BodyDeps): void {
   deps = next;
 }
-
-interface CachedDocument {
-  /** The session is part of the key: the same relative path can name a
-   * different file in another workspace. */
-  readonly sessionId: string;
-  readonly path: string;
-  readonly text: string;
-}
-
-type BodyState =
-  | { readonly status: "loading" }
-  | { readonly status: "ready"; readonly text: string }
-  | { readonly status: "unavailable" }
-  | { readonly status: "failed"; readonly code: string; readonly message: string };
 
 /**
  * Human copy for one failure.
@@ -74,19 +67,19 @@ function failureText(code: string, message: string, t: Translate): string {
 }
 
 /**
- * Fetch the GFM chunk once a document is ready to be read.
+ * Fetch the editor chunk once a document is ready to be shown.
  *
- * A failed chunk load degrades to source mode rather than blocking the file:
- * the reader still gets their content, just without the formatting.
+ * A failed chunk load degrades to a read-only source view rather than blocking
+ * the file: the reader still gets their content, just without the editor.
  */
-function useMarkdownChunk(active: boolean): { readonly chunk: MarkdownChunkModule | null; readonly failed: boolean } {
-  const [chunk, setChunk] = useState<MarkdownChunkModule | null>(null);
+function useEditorChunk(active: boolean): { readonly chunk: EditorChunkModule | null; readonly failed: boolean } {
+  const [chunk, setChunk] = useState<EditorChunkModule | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!active || chunk !== null) return;
     let live = true;
-    loadMarkdownChunk().then(
+    loadEditorChunk().then(
       module => {
         if (live) setChunk(module);
       },
@@ -145,98 +138,101 @@ function FailedBody({
   );
 }
 
+type AcquireState =
+  | { readonly status: "pending" }
+  | { readonly status: "missing" }
+  | { readonly status: "failed"; readonly code: string; readonly message: string }
+  | { readonly status: "session"; readonly session: DocumentSessionFace };
+
 /**
  * The body the registry mounts for `.md` / `.markdown`.
  * @param props - path, session, visibility and the pane's current mode.
- * @returns loading, failure, source text or the GFM reading surface.
+ * @returns loading, failure, or the editable document.
  */
-export function MarkdownBody({ path, sessionId, visible, mode }: RendererBodyProps): ReactElement {
+export function MarkdownBody(props: RendererBodyProps): ReactElement {
+  const { path, sessionId, visible, mode } = props;
   const t = deps.t;
-  const cache = useRef<CachedDocument | null>(null);
-  const [state, setState] = useState<BodyState>({ status: "loading" });
+  const [acquired, setAcquired] = useState<AcquireState>({ status: "pending" });
+  const [snapshot, setSnapshot] = useState<DocumentSnapshotFace | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const sessionRef = useRef<DocumentSessionFace | null>(null);
 
   useEffect(() => {
-    // A hidden panel must not start reads; it gets its chance when it becomes
-    // visible, because visible is part of this effect's dependencies.
-    if (visible === false) return;
+    setAcquired({ status: "pending" });
+    setSnapshot(null);
+    sessionRef.current = null;
 
-    const cached = cache.current;
-    if (cached !== null && cached.path === path && cached.sessionId === sessionId) {
-      setState({ status: "ready", text: cached.text });
-      return;
-    }
-
-    const documents = deps.documents();
-    if (documents === undefined) {
-      setState({ status: "unavailable" });
-      return;
-    }
     if (sessionId === undefined) {
-      setState({ status: "failed", code: "no-session", message: "" });
+      setAcquired({ status: "failed", code: "no-session", message: "" });
+      return;
+    }
+    const store = deps.documents();
+    if (store === undefined) {
+      setAcquired({ status: "missing" });
       return;
     }
 
-    const controller = new AbortController();
-    let live = true;
-    setState({ status: "loading" });
-
-    try {
-      const request = documents.open({ sessionId, path }, controller.signal);
-      Promise.resolve(request).then(
-        response => {
-          if (!live) return;
-          const result = normalizeOpenDocument(response);
-          if (!result.ok) {
-            setState({ status: "failed", code: result.code, message: result.message });
-            return;
-          }
-          cache.current = { sessionId, path, text: result.text };
-          setState({ status: "ready", text: result.text });
-        },
-        (error: unknown) => {
-          if (!live) return;
-          setState({ status: "failed", code: "io-error", message: describeFailure(error) });
-        },
-      );
-    } catch (error) {
-      setState({ status: "failed", code: "io-error", message: describeFailure(error) });
-    }
+    const session = store.acquire(sessionId, path);
+    sessionRef.current = session;
+    setAcquired({ status: "session", session });
+    setSnapshot(session.getSnapshot());
+    const off = session.subscribe(() => setSnapshot(session.getSnapshot()));
 
     return () => {
-      live = false;
-      controller.abort();
+      off();
+      session.dispose();
+      if (sessionRef.current === session) sessionRef.current = null;
     };
-    // `mode` is deliberately absent: both modes read the same document, so a
-    // switch between them must not touch the channel.
-  }, [path, visible, sessionId, attempt]);
+  }, [path, sessionId, attempt]);
 
-  const retry = (): void => setAttempt(value => value + 1);
-  const chunk = useMarkdownChunk(mode === "reading" && state.status === "ready");
+  // Reading starts only once the panel is actually visible. Acquiring early is
+  // cheap; a hidden panel that read every path it was mounted with would not be.
+  useEffect(() => {
+    if (visible === false) return;
+    if (acquired.status !== "session") return;
+    if (snapshot === null || snapshot.status !== "idle") return;
+    void acquired.session.reload();
+  }, [acquired, snapshot, visible]);
 
-  if (state.status === "loading") return <LoadingBody t={t} />;
-  if (state.status === "unavailable") return <UnavailableBody t={t} onRetry={retry} />;
-  if (state.status === "failed") {
-    return <FailedBody code={state.code} message={state.message} t={t} onRetry={retry} />;
+  const retry = (): void => {
+    const session = sessionRef.current;
+    if (session !== null) {
+      void session.reload();
+      return;
+    }
+    setAttempt(value => value + 1);
+  };
+
+  const chunk = useEditorChunk(acquired.status === "session" && snapshot?.status === "ready");
+
+  if (acquired.status === "failed") {
+    return <FailedBody code={acquired.code} message={acquired.message} t={t} onRetry={retry} />;
   }
-  if (mode === "source") {
-    return (
-      <pre className="fmd-source" data-testid="fs-md-source">
-        {state.text}
-      </pre>
-    );
+  if (acquired.status === "missing") return <UnavailableBody t={t} onRetry={retry} />;
+  if (acquired.status !== "session") return <LoadingBody t={t} />;
+  if (snapshot === null || snapshot.status === "idle" || snapshot.status === "loading") {
+    return <LoadingBody t={t} />;
   }
+  if (snapshot.status === "failed") {
+    const error = snapshot.error ?? { code: "io-error", message: "" };
+    return <FailedBody code={error.code} message={error.message} t={t} onRetry={retry} />;
+  }
+
   if (chunk.chunk !== null) {
     return (
-      <div className="fmd-read" data-testid="fs-md-reading">
-        <chunk.chunk.MarkdownView text={state.text} imageLabel={t("md.image")} />
+      <div
+        className={mode === "source" ? "fmd-source-editor" : "fmd-read"}
+        data-testid={mode === "source" ? "fs-md-source" : "fs-md-reading"}
+        data-renderer="codemirror"
+      >
+        <chunk.chunk.EditorBody {...props} text={snapshot.text} onChange={text => acquired.session.setDraft(text)} />
       </div>
     );
   }
   if (chunk.failed) {
     return (
       <pre className="fmd-source" data-testid="fs-md-source">
-        {state.text}
+        {snapshot.text}
       </pre>
     );
   }

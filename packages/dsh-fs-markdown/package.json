@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "DeepSeek Harness Markdown reader: registers a whole-document renderer for .md files into the file explorer",
+  "description": "DeepSeek Harness Markdown editor: registers a Typora-style whole-document editor for .md files into the file explorer",
   "license": "MIT",
   "author": "Lionad <1806234223@qq.com>",
   "homepage": "https://github.com/Lionad-Morotar/dsh-plugins/tree/main/packages/dsh-fs-markdown#readme",
@@ -20,8 +20,8 @@
     "deepseek-harness",
     "dsh-plugin",
     "markdown",
-    "renderer",
-    "gfm"
+    "editor",
+    "codemirror"
   ],
   "main": "lib/index.js",
   "exports": {
@@ -58,8 +58,11 @@
     "check:lib": "node scripts/build.mjs --check"
   },
   "dependencies": {
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1"

@@ -1,18 +1,19 @@
 /**
  * The Markdown body's stylesheet.
  *
- * The host does not style plugin markup, and a reading surface needs more than
- * inline styles can express: table overflow, nested list rhythm, code blocks.
- * One string is inserted once per document. Colours resolve through the shell's
- * `--dsw-alias-*` semantic tokens, with plain `currentColor` mixes as the
- * fallback for a host that has none.
+ * The editor owns its DOM, so this file only supplies the reading typography
+ * and the decoration classes the planner emits. Colours resolve through the
+ * shell's `--dsw-alias-*` semantic tokens, with `currentColor` mixes as the
+ * fallback for a host that has none; nothing here hard-codes a colour, which is
+ * what keeps the surface legible in both themes.
  */
 
 /** Attribute that tells a re-mount the stylesheet is already present. */
 const STYLE_ID = "dsh-fs-markdown-styles";
 
 export const MARKDOWN_STYLES = `
-.fmd-read {
+.fmd-read,
+.fmd-source-editor {
   --fmd-font: var(--dsw-font-sans, inherit);
   --fmd-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --fmd-text: var(--dsw-alias-label-primary, inherit);
@@ -21,75 +22,67 @@ export const MARKDOWN_STYLES = `
   --fmd-border: var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent));
   --fmd-panel: var(--dsw-alias-bg-layer-2, color-mix(in srgb, currentColor 4%, transparent));
   --fmd-accent: var(--dsw-alias-brand-primary, currentColor);
-  /* The pane owns the scroll container in reading mode; this box only fills it
-     so the empty space below a short document stays part of the same surface. */
+  /* The pane owns the scroll container; this box only fills it so the empty
+     space below a short document stays part of the same surface. */
   min-height: 100%;
   box-sizing: border-box;
 }
-.fmd {
-  max-width: 72ch;
-  margin: 0 auto;
-  padding: 18px 24px 64px;
+.fmd-editor { height: 100%; min-height: 100%; }
+.fmd-editor .cm-editor {
+  height: 100%;
+  background: transparent;
   color: var(--fmd-text);
+}
+.fmd-editor .cm-scroller {
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 18px 24px 64px;
   font-family: var(--fmd-font);
   font-size: 13px;
   line-height: 1.72;
-  overflow-wrap: anywhere;
+  scrollbar-width: thin;
 }
-.fmd > :first-child { margin-top: 0; }
-.fmd h1, .fmd h2, .fmd h3, .fmd h4, .fmd h5, .fmd h6 {
-  margin: 1.5em 0 .6em;
-  line-height: 1.3;
+.fmd-editor .cm-content {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 72ch;
+  margin: 0 auto;
+  padding: 0;
+  caret-color: var(--fmd-text);
+}
+.fmd-editor .cm-line { padding: 0; }
+.fmd-editor .cm-cursor { border-left-color: var(--fmd-text); }
+.fmd-editor .cm-selectionBackground,
+.fmd-editor .cm-focused .cm-selectionBackground {
+  background: color-mix(in srgb, var(--fmd-accent) 22%, transparent);
+}
+.fmd-source-editor .cm-scroller { font-family: var(--fmd-mono); font-size: 12px; line-height: 1.55; }
+.fmd-h1, .fmd-h2, .fmd-h3, .fmd-h4, .fmd-h5, .fmd-h6 {
   font-weight: 600;
+  line-height: 1.3;
 }
-.fmd h1 { font-size: 1.55em; padding-bottom: .3em; border-bottom: 1px solid var(--fmd-border); }
-.fmd h2 { font-size: 1.3em; }
-.fmd h3 { font-size: 1.12em; }
-.fmd p { margin: .8em 0; }
-.fmd ul, .fmd ol { margin: .8em 0; padding-left: 1.5em; }
-.fmd li { margin: .25em 0; }
-.fmd li > ul, .fmd li > ol { margin: .25em 0; }
-.fmd a { color: var(--fmd-accent); text-decoration: none; }
-.fmd a:hover { text-decoration: underline; }
-.fmd code { font-family: var(--fmd-mono); font-size: .92em; }
-.fmd :not(pre) > code {
-  padding: 1px 5px;
+.fmd-h1 { font-size: 1.55em; }
+.fmd-h2 { font-size: 1.3em; }
+.fmd-h3 { font-size: 1.12em; }
+.fmd-h4, .fmd-h5, .fmd-h6 { font-size: 1em; }
+.fmd-strong { font-weight: 600; }
+.fmd-em { font-style: italic; }
+.fmd-code {
+  padding: 1px 4px;
   border-radius: 4px;
   background: color-mix(in srgb, currentColor 9%, transparent);
-}
-.fmd pre {
-  overflow-x: auto;
-  margin: 1em 0;
-  padding: 10px 14px;
-  border: 1px solid var(--fmd-border);
-  border-radius: 8px;
-  background: var(--fmd-panel);
-  line-height: 1.55;
-}
-.fmd pre code { display: block; white-space: pre; }
-.fmd blockquote {
-  margin: 1em 0;
-  padding: .2em 1em;
-  border-left: 3px solid var(--fmd-border);
-  color: var(--fmd-text-2);
-}
-.fmd hr { margin: 1.6em 0; border: 0; border-top: 1px solid var(--fmd-border); }
-.fmd table { display: block; overflow-x: auto; margin: 1em 0; border-collapse: collapse; }
-.fmd th, .fmd td { padding: 4px 10px; border: 1px solid var(--fmd-border); }
-.fmd th { background: var(--fmd-panel); font-weight: 600; }
-.fmd img { max-width: 100%; }
-.fmd-img {
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 8px;
-  border: 1px solid var(--fmd-border);
-  border-radius: 5px;
-  color: var(--fmd-caption);
   font-family: var(--fmd-mono);
-  font-size: 10.5px;
+  font-size: .92em;
 }
-.fmd input[type="checkbox"] { margin-right: .45em; vertical-align: middle; }
+.fmd-link { color: var(--fmd-accent); text-decoration: none; }
+.fmd-link:hover { text-decoration: underline; }
+.fmd-quote { color: var(--fmd-text-2); font-style: italic; }
+.fmd-list-marker { color: var(--fmd-accent); font-family: var(--fmd-mono); }
+.fmd-code-block {
+  background: var(--fmd-panel);
+  font-family: var(--fmd-mono);
+  font-size: .94em;
+}
 .fmd-source {
   display: block;
   box-sizing: border-box;

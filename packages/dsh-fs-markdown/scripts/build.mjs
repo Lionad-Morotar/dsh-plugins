@@ -7,12 +7,12 @@
  *
  *   lib/index.js            Host half, plain ESM (Node imports it directly).
  *   lib/client.js           Browser half: the renderer registration and body.
- *   lib/client.markdown.js  Lazy chunk: react-markdown + remark-gfm.
+ *   lib/client.editor.js    Lazy chunk: CodeMirror and the decoration layer.
  *
  * The split is the cost model. `client.js` is parsed on every conversation
- * boot whether or not a Markdown file is ever opened, so it may not carry the
- * GFM pipeline; the body fetches the chunk through the loader's `require.async`
- * the first time it has a document to draw. The loader only accepts a
+ * boot whether or not a Markdown file is ever opened, so it may not carry
+ * CodeMirror; the body fetches the chunk through the loader's `require.async`
+ * the first time it has a document to edit. The loader only accepts a
  * package-local chunk that declares its own file name in a `chunk:` field, and
  * it keys the chunk as `<package>/<file>`.
  *
@@ -33,8 +33,8 @@ const libRoot = join(packageRoot, "lib");
 const require = createRequire(join(packageRoot, "package.json"));
 const manifest = require(join(packageRoot, "package.json"));
 
-/** The lazy chunk's name; must match `MARKDOWN_CHUNK` in src/shared.ts. */
-const MARKDOWN_CHUNK = "client.markdown.js";
+/** The lazy chunk's name; must match `EDITOR_CHUNK` in src/shared.ts. */
+const EDITOR_CHUNK = "client.editor.js";
 
 /**
  * Platform modules the host seeds for a third-party client bundle: React
@@ -48,20 +48,20 @@ const HOST_EXTERNALS = ["@deepseek-ai/*"];
 
 /**
  * Symbols that belong to the lazy chunk and must never reach the startup
- * bundle. `marked` is listed with the editor and GFM markers because any
- * Markdown engine in the entry defeats the split the same way.
+ * bundle. `marked` is listed with the editor and Markdown-engine markers
+ * because any renderer in the entry defeats the split the same way.
  */
-const STARTUP_BANNED = ["@codemirror", "codemirror", "react-markdown", "remark-gfm", "marked"];
+const STARTUP_BANNED = ["@codemirror", "react-markdown", "remark-gfm", "marked"];
 
 /**
  * Marks the chunk must carry.
  *
- * The first is GFM's own vocabulary, which survives minification as node-type
- * and extension-name strings; the second is the diagnostic marker the chunk
+ * `cm-editor` is CodeMirror's own root class, which survives minification
+ * because it is a DOM string; the diagnostic marker is the value the chunk
  * exports. Together they catch a chunk built from the wrong entry or an empty
  * stub.
  */
-const CHUNK_MARKERS = [/strikethrough/u, /tasklist/u];
+const CHUNK_MARKERS = [/cm-editor/u];
 
 /**
  * The ModuleLoader wrapper for one client artifact.
@@ -134,17 +134,17 @@ async function bundle(entry, format, external) {
  * @throws when a name, a boundary or a marker is wrong.
  */
 function assertArtifacts(entryText, chunkText) {
-  if (!entryText.includes(`"${MARKDOWN_CHUNK}"`)) {
-    throw new Error(`client.js no longer names its lazy chunk ${MARKDOWN_CHUNK}; the body would fetch nothing`);
+  if (!entryText.includes(`"${EDITOR_CHUNK}"`)) {
+    throw new Error(`client.js no longer names its lazy chunk ${EDITOR_CHUNK}; the body would fetch nothing`);
   }
   for (const symbol of STARTUP_BANNED) {
     if (entryText.includes(symbol)) throw new Error(`client.js contains ${symbol}; it must stay in the lazy chunk`);
   }
   for (const marker of CHUNK_MARKERS) {
-    if (!marker.test(chunkText)) throw new Error(`${MARKDOWN_CHUNK} does not look like the GFM renderer (${String(marker)})`);
+    if (!marker.test(chunkText)) throw new Error(`${EDITOR_CHUNK} does not look like the editor (${String(marker)})`);
   }
-  if (!chunkText.includes('"markdown"')) {
-    throw new Error(`${MARKDOWN_CHUNK} does not carry its renderer marker`);
+  if (!chunkText.includes('"codemirror"')) {
+    throw new Error(`${EDITOR_CHUNK} does not carry its renderer marker`);
   }
 }
 
@@ -176,13 +176,13 @@ async function main(checkOnly) {
   const entryText = wrap(manifest.name, client, { boot: true });
   await emit("client.js", entryText);
 
-  const markdown = await bundle(join(packageRoot, "src", "client", "chunk", "markdown.tsx"), "cjs", CLIENT_EXTERNALS);
-  const chunkText = wrap(manifest.name, markdown, { chunk: MARKDOWN_CHUNK });
-  await emit(MARKDOWN_CHUNK, chunkText);
+  const editor = await bundle(join(packageRoot, "src", "client", "chunk", "editor.tsx"), "cjs", CLIENT_EXTERNALS);
+  const chunkText = wrap(manifest.name, editor, { chunk: EDITOR_CHUNK });
+  await emit(EDITOR_CHUNK, chunkText);
 
   assertArtifacts(entryText, chunkText);
 
-  const written = ["index.js", "client.js", MARKDOWN_CHUNK];
+  const written = ["index.js", "client.js", EDITOR_CHUNK];
 
   if (checkOnly) {
     const stale = [];

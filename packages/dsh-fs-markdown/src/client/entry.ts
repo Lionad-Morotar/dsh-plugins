@@ -5,14 +5,13 @@
  * The registry is another plugin's service, so this row injects `fsExplorer`
  * and does nothing at all when the explorer is absent: an unclaimed file is
  * better than a boot failure. The contribution's `load()` stays synchronous —
- * only the body is mounted for files this plugin won, and the GFM chunk is
- * fetched by the body itself.
+ * only the body is mounted for files this plugin won, and the CodeMirror chunk
+ * is fetched by the body itself.
  */
 import { MarkdownBody, configureBody } from "./body.tsx";
-import { boot, loadMarkdownChunk, markdownChunkRoute, type LoaderRequire } from "./chunk-loader.ts";
-import type { FsExplorerService, RendererContribution } from "./contracts.ts";
+import { boot, editorChunkRoute, loadEditorChunk, type LoaderRequire } from "./chunk-loader.ts";
+import type { DocumentStoreFace, FsExplorerService, RendererContribution } from "./contracts.ts";
 import { EN, ZH, translatorFor, type Translate } from "./copy.ts";
-import { createDocumentsResolver } from "./documents.ts";
 import { insertStyles } from "./styles.ts";
 import { LOCALE_NAMESPACE, PACKAGE_NAME } from "../shared.ts";
 
@@ -48,6 +47,25 @@ let registeredRenderer: (() => void) | undefined;
 let registeredLocale: (() => void) | undefined;
 
 /**
+ * Read the draft store off the explorer service.
+ *
+ * The service belongs to another plugin and an older build has no `documents`
+ * member, so this is a soft probe rather than a destructure.
+ * @param ctx - the client context this row was applied to.
+ * @returns the store, or undefined while the explorer has none.
+ */
+function documentsResolver(ctx: ClientContextLike): () => DocumentStoreFace | undefined {
+  return () => {
+    try {
+      return ctx.fsExplorer?.documents;
+    } catch {
+      // A whitelisted service read may throw; that is the same as absent here.
+      return undefined;
+    }
+  };
+}
+
+/**
  * Install the plugin's dictionary and hand the body its translator.
  *
  * The binder is taken from the host rather than reimplemented so a locale
@@ -57,19 +75,19 @@ let registeredLocale: (() => void) | undefined;
  * @returns the dictionary disposer, or a no-op when nothing was registered.
  */
 function installLocale(ctx: ClientContextLike): () => void {
-  const locale = ctx.locale;
-  if (locale === undefined) {
-    configureBody({ documents: createDocumentsResolver(ctx), t: translatorFor(undefined) });
+  const documents = documentsResolver(ctx);
+  if (ctx.locale === undefined) {
+    configureBody({ documents, t: translatorFor(undefined) });
     return () => {};
   }
   let off: () => void = () => {};
   try {
-    off = locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
+    off = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
   } catch {
     // A second copy of this module in the same page meets a table that refuses
     // the same namespace and locale twice; its binder still answers.
   }
-  configureBody({ documents: createDocumentsResolver(ctx), t: locale.bind(LOCALE_NAMESPACE) });
+  configureBody({ documents, t: ctx.locale.bind(LOCALE_NAMESPACE) });
   return off;
 }
 
@@ -111,12 +129,12 @@ export const clientPlugin = { name: PACKAGE_NAME, inject, apply };
 
 /**
  * The loader hands its `require` to this export after the module body runs.
- * It is the only reachable handle on `require.async`, which is how the GFM
+ * It is the only reachable handle on `require.async`, which is how the editor
  * chunk is fetched.
  */
 export { boot };
 
-export { loadMarkdownChunk, markdownChunkRoute };
+export { editorChunkRoute, loadEditorChunk };
 export type { LoaderRequire };
 
 export default clientPlugin;

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Markdown reader",
-    "description": "Takes over .md bodies: GFM in reading mode, the literal text in source mode."
+    "title": "Markdown editor",
+    "description": "Takes over .md bodies: edit in place, markers in the cursor block, one editor for source mode."
   }
 }
