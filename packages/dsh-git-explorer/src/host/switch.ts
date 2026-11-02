@@ -16,7 +16,16 @@
  * The inventory is read with full ref names. `%(refname:short)` is shorter but
  * ambiguous when a tag shares a branch name: git then prints `heads/<name>`,
  * which would reject a branch that really exists.
+ *
+ * A dirty worktree cannot be switched in place, so its changes are parked in a
+ * stash entry (`--include-untracked`) before the switch and applied back after
+ * it. The ordering is what keeps the worktree recoverable: a failed switch pops
+ * the entry back, and a failing restore keeps the entry and still reports the
+ * switch as successful, because the branch really did change. A stashed restore
+ * that conflicts writes markers into the worktree; those markers are the state
+ * the user has to resolve, so nothing is aborted or dropped here.
  */
+import { WORKTREE_STATUS_ARGS } from "./branches.ts";
 import { fail } from "./failure.ts";
 import type { GitRunner, GitRunResult } from "./git.ts";
 import type { GitFailure, GitSwitchRequest, GitSwitchResult } from "./types.ts";
@@ -83,13 +92,18 @@ function detailOf(result: GitRunResult): string {
     : `the command exited with code ${String(result.exitCode)}`;
 }
 
-/** Map a failed inventory read; null means the ref list is usable. */
-function inventoryFailure(result: GitRunResult): GitFailure | null {
+/** Map any failed read command; null means its stdout is usable. */
+function readFailure(result: GitRunResult): GitFailure | null {
   if (result.timedOut) return { code: "timeout", message: "the command exceeded its deadline" };
   if (result.cancelled) return { code: "git-failed", message: "cancelled" };
   if (result.exitCode !== 0) return { code: "git-failed", message: detailOf(result) };
   if (result.stdoutLossy) return { code: "git-failed", message: "command output exceeded the collection budget" };
   return null;
+}
+
+/** The message git shows for the entry this endpoint creates. */
+function stashMessage(name: string): string {
+  return `git-explorer: 切换 ${name} 前自动暂存`;
 }
 
 /** Map a failed `git switch` onto the shared failure vocabulary. */
@@ -122,15 +136,57 @@ export async function switchToBranch(
   if (problem !== null) return fail("invalid-request", problem);
 
   const inventory = await options.runner.run(["for-each-ref", REF_FORMAT, "refs/heads"], { cwd, signal });
-  const inventoryError = inventoryFailure(inventory);
+  const inventoryError = readFailure(inventory);
   if (inventoryError !== null) return { ok: false, error: inventoryError };
   if (!localBranchNames(inventory.stdout).has(request.name)) {
     return fail("invalid-request", `branch not found: ${request.name}`);
   }
 
+  // A failed dirty probe must stop here rather than switch with an unknown
+  // worktree state: the whole point of the stash step is not to lose changes.
+  const status = await options.runner.run([...WORKTREE_STATUS_ARGS], { cwd, signal });
+  const statusError = readFailure(status);
+  if (statusError !== null) return { ok: false, error: statusError };
+
+  const dirty = status.stdout !== "";
+  if (dirty) {
+    const stash = await options.runner.run(
+      ["stash", "push", "--include-untracked", "-m", stashMessage(request.name)],
+      { cwd, signal },
+    );
+    const stashError = readFailure(stash);
+    // Nothing has moved yet, so the worktree is still exactly as it was.
+    if (stashError !== null) return { ok: false, error: stashError };
+  }
+
   const switched = await options.runner.run(["switch", "--no-guess", request.name], { cwd, signal });
   if (switched.timedOut || switched.cancelled || switched.exitCode !== 0) {
-    return { ok: false, error: switchFailure(switched) };
+    const failure = switchFailure(switched);
+    if (!dirty) return { ok: false, error: failure };
+    // The restore is deliberately not tied to the caller's signal: a cancelled
+    // request still owns a stash entry, and the entry has to go back on the
+    // worktree even though nobody is waiting for the answer anymore.
+    const rollback = await options.runner.run(["stash", "pop"], { cwd });
+    const rollbackError = readFailure(rollback);
+    const note =
+      rollbackError === null ? "auto-stash restored" : `auto-stash rollback failed: ${rollbackError.message}`;
+    return fail(failure.code, `${failure.message}; ${note}`);
   }
-  return { ok: true, branch: request.name };
+
+  if (!dirty) return { ok: true, branch: request.name, stash: { stashed: false, restored: false } };
+
+  const popped = await options.runner.run(["stash", "pop"], { cwd });
+  const restoreError = readFailure(popped);
+  if (restoreError === null) {
+    return { ok: true, branch: request.name, stash: { stashed: true, restored: true } };
+  }
+  // The checkout already happened, so the switch itself is a success. A
+  // conflicting pop writes markers into the worktree and keeps the entry; that
+  // is reported, never repaired or dropped behind the user's back.
+  const message = popped.timedOut ? "the command exceeded its deadline" : detailOf(popped);
+  return {
+    ok: true,
+    branch: request.name,
+    stash: { stashed: true, restored: false, conflict: true, message },
+  };
 }

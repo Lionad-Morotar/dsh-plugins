@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,8 +8,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { collectBranches, parseBranchRefs, parseWorktreeList } from "../src/host/branches.ts";
 import type { GitRunner, GitRunResult } from "../src/host/git.ts";
+import type { GitWorktreeDirty } from "../src/host/types.ts";
 
 const BRANCH_FORMAT = "--format=%(refname)%00%(objectname)%00%(HEAD)%00%(upstream)";
+const STATUS_ARGS = ["status", "--porcelain=v2", "-z", "--untracked-files=normal"];
+const NUMSTAT_ARGS = ["diff", "HEAD", "--numstat"];
+const CLEAN: GitWorktreeDirty = { dirty: false, additions: 0, deletions: 0, trackedFiles: 0, untrackedFiles: 0 };
 
 function ok(argv: readonly string[], stdout: string): GitRunResult {
   return { argv, exitCode: 0, stdout, stderr: "", timedOut: false, cancelled: false, stdoutLossy: false };
@@ -33,6 +37,12 @@ function fakeRunner(reply: (args: readonly string[]) => GitRunResult): { runner:
     },
   };
   return { runner, calls };
+}
+
+/** Answer the two dirty probes with a clean worktree. */
+function cleanProbe(args: readonly string[]): GitRunResult | null {
+  if (args[0] === "status" || args[0] === "diff") return ok(["git", ...args], "");
+  return null;
 }
 
 const REFS = [
@@ -115,11 +125,13 @@ describe("parseWorktreeList", () => {
 });
 
 describe("collectBranches", () => {
-  it("reads three commands by argv and marks a branch held by another worktree", async () => {
+  it("reads the inventory and a clean worktree by argv, and marks a held branch", async () => {
     const { runner, calls } = fakeRunner(args => {
       if (args[0] === "rev-parse") return ok(["git", ...args], "/repo\n");
       if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
       if (args[0] === "worktree") return ok(["git", ...args], WORKTREES);
+      const probe = cleanProbe(args);
+      if (probe !== null) return probe;
       throw new Error(`unexpected command ${args[0]}`);
     });
     const result = await collectBranches({ runner, cwd: "/repo" });
@@ -135,12 +147,15 @@ describe("collectBranches", () => {
           { name: "main", hash: "aaa", current: true, upstream: "origin/main" },
           { name: "no-upstream", hash: "ccc", current: false },
         ],
+        worktree: CLEAN,
       },
     });
     expect(calls.map(call => call.argv)).toEqual([
       ["rev-parse", "--show-toplevel"],
       ["for-each-ref", BRANCH_FORMAT, "refs/heads"],
       ["worktree", "list", "--porcelain"],
+      STATUS_ARGS,
+      NUMSTAT_ARGS,
     ]);
     expect(calls.every(call => call.cwd === "/repo")).toBe(true);
   });
@@ -154,6 +169,8 @@ describe("collectBranches", () => {
       if (args[0] === "rev-parse") return ok(["git", ...args], "/tmp/feature one\n");
       if (args[0] === "for-each-ref") return ok(["git", ...args], linkedRefs);
       if (args[0] === "worktree") return ok(["git", ...args], WORKTREES);
+      const probe = cleanProbe(args);
+      if (probe !== null) return probe;
       throw new Error(`unexpected command ${args[0]}`);
     });
     const result = await collectBranches({ runner, cwd: "/tmp/feature one" });
@@ -163,7 +180,7 @@ describe("collectBranches", () => {
       { name: "feat/one", hash: "bbb", current: true, upstream: "origin/feat/one" },
       { name: "main", hash: "aaa", current: false, upstream: "origin/main", worktreePath: "/repo" },
     ]);
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(5);
   });
 
   it("reports a detached HEAD with a short hash and no current branch", async () => {
@@ -180,18 +197,22 @@ describe("collectBranches", () => {
         );
       }
       if (args[0] === "worktree") return ok(["git", ...args], ["worktree /repo", "HEAD aaa", "detached", ""].join("\n"));
+      const probe = cleanProbe(args);
+      if (probe !== null) return probe;
       throw new Error(`unexpected command ${args[0]}`);
     });
     const result = await collectBranches({ runner, cwd: "/repo" });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.list).toMatchObject({ root: "/repo", isRepository: true, detached: true, headHash: "aaa1234" });
+    expect(result.list).toMatchObject({ root: "/repo", isRepository: true, detached: true, headHash: "aaa1234", worktree: CLEAN });
     expect(result.list.branches.some(branch => branch.current)).toBe(false);
-    expect(calls.map(call => call.argv[0])).toEqual(["rev-parse", "for-each-ref", "worktree", "rev-parse"]);
-    expect(calls[3]?.argv).toEqual(["rev-parse", "--short", "HEAD"]);
+    expect(calls.map(call => call.argv[0])).toEqual(["rev-parse", "for-each-ref", "worktree", "status", "diff", "rev-parse"]);
+    expect(calls[3]?.argv).toEqual(STATUS_ARGS);
+    expect(calls[4]?.argv).toEqual(NUMSTAT_ARGS);
+    expect(calls[5]?.argv).toEqual(["rev-parse", "--short", "HEAD"]);
   });
 
-  it("keeps a repository with no commits unborn instead of detached", async () => {
+  it("keeps a repository with no commits unborn and its line counts at zero", async () => {
     const { runner } = fakeRunner(args => {
       if (args[0] === "rev-parse" && args[1] === "--short") return failed(["git", ...args], 128, "fatal: Needed a single revision\n");
       if (args[0] === "rev-parse") return ok(["git", ...args], "/repo\n");
@@ -199,12 +220,25 @@ describe("collectBranches", () => {
       if (args[0] === "worktree") {
         return ok(["git", ...args], ["worktree /repo", "HEAD 0000000000000000000000000000000000000000", "branch refs/heads/main", ""].join("\n"));
       }
+      if (args[0] === "status") return ok(["git", ...args], "1 A. N... 000000 100644 100644 0000000 1111111 staged.txt\0");
+      if (args[0] === "diff") {
+        // The translated message is deliberate: the all-zero HEAD in the worktree
+        // list is what has to carry this state, not git's wording.
+        return failed(["git", ...args], 128, "致命错误：有歧义的参数 'HEAD'：未知的版本或路径不存在于工作区中。\n");
+      }
       throw new Error(`unexpected command ${args[0]}`);
     });
     const result = await collectBranches({ runner, cwd: "/repo" });
     expect(result).toEqual({
       ok: true,
-      list: { root: "/repo", isRepository: true, detached: false, headHash: null, branches: [] },
+      list: {
+        root: "/repo",
+        isRepository: true,
+        detached: false,
+        headHash: null,
+        branches: [],
+        worktree: { dirty: true, additions: 0, deletions: 0, trackedFiles: 1, untrackedFiles: 0 },
+      },
     });
   });
 
@@ -213,7 +247,7 @@ describe("collectBranches", () => {
     const result = await collectBranches({ runner, cwd: "/plain" });
     expect(result).toEqual({
       ok: true,
-      list: { root: "/plain", isRepository: false, detached: false, headHash: null, branches: [] },
+      list: { root: "/plain", isRepository: false, detached: false, headHash: null, branches: [], worktree: CLEAN },
     });
     expect(calls.map(call => call.argv)).toEqual([["rev-parse", "--show-toplevel"]]);
   });
@@ -226,6 +260,83 @@ describe("collectBranches", () => {
     });
     const result = await collectBranches({ runner, cwd: "/repo" });
     expect(result).toEqual({ ok: false, error: { code: "git-failed", message: "fatal: bad object" } });
+  });
+});
+
+describe("worktree dirtiness", () => {
+  function dirtyRunner(replies: { readonly status?: string; readonly numstat?: string }): {
+    runner: GitRunner;
+    calls: RunnerCall[];
+  } {
+    return fakeRunner(args => {
+      if (args[0] === "rev-parse") return ok(["git", ...args], "/repo\n");
+      if (args[0] === "for-each-ref") return ok(["git", ...args], "refs/heads/main\0aaa\0*\0refs/remotes/origin/main\n");
+      if (args[0] === "worktree") {
+        return ok(["git", ...args], ["worktree /repo", "HEAD aaa", "branch refs/heads/main", ""].join("\n"));
+      }
+      if (args[0] === "status") return ok(["git", ...args], replies.status ?? "");
+      if (args[0] === "diff") return ok(["git", ...args], replies.numstat ?? "");
+      throw new Error(`unexpected command ${args[0]}`);
+    });
+  }
+
+  async function worktreeOf(replies: { readonly status?: string; readonly numstat?: string }): Promise<GitWorktreeDirty> {
+    const result = await collectBranches({ runner: dirtyRunner(replies).runner, cwd: "/repo" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected a branch list");
+    return result.list.worktree;
+  }
+
+  it("counts tracked changes and untracked files separately", async () => {
+    const status = [
+      "1 .M N... 100644 100644 100644 aaa bbb src/a.ts",
+      "1 A. N... 000000 100644 100644 0000000 ccc src/b.ts",
+      "? notes.txt",
+      "? tmp/two.txt",
+      "",
+    ].join("\0");
+    const worktree = await worktreeOf({ status, numstat: "2\t0\tsrc/a.ts\n0\t3\tsrc/b.ts\n" });
+    expect(worktree).toEqual({ dirty: true, additions: 2, deletions: 3, trackedFiles: 2, untrackedFiles: 2 });
+  });
+
+  it("counts a rename once even though its old path follows as a second NUL field", async () => {
+    const status = ["2 R. N... 100644 100644 100644 aaa bbb R100 new/name.ts", "old/name.ts", ""].join("\0");
+    expect(await worktreeOf({ status })).toEqual({
+      dirty: true,
+      additions: 0,
+      deletions: 0,
+      trackedFiles: 1,
+      untrackedFiles: 0,
+    });
+  });
+
+  it("skips binary numstat rows instead of returning NaN", async () => {
+    const status = "1 .M N... 100644 100644 100644 aaa bbb logo.png\0";
+    expect(await worktreeOf({ status, numstat: "-\t-\tlogo.png\n" })).toEqual({
+      dirty: true,
+      additions: 0,
+      deletions: 0,
+      trackedFiles: 1,
+      untrackedFiles: 0,
+    });
+  });
+
+  it("counts a staged-only change through diff HEAD", async () => {
+    const { runner, calls } = dirtyRunner({
+      status: "1 M. N... 100644 100644 100644 aaa bbb src/a.ts\0",
+      numstat: "4\t1\tsrc/a.ts\n",
+    });
+    const result = await collectBranches({ runner, cwd: "/repo" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.list.worktree).toEqual({
+      dirty: true,
+      additions: 4,
+      deletions: 1,
+      trackedFiles: 1,
+      untrackedFiles: 0,
+    });
+    expect(calls.find(call => call.argv[0] === "diff")?.argv).toEqual(NUMSTAT_ARGS);
   });
 });
 
@@ -321,5 +432,68 @@ describe.runIf(canRunGit())("branch name shadowed by a tag", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.list.branches.find(branch => branch.current)?.upstream).toBe("topic");
+  });
+});
+
+describe.runIf(canRunGit())("real worktree dirtiness", () => {
+  let dir = "";
+
+  function git(args: readonly string[]): string {
+    return execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  }
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "dsh-git-explorer-dirty-"));
+    git(["init", "-q", "-b", "main"]);
+    git(["config", "user.email", "qa@example.com"]);
+    git(["config", "user.name", "qa"]);
+    writeFileSync(join(dir, "tracked.txt"), "one\n");
+    writeFileSync(join(dir, "asset.bin"), Buffer.from([0, 1, 2, 0, 255]));
+    git(["add", "-A"]);
+    git(["commit", "-q", "-m", "seed"]);
+  });
+
+  afterAll(() => {
+    if (dir !== "") rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("counts unstaged, staged and untracked changes and skips the binary row", async () => {
+    writeFileSync(join(dir, "tracked.txt"), "one\ntwo\n");
+    writeFileSync(join(dir, "untracked.txt"), "new\n");
+    const unstaged = await collectBranches({ runner: localRunnerAt(dir), cwd: dir });
+    expect(unstaged.ok).toBe(true);
+    if (!unstaged.ok) return;
+    expect(unstaged.list.worktree).toEqual({
+      dirty: true,
+      additions: 1,
+      deletions: 0,
+      trackedFiles: 1,
+      untrackedFiles: 1,
+    });
+
+    git(["add", "tracked.txt"]);
+    const staged = await collectBranches({ runner: localRunnerAt(dir), cwd: dir });
+    expect(staged.ok).toBe(true);
+    if (!staged.ok) return;
+    // Only `git diff HEAD` includes the staged half; a bare `git diff` would drop it.
+    expect(staged.list.worktree).toEqual({
+      dirty: true,
+      additions: 1,
+      deletions: 0,
+      trackedFiles: 1,
+      untrackedFiles: 1,
+    });
+
+    appendFileSync(join(dir, "asset.bin"), Buffer.from([7]));
+    const binary = await collectBranches({ runner: localRunnerAt(dir), cwd: dir });
+    expect(binary.ok).toBe(true);
+    if (!binary.ok) return;
+    expect(binary.list.worktree).toEqual({
+      dirty: true,
+      additions: 1,
+      deletions: 0,
+      trackedFiles: 2,
+      untrackedFiles: 1,
+    });
   });
 });

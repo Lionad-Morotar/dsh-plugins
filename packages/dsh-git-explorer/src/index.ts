@@ -65,6 +65,8 @@ export type {
   GitSnapshotResult,
   GitSwitchRequest,
   GitSwitchResult,
+  GitSwitchStashOutcome,
+  GitWorktreeDirty,
 } from "./host/types.ts";
 export type { LaneEdge, LaneRow } from "./host/lanes.ts";
 

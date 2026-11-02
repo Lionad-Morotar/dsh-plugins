@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,7 +10,13 @@ import type { GitRunner, GitRunResult } from "../src/host/git.ts";
 import { switchToBranch } from "../src/host/switch.ts";
 
 const ENUM_ARGV = ["for-each-ref", "--format=%(refname)", "refs/heads"];
+const STATUS_ARGV = ["status", "--porcelain=v2", "-z", "--untracked-files=normal"];
+const SWITCH_ARGV = ["switch", "--no-guess", "feat/one"];
+const POP_ARGV = ["stash", "pop"];
+const PUSH_ARGV = ["stash", "push", "--include-untracked", "-m", "git-explorer: 切换 feat/one 前自动暂存"];
 const REFS = ["refs/heads/main", "refs/heads/feat/one"].join("\n");
+const DIRTY_STATUS = "1 .M N... 100644 100644 100644 aaa bbb src/a.ts\0? notes.txt\0";
+const CLEAN_STASH = { stashed: false, restored: false };
 
 function ok(argv: readonly string[], stdout: string): GitRunResult {
   return { argv, exitCode: 0, stdout, stderr: "", timedOut: false, cancelled: false, stdoutLossy: false };
@@ -36,16 +43,165 @@ function fakeRunner(reply: (args: readonly string[]) => GitRunResult): { runner:
 }
 
 describe("switchToBranch", () => {
-  it("checks the name against refs/heads, then switches with --no-guess", async () => {
+  it("checks the name against refs/heads, reads the worktree, then switches with --no-guess", async () => {
     const { runner, calls } = fakeRunner(args => {
       if (args[0] === "for-each-ref") return ok(["git", ...args], `${REFS}\n`);
+      if (args[0] === "status") return ok(["git", ...args], "");
       if (args[0] === "switch") return ok(["git", ...args], "Switched to branch 'feat/one'\n");
       throw new Error(`unexpected command ${String(args[0])}`);
     });
     const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
-    expect(result).toEqual({ ok: true, branch: "feat/one" });
-    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, ["switch", "--no-guess", "feat/one"]]);
+    expect(result).toEqual({ ok: true, branch: "feat/one", stash: CLEAN_STASH });
+    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, STATUS_ARGV, SWITCH_ARGV]);
     expect(calls.every(call => call.cwd === "/repo")).toBe(true);
+  });
+
+  it("parks a dirty worktree in a stash and restores it after the switch", async () => {
+    const { runner, calls } = fakeRunner(args => {
+      if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+      if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
+      if (args[0] === "stash" && args[1] === "push") return ok(["git", ...args], "Saved working directory\n");
+      if (args[0] === "switch") return ok(["git", ...args], "Switched to branch 'feat/one'\n");
+      if (args[0] === "stash" && args[1] === "pop") return ok(["git", ...args], "Dropped refs/stash@{0}\n");
+      throw new Error(`unexpected command ${String(args[0])}`);
+    });
+    const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
+    expect(result).toEqual({ ok: true, branch: "feat/one", stash: { stashed: true, restored: true } });
+    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, STATUS_ARGV, PUSH_ARGV, SWITCH_ARGV, POP_ARGV]);
+  });
+
+  it("stops before switching when the stash itself is refused", async () => {
+    const { runner, calls } = fakeRunner(args => {
+      if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+      if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
+      if (args[0] === "stash" && args[1] === "push") return failed(["git", ...args], 1, "error: pre-commit hook refused\n");
+      throw new Error(`unexpected command ${String(args[0])}`);
+    });
+    const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
+    expect(result).toEqual({ ok: false, error: { code: "git-failed", message: "error: pre-commit hook refused" } });
+    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, STATUS_ARGV, PUSH_ARGV]);
+  });
+
+  it("pops the stash back when the switch is refused", async () => {
+    const refusal = "fatal: 'feat/one' is already used by worktree at '/tmp/other'\nhint: use --ignore-other-worktrees\n";
+    const { runner, calls } = fakeRunner(args => {
+      if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+      if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
+      if (args[0] === "stash" && args[1] === "push") return ok(["git", ...args], "");
+      if (args[0] === "switch") return failed(["git", ...args], 1, refusal);
+      if (args[0] === "stash" && args[1] === "pop") return ok(["git", ...args], "");
+      throw new Error(`unexpected command ${String(args[0])}`);
+    });
+    const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "git-failed",
+        message:
+          "fatal: 'feat/one' is already used by worktree at '/tmp/other'; hint: use --ignore-other-worktrees; auto-stash restored",
+      },
+    });
+    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, STATUS_ARGV, PUSH_ARGV, SWITCH_ARGV, POP_ARGV]);
+  });
+
+  it("restores the stash even when the request was cancelled before the rollback", async () => {
+    const controller = new AbortController();
+    const calls: string[][] = [];
+    const runner: GitRunner = {
+      async run(args, options = {}) {
+        calls.push([...args]);
+        if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+        if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
+        if (args[0] === "stash" && args[1] === "push") return ok(["git", ...args], "");
+        if (args[0] === "switch") {
+          controller.abort();
+          return {
+            argv: ["git", ...args],
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            timedOut: false,
+            cancelled: true,
+            stdoutLossy: false,
+          };
+        }
+        if (args[0] === "stash" && args[1] === "pop") {
+          // A cancelled request would have killed this pop; cleanup must not inherit it.
+          return options.signal?.aborted === true
+            ? {
+                argv: ["git", ...args],
+                exitCode: null,
+                stdout: "",
+                stderr: "",
+                timedOut: false,
+                cancelled: true,
+                stdoutLossy: false,
+              }
+            : ok(["git", ...args], "");
+        }
+        throw new Error(`unexpected command ${String(args[0])}`);
+      },
+    };
+    const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" }, controller.signal);
+    expect(result).toEqual({
+      ok: false,
+      error: { code: "git-failed", message: "cancelled; auto-stash restored" },
+    });
+    expect(calls.map(args => args[0])).toEqual(["for-each-ref", "status", "stash", "switch", "stash"]);
+  });
+
+  it("says so when the rollback of a refused switch also fails", async () => {
+    const { runner } = fakeRunner(args => {
+      if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+      if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
+      if (args[0] === "stash" && args[1] === "push") return ok(["git", ...args], "");
+      if (args[0] === "switch") return failed(["git", ...args], 1, "fatal: cannot switch\n");
+      return failed(["git", ...args], 1, "error: could not restore\n");
+    });
+    const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: "git-failed", message: "fatal: cannot switch; auto-stash rollback failed: error: could not restore" },
+    });
+  });
+
+  it("keeps the stash entry and reports the conflict when the restore conflicts", async () => {
+    const stderr = [
+      "Auto-merging shared.txt",
+      "CONFLICT (content): Merge conflict in shared.txt",
+      "",
+      "The stash entry is kept in case you need it again.",
+      "a fourth line is dropped",
+    ].join("\n");
+    const { runner, calls } = fakeRunner(args => {
+      if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+      if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
+      if (args[0] === "stash" && args[1] === "push") return ok(["git", ...args], "");
+      if (args[0] === "switch") return ok(["git", ...args], "");
+      return failed(["git", ...args], 1, stderr);
+    });
+    const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
+    expect(result).toEqual({
+      ok: true,
+      branch: "feat/one",
+      stash: {
+        stashed: true,
+        restored: false,
+        conflict: true,
+        message: "Auto-merging shared.txt; CONFLICT (content): Merge conflict in shared.txt; The stash entry is kept in case you need it again.",
+      },
+    });
+    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, STATUS_ARGV, PUSH_ARGV, SWITCH_ARGV, POP_ARGV]);
+  });
+
+  it("refuses to switch when the worktree state cannot be read", async () => {
+    const { runner, calls } = fakeRunner(args => {
+      if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+      return failed(["git", ...args], 128, "fatal: index file corrupt\n");
+    });
+    const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
+    expect(result).toEqual({ ok: false, error: { code: "git-failed", message: "fatal: index file corrupt" } });
+    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, STATUS_ARGV]);
   });
 
   it("rejects names git could read as an option or a revision without running anything", async () => {
@@ -86,6 +242,7 @@ describe("switchToBranch", () => {
     ].join("\n");
     const { runner } = fakeRunner(args => {
       if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+      if (args[0] === "status") return ok(["git", ...args], "");
       return failed(["git", ...args], 1, stderr);
     });
     const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
@@ -102,6 +259,7 @@ describe("switchToBranch", () => {
   it("maps a timed-out switch to the timeout code", async () => {
     const { runner } = fakeRunner(args => {
       if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+      if (args[0] === "status") return ok(["git", ...args], "");
       return {
         argv: ["git", ...args],
         exitCode: null,
@@ -119,6 +277,7 @@ describe("switchToBranch", () => {
   it("keeps a cancelled call in the failure union", async () => {
     const { runner } = fakeRunner(args => {
       if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+      if (args[0] === "status") return ok(["git", ...args], "");
       return {
         argv: ["git", ...args],
         exitCode: null,
@@ -176,6 +335,10 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 }
 
+function stashCount(repo: string): number {
+  return git(repo, "stash", "list").split("\n").filter(Boolean).length;
+}
+
 async function withTempDirectory(run: (root: string) => Promise<void>): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "dsh-switch-"));
   try {
@@ -194,14 +357,24 @@ async function makeRepository(root: string): Promise<string> {
   return repo;
 }
 
+/** A repository with one committed text file, so a case can modify it. */
+async function makeTrackedRepository(root: string): Promise<string> {
+  const repo = await makeRepository(root);
+  await writeFile(join(repo, "tracked.txt"), "base\n");
+  git(repo, "add", "tracked.txt");
+  git(repo, "commit", "-q", "-m", "tracked");
+  return repo;
+}
+
 describe("switchToBranch in a real repository", () => {
-  it("leaves the worktree on the branch it switched to", async () => {
+  it("leaves the worktree on the branch it switched to without a stash entry", async () => {
     await withTempDirectory(async root => {
       const repo = await makeRepository(root);
       git(repo, "branch", "feat/one", "HEAD");
       const result = await switchToBranch({ runner: localRunner, cwd: repo }, { name: "feat/one" });
-      expect(result).toEqual({ ok: true, branch: "feat/one" });
+      expect(result).toEqual({ ok: true, branch: "feat/one", stash: { stashed: false, restored: false } });
       expect(git(repo, "branch", "--show-current").trim()).toBe("feat/one");
+      expect(stashCount(repo)).toBe(0);
     });
   });
 
@@ -214,18 +387,70 @@ describe("switchToBranch in a real repository", () => {
     });
   });
 
-  it("reports git's own refusal when another worktree holds the branch", async () => {
+  it("stashes a dirty worktree, switches, and puts the changes back", async () => {
     await withTempDirectory(async root => {
-      const repo = await makeRepository(root);
-      git(repo, "branch", "held", "HEAD");
+      const repo = await makeTrackedRepository(root);
+      git(repo, "branch", "feat/one");
+      await writeFile(join(repo, "tracked.txt"), "base\nlocal\n");
+      await writeFile(join(repo, "untracked.txt"), "new\n");
+
+      const result = await switchToBranch({ runner: localRunner, cwd: repo }, { name: "feat/one" });
+
+      expect(result).toEqual({ ok: true, branch: "feat/one", stash: { stashed: true, restored: true } });
+      expect(git(repo, "branch", "--show-current").trim()).toBe("feat/one");
+      expect(await readFile(join(repo, "tracked.txt"), "utf8")).toBe("base\nlocal\n");
+      expect(existsSync(join(repo, "untracked.txt"))).toBe(true);
+      expect(stashCount(repo)).toBe(0);
+    });
+  });
+
+  it("reports git's refusal when another worktree holds the branch and leaves the changes in place", async () => {
+    await withTempDirectory(async root => {
+      const repo = await makeTrackedRepository(root);
+      git(repo, "branch", "held");
       git(repo, "worktree", "add", "-q", join(root, "occupied"), "held");
+      await writeFile(join(repo, "tracked.txt"), "base\nlocal\n");
+      await writeFile(join(repo, "untracked.txt"), "new\n");
+
       const result = await switchToBranch({ runner: localRunner, cwd: repo }, { name: "held" });
+
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.error.code).toBe("git-failed");
-      expect(result.error.message).not.toBe("");
       expect(result.error.message).toMatch(/already checked out|already used by worktree/u);
-      expect(result.error.message).not.toContain("\n");
+      expect(result.error.message).toContain("auto-stash restored");
+      expect(await readFile(join(repo, "tracked.txt"), "utf8")).toBe("base\nlocal\n");
+      expect(existsSync(join(repo, "untracked.txt"))).toBe(true);
+      expect(stashCount(repo)).toBe(0);
+      expect(git(repo, "branch", "--show-current").trim()).toBe("main");
+    });
+  });
+
+  it("keeps the stash entry when the restored changes conflict with the new branch", async () => {
+    await withTempDirectory(async root => {
+      const repo = await makeRepository(root);
+      await writeFile(join(repo, "shared.txt"), "base\n");
+      git(repo, "add", "shared.txt");
+      git(repo, "commit", "-q", "-m", "shared base");
+      git(repo, "branch", "other");
+      await writeFile(join(repo, "shared.txt"), "main\n");
+      git(repo, "commit", "-qam", "main side");
+      git(repo, "switch", "-q", "other");
+      await writeFile(join(repo, "shared.txt"), "other\n");
+      git(repo, "commit", "-qam", "other side");
+      git(repo, "switch", "-q", "main");
+      await writeFile(join(repo, "shared.txt"), "local\n");
+
+      const result = await switchToBranch({ runner: localRunner, cwd: repo }, { name: "other" });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.branch).toBe("other");
+      expect(result.stash).toMatchObject({ stashed: true, restored: false, conflict: true });
+      expect(result.stash.message).toBeTruthy();
+      // A conflicting pop keeps the entry; nothing is dropped behind the user's back.
+      expect(stashCount(repo)).toBe(1);
+      expect(git(repo, "branch", "--show-current").trim()).toBe("other");
     });
   });
 
@@ -235,7 +460,7 @@ describe("switchToBranch in a real repository", () => {
       git(repo, "tag", "topic");
       git(repo, "branch", "topic", "HEAD");
       const result = await switchToBranch({ runner: localRunner, cwd: repo }, { name: "topic" });
-      expect(result).toEqual({ ok: true, branch: "topic" });
+      expect(result).toEqual({ ok: true, branch: "topic", stash: { stashed: false, restored: false } });
       expect(git(repo, "branch", "--show-current").trim()).toBe("topic");
     });
   });

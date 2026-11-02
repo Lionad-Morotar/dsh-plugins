@@ -73,6 +73,13 @@ var HEADS_PREFIX = "refs/heads/";
 var REMOTES_PREFIX = "refs/remotes/";
 var BRANCH_FORMAT = "--format=%(refname)%00%(objectname)%00%(HEAD)%00%(upstream)";
 var WORKTREE_PREFIX = "worktree ";
+var WORKTREE_STATUS_ARGS = ["status", "--porcelain=v2", "-z", "--untracked-files=normal"];
+var WORKTREE_NUMSTAT_ARGS = ["diff", "HEAD", "--numstat"];
+var ZERO_HEAD = /^0+$/u;
+var UNSET_HEAD_STDERR = /unknown revision|ambiguous argument 'HEAD'/iu;
+function cleanWorktree() {
+  return { dirty: false, additions: 0, deletions: 0, trackedFiles: 0, untrackedFiles: 0 };
+}
 function shortRef(ref) {
   if (ref.startsWith(HEADS_PREFIX)) return ref.slice(HEADS_PREFIX.length);
   if (ref.startsWith(REMOTES_PREFIX)) return ref.slice(REMOTES_PREFIX.length);
@@ -146,7 +153,60 @@ function parseWorktreeList(text) {
   return worktrees;
 }
 function emptyList(root) {
-  return { root, isRepository: false, detached: false, headHash: null, branches: [] };
+  return { root, isRepository: false, detached: false, headHash: null, branches: [], worktree: cleanWorktree() };
+}
+function countStatusEntries(text) {
+  const records = text.split("\0");
+  let trackedFiles = 0;
+  let untrackedFiles = 0;
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index] ?? "";
+    if (record === "") continue;
+    const kind = record[0];
+    if (kind === "?") {
+      untrackedFiles += 1;
+    } else if (kind === "1" || kind === "u") {
+      trackedFiles += 1;
+    } else if (kind === "2") {
+      trackedFiles += 1;
+      index += 1;
+    }
+  }
+  return { dirty: text !== "", trackedFiles, untrackedFiles };
+}
+function sumNumStat(text) {
+  let additions = 0;
+  let deletions = 0;
+  for (const raw of text.split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line === "") continue;
+    const fields = line.split("	");
+    const addRaw = fields[0] ?? "";
+    const delRaw = fields[1] ?? "";
+    if (addRaw === "-" || delRaw === "-") continue;
+    const add = Number.parseInt(addRaw, 10);
+    const del = Number.parseInt(delRaw, 10);
+    if (!Number.isFinite(add) || !Number.isFinite(del)) continue;
+    additions += add;
+    deletions += del;
+  }
+  return { additions, deletions };
+}
+function summarizeWorktreeDirty(statusText, numstatText) {
+  const counts = countStatusEntries(statusText);
+  const lines = sumNumStat(numstatText);
+  return {
+    dirty: counts.dirty,
+    additions: lines.additions,
+    deletions: lines.deletions,
+    trackedFiles: counts.trackedFiles,
+    untrackedFiles: counts.untrackedFiles
+  };
+}
+function unsetHead(worktrees, root, numstat) {
+  const current = worktrees.find((worktree) => worktree.path === root);
+  if (current?.head !== void 0 && ZERO_HEAD.test(current.head)) return true;
+  return numstat.exitCode !== 0 && !numstat.timedOut && !numstat.cancelled && UNSET_HEAD_STDERR.test(numstat.stderr);
 }
 async function collectBranches(options, request = {}, signal) {
   const cwd = request.cwd ?? options.cwd;
@@ -158,33 +218,43 @@ async function collectBranches(options, request = {}, signal) {
   }
   const root = probe.stdout.trim();
   if (root === "") return { ok: true, list: emptyList(cwd) };
-  const [refsRun, worktreesRun] = await Promise.all([
+  const [refsRun, worktreesRun, statusRun, numstatRun] = await Promise.all([
     options.runner.run(["for-each-ref", BRANCH_FORMAT, "refs/heads"], { cwd: root, signal }),
-    options.runner.run(["worktree", "list", "--porcelain"], { cwd: root, signal })
+    options.runner.run(["worktree", "list", "--porcelain"], { cwd: root, signal }),
+    options.runner.run([...WORKTREE_STATUS_ARGS], { cwd: root, signal }),
+    options.runner.run([...WORKTREE_NUMSTAT_ARGS], { cwd: root, signal })
   ]);
-  for (const result of [refsRun, worktreesRun]) {
+  for (const result of [refsRun, worktreesRun, statusRun]) {
     const failure = runFailure(result);
     if (failure !== null) return { ok: false, error: failure };
     if (result.stdoutLossy) return fail("git-failed", "command output exceeded the collection budget");
   }
   const refs = parseBranchRefs(refsRun.stdout);
+  const worktrees = parseWorktreeList(worktreesRun.stdout);
+  const headUnset = unsetHead(worktrees, root, numstatRun);
+  const numstatFailure = headUnset ? null : runFailure(numstatRun);
+  if (numstatFailure !== null) return { ok: false, error: numstatFailure };
+  if (!headUnset && numstatRun.stdoutLossy) {
+    return fail("git-failed", "command output exceeded the collection budget");
+  }
+  const worktree = summarizeWorktreeDirty(statusRun.stdout, headUnset ? "" : numstatRun.stdout);
   const occupied = /* @__PURE__ */ new Map();
-  for (const worktree of parseWorktreeList(worktreesRun.stdout)) {
-    if (worktree.branch === void 0 || worktree.path === root) continue;
-    if (!occupied.has(worktree.branch)) occupied.set(worktree.branch, worktree.path);
+  for (const worktreeEntry of worktrees) {
+    if (worktreeEntry.branch === void 0 || worktreeEntry.path === root) continue;
+    if (!occupied.has(worktreeEntry.branch)) occupied.set(worktreeEntry.branch, worktreeEntry.path);
   }
   const branches = refs.map((branch) => {
     const worktreePath = occupied.get(branch.name);
     return worktreePath === void 0 ? branch : { ...branch, worktreePath };
   });
   if (branches.some((branch) => branch.current)) {
-    return { ok: true, list: { root, isRepository: true, detached: false, headHash: null, branches } };
+    return { ok: true, list: { root, isRepository: true, detached: false, headHash: null, branches, worktree } };
   }
   const headRun = await options.runner.run(["rev-parse", "--short", "HEAD"], { cwd: root, signal });
   const headFailure = runFailure(headRun);
   if (headFailure !== null) {
     if (headFailure.code === "git-failed") {
-      return { ok: true, list: { root, isRepository: true, detached: false, headHash: null, branches } };
+      return { ok: true, list: { root, isRepository: true, detached: false, headHash: null, branches, worktree } };
     }
     return { ok: false, error: headFailure };
   }
@@ -196,7 +266,8 @@ async function collectBranches(options, request = {}, signal) {
       isRepository: true,
       detached: true,
       headHash: headHash === "" ? null : headHash,
-      branches
+      branches,
+      worktree
     }
   };
 }
@@ -967,12 +1038,15 @@ function detailOf(result) {
   if (lines.length > 0) return lines.join("; ");
   return result.exitCode === null ? "the command was terminated by a signal" : `the command exited with code ${String(result.exitCode)}`;
 }
-function inventoryFailure(result) {
+function readFailure(result) {
   if (result.timedOut) return { code: "timeout", message: "the command exceeded its deadline" };
   if (result.cancelled) return { code: "git-failed", message: "cancelled" };
   if (result.exitCode !== 0) return { code: "git-failed", message: detailOf(result) };
   if (result.stdoutLossy) return { code: "git-failed", message: "command output exceeded the collection budget" };
   return null;
+}
+function stashMessage(name2) {
+  return `git-explorer: \u5207\u6362 ${name2} \u524D\u81EA\u52A8\u6682\u5B58`;
 }
 function switchFailure(result) {
   if (result.timedOut) return { code: "timeout", message: "the command exceeded its deadline" };
@@ -987,16 +1061,44 @@ async function switchToBranch(options, request, signal) {
   const problem = nameProblem(request.name);
   if (problem !== null) return fail("invalid-request", problem);
   const inventory = await options.runner.run(["for-each-ref", REF_FORMAT2, "refs/heads"], { cwd, signal });
-  const inventoryError = inventoryFailure(inventory);
+  const inventoryError = readFailure(inventory);
   if (inventoryError !== null) return { ok: false, error: inventoryError };
   if (!localBranchNames(inventory.stdout).has(request.name)) {
     return fail("invalid-request", `branch not found: ${request.name}`);
   }
+  const status = await options.runner.run([...WORKTREE_STATUS_ARGS], { cwd, signal });
+  const statusError = readFailure(status);
+  if (statusError !== null) return { ok: false, error: statusError };
+  const dirty = status.stdout !== "";
+  if (dirty) {
+    const stash = await options.runner.run(
+      ["stash", "push", "--include-untracked", "-m", stashMessage(request.name)],
+      { cwd, signal }
+    );
+    const stashError = readFailure(stash);
+    if (stashError !== null) return { ok: false, error: stashError };
+  }
   const switched = await options.runner.run(["switch", "--no-guess", request.name], { cwd, signal });
   if (switched.timedOut || switched.cancelled || switched.exitCode !== 0) {
-    return { ok: false, error: switchFailure(switched) };
+    const failure = switchFailure(switched);
+    if (!dirty) return { ok: false, error: failure };
+    const rollback = await options.runner.run(["stash", "pop"], { cwd });
+    const rollbackError = readFailure(rollback);
+    const note = rollbackError === null ? "auto-stash restored" : `auto-stash rollback failed: ${rollbackError.message}`;
+    return fail(failure.code, `${failure.message}; ${note}`);
   }
-  return { ok: true, branch: request.name };
+  if (!dirty) return { ok: true, branch: request.name, stash: { stashed: false, restored: false } };
+  const popped = await options.runner.run(["stash", "pop"], { cwd });
+  const restoreError = readFailure(popped);
+  if (restoreError === null) {
+    return { ok: true, branch: request.name, stash: { stashed: true, restored: true } };
+  }
+  const message = popped.timedOut ? "the command exceeded its deadline" : detailOf(popped);
+  return {
+    ok: true,
+    branch: request.name,
+    stash: { stashed: true, restored: false, conflict: true, message }
+  };
 }
 
 // src/shared.ts

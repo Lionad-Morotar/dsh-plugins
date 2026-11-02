@@ -215,6 +215,25 @@ export interface GitBranch {
 }
 
 /**
+ * Working-tree dirtiness of the session worktree, next to the branch inventory.
+ *
+ * Line counts cover tracked paths only: git has no line count for a file before
+ * it enters the index, so untracked files are reported as a count instead of
+ * pretending their contents were measured.
+ */
+export interface GitWorktreeDirty {
+  readonly dirty: boolean;
+  /** Sum of added lines across tracked changes (`git diff HEAD --numstat`). */
+  readonly additions: number;
+  /** Sum of deleted lines across tracked changes. */
+  readonly deletions: number;
+  /** Tracked paths with any modification (porcelain v2 non-`?` entries). */
+  readonly trackedFiles: number;
+  /** Untracked paths (`?` records). Their lines are not counted. */
+  readonly untrackedFiles: number;
+}
+
+/**
  * Branch inventory for one session working directory.
  *
  * `headHash` is the short object id only when HEAD is detached: on a branch the
@@ -226,6 +245,8 @@ export interface GitBranchList {
   readonly detached: boolean;
   readonly headHash: string | null;
   readonly branches: readonly GitBranch[];
+  /** Current working-tree state, so the header can show `+N -M` before a switch. */
+  readonly worktree: GitWorktreeDirty;
 }
 
 export type GitBranchListResult =
@@ -249,6 +270,24 @@ export interface GitSwitchRequest {
   readonly cwd?: string;
 }
 
+/**
+ * What the automatic stash did around one successful switch.
+ *
+ * A switch is not atomic when the worktree is dirty: the changes are parked in
+ * a stash entry first and applied back afterwards. `restored` and `conflict`
+ * describe that second half; a conflict keeps the entry so nothing is lost.
+ */
+export interface GitSwitchStashOutcome {
+  /** A stash entry was created before switching. */
+  readonly stashed: boolean;
+  /** The stash was applied back after switching. */
+  readonly restored: boolean;
+  /** The restore failed and left conflicts; the stash entry is kept. */
+  readonly conflict?: boolean;
+  /** Readable summary of the restore failure, for the popover. */
+  readonly message?: string;
+}
+
 export type GitSwitchResult =
-  | { readonly ok: true; readonly branch: string }
+  | { readonly ok: true; readonly branch: string; readonly stash: GitSwitchStashOutcome }
   | { readonly ok: false; readonly error: GitFailure };

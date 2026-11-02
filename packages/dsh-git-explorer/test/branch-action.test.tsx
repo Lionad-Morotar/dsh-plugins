@@ -29,6 +29,9 @@ import type { GitRemoteFace, RemoteResult } from "../src/client/wire.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const CLEAN_WORKTREE = { dirty: false, additions: 0, deletions: 0, trackedFiles: 0, untrackedFiles: 0 };
+const CLEAN_STASH = { stashed: false, restored: false };
+
 const LIST: GitBranchList = {
   root: "/repo",
   isRepository: true,
@@ -39,6 +42,7 @@ const LIST: GitBranchList = {
     { name: "feature", hash: "b2", current: false },
     { name: "taken", hash: "c3", current: false, worktreePath: "/repo/.worktrees/taken" },
   ],
+  worktree: CLEAN_WORKTREE,
 };
 
 const NO_DISMISS: DismissHook = () => {};
@@ -582,7 +586,7 @@ describe("branch store", () => {
     const store = createBranchStore(() =>
       face({
         branches: () => Promise.resolve({ ok: true, value: { ok: true, list: LIST } }),
-        switchBranch: () => Promise.resolve({ ok: true, value: { ok: true, branch: "feature" } }),
+        switchBranch: () => Promise.resolve({ ok: true, value: { ok: true, branch: "feature", stash: CLEAN_STASH } }),
       }),
     );
     await store.load("s1");
@@ -650,7 +654,7 @@ describe("branch store", () => {
     const settled = store.getSnapshot();
     expect(settled.sessionId).toBe("s2");
 
-    switchReply.resolve({ ok: true, value: { ok: true, branch: "feature" } });
+    switchReply.resolve({ ok: true, value: { ok: true, branch: "feature", stash: CLEAN_STASH } });
 
     expect(await switching).toBe(true);
     expect(store.getSnapshot()).toBe(settled);
@@ -688,7 +692,7 @@ describe("branch store", () => {
     const loadingState = store.getSnapshot();
     expect(loadingState.sessionId).toBe("s2");
 
-    switchReply.resolve({ ok: true, value: { ok: true, branch: "feature" } });
+    switchReply.resolve({ ok: true, value: { ok: true, branch: "feature", stash: CLEAN_STASH } });
     await switching;
     expect(store.getSnapshot()).toBe(loadingState);
 

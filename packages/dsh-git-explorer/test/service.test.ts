@@ -46,7 +46,14 @@ describe("GitExplorerService", () => {
     const service = new GitExplorerService(ctx, {});
     await expect(service.branches({ sessionId: "s1" })).resolves.toEqual({
       ok: true,
-      list: { root: "/missing/repo", isRepository: false, detached: false, headHash: null, branches: [] },
+      list: {
+        root: "/missing/repo",
+        isRepository: false,
+        detached: false,
+        headHash: null,
+        branches: [],
+        worktree: { dirty: false, additions: 0, deletions: 0, trackedFiles: 0, untrackedFiles: 0 },
+      },
     });
   });
 
