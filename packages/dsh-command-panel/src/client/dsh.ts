@@ -118,7 +118,7 @@ export function isPathExplorerFace(value: unknown): value is PathExplorerRemote 
  * namespace simply never hands the row out.
  */
 export interface HostShutdownRemote {
-  request(): Promise<RemoteResult<ShutdownRequestResult>>;
+  request(signal?: AbortSignal): Promise<RemoteResult<ShutdownRequestResult>>;
 }
 
 /** Whether a value structurally answers the hostShutdown face. */

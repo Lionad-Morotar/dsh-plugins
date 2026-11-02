@@ -76,7 +76,7 @@ import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from ".
 import { statusStamp } from "./status.ts";
 import { createPanelStore } from "./store.ts";
 import { directoryQuery, focusPath, parentQuery } from "./tree.ts";
-import { createPathExplorerFace, createGitExplorerFace, createSessionOpenFace, gatewayRpcOf } from "./wire.ts";
+import { createPathExplorerFace, createGitExplorerFace, createHostShutdownFace, createSessionOpenFace, gatewayRpcOf } from "./wire.ts";
 import { insertPanelStyles } from "./styles.ts";
 
 /** The three command ids; also the settings rows the reader can rebind. */
@@ -224,6 +224,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   let rpcPathExplorer: PathExplorerRemote | null | undefined;
   let rpcSessionOpen: SessionOpenFace | null | undefined;
   let rpcGitExplorer: GitExplorerRemote | null | undefined;
+  let rpcHostShutdown: HostShutdownRemote | null | undefined;
 
   function pathExplorerFace(): PathExplorerRemote | undefined {
     if (isPathExplorerFace(refs.pathExplorer)) return refs.pathExplorer;
@@ -406,8 +407,20 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
    * the injection below, and a composition that misses it simply costs one
    * row — no caching, no stale row after a namespace goes away.
    */
-  function hostShutdownAvailable(): boolean {
-    return isHostShutdownFace(refs.hostShutdown);
+  /**
+   * The quit face, injected namespace first and the raw gateway caller after.
+   *
+   * `remote.hostShutdown` is never generated for a third-party package, so the
+   * reliable tier is the same `/api` route the host half publishes. The raw
+   * face is cached once; an injected face that arrives later still wins.
+   */
+  function hostShutdownFace(): HostShutdownRemote | undefined {
+    if (isHostShutdownFace(refs.hostShutdown)) return refs.hostShutdown;
+    if (rpcHostShutdown === undefined) {
+      const rpc = gatewayRpcOf(deps.ctx);
+      rpcHostShutdown = rpc === undefined ? null : createHostShutdownFace(rpc);
+    }
+    return rpcHostShutdown ?? undefined;
   }
 
   /**
@@ -422,7 +435,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   function composeCommandRows(hostRows: readonly PanelRow[]): PanelRow[] {
     const entries = availableCatalog(actionContext(), {
       seatSurfaces: deps.config?.seatSurfaces !== false,
-      hostShutdown: hostShutdownAvailable(),
+      hostShutdown: hostShutdownFace() !== undefined,
       hostCommands: knownHostCommands,
     });
     const shortcuts = services.shortcuts();
@@ -447,7 +460,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       sidebarRight: () => refs.sidebarRight,
       slots: () => refs.slots,
       shortcuts: () => refs.shortcuts,
-      shutdownRequest: () => (isHostShutdownFace(refs.hostShutdown) ? refs.hostShutdown : undefined),
+      shutdownRequest: hostShutdownFace,
       currentSessionId,
       insert,
       close,
