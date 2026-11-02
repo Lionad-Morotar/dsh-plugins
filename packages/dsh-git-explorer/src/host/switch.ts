@@ -24,6 +24,14 @@
  * switch as successful, because the branch really did change. A stashed restore
  * that conflicts writes markers into the worktree; those markers are the state
  * the user has to resolve, so nothing is aborted or dropped here.
+ *
+ * `stash push` is not guaranteed to create an entry: a worktree can be dirty
+ * for content the stash cannot capture (a submodule whose own files changed),
+ * and git then exits 0 without touching the stack. The top object id is read on
+ * both sides of the push, so an unchanged top proves nothing was parked; the
+ * restore and rollback are skipped entirely in that case, because a pop would
+ * silently consume an older entry that belongs to the user. Both pops name
+ * `stash@{0}` explicitly rather than relying on pop's default operand.
  */
 import { WORKTREE_STATUS_ARGS } from "./branches.ts";
 import { fail } from "./failure.ts";
@@ -37,6 +45,8 @@ export interface SwitchOptions {
 
 const REF_FORMAT = "--format=%(refname)";
 const HEADS_PREFIX = "refs/heads/";
+const STASH_TOP_ARGS = ["stash", "list", "--format=%H", "-1"];
+const STASH_POP_ARGS = ["stash", "pop", "stash@{0}"];
 const MAX_NAME_LENGTH = 255;
 const MAX_DETAIL_LINES = 3;
 
@@ -101,6 +111,25 @@ function readFailure(result: GitRunResult): GitFailure | null {
   return null;
 }
 
+/** Top object id of the stash stack, or null when it is empty. */
+type StashTop =
+  | { readonly top: string | null; readonly failure?: undefined }
+  | { readonly top?: undefined; readonly failure: GitFailure };
+
+/**
+ * Read the top of the stash stack. The object id is the only stable identity
+ * here: messages are localized and exit codes cannot tell a no-op push from one
+ * that created an entry.
+ */
+async function readStashTop(runner: GitRunner, cwd: string, signal?: AbortSignal): Promise<StashTop> {
+  const listed = await runner.run([...STASH_TOP_ARGS], { cwd, signal });
+  const failure = readFailure(listed);
+  if (failure !== null) return { failure };
+  const [first = ""] = listed.stdout.split("\n");
+  const top = first.trim();
+  return { top: top === "" ? null : top };
+}
+
 /** The message git shows for the entry this endpoint creates. */
 function stashMessage(name: string): string {
   return `git-explorer: 切换 ${name} 前自动暂存`;
@@ -149,33 +178,44 @@ export async function switchToBranch(
   if (statusError !== null) return { ok: false, error: statusError };
 
   const dirty = status.stdout !== "";
+  // Only a confirmed new entry may be popped later. null means the worktree was
+  // clean, or the push created nothing and there is nothing of ours to restore.
+  let stashEntry: string | null = null;
   if (dirty) {
+    const before = await readStashTop(options.runner, cwd, signal);
+    // Nothing has moved yet, so the worktree is still exactly as it was.
+    if (before.failure !== undefined) return { ok: false, error: before.failure };
     const stash = await options.runner.run(
       ["stash", "push", "--include-untracked", "-m", stashMessage(request.name)],
       { cwd, signal },
     );
     const stashError = readFailure(stash);
-    // Nothing has moved yet, so the worktree is still exactly as it was.
     if (stashError !== null) return { ok: false, error: stashError };
+    const after = await readStashTop(options.runner, cwd, signal);
+    // The push ran but its result cannot be verified. The branch stays put and
+    // no pop is attempted: without the entry id a pop would be a guess, and if
+    // the push did create an entry the changes are safe in the stash.
+    if (after.failure !== undefined) return { ok: false, error: after.failure };
+    if (after.top !== null && after.top !== before.top) stashEntry = after.top;
   }
 
   const switched = await options.runner.run(["switch", "--no-guess", request.name], { cwd, signal });
   if (switched.timedOut || switched.cancelled || switched.exitCode !== 0) {
     const failure = switchFailure(switched);
-    if (!dirty) return { ok: false, error: failure };
+    if (stashEntry === null) return { ok: false, error: failure };
     // The restore is deliberately not tied to the caller's signal: a cancelled
     // request still owns a stash entry, and the entry has to go back on the
     // worktree even though nobody is waiting for the answer anymore.
-    const rollback = await options.runner.run(["stash", "pop"], { cwd });
+    const rollback = await options.runner.run([...STASH_POP_ARGS], { cwd });
     const rollbackError = readFailure(rollback);
     const note =
       rollbackError === null ? "auto-stash restored" : `auto-stash rollback failed: ${rollbackError.message}`;
     return fail(failure.code, `${failure.message}; ${note}`);
   }
 
-  if (!dirty) return { ok: true, branch: request.name, stash: { stashed: false, restored: false } };
+  if (stashEntry === null) return { ok: true, branch: request.name, stash: { stashed: false, restored: false } };
 
-  const popped = await options.runner.run(["stash", "pop"], { cwd });
+  const popped = await options.runner.run([...STASH_POP_ARGS], { cwd });
   const restoreError = readFailure(popped);
   if (restoreError === null) {
     return { ok: true, branch: request.name, stash: { stashed: true, restored: true } };

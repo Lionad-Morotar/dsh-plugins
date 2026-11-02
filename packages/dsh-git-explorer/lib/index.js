@@ -1005,6 +1005,8 @@ async function collectSnapshot(options, request = {}, signal) {
 // src/host/switch.ts
 var REF_FORMAT2 = "--format=%(refname)";
 var HEADS_PREFIX2 = "refs/heads/";
+var STASH_TOP_ARGS = ["stash", "list", "--format=%H", "-1"];
+var STASH_POP_ARGS = ["stash", "pop", "stash@{0}"];
 var MAX_NAME_LENGTH = 255;
 var MAX_DETAIL_LINES = 3;
 var NAME_RULES = [
@@ -1045,6 +1047,14 @@ function readFailure(result) {
   if (result.stdoutLossy) return { code: "git-failed", message: "command output exceeded the collection budget" };
   return null;
 }
+async function readStashTop(runner, cwd, signal) {
+  const listed = await runner.run([...STASH_TOP_ARGS], { cwd, signal });
+  const failure = readFailure(listed);
+  if (failure !== null) return { failure };
+  const [first = ""] = listed.stdout.split("\n");
+  const top = first.trim();
+  return { top: top === "" ? null : top };
+}
 function stashMessage(name2) {
   return `git-explorer: \u5207\u6362 ${name2} \u524D\u81EA\u52A8\u6682\u5B58`;
 }
@@ -1070,25 +1080,31 @@ async function switchToBranch(options, request, signal) {
   const statusError = readFailure(status);
   if (statusError !== null) return { ok: false, error: statusError };
   const dirty = status.stdout !== "";
+  let stashEntry = null;
   if (dirty) {
+    const before = await readStashTop(options.runner, cwd, signal);
+    if (before.failure !== void 0) return { ok: false, error: before.failure };
     const stash = await options.runner.run(
       ["stash", "push", "--include-untracked", "-m", stashMessage(request.name)],
       { cwd, signal }
     );
     const stashError = readFailure(stash);
     if (stashError !== null) return { ok: false, error: stashError };
+    const after = await readStashTop(options.runner, cwd, signal);
+    if (after.failure !== void 0) return { ok: false, error: after.failure };
+    if (after.top !== null && after.top !== before.top) stashEntry = after.top;
   }
   const switched = await options.runner.run(["switch", "--no-guess", request.name], { cwd, signal });
   if (switched.timedOut || switched.cancelled || switched.exitCode !== 0) {
     const failure = switchFailure(switched);
-    if (!dirty) return { ok: false, error: failure };
-    const rollback = await options.runner.run(["stash", "pop"], { cwd });
+    if (stashEntry === null) return { ok: false, error: failure };
+    const rollback = await options.runner.run([...STASH_POP_ARGS], { cwd });
     const rollbackError = readFailure(rollback);
     const note = rollbackError === null ? "auto-stash restored" : `auto-stash rollback failed: ${rollbackError.message}`;
     return fail(failure.code, `${failure.message}; ${note}`);
   }
-  if (!dirty) return { ok: true, branch: request.name, stash: { stashed: false, restored: false } };
-  const popped = await options.runner.run(["stash", "pop"], { cwd });
+  if (stashEntry === null) return { ok: true, branch: request.name, stash: { stashed: false, restored: false } };
+  const popped = await options.runner.run([...STASH_POP_ARGS], { cwd });
   const restoreError = readFailure(popped);
   if (restoreError === null) {
     return { ok: true, branch: request.name, stash: { stashed: true, restored: true } };

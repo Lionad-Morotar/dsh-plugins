@@ -12,11 +12,30 @@ import { switchToBranch } from "../src/host/switch.ts";
 const ENUM_ARGV = ["for-each-ref", "--format=%(refname)", "refs/heads"];
 const STATUS_ARGV = ["status", "--porcelain=v2", "-z", "--untracked-files=normal"];
 const SWITCH_ARGV = ["switch", "--no-guess", "feat/one"];
-const POP_ARGV = ["stash", "pop"];
+const STASH_TOP_ARGV = ["stash", "list", "--format=%H", "-1"];
+const POP_ARGV = ["stash", "pop", "stash@{0}"];
 const PUSH_ARGV = ["stash", "push", "--include-untracked", "-m", "git-explorer: 切换 feat/one 前自动暂存"];
 const REFS = ["refs/heads/main", "refs/heads/feat/one"].join("\n");
 const DIRTY_STATUS = "1 .M N... 100644 100644 100644 aaa bbb src/a.ts\0? notes.txt\0";
 const CLEAN_STASH = { stashed: false, restored: false };
+const USER_STASH = "1".repeat(40);
+const AUTO_STASH = "2".repeat(40);
+
+interface FakeStashStack {
+  readonly top: (argv: readonly string[]) => GitRunResult;
+  readonly created: () => void;
+}
+
+/** Models the stack top so a push can either create an entry or leave it alone. */
+function fakeStashStack(before: string | null): FakeStashStack {
+  let top = before;
+  return {
+    top: argv => ok(argv, top === null ? "" : `${top}\n`),
+    created: () => {
+      top = AUTO_STASH;
+    },
+  };
+}
 
 function ok(argv: readonly string[], stdout: string): GitRunResult {
   return { argv, exitCode: 0, stdout, stderr: "", timedOut: false, cancelled: false, stdoutLossy: false };
@@ -57,37 +76,111 @@ describe("switchToBranch", () => {
   });
 
   it("parks a dirty worktree in a stash and restores it after the switch", async () => {
+    const stack = fakeStashStack(null);
     const { runner, calls } = fakeRunner(args => {
       if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
       if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
-      if (args[0] === "stash" && args[1] === "push") return ok(["git", ...args], "Saved working directory\n");
+      if (args[0] === "stash" && args[1] === "list") return stack.top(["git", ...args]);
+      if (args[0] === "stash" && args[1] === "push") {
+        stack.created();
+        return ok(["git", ...args], "Saved working directory\n");
+      }
       if (args[0] === "switch") return ok(["git", ...args], "Switched to branch 'feat/one'\n");
       if (args[0] === "stash" && args[1] === "pop") return ok(["git", ...args], "Dropped refs/stash@{0}\n");
       throw new Error(`unexpected command ${String(args[0])}`);
     });
     const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
     expect(result).toEqual({ ok: true, branch: "feat/one", stash: { stashed: true, restored: true } });
-    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, STATUS_ARGV, PUSH_ARGV, SWITCH_ARGV, POP_ARGV]);
+    expect(calls.map(call => call.argv)).toEqual([
+      ENUM_ARGV,
+      STATUS_ARGV,
+      STASH_TOP_ARGV,
+      PUSH_ARGV,
+      STASH_TOP_ARGV,
+      SWITCH_ARGV,
+      POP_ARGV,
+    ]);
   });
 
-  it("stops before switching when the stash itself is refused", async () => {
+  it("treats an unchanged stash top as a no-op and leaves the user's entry alone", async () => {
+    // `stash push -u` exits 0 without creating an entry when the dirty state is
+    // one it cannot capture. The top stays the user's entry, so a pop here
+    // would apply and drop their stash on the new branch.
+    const stack = fakeStashStack(USER_STASH);
     const { runner, calls } = fakeRunner(args => {
       if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
       if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
+      if (args[0] === "stash" && args[1] === "list") return stack.top(["git", ...args]);
+      if (args[0] === "stash" && args[1] === "push") return ok(["git", ...args], "No local changes to save\n");
+      if (args[0] === "switch") return ok(["git", ...args], "Switched to branch 'feat/one'\n");
+      throw new Error(`unexpected command ${String(args[0])}`);
+    });
+    const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
+    expect(result).toEqual({ ok: true, branch: "feat/one", stash: CLEAN_STASH });
+    expect(calls.map(call => call.argv)).toEqual([
+      ENUM_ARGV,
+      STATUS_ARGV,
+      STASH_TOP_ARGV,
+      PUSH_ARGV,
+      STASH_TOP_ARGV,
+      SWITCH_ARGV,
+    ]);
+  });
+
+  it("does not pop the user's entry when a no-op push is followed by a refused switch", async () => {
+    const stack = fakeStashStack(USER_STASH);
+    const { runner, calls } = fakeRunner(args => {
+      if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+      if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
+      if (args[0] === "stash" && args[1] === "list") return stack.top(["git", ...args]);
+      if (args[0] === "stash" && args[1] === "push") return ok(["git", ...args], "No local changes to save\n");
+      if (args[0] === "switch") return failed(["git", ...args], 1, "fatal: cannot switch\n");
+      throw new Error(`unexpected command ${String(args[0])}`);
+    });
+    const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
+    expect(result).toEqual({ ok: false, error: { code: "git-failed", message: "fatal: cannot switch" } });
+    expect(calls.some(call => call.argv[1] === "pop")).toBe(false);
+  });
+
+  it("refuses to stash when the stack top cannot be read", async () => {
+    const { runner, calls } = fakeRunner(args => {
+      if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+      if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
+      return failed(["git", ...args], 128, "fatal: unable to read stash reflog\n");
+    });
+    const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: "git-failed", message: "fatal: unable to read stash reflog" },
+    });
+    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, STATUS_ARGV, STASH_TOP_ARGV]);
+  });
+
+  it("stops before switching when the stash itself is refused", async () => {
+    const stack = fakeStashStack(null);
+    const { runner, calls } = fakeRunner(args => {
+      if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
+      if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
+      if (args[0] === "stash" && args[1] === "list") return stack.top(["git", ...args]);
       if (args[0] === "stash" && args[1] === "push") return failed(["git", ...args], 1, "error: pre-commit hook refused\n");
       throw new Error(`unexpected command ${String(args[0])}`);
     });
     const result = await switchToBranch({ runner, cwd: "/repo" }, { name: "feat/one" });
     expect(result).toEqual({ ok: false, error: { code: "git-failed", message: "error: pre-commit hook refused" } });
-    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, STATUS_ARGV, PUSH_ARGV]);
+    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, STATUS_ARGV, STASH_TOP_ARGV, PUSH_ARGV]);
   });
 
   it("pops the stash back when the switch is refused", async () => {
     const refusal = "fatal: 'feat/one' is already used by worktree at '/tmp/other'\nhint: use --ignore-other-worktrees\n";
+    const stack = fakeStashStack(null);
     const { runner, calls } = fakeRunner(args => {
       if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
       if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
-      if (args[0] === "stash" && args[1] === "push") return ok(["git", ...args], "");
+      if (args[0] === "stash" && args[1] === "list") return stack.top(["git", ...args]);
+      if (args[0] === "stash" && args[1] === "push") {
+        stack.created();
+        return ok(["git", ...args], "");
+      }
       if (args[0] === "switch") return failed(["git", ...args], 1, refusal);
       if (args[0] === "stash" && args[1] === "pop") return ok(["git", ...args], "");
       throw new Error(`unexpected command ${String(args[0])}`);
@@ -101,18 +194,31 @@ describe("switchToBranch", () => {
           "fatal: 'feat/one' is already used by worktree at '/tmp/other'; hint: use --ignore-other-worktrees; auto-stash restored",
       },
     });
-    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, STATUS_ARGV, PUSH_ARGV, SWITCH_ARGV, POP_ARGV]);
+    expect(calls.map(call => call.argv)).toEqual([
+      ENUM_ARGV,
+      STATUS_ARGV,
+      STASH_TOP_ARGV,
+      PUSH_ARGV,
+      STASH_TOP_ARGV,
+      SWITCH_ARGV,
+      POP_ARGV,
+    ]);
   });
 
   it("restores the stash even when the request was cancelled before the rollback", async () => {
     const controller = new AbortController();
     const calls: string[][] = [];
+    const stack = fakeStashStack(null);
     const runner: GitRunner = {
       async run(args, options = {}) {
         calls.push([...args]);
         if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
         if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
-        if (args[0] === "stash" && args[1] === "push") return ok(["git", ...args], "");
+        if (args[0] === "stash" && args[1] === "list") return stack.top(["git", ...args]);
+        if (args[0] === "stash" && args[1] === "push") {
+          stack.created();
+          return ok(["git", ...args], "");
+        }
         if (args[0] === "switch") {
           controller.abort();
           return {
@@ -147,14 +253,27 @@ describe("switchToBranch", () => {
       ok: false,
       error: { code: "git-failed", message: "cancelled; auto-stash restored" },
     });
-    expect(calls.map(args => args[0])).toEqual(["for-each-ref", "status", "stash", "switch", "stash"]);
+    expect(calls.map(args => args[0])).toEqual([
+      "for-each-ref",
+      "status",
+      "stash",
+      "stash",
+      "stash",
+      "switch",
+      "stash",
+    ]);
   });
 
   it("says so when the rollback of a refused switch also fails", async () => {
+    const stack = fakeStashStack(null);
     const { runner } = fakeRunner(args => {
       if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
       if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
-      if (args[0] === "stash" && args[1] === "push") return ok(["git", ...args], "");
+      if (args[0] === "stash" && args[1] === "list") return stack.top(["git", ...args]);
+      if (args[0] === "stash" && args[1] === "push") {
+        stack.created();
+        return ok(["git", ...args], "");
+      }
       if (args[0] === "switch") return failed(["git", ...args], 1, "fatal: cannot switch\n");
       return failed(["git", ...args], 1, "error: could not restore\n");
     });
@@ -173,10 +292,15 @@ describe("switchToBranch", () => {
       "The stash entry is kept in case you need it again.",
       "a fourth line is dropped",
     ].join("\n");
+    const stack = fakeStashStack(null);
     const { runner, calls } = fakeRunner(args => {
       if (args[0] === "for-each-ref") return ok(["git", ...args], REFS);
       if (args[0] === "status") return ok(["git", ...args], DIRTY_STATUS);
-      if (args[0] === "stash" && args[1] === "push") return ok(["git", ...args], "");
+      if (args[0] === "stash" && args[1] === "list") return stack.top(["git", ...args]);
+      if (args[0] === "stash" && args[1] === "push") {
+        stack.created();
+        return ok(["git", ...args], "");
+      }
       if (args[0] === "switch") return ok(["git", ...args], "");
       return failed(["git", ...args], 1, stderr);
     });
@@ -191,7 +315,15 @@ describe("switchToBranch", () => {
         message: "Auto-merging shared.txt; CONFLICT (content): Merge conflict in shared.txt; The stash entry is kept in case you need it again.",
       },
     });
-    expect(calls.map(call => call.argv)).toEqual([ENUM_ARGV, STATUS_ARGV, PUSH_ARGV, SWITCH_ARGV, POP_ARGV]);
+    expect(calls.map(call => call.argv)).toEqual([
+      ENUM_ARGV,
+      STATUS_ARGV,
+      STASH_TOP_ARGV,
+      PUSH_ARGV,
+      STASH_TOP_ARGV,
+      SWITCH_ARGV,
+      POP_ARGV,
+    ]);
   });
 
   it("refuses to switch when the worktree state cannot be read", async () => {
@@ -366,6 +498,26 @@ async function makeTrackedRepository(root: string): Promise<string> {
   return repo;
 }
 
+/**
+ * A repository whose dirty state can be confined to a submodule. The
+ * superproject sees the submodule as modified while `stash push` has no
+ * superproject change it can capture, which is exactly the no-op shape.
+ */
+async function makeSubmoduleRepository(root: string): Promise<string> {
+  git(root, "init", "-q", "-b", "main", "sub-origin");
+  const sub = join(root, "sub-origin");
+  git(sub, "config", "user.name", "Switch Test");
+  git(sub, "config", "user.email", "switch@example.com");
+  await writeFile(join(sub, "inner.txt"), "base\n");
+  git(sub, "add", "inner.txt");
+  git(sub, "commit", "-q", "-m", "inner base");
+
+  const repo = await makeTrackedRepository(root);
+  git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", "../sub-origin", "sub");
+  git(repo, "commit", "-q", "-m", "add submodule");
+  return repo;
+}
+
 describe("switchToBranch in a real repository", () => {
   it("leaves the worktree on the branch it switched to without a stash entry", async () => {
     await withTempDirectory(async root => {
@@ -401,6 +553,29 @@ describe("switchToBranch in a real repository", () => {
       expect(await readFile(join(repo, "tracked.txt"), "utf8")).toBe("base\nlocal\n");
       expect(existsSync(join(repo, "untracked.txt"))).toBe(true);
       expect(stashCount(repo)).toBe(0);
+    });
+  });
+
+  it("switches without touching a user stash when only submodule content is dirty", async () => {
+    await withTempDirectory(async root => {
+      const repo = await makeSubmoduleRepository(root);
+      git(repo, "branch", "feat/one");
+      await writeFile(join(repo, "tracked.txt"), "base\nuser\n");
+      git(repo, "stash", "push", "-q", "-m", "user-entry");
+      const userStash = git(repo, "stash", "list", "--format=%H", "-1").trim();
+      expect(userStash).not.toBe("");
+      // Only the submodule moved: `stash push -u` prints "No local changes to
+      // save" and exits 0, so the user's entry stays at the top.
+      await writeFile(join(repo, "sub", "inner.txt"), "base\nsub\n");
+
+      const result = await switchToBranch({ runner: localRunner, cwd: repo }, { name: "feat/one" });
+
+      expect(result).toEqual({ ok: true, branch: "feat/one", stash: CLEAN_STASH });
+      expect(git(repo, "branch", "--show-current").trim()).toBe("feat/one");
+      expect(stashCount(repo)).toBe(1);
+      expect(git(repo, "stash", "list", "--format=%H", "-1").trim()).toBe(userStash);
+      // The pre-existing stash was neither applied nor dropped.
+      expect(await readFile(join(repo, "tracked.txt"), "utf8")).toBe("base\n");
     });
   });
 
