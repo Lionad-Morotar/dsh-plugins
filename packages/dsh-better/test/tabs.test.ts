@@ -24,6 +24,7 @@ import {
   createTabController,
   planHiddenRules,
   readHidden,
+  readStripButtons,
   resolveViewLabel,
   stripRows,
   tabRows,
@@ -138,6 +139,41 @@ describe("tabRows / stripRows", () => {
   it("projects the same roster onto the strip, chat excluded there too", () => {
     expect(stripRows([view("chat", "对话"), view("files", "文件"), view("files", "旧")]))
       .toEqual([{ id: "files", label: "文件" }]);
+  });
+});
+
+describe("readStripButtons", () => {
+  /**
+   * The host's tab: a button whose visible label lives in a nested span, with
+   * the tooltip's own fallback text as a sibling the reader must not see.
+   */
+  function hostButton(label: string, tooltipFallback: string): {
+    textContent: string;
+    querySelector(selector: string): { textContent: string } | null;
+  } {
+    return {
+      textContent: `${label}${tooltipFallback}`,
+      querySelector: selector => (selector === "[class*='tabLabel']" ? { textContent: ` ${label} ` } : null),
+    };
+  }
+
+  it("reads the nested label rather than the tooltip's fallback text", () => {
+    const buttons = [hostButton("对话", ""), hostButton("WakaTime", "WakaTime"), hostButton("文件", "")];
+    const doc = {
+      querySelector: () => ({
+        querySelectorAll: () => Object.assign([...buttons], { length: buttons.length }),
+      }),
+    };
+    expect(readStripButtons(doc)).toEqual(["对话", "WakaTime", "文件"]);
+  });
+
+  it("falls back to the button's own text when the host renders the label bare", () => {
+    const doc = {
+      querySelector: () => ({
+        querySelectorAll: () => Object.assign([{ textContent: " 对话 ", querySelector: () => null }], { length: 1 }),
+      }),
+    };
+    expect(readStripButtons(doc)).toEqual(["对话"]);
   });
 });
 

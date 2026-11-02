@@ -330,9 +330,25 @@ export function readStripButtons(doc: StripDocument): readonly string[] | undefi
   if (buttons === undefined) return undefined;
   const texts: string[] = [];
   for (let index = 0; index < buttons.length; index += 1) {
-    texts.push(buttons[index]?.textContent ?? "");
+    texts.push(buttonLabel(buttons[index]));
   }
   return texts;
+}
+
+/**
+ * The label a tab button shows.
+ *
+ * The host wraps the label in a tooltip, and the tooltip's accessible name is
+ * the button's text. Reading `textContent` instead returns the tooltip's own
+ * fallback copy when the label is short enough not to overflow, which is every
+ * tab here, so the comparison against the ledger finds nothing and the strip
+ * stays whole. The visible label is the `.tabLabel` span; the button's own text
+ * is the fallback for a host that renders the label bare.
+ */
+function buttonLabel(button: { textContent?: string | null; querySelector?: (selector: string) => { textContent?: string | null } | null } | undefined): string {
+  const label = button?.querySelector?.("[class*='tabLabel']");
+  const text = label?.textContent ?? button?.textContent ?? "";
+  return text.trim();
 }
 
 /**
