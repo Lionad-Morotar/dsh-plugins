@@ -1,5 +1,5 @@
-# Arch tab Loader row. The client half waits for the `workbench` service
-# through its plugin `inject`, so row order against the core row is irrelevant.
+# Arch tab Loader row. The client half waits for `slots` and registers a
+# conversation view; the dock kind is optional and probed at apply time.
 - insert:
     - id: arch
       name: 'dsh-arch'

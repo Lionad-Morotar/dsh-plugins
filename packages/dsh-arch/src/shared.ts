@@ -9,6 +9,15 @@
 /** Loader row name; must match `package.json#name` and the patch row id. */
 export const PACKAGE_NAME = "dsh-arch";
 
+/** Host slot the architecture view registers into, beside files and Git. */
+export const VIEW_SLOT = "conversation.view";
+
+/** Cell id inside that list slot. */
+export const VIEW_ID = "arch";
+
+/** Tab order in the conversation view row; chat stays at 0, files 100, Git 110. */
+export const VIEW_ORDER = 120;
+
 /**
  * HTTP route prefix handed to `webServer.register({ kind: "prefix", ... })`.
  *

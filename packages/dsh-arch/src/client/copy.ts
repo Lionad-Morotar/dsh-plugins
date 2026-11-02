@@ -5,7 +5,7 @@
  * model data from the wire payload.
  */
 export const ZH: Record<string, string> = {
-  "arch.tabTitle": "Arch",
+  "arch.tabTitle": "\u67b6\u6784",
   "arch.waitingSession": "等待会话…",
   "arch.empty": "本工作区还没有 C4 模型。用 flow-dx 的 agents-md 流程生成 .planning/c4 模型后，即可在此浏览架构图。",
   "arch.loadFailed": "架构数据加载失败",

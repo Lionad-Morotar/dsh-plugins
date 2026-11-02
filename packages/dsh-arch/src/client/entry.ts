@@ -17,10 +17,11 @@
  */
 import type { DiagramHandle, DiagramInteractions, DiagramView } from "./chunk/diagram.ts";
 import type { DiagramChunkModule, LoaderRequire } from "./chunk-loader.ts";
-import { PACKAGE_NAME } from "../shared.ts";
+import { PACKAGE_NAME, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
 import { loadDiagramChunk } from "./chunk-loader.ts";
 import { EN, LOCALE_NAMESPACE, ZH } from "./copy.ts";
 import { mountArchChrome, type ArchChromeStrings } from "./chrome.tsx";
+import { createArchView } from "./view.tsx";
 import { applyViewOffsets, defaultViewport, offsetFromDrag } from "./view-state.ts";
 import type { ViewStateHandle } from "./view-state.ts";
 
@@ -33,9 +34,15 @@ export type { DiagramInteractions } from "./chunk/diagram.ts";
 
 /** The slice of the client context this entry uses. */
 export interface ArchClientContext {
+  readonly slots: {
+    inject(slot: string, factory: () => () => void): unknown;
+    register(options: Record<string, unknown>, component: unknown): () => void;
+  };
   readonly locale: {
     register(namespace: string, dictionaries: Record<string, Record<string, string>>): () => void;
     bind(namespace: string): (key: string) => string;
+    /** Locale snapshot; absent on hosts that only expose the binder. */
+    getSnapshot?(): { readonly active?: string };
   };
   readonly workbench?: WorkbenchFace;
   get?(name: string): unknown;
@@ -50,8 +57,13 @@ export interface WorkbenchFace {
   }) => () => void;
 }
 
-/** Services this plugin waits for before applying. */
-export const inject = ["locale", "workbench"];
+/** Services this plugin waits for before applying.
+ *
+ * `slots` is required: the conversation tab is the entry the user looks for.
+ * `workbench` stays so the dock kind can still register when the core is up;
+ * a host without it still gets the conversation tab.
+ */
+export const inject = ["slots", "locale", "workbench"];
 
 /** Disposer of the dictionary currently sitting in the host's locale table.
 * A repeat apply on one host process meets the same table, and the table
@@ -93,36 +105,71 @@ function chromeStrings(t: (key: string) => string): ArchChromeStrings {
 }
 
 /**
+ * The host's active locale id.
+ *
+ * The slot label is re-resolved by the shell on every locale revision, so the
+ * thunk reads this at call time instead of freezing the boot language.
+ * @param ctx - the client context carrying the locale service.
+ * @returns the active id, or `zh` when the host exposes no snapshot.
+ */
+function activeLocale(ctx: ArchClientContext): string {
+  const snapshot = ctx.locale.getSnapshot?.();
+  return typeof snapshot?.active === "string" ? snapshot.active : "zh";
+}
+
+/** Chrome seams shared by the conversation view and the dock kind. */
+function chromeSeams(t: (key: string) => string) {
+  return {
+    mountView: mountArchDiagram,
+    load: loadDiagramChunk,
+    strings: chromeStrings(t),
+  };
+}
+
+/**
  * Register the Arch panel kind.
  *
  * @param ctx - the client context, with the core service already injected.
  * @returns a disposer that unregisters the kind and the dictionary.
  */
 export function apply(ctx: ArchClientContext): () => void {
-  const workbench = readWorkbench(ctx);
-  if (workbench === undefined || typeof workbench.registerDockPanelKind !== "function") return () => {};
-
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
   registeredDictionaries?.();
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
   registeredDictionaries = offLocale;
 
-  // Drop the previous registration before taking a new one: the double apply
-  // meets a fresh core service, and the old ledger entry must not outlive
-  // the service instance that owns it.
-  registeredKind?.();
-  const offKind = workbench.registerDockPanelKind({
-    kind: ARCH_PANEL_KIND,
-    title: t("arch.tabTitle"),
-    mount: (host, context) =>
-      mountArchChrome(host, {
-        sessionId: context.sessionId,
-        mountView: mountArchDiagram,
-        load: loadDiagramChunk,
-        strings: chromeStrings(t),
-      }),
-  });
-  registeredKind = offKind;
+  const View = createArchView({ chrome: chromeSeams(t) });
+  ctx.slots.inject(VIEW_SLOT, () =>
+    ctx.slots.register(
+      {
+        name: VIEW_SLOT,
+        id: VIEW_ID,
+        order: VIEW_ORDER,
+        label: () => (activeLocale(ctx).startsWith("zh") ? ZH["arch.tabTitle"] : EN["arch.tabTitle"]),
+        locale: LOCALE_NAMESPACE,
+      },
+      View,
+    ),
+  );
+
+  const workbench = readWorkbench(ctx);
+  let offKind = (): void => {};
+  if (workbench !== undefined && typeof workbench.registerDockPanelKind === "function") {
+    // Drop the previous registration before taking a new one: the double apply
+    // meets a fresh core service, and the old ledger entry must not outlive
+    // the service instance that owns it.
+    registeredKind?.();
+    offKind = workbench.registerDockPanelKind({
+      kind: ARCH_PANEL_KIND,
+      title: t("arch.tabTitle"),
+      mount: (host, context) =>
+        mountArchChrome(host, {
+          sessionId: context.sessionId,
+          ...chromeSeams(t),
+        }),
+    });
+    registeredKind = offKind;
+  }
 
   return () => {
     offKind();

@@ -59,7 +59,7 @@
 | `dsh-fs-explorer` | `fs-explorer` | `dsh-fs-explorer` | `packages/dsh-fs-explorer/cordis.patch.yml` | 无；`dsh.client.inject: ["dsh-workbench-core"]` |
 | `dsh-git-explorer` | `git-explorer` | `dsh-git-explorer` | `packages/dsh-git-explorer/cordis.patch.yml` | 无；宿主半导出 Typert 命名空间 `gitExplorer`，客户端半 `dsh.client.inject: ["dsh-workbench-core"]` |
 | `dsh-term-dock` | `term-dock` | `dsh-term-dock` | `packages/dsh-term-dock/cordis.patch.yml` | 无；`dsh.client.inject: ["dsh-workbench-core"]`，占 `shell.bottom` |
-| `dsh-arch` | `arch` | `dsh-arch` | `packages/dsh-arch/cordis.patch.yml` | `/arch/api` 前缀路由（views / model / state），`dsh.client.inject: ["dsh-workbench-core"]`，经面板种类挂进 term-dock 的 `shell.bottom` |
+| `dsh-arch` | `arch` | `dsh-arch` | `packages/dsh-arch/cordis.patch.yml` | `/arch/api` 前缀路由（views / model / state），`dsh.client.inject: ["dsh-workbench-core"]`，会话顶栏 `conversation.view` 挂「架构」标签，另可选经面板种类挂进 term-dock 的 `shell.bottom` |
 
 ## 客户端半边入口
 
@@ -81,7 +81,7 @@
 | `dsh-fs-explorer` | `src/client/entry.ts` | `lib/client.js` + `lib/client.preview.js` + 三个家族 chunk（`lib/client.scene3d.js` / `lib/client.raster.js` / `lib/client.cad.js`） | `slots.register({ name: "conversation.view", id: "fs-explorer", order: 100 })`；另有可选地址桥（见下）；`inject = ["slots", "locale", "workbench", "remote"]`；CodeMirror 与 Markdown 渲染器在懒 chunk，二进制家族渲染器按家族懒加载 |
 | `dsh-git-explorer` | `src/client/entry.ts` | `lib/client.js`（宿主半 `lib/index.js`） | `slots.register({ name: "conversation.view", id: "git-explorer", order: 110 })`；`inject` 同文件面板，数据走 `remote.gitExplorer` 的 snapshot / query / commit |
 | `dsh-term-dock` | `src/client/entry.ts` | `lib/client.js` + `lib/client.terminal.js` | `slots.register({ name: "shell.bottom", id: "term-dock" })`，仅在 core 的 `dockVisible` 为真时注册；`inject = ["slots", "locale", "workbench"]`；xterm 在懒 chunk |
-| `dsh-arch` | `src/client/entry.ts` | `lib/client.js` + `lib/client.diagram.js` | 经 `workbench.registerDockPanelKind` 注册 kind `arch`（不占独立 slot），SVG 渲染器在懒 chunk；宿主半 `lib/index.js` 提供 `/arch/api` 三路由；`inject = ["slots", "locale", "workbench"]` |
+| `dsh-arch` | `src/client/entry.ts` | `lib/client.js` + `lib/client.diagram.js` | `slots.register({ name: "conversation.view", id: "arch", order: 120 })` 会话标签（文件 100、Git 110 之后），另经 `workbench.registerDockPanelKind` 可选注册 kind `arch`；SVG 渲染器在懒 chunk；宿主半 `lib/index.js` 提供 `/arch/api` 三路由；`inject = ["slots", "locale", "workbench"]` |
 
 ### 右栏地址桥（`dsh-fs-explorer`，可选）
 
