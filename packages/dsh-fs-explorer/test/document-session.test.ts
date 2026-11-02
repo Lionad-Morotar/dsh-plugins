@@ -496,6 +496,31 @@ describe("document channel", () => {
     expect(createDocumentsResolver({ remote: { fsExplorerDocuments: face } })()).toBe(face);
   });
 
+  it("falls back to the raw connection RPC when no generated namespace exists", async () => {
+    const calls: Array<{ scope: string; endpoint: string; payload: unknown }> = [];
+    const resolve = createDocumentsResolver({
+      remote: {},
+      get: name =>
+        name === "connection"
+          ? {
+              rpc: {
+                call: async (scope: string, endpoint: string, payload: unknown) => {
+                  calls.push({ scope, endpoint, payload });
+                  return { ok: true, value: { ok: true, document: { text: "hi", version: "v9" } } };
+                },
+              },
+            }
+          : undefined,
+    });
+    const face = resolve();
+    expect(face).toBeDefined();
+    const answer = await face!.open({ sessionId: "s1", path: "a.md" });
+    expect(calls).toEqual([
+      { scope: "/api", endpoint: "fsExplorerDocuments/open", payload: { args: { request: { sessionId: "s1", path: "a.md" } } } },
+    ]);
+    expect(normalizeOpenResult(answer)).toEqual({ ok: true, text: "hi", version: "v9" });
+  });
+
   it("falls back to the Cordis resolver", () => {
     const resolve = createDocumentsResolver({
       remote: {},

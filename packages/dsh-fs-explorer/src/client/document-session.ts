@@ -9,6 +9,8 @@
  * request may never overwrite a newer draft, and a write is authorized by the
  * version the text was read at rather than by time.
  */
+import { DOCUMENTS_SERVICE } from "../shared.ts";
+
 /** A failure the session can paint, after transport envelopes are gone. */
 export interface DocumentError {
   readonly code: string;
@@ -252,10 +254,63 @@ export function isDocumentsFace(value: unknown): value is DocumentsFace {
   return isRecord(value) && typeof value.open === "function";
 }
 
+/** The gateway's unary caller, as the connection service exposes it. */
+interface ConnectionFace {
+  readonly rpc?: {
+    call(scope: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<unknown>;
+  };
+}
+
+/** One unary call into the host namespace. */
+export type DocumentsRpcCall = (endpoint: string, payload: unknown, signal?: AbortSignal) => Promise<unknown>;
+
 /**
- * Resolve `remote.fsExplorerDocuments` on every call so a late mount works.
+ * Reach a hand-published host namespace through the raw connection RPC.
+ *
+ * A third-party package ships no generated client contribution, so
+ * `ctx.remote.<namespace>` never exists for it; the generated tables only cover
+ * namespaces the host itself publishes a client artifact for. The connection
+ * service is the same route the built-in panels use, and it is the only path
+ * that works for a plugin-hosted Remote service.
+ * @param ctx - client context carrying the connection service.
+ * @returns the caller, or undefined when this host exposes no connection.
+ */
+export function createDocumentsRpc(ctx: DocumentsContextLike): DocumentsRpcCall | undefined {
+  const connection = safeRead(() =>
+    typeof ctx.get === "function" ? (ctx.get("connection") as ConnectionFace | undefined) : undefined,
+  );
+  const rpc = isRecord(connection) ? connection.rpc : undefined;
+  if (!isRecord(rpc) || typeof rpc.call !== "function") return undefined;
+  return (endpoint, payload, signal) =>
+    (rpc.call as (scope: string, endpoint: string, payload: unknown, signal?: AbortSignal) => Promise<unknown>).call(
+      rpc,
+      "/api",
+      `${DOCUMENTS_SERVICE}/${endpoint}`,
+      payload,
+      signal,
+    );
+}
+
+/**
+ * Build the document face over a raw RPC caller.
+ * @param call - unary caller bound to this namespace.
+ * @returns a face shaped like the generated one.
+ */
+export function createRpcDocumentsFace(call: DocumentsRpcCall): DocumentsFace {
+  const invoke =
+    (method: string) =>
+    (request: unknown, signal?: AbortSignal): Promise<unknown> =>
+      call(method, { args: { request } }, signal);
+  return { open: invoke("open"), save: invoke("save") };
+}
+
+/**
+ * Resolve the document namespace on every call so a late mount works.
+ *
+ * Order: the injected service, the generated table, the non-throwing resolver,
+ * then the raw connection RPC that hand-published host halves actually reach.
  * @param ctx - the client context this row was applied to.
- * @returns a resolver that answers undefined while the namespace is absent.
+ * @returns a resolver that answers undefined while no transport exists.
  */
 export function createDocumentsResolver(ctx: DocumentsContextLike): () => DocumentsFace | undefined {
   return () => {
@@ -269,6 +324,9 @@ export function createDocumentsResolver(ctx: DocumentsContextLike): () => Docume
       typeof ctx.get === "function" ? ctx.get("remote.fsExplorerDocuments") : undefined,
     );
     if (isDocumentsFace(viaGet)) return viaGet;
+
+    const call = createDocumentsRpc(ctx);
+    if (call !== undefined) return createRpcDocumentsFace(call);
 
     return undefined;
   };
