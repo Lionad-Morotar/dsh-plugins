@@ -40,6 +40,7 @@ Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。十九个包：DSH �
 | `dsh-repo-harness` | [README](./packages/dsh-repo-harness/README.md)：merge-steer 的 reflog 检测、15 秒轮询与 fs.watch 加速、受众规则、消息 clamp、配置与限制 |
 | `dsh-workbench-core` | [README](./packages/dsh-workbench-core/README.md)：`workbench` 服务契约、设置页三组键位矩阵与会话视图数字键开关、宿主适配层与视图切换 seam |
 | `dsh-fs-explorer` | [README](./packages/dsh-fs-explorer/README.md)：懒加载文件树、Git 状态着色、分页预览与多面板；二进制预览家族与右栏地址桥 |
+| `dsh-fs-markdown` | [README](./packages/dsh-fs-markdown/README.md)：`.md` / `.markdown` 正文的 CodeMirror 6 编辑器，光标块显示标记、源码模式复用同一实例，整篇文档的草稿与版本守卫保存 |
 | `dsh-git-explorer` | [README](./packages/dsh-git-explorer/README.md)：argv-only 取数、泳道提交图、两栏视图与跨面板跳转 |
 | `dsh-term-dock` | [README](./packages/dsh-term-dock/README.md)：会话级终端 dock、xterm 懒 chunk、背压与进程台账 |
 | `dsh-arch` | [README](./packages/dsh-arch/README.md)：架构图 tab、LikeC4 宿主内布局与 `/arch/api` 下发、视口/偏移写回闭环、watch baseline 窗口与节流轮询刷新、体积代价首屏（55MB 依赖） |

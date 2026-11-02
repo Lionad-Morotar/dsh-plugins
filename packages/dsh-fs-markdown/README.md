@@ -1,55 +1,122 @@
 # dsh-fs-markdown
 
-文件浏览器的 Markdown 编辑器插件。它把自己注册成 `.md` / `.markdown` 的正文渲染器，经宿主文档通道读整篇文件，正文直接进入可编辑的 CodeMirror 6：光标所在块显示 Markdown 标记，离开后恢复排版；源码模式复用同一个编辑器实例，只关掉装饰。
+文件浏览器 `dsh-fs-explorer` 的 Markdown 编辑器插件。它把自己注册成 `.md` / `.markdown` 的正文渲染器：经宿主整篇文档通道读入文件，正文直接进入可编辑的 CodeMirror 6。光标所在块显示 Markdown 标记，离开后恢复排版；源码模式复用同一个编辑器实例，只关掉装饰层。
 
 ## 它接管什么
 
-文件浏览器 `dsh-fs-explorer` 把「谁来画正文」做成了一张注册表。本包在客户端 `apply` 时注册一条贡献：
+文件浏览器把「谁来画正文」做成了一张注册表，本包在客户端 `apply` 时注册一条贡献：
 
 | 字段 | 值 |
 | --- | --- |
 | `id` | `markdown` |
 | `label` | `Markdown` |
 | `match.extensions` | `.md`、`.markdown` |
-| `priority` | `10`，高于文件浏览器自带的 Markdown 阅读器 |
-| `load()` | 同步返回 `{ Body: MarkdownBody, renderer: "markdown" }` |
+| `priority` | `10`，高于文件浏览器的内置 Markdown 渲染器 `builtin.markdown`（priority `0`） |
+| `load()` | 立即 resolve `{ Body: MarkdownBody, renderer: "markdown" }`；CodeMirror 不在启动包里，正文挂载后才去取懒 chunk `client.editor.js` |
 
-只有命中的文件才会挂载这个 Body，所以别的格式不为本包付出任何解析成本。
+只有命中后缀的文件才会挂载这个 Body，别的格式不为本包付出任何解析成本。启动包 `lib/client.js` 里不允许出现 `@codemirror` 字样，构建脚本会断言这条边界。
 
 ## 两种模式
 
-阅读态是可编辑的 CodeMirror 6。装饰规划由纯函数 `planDecorations(text, selection)` 产出，规则覆盖标题、加粗、斜体、行内代码、链接、引用、列表标记、围栏代码块与表格等宽；活动块（与光标相交的块）不隐藏任何标记，其他块的标记折叠成排版。样式类名统一为 `fmd-h1`…`fmd-h6`、`fmd-strong`、`fmd-em`、`fmd-code`、`fmd-link`、`fmd-quote`、`fmd-list-marker`、`fmd-code-block`，由 `styles.ts` 注入并跟随宿主的亮暗 token。
+| 模式 | 行为 |
+| --- | --- |
+| 阅读态 `reading` | 装饰层开启。标题按 `fmd-h1`…`fmd-h6` 放大，粗体 / 斜体 / 行内代码 / 链接 / 引用 / 列表标记只保留排版结果；与光标相交的块（活动块）不隐藏任何标记，方便就地改源码 |
+| 源码态 `source` | 同一个 `EditorView`，只把装饰 compartment 换成空扩展，全文按等宽源码呈现 |
 
-源码态是同一个编辑器实例：只把装饰 compartment 换成空扩展，因此滚动位置、选区与撤销历史都不丢。
+两种模式共享滚动位置、选区和撤销历史：切换不是重建编辑器。装饰规划由纯函数 `planDecorations(text, selection)` 产出，规则覆盖标题、加粗、斜体、行内代码、链接、引用、列表标记、围栏代码块与表格。
 
-第一期的呈现边界：不做数学公式、不做任务列表复选框替换、不做表格 widget、不做图片内联。这些行保持 Markdown 源码呈现，留给后续切片。
+## 第一期的呈现边界
 
-## 文档从哪里来
+- 表格按等宽源码块呈现（`fmd-code-block`），不解析成表格 widget。
+- 数学公式不做渲染：行内 `$…$` 与块级 `$$…$$` 都按普通文本保留，没有等宽或公式样式。
+- 文首 frontmatter（两条 `---` 夹住的块）呈现中性：整块原样保留，任何标记都不隐藏、不改样式。
+- 图片 `![alt](url)` 保持字面，不内联。
+- 任务列表 `- [ ]` 只当普通列表项，不画复选框。
 
-正文的草稿来自文件浏览器客户端服务 `ctx.fsExplorer.documents.acquire(sessionId, path)`。会话按 `sessionId + path` 复用，引用计数归零才释放；`setDraft` 只改内存草稿，`save()` 目前只推进本地基线，远端保存由后续切片接上。通道不存在（宿主没装文件浏览器的宿主半边）时，正文显示「文档通道不可用」并提供重试，不会让面板停在加载中。
+这些都是留给后续切片的边界，不是遗漏：编辑器当前只做「标记折叠 + 排版投影」，不引入 Markdown AST 或 widget 系统。
 
-底层读取仍走 `ctx.remote.fsExplorerDocuments.open({ sessionId, path }, signal)` 读整篇，而不是复用文件浏览器的分页预览。失败按通道的错误码出人话：
+## 文档通道：草稿与保存
+
+### 草稿
+
+正文的草稿来自文件浏览器客户端服务 `ctx.fsExplorer.documents`：
+
+- `acquire(sessionId, path)` 按 `sessionId + path` 复用一个会话，引用计数归零才释放。同一份文档被面板重挂载、或被别的渲染器同时打开时，拿到的是同一份草稿。
+- `setDraft(text)` 只改内存草稿，`dirty` 由 `text !== savedText` 推出；标签页上的未保存圆点读的是同一份快照。
+- 文件浏览器客户端版本过旧、服务上没有 `documents` 成员时，正文显示「文档通道不可用」并提供重试，不会让面板停在加载中。
+
+整篇读取走 `remote.fsExplorerDocuments.open({ sessionId, path })`，不复用文件浏览器的分页预览。同一会话里同一份文档只在首次可见时读取一次；模式切换复用同一个会话与编辑器实例；面板卸载会释放会话引用。
+
+失败按通道错误码出人话：
 
 | 错误码 | 提示 |
 | --- | --- |
 | `too-large` | 文件超过 2 MiB，请用源码分页阅读 |
 | `not-text` | 这不是文本文件，无法按文档读取 |
 | `no-workspace` | 当前会话缺少工作目录，无法定位这个文件 |
+| `no-session` | 没有会话上下文，无法读取这个文件 |
 | 其他 | 后端返回的原始 message |
 
-同一会话里同一份文档只在路径变化时读取一次，模式切换复用同一个会话与编辑器实例；面板卸载会释放会话引用。
+### 保存
+
+`save()` 把当前草稿整篇写回，请求体是 `{ sessionId, path, text, expectedVersion }`，`expectedVersion` 是这次文本被读入时的版本。规则如下：
+
+- 草稿不脏时不发写请求，直接返回当前版本。
+- 另有保存正在进行时返回 `busy`；文档尚未读完时返回 `not-ready`。
+- 宿主只有读通道、没有写通道时返回 `unavailable`，界面明说保存不可用，不假装写成功。
+- 写入成功才推进 `savedText` 与 `version`；保存期间继续输入的文字仍是脏的，不会被这次响应顺手标记为已保存。
+- 版本守卫失败（`stale-version`）进入冲突态：草稿原样保留，面板给出「重新读取」与「复制草稿」两条路。冲突只能靠重新读取清掉，重新读取会用磁盘内容替换草稿。
+- 保存按钮与 `⌘S` 走同一个会话方法；脏面板关闭前必须三选一：保存并关闭、放弃修改、取消。
+
+草稿只在内存里，没有 localStorage / IndexedDB 兜底。页面刷新、宿主崩溃或选择「放弃修改」后，未保存内容就没了；冲突时先复制草稿再重新读取。
+
+## 快捷键
+
+| 动作 | 键 | 说明 |
+| --- | --- | --- |
+| 保存草稿 | `⌘S` / `Ctrl+S` | CodeMirror keymap 里的 `Mod-s`，`preventDefault`，不会落到浏览器的保存页面 |
+| 撤销 / 重做 / 行移动等 | CodeMirror 默认键位 | 由 `defaultKeymap` 提供 |
+| 下一个 / 上一个面板 | `⌘⌥↓` / `⌘⌥↑` | 文件浏览器提供，输入框聚焦时不抢 |
+| 关闭当前面板 | `Ctrl+W` | 桌面端承诺；web 上浏览器先关标签页，见「已知边界」 |
+
+阅读态 / 源码态由面板工具栏的「源码」/「阅读」按钮切换，没有单独键位。
 
 ## 安装
 
-本包是仓库内的私有包（`private: true`），按 Loader row 挂载：
+本包是仓库内的私有包（`private: true`），依赖文件浏览器 `dsh-fs-explorer` 的客户端服务 `fsExplorer`。
+
+### profile 依赖
+
+```jsonc
+// ~/.dsh/profiles/web/package.json
+{
+  "dependencies": {
+    "dsh-fs-explorer": "link:<checkout>/packages/dsh-fs-explorer",
+    "dsh-fs-markdown": "link:<checkout>/packages/dsh-fs-markdown"
+  },
+  "dsh": { "profile": { "bundles": ["…", "dsh-fs-explorer", "dsh-fs-markdown"] } }
+}
+```
+
+### cordis patch
 
 ```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
 - insert:
     - id: fs-markdown
       name: 'dsh-fs-markdown'
 ```
 
-客户端半边在 `package.json` 里声明 `dsh.client.inject: ["dsh-fs-explorer", "remote"]`，并在入口 `inject` 里等待 `fsExplorer` 服务，所以 row 的先后顺序无关紧要。
+`dsh plugin --profile web install` 后重启宿主。客户端半边在 `package.json` 里声明 `dsh.client.inject: ["dsh-fs-explorer", "remote"]`，入口再 `inject` 等待 `fsExplorer`、`locale`、`remote`，所以 row 的先后顺序无关紧要；没装文件浏览器时本包不会激活，也不会让 boot 失败。
+
+## 已知边界
+
+- web 上的 `Ctrl+W` / `⌘W` 先被浏览器用来关标签页，宿主拦不到；面板的关闭按钮与标签栏的 `Delete` 才是可靠入口。desktop 端才把 `Ctrl+W` 当面板关闭键。
+- 整篇通道默认上限 2 MiB（文件浏览器宿主半的 `documents.maxBytes` 可调，范围 64 KiB 到 16 MiB），读取与保存都受同一预算约束：超过上限的草稿不会被写盘，否则会写出一个本通道再也打不开的文件。
+- 第一期没有插件内的分页回退。超过上限时正文显示 `too-large` 失败态，提示语里的「源码分页阅读」需要临时停用本渲染器或用别的工具打开；文件浏览器的内置分页阅读不再参与，因为 `.md` 已被本包接管。
+- 草稿只存在内存中，崩溃或刷新不持久化。
+- 编辑器 chunk 取不到时（网络 404、加载竞态）正文降级为只读 `<pre>`，内容仍可读，但不能再编辑；重新打开面板会重试。
+- 每次保存都写整篇，不做增量或 diff 写；2 MiB 以内这是可接受的代价。
 
 ## 构建与测试
 
@@ -59,6 +126,6 @@ pnpm --filter dsh-fs-markdown test
 pnpm --filter dsh-fs-markdown typecheck
 ```
 
-`lib/` 是提交入库的构建产物，profile 安装态不跑构建。`test` 先跑一次 `build --check`，防止 `src/` 与提交的 `lib/` 脱节。
+`lib/` 是提交入库的构建产物，profile 安装态不跑构建。`test` 先跑一次 `build --check`，防止 `src/` 与提交的 `lib/` 脱节；`check:lib` 只比较不写盘。
 
-启动包（`lib/client.js`）不得出现 `@codemirror` 字样：CodeMirror 与语言包全部在 `lib/client.editor.js` 这个懒 chunk 里，构建脚本会断言这条边界。
+第三方归属见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。
