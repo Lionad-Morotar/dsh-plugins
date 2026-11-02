@@ -218,6 +218,22 @@ const CSS = `
   to { opacity: 1; transform: translateY(0); }
 }
 
+/*
+ * A commit hash written as inline code. Dotted rather than solid so it stays
+ * distinguishable from a link, and unbacked so the prose colour is untouched
+ * until the pointer is actually over it.
+ */
+code[data-dcp-commit] {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+code[data-dcp-commit]:hover {
+  color: var(--dsw-alias-state-business-primary, #2f6fed);
+}
+
 @media (prefers-reduced-motion: reduce) {
   [${ROOT_ATTR}] [data-dcp-mask],
   [${ROOT_ATTR}] [data-dcp-card] {
