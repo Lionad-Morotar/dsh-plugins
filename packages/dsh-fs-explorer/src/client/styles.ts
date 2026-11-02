@@ -219,6 +219,16 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-tab-main:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -2px; }
 .fx-tab-badge { width: 16px; height: 14px; }
 .fx-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-tab-rev {
+  flex: none;
+  padding: 0 3px;
+  border: 1px solid var(--fx-border-soft);
+  border-radius: 4px;
+  color: var(--fx-caption);
+  font-family: var(--fx-mono);
+  font-size: 9px;
+  line-height: 13px;
+}
 .fx-tab-close {
   display: inline-flex;
   align-items: center;

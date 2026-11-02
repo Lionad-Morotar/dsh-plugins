@@ -16,12 +16,12 @@ describe("GitExplorerService", () => {
     expect(GitExplorerService.inject).toEqual(["subprocess", "sessions", "sessionPersistence"]);
   });
 
-  it("marks snapshot, query and run as Remote endpoints", () => {
+  it("marks snapshot, query, commit, show and run as Remote endpoints", () => {
     const ctx = new Context();
     ctx.provide("subprocess", { spawn: () => { throw new Error("unused in this test"); } });
     const service = new GitExplorerService(ctx, {});
     const markers = remoteMethods(service);
-    expect(markers.map(marker => marker.exportName ?? marker.method)).toEqual(["snapshot", "query", "commit", "run"]);
+    expect(markers.map(marker => marker.exportName ?? marker.method)).toEqual(["snapshot", "query", "commit", "show", "run"]);
   });
 
   it("normalizes hostile config values into the allowed ranges", () => {
@@ -40,6 +40,10 @@ describe("GitExplorerService", () => {
     await expect(service.commit({ sessionId: "s1", hash: "--all" })).resolves.toEqual({
       ok: false,
       error: { code: "invalid-request", message: "hash must be a hexadecimal object id" },
+    });
+    await expect(service.show({ sessionId: "s1", hash: "zzz", path: "a.ts" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "invalid-request" },
     });
   });
 

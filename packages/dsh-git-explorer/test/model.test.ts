@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   computeWindow,
+  createCommitJump,
   createJump,
   formatCommitDetail,
   graphLaneCount,
@@ -85,6 +86,95 @@ describe("createJump", () => {
       ["s1", "fs-explorer", "path:src/main.ts:1"],
       ["s1", "fs-explorer", "path:README.md:12"],
     ]);
+  });
+});
+
+describe("createCommitJump", () => {
+  it("addresses the fs explorer with a git focus, revision before line before path", () => {
+    const queue: { requests: string[]; takes: string[] } = { requests: [], takes: [] };
+    const deliveries: number[] = [];
+    const jump = createCommitJump({
+      seam: {
+        openViewOrSwitch: () => {
+          deliveries.push(1);
+          return { opened: true, focused: true };
+        },
+        viewFocus: {
+          request: (view, focus) => queue.requests.push(`${view}:${focus}`),
+          take: view => {
+            queue.takes.push(view);
+            return undefined;
+          },
+        },
+      },
+      sessionId: "s1",
+    });
+    jump("17b6a55", "package.json");
+    jump("26d4fd0", "src\\client/view.tsx", 12);
+    // The path may hold colons; the revision and line segments stay unambiguous.
+    jump("abcd", "docs/a:b.md", 0);
+    expect(deliveries).toHaveLength(3);
+    // A delivered focus drops its queued copy, so the queue never replays.
+    expect(queue.takes).toEqual(["fs-explorer", "fs-explorer", "fs-explorer"]);
+    expect(queue.requests).toEqual([
+      "fs-explorer:git:17b6a55:1:package.json",
+      "fs-explorer:git:26d4fd0:12:src/client/view.tsx",
+      "fs-explorer:git:abcd:1:docs/a:b.md",
+    ]);
+  });
+
+  it("keeps the queued focus when the switch lands without focus delivery", () => {
+    const queue: string[] = [];
+    const jump = createCommitJump({
+      seam: {
+        openViewOrSwitch: () => ({ opened: true, focused: false }),
+        viewFocus: { request: (view, focus) => queue.push(`${view}:${focus}`) },
+      },
+      sessionId: "s1",
+    });
+    jump("17b6a55", "a.ts");
+    // The view mounts on the switch and takes the waiting focus; taking it back
+    // here would strand the reader on an empty panel.
+    expect(queue).toEqual(["fs-explorer:git:17b6a55:1:a.ts"]);
+  });
+
+  it("falls back to the legacy seams and finally the queue when nothing delivers", () => {
+    const opened: unknown[] = [];
+    const queued: string[] = [];
+    const jump = createCommitJump({
+      seam: {
+        views: { open: (...args: unknown[]) => { opened.push(args); return false; } },
+        openView: (id, focus) => {
+          opened.push([id, focus]);
+          return false;
+        },
+        viewFocus: { request: (view, focus) => queued.push(`${view}:${focus}`) },
+      },
+      sessionId: "s1",
+    });
+    jump("abcd1234", "src/a.ts", 7);
+    expect(opened).toHaveLength(2);
+    expect(queued).toEqual(["fs-explorer:git:abcd1234:7:src/a.ts"]);
+
+    // A legacy views seam that answers true is a delivery; nothing is queued.
+    const delivered = createCommitJump({
+      seam: { views: { open: () => true }, viewFocus: { request: (_view, focus) => queued.push(focus) } },
+      sessionId: "s1",
+    });
+    delivered("abcd1234", "src/a.ts", 7);
+    expect(queued).toHaveLength(1);
+  });
+
+  it("ignores an empty path or hash", () => {
+    const seam = {
+      openViewOrSwitch: () => ({ opened: true, focused: true }),
+      viewFocus: { request: () => { throw new Error("must not queue"); } },
+    };
+    const jump = createCommitJump({ seam, sessionId: "s1" });
+    expect(() => {
+      jump("", "a.ts");
+      jump("abcd", "");
+    }).not.toThrow();
   });
 });
 

@@ -320,6 +320,33 @@ describe("paths, focus and size", () => {
     expect(parseFocus("abs:/a/b.ts:x")).toEqual({ path: "/a/b.ts:x", line: 1, absolute: true });
   });
 
+  it("parses a git focus with revision, line and the rest as the path", () => {
+    expect(parseFocus("git:17b6a55:12:src/client/view.tsx")).toEqual({
+      path: "src/client/view.tsx",
+      line: 12,
+      absolute: false,
+      revision: "17b6a55",
+    });
+    // The line segment is mandatory: a git path may itself end in digits.
+    expect(parseFocus("git:26d4fd0:1:docs/notes:2024.md")).toEqual({
+      path: "docs/notes:2024.md",
+      line: 1,
+      absolute: false,
+      revision: "26d4fd0",
+    });
+    // Uppercase hex is normalized; backslashes and leading ./ are not paths.
+    expect(parseFocus("git:17B6A55:3:.\\src\\a.ts")).toEqual({
+      path: "src/a.ts",
+      line: 3,
+      absolute: false,
+      revision: "17b6a55",
+    });
+    // A missing line or a revision shorter than four hex digits is not ours.
+    expect(parseFocus("git:17b6a55:src/a.ts")).toBeUndefined();
+    expect(parseFocus("git:ab:12:src/a.ts")).toBeUndefined();
+    expect(parseFocus("git:17b6a55:0:")).toBeUndefined();
+  });
+
   it("reads the badge from the basename, not from a dotted directory", () => {
     expect(badgeFor("notes.txt.d/a.ts")).toBe("TS");
     expect(iconFor("v1.2/Makefile")).toBe("config");

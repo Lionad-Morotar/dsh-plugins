@@ -149,6 +149,115 @@ export function createPreviewReader(
   };
 }
 
+/**
+ * The slice of the Git panel's Remote namespace that reads a commit version.
+ *
+ * `show` is the only method needed here; keeping the face structural means the
+ * fs package does not depend on the Git package's client bundle or module graph.
+ */
+export interface GitShowRequestLike {
+  readonly sessionId: string;
+  readonly hash: string;
+  readonly path: string;
+  readonly offset?: number;
+  readonly limit?: number;
+}
+
+export interface GitShowFace {
+  show(request: GitShowRequestLike, signal?: AbortSignal): Promise<unknown> | unknown;
+}
+
+/** Read the optional Git namespace on every call so a late host mount works. */
+export type GitShowResolver = () => GitShowFace | undefined;
+
+/** The client context slice the Git-show resolver probes. */
+export interface GitShowContextLike {
+  readonly remote?: unknown;
+  get?(name: string): unknown;
+}
+
+/** Whether a value exposes the Git `show` reader rather than being a Cordis stub. */
+export function isGitShowFace(value: unknown): value is GitShowFace {
+  if (value === null || typeof value !== "object") return false;
+  return typeof (value as { show?: unknown }).show === "function";
+}
+
+/**
+ * Resolve `remote.gitExplorer` by its `show` method alone.
+ *
+ * The file tree only needs `snapshot`, and a host half that predates `show`
+ * still serves that; probing `show` separately is what lets a commit-version
+ * panel degrade to "preview unavailable" without taking the workspace tree or
+ * the current-file preview down with it.
+ * @param ctx - the client context this row was applied to.
+ * @returns a resolver that answers undefined while `show` is absent.
+ */
+export function createGitShowResolver(ctx: GitShowContextLike): GitShowResolver {
+  return () => {
+    const direct = safeRead(() => (ctx.remote as { readonly gitExplorer?: unknown } | undefined)?.gitExplorer);
+    if (isGitShowFace(direct)) return direct;
+    const viaGet = safeRead(() => (typeof ctx.get === "function" ? ctx.get("remote.gitExplorer") : undefined));
+    return isGitShowFace(viaGet) ? viaGet : undefined;
+  };
+}
+
+function countLines(text: string): number {
+  return text === "" ? 0 : text.split("\n").length;
+}
+
+function pageError(value: unknown): PreviewReadError {
+  const record = isRecord(value) ? value : {};
+  const code = typeof record.code === "string" ? record.code : "preview/unknown";
+  const message = typeof record.message === "string" && record.message !== "" ? record.message : "读取提交版本失败";
+  return new PreviewReadError(code, message);
+}
+
+/**
+ * Bind the preview's page reader to one commit version.
+ *
+ * The git endpoint pages in the host exactly like `workspaceFiles.read`, but it
+ * answers a double envelope (transport then business then page) and names its
+ * refusals in the Git vocabulary. Folding that here keeps `PreviewPane` on one
+ * `PreviewFiles` contract, so Markdown, source highlighting and paging are the
+ * same code path for the working tree and for a commit.
+ * @param face - the Git namespace, when the host exposes `show`.
+ * @param sessionId - the session whose repository is read.
+ * @param revision - commit object id, 4-64 hex digits.
+ * @returns the reader the preview loader pages through.
+ */
+export function createGitPreviewReader(face: GitShowFace, sessionId: string, revision: string): PreviewFiles {
+  return {
+    async read(path, range, signal) {
+      const request: GitShowRequestLike = {
+        sessionId,
+        hash: revision,
+        path,
+        ...(range.offset === undefined ? {} : { offset: range.offset }),
+        ...(range.limit === undefined ? {} : { limit: range.limit }),
+      };
+      const transport = await face.show(request, signal);
+      if (!isRecord(transport)) throw new PreviewReadError("preview/unknown", "Git 服务返回了无效响应");
+      if (transport.ok === false) throw pageError(transport.error);
+      let value: unknown = transport;
+      if (transport.ok === true) value = transport.value;
+      if (!isRecord(value)) throw new PreviewReadError("preview/unknown", "Git 服务返回了无效响应");
+      if (value.ok === false) throw pageError(value.error);
+      let page: unknown = value;
+      if (value.ok === true) page = value.page;
+      if (!isRecord(page)) throw new PreviewReadError("preview/unknown", "提交版本缺少页面数据");
+      if (page.kind === "submodule") throw new PreviewReadError("git/submodule", "这是一个子模块，没有可预览的文本内容");
+      if (page.binary === true || page.kind === "binary") throw new PreviewReadError("git/binary", "该提交版本中的文件是二进制，无法预览");
+      if (typeof page.text !== "string") throw new PreviewReadError("preview/unknown", "文件页面缺少 text");
+      const lines = typeof page.lines === "number" && Number.isFinite(page.lines) ? Math.max(0, Math.trunc(page.lines)) : countLines(page.text);
+      const offset =
+        typeof page.offset === "number" && Number.isFinite(page.offset) && page.offset > 0
+          ? Math.trunc(page.offset)
+          : (range.offset ?? 1);
+      return { text: page.text, lines, offset, eof: page.eof === true };
+    },
+  };
+}
+
 /** One complete file's bytes after both transport and business envelopes. */
 export type NormalizedBytes =
   | { readonly ok: true; readonly value: { readonly data: Uint8Array } }

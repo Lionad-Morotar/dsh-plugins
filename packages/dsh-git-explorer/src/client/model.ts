@@ -276,6 +276,63 @@ export interface CommitFocus {
   readonly hash: string;
 }
 
+/** The `viewFocus` queue slice a commit jump hands its target to. */
+export interface CommitJumpViewFocus {
+  request?(view: string, focus: string): void;
+  take?(view: string): string | undefined;
+}
+
+/** Every seam a commit-file jump may deliver through, newest first. */
+export interface CommitJumpSeam {
+  openViewOrSwitch?(id: string, focus?: string): { readonly opened: boolean; readonly focused: boolean };
+  views?: JumpViews;
+  openView?(id: string, focus?: string): boolean | void;
+  viewFocus?: CommitJumpViewFocus;
+}
+
+/** What one commit-file jump closure owns. */
+export interface CommitJumpWiring {
+  readonly seam: CommitJumpSeam;
+  readonly sessionId: string;
+}
+
+/**
+ * Build the commit-detail-to-files jump.
+ *
+ * The target names a commit version, not a workspace path: `git:<hash>:<line>:<path>`
+ * keeps the line segment before the path so a path may itself contain colons.
+ * The queue-then-switch order is the one the command palette already uses: the
+ * focus waits in `viewFocus` before the switch so a view that mounts on the
+ * switch can take it, and a delivered focus drops its queued copy so it cannot
+ * replay on a later mount.
+ * @param wiring - the workbench seams and the session whose views open.
+ * @returns a `(hash, path, line)` function.
+ */
+export function createCommitJump({ seam, sessionId }: CommitJumpWiring): (hash: string, path: string, line?: number) => void {
+  return (hash, path, line = 1) => {
+    const cleanHash = typeof hash === "string" ? hash.trim().toLowerCase() : "";
+    if (cleanHash === "" || typeof path !== "string") return;
+    const cleanPath = path.trim().replace(/\\/gu, "/").replace(/^(?:\.\/)+/u, "");
+    if (cleanPath === "") return;
+    const target = Number.isFinite(line) && line > 0 ? Math.floor(line) : 1;
+    const focus = `git:${cleanHash}:${String(target)}:${cleanPath}`;
+
+    if (seam.openViewOrSwitch !== undefined) {
+      seam.viewFocus?.request?.("fs-explorer", focus);
+      const result = seam.openViewOrSwitch("fs-explorer", focus);
+      if (result.focused) {
+        seam.viewFocus?.take?.("fs-explorer");
+        return;
+      }
+      if (result.opened) return;
+      seam.viewFocus?.take?.("fs-explorer");
+    }
+    if (seam.views?.open(sessionId, "fs-explorer", focus) === true) return;
+    if (seam.openView?.("fs-explorer", focus) === true) return;
+    seam.viewFocus?.request?.("fs-explorer", focus);
+  };
+}
+
 /** `commit:` followed by one 4-64 digit hex id, either case. */
 const COMMIT_FOCUS_PATTERN = /^commit:([0-9a-f]{4,64})$/iu;
 

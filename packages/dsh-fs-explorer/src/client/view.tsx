@@ -54,6 +54,8 @@ import {
   normalizeListing,
   normalizeStatusSnapshot,
   type FilesResolver,
+  type GitShowFace,
+  type GitShowResolver,
   type StatusResolver,
   type WorkspaceFilesFace,
 } from "./wire.ts";
@@ -100,6 +102,8 @@ export interface ViewWiring {
   readonly files: FilesResolver;
   /** Resolves the Git namespace whose snapshot carries the raw status text. */
   readonly status: StatusResolver;
+  /** Resolves the Git `show` reader used by commit-version panels. */
+  readonly git?: GitShowResolver;
 }
 
 /** The first-paint state without waiting for an effect. */
@@ -190,7 +194,14 @@ function StateBlock({
  * @param wiring - the core service, contract version, copy and file resolver.
  * @returns the component registered into `conversation.view`.
  */
-export function createFsExplorerView({ workbench, version, t, files: resolveFiles, status: resolveStatus }: ViewWiring) {
+export function createFsExplorerView({
+  workbench,
+  version,
+  t,
+  files: resolveFiles,
+  status: resolveStatus,
+  git: resolveGit = () => undefined,
+}: ViewWiring) {
   // One registry per registered view: the host mounts and unmounts this
   // component on every view switch, while the factory itself lives on.
   const stacks = createPanelStackRegistry();
@@ -204,6 +215,7 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     // identity on every render would restart the root listing.
     const files = useMemo<WorkspaceFilesFace | undefined>(() => resolveFiles(), [resolveFiles]);
     const statusFace = useMemo(() => resolveStatus(), [resolveStatus]);
+    const gitFace = useMemo<GitShowFace | undefined>(() => resolveGit(), [resolveGit]);
 
     const [levels, setLevels] = useState<ReadonlyMap<string, TreeLevel>>(() => new Map());
     const [statuses, setStatuses] = useState<StatusMap | undefined>(undefined);
@@ -215,7 +227,9 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
     const stack = useMemo(() => stacks.forSession(sessionId), [stacks, sessionId]);
     const panels = useSyncExternalStore(stack.subscribe, stack.snapshot, stack.snapshot);
-    const activePath = panels.active ?? undefined;
+    const activeEntry = panels.panels.find(panel => panel.key === panels.active);
+    const activePath = activeEntry?.path;
+    const activeRevision = activeEntry?.revision;
     const [reloadToken, setReloadToken] = useState(0);
     const controllers = useRef<Map<string, AbortController>>(new Map());
     const handledRequest = useRef<string | undefined>(undefined);
@@ -244,8 +258,8 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
      * request.
      */
     const openRequest = useCallback(
-      (path: string, line: number, absolute: boolean): void => {
-        stack.open(path, line, absolute);
+      (path: string, line: number, absolute: boolean, revision?: string): void => {
+        stack.open(path, line, absolute, revision);
       },
       [stack],
     );
@@ -444,10 +458,11 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
     // focus request, a tab click, the ⌘⌥ arrows, a close fallback or a remount
     // restore — lands on `panels.active`, and this effect aligns the tree with
     // it. Absolute paths sit outside the workspace, so they have no row to
-    // align and the tree keeps whatever state the reader left. While the
-    // active panel does not change, a manually collapsed tree stays collapsed.
+    // align, and the tree keeps whatever state the reader left. A commit
+    // version is deliberately skipped too: its row belongs to the working tree
+    // and highlighting it would claim the old file is the one on disk.
     useEffect(() => {
-      if (activePath === undefined || !rootReady || isAbsolutePath(activePath)) return;
+      if (activePath === undefined || activeRevision !== undefined || !rootReady || isAbsolutePath(activePath)) return;
       const chain = ancestorChain(activePath);
       if (chain.length === 0) return;
       // The same reference on no change keeps a click on an already-visible row render-free.
@@ -458,7 +473,7 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
       const missing = chain.filter(directory => levelsRef.current.get(directory)?.status !== "ready");
       if (missing.length === 0) return;
       void Promise.all(missing.map(directory => loadLevel(directory, sessionId, files)));
-    }, [activePath, rootReady, sessionId, files, loadLevel]);
+    }, [activePath, activeRevision, rootReady, sessionId, files, loadLevel]);
 
     /** Focus the host's conversation composer, the Esc destination. */
     const focusComposer = useCallback((): boolean => {
@@ -774,7 +789,7 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
               >
                 <TreeBody
                   rows={rows}
-                  selectedPath={activePath}
+                  selectedPath={activeRevision === undefined ? activePath : undefined}
                   entryFocus={entryFocus}
                   t={t}
                   onToggle={toggleDirectory}
@@ -808,8 +823,8 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                   panels={panels.panels}
                   active={panels.active}
                   t={t}
-                  onActivate={path => stack.activate(path)}
-                  onClose={path => stack.close(path)}
+                  onActivate={key => stack.activate(key)}
+                  onClose={key => stack.close(key)}
                   onStep={delta => (delta === 1 ? stack.next() : stack.previous())}
                 />
                 <div className="fx-editor-body">
@@ -820,10 +835,10 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                       // One pane stays mounted per open file; the inactive ones
                       // are hidden, not unmounted, so the renderer needs to be
                       // told which panel is actually on screen.
-                      const isActive = panel.path === panels.active;
+                      const isActive = panel.key === panels.active;
                       return (
                         <div
-                          key={panel.path}
+                          key={panel.key}
                           className="fx-panel"
                           id={`fx-panel-${index}`}
                           role="tabpanel"
@@ -832,7 +847,15 @@ export function createFsExplorerView({ workbench, version, t, files: resolveFile
                           data-line={panel.line}
                           data-testid="fs-panel"
                         >
-                          <PreviewPane sessionId={sessionId} files={files} path={panel.path} t={t} visible={isActive} />
+                          <PreviewPane
+                            sessionId={sessionId}
+                            files={files}
+                            path={panel.path}
+                            revision={panel.revision}
+                            git={gitFace}
+                            t={t}
+                            visible={isActive}
+                          />
                         </div>
                       );
                     })

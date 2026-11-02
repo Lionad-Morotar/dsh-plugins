@@ -119,7 +119,9 @@ export type GitFailureCode =
   | "git-failed"
   | "invalid-request"
   | "not-implemented"
-  | "internal";
+  | "internal"
+  | "not-found"
+  | "too-large";
 
 export interface GitFailure {
   readonly code: GitFailureCode;
@@ -191,6 +193,45 @@ export interface GitCommitRequest {
 
 export type GitCommitResult =
   | { readonly ok: true; readonly detail: GitCommitDetail }
+  | { readonly ok: false; readonly error: GitFailure };
+
+/** One page request for a file as a specific commit holds it. */
+export interface GitShowRequest {
+  /** Session whose working directory backs this call; resolved server-side. */
+  readonly sessionId: string;
+  /** Commit object id, 4-64 hexadecimal digits. */
+  readonly hash: string;
+  /** Repository-relative path. */
+  readonly path: string;
+  /** First line of the page, 1-based; defaults to 1. */
+  readonly offset?: number;
+  /** Largest line count of the page; defaults to 200 and caps at 5000. */
+  readonly limit?: number;
+  /** Absolute directory override; when absent the session's cwd is used. */
+  readonly cwd?: string;
+}
+
+/** One page of a commit-version file, or the reason there is no text page. */
+export interface GitBlobPage {
+  readonly path: string;
+  /** Complete object id of the blob that was read. */
+  readonly revision: string;
+  /** `first-parent` when the commit deleted the path and the parent kept it. */
+  readonly source: "commit" | "first-parent";
+  /** First line of the page, 1-based. */
+  readonly offset: number;
+  /** Lines held by this page; `0` for binary, submodule or past-the-end. */
+  readonly lines: number;
+  readonly text: string;
+  readonly eof: boolean;
+  /** Complete blob size in bytes. */
+  readonly bytes: number;
+  readonly binary: boolean;
+  readonly kind: "text" | "binary" | "submodule";
+}
+
+export type GitShowResult =
+  | { readonly ok: true; readonly page: GitBlobPage }
   | { readonly ok: false; readonly error: GitFailure };
 
 /** Actions are a later slice; the data layer only acknowledges the shape. */

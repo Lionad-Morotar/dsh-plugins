@@ -46,6 +46,7 @@ import { buildWorkspaceMap, workspaceTagFor } from "./workspace-map.ts";
 import { createFsExplorerView, type WorkbenchFace } from "./view.tsx";
 import {
   createFilesResolver,
+  createGitShowResolver,
   createGitStatusResolver,
   normalizeListing,
   normalizeStatusSnapshot,
@@ -113,6 +114,7 @@ export function apply(ctx: ClientContextLike): () => void {
     t,
     files: createFilesResolver(ctx),
     status: createGitStatusResolver(ctx),
+    git: createGitShowResolver(ctx),
   });
 
   // The address bridge hangs off the optional right sidebar; it registers

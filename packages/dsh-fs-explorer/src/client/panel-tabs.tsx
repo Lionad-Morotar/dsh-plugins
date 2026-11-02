@@ -18,8 +18,8 @@ export interface PanelTabsProps {
   readonly panels: readonly PanelEntry[];
   readonly active: string | null;
   readonly t: Translate;
-  readonly onActivate: (path: string) => void;
-  readonly onClose: (path: string) => void;
+  readonly onActivate: (key: string) => void;
+  readonly onClose: (key: string) => void;
   readonly onStep: (delta: 1 | -1) => void;
 }
 
@@ -56,11 +56,11 @@ export function PanelTabs({ panels, active, t, onActivate, onClose, onStep }: Pa
   return (
     <div className="fx-tabs" role="tablist" aria-label={t("panel.tabs")} onKeyDown={onKeyDown} data-testid="fs-tabs">
       {panels.map((panel, index) => {
-        const selected = panel.path === active;
+        const selected = panel.key === active;
         const title = panelTitle(panel.path);
         const closeLabel = t("panel.close").replace("{name}", title);
         return (
-          <div key={panel.path} className="fx-tab" data-active={selected ? "true" : "false"} role="presentation">
+          <div key={panel.key} className="fx-tab" data-active={selected ? "true" : "false"} role="presentation">
             <button
               type="button"
               className="fx-tab-main"
@@ -72,13 +72,19 @@ export function PanelTabs({ panels, active, t, onActivate, onClose, onStep }: Pa
               title={panel.path}
               data-testid="fs-tab"
               data-path={panel.path}
+              data-key={panel.key}
               ref={selected ? activeTab : undefined}
-              onClick={() => onActivate(panel.path)}
+              onClick={() => onActivate(panel.key)}
             >
               <span className="fx-badge fx-tab-badge" data-icon={iconFor(panel.path)} aria-hidden="true">
                 {badgeFor(panel.path)}
               </span>
               <span className="fx-tab-name">{title}</span>
+              {panel.revision === undefined ? null : (
+                <span className="fx-tab-rev" data-testid="fs-tab-revision" title={panel.revision}>
+                  {panel.revision.slice(0, 7)}
+                </span>
+              )}
             </button>
             <button
               type="button"
@@ -87,7 +93,7 @@ export function PanelTabs({ panels, active, t, onActivate, onClose, onStep }: Pa
               aria-label={closeLabel}
               title={closeLabel}
               data-testid="fs-tab-close"
-              onClick={() => onClose(panel.path)}
+              onClick={() => onClose(panel.key)}
             >
               ×
             </button>

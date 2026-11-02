@@ -127,6 +127,60 @@ describe("panel stack", () => {
     expect(registry.forSession("session-b").snapshot().panels).toHaveLength(0);
     expect(registry.forSession(undefined)).toBe(registry.forSession(undefined));
   });
+
+  it("keys a revision panel by the (revision, path) pair", () => {
+    const stack = createPanelStack();
+    stack.open("package.json", 1, false, "17b6a55");
+    stack.open("package.json", 1, false, "26d4fd0");
+    stack.open("package.json");
+
+    const snapshot = stack.snapshot();
+    // Two commit versions and the working-tree file are three panels.
+    expect(snapshot.panels.map(panel => [panel.path, panel.revision])).toEqual([
+      ["package.json", "17b6a55"],
+      ["package.json", "26d4fd0"],
+      ["package.json", undefined],
+    ]);
+    expect(snapshot.panels.map(panel => panel.key)).toEqual([
+      "git:17b6a55:package.json",
+      "git:26d4fd0:package.json",
+      "package.json",
+    ]);
+    expect(snapshot.active).toBe("package.json");
+
+    // Activation and closing address the panel by its key, so the two commit
+    // versions of one path never collapse into each other.
+    stack.activate("git:17b6a55:package.json");
+    expect(stack.snapshot().active).toBe("git:17b6a55:package.json");
+    stack.close("git:17b6a55:package.json");
+    expect(stack.snapshot().panels.map(panel => panel.key)).toEqual([
+      "git:26d4fd0:package.json",
+      "package.json",
+    ]);
+    expect(stack.snapshot().active).toBe("git:26d4fd0:package.json");
+  });
+
+  it("dedupes a revision panel and updates its line, not its identity", () => {
+    const stack = createPanelStack();
+    stack.open("a.ts", 3, false, "ABC1234");
+    stack.open("a.ts", 9, false, "abc1234");
+    const snapshot = stack.snapshot();
+    expect(snapshot.panels).toHaveLength(1);
+    expect(snapshot.panels[0]).toMatchObject({ key: "git:abc1234:a.ts", line: 9, revision: "abc1234" });
+  });
+
+  it("leaves revision panels out of path-addressed lookups", () => {
+    const stack = createPanelStack();
+    stack.open("src/a.ts", 1, false, "17b6a55");
+    // A path spelling reaches the working-tree row only; the commit version of
+    // the same path is another panel and stays open.
+    expect(stack.isOpen("src/a.ts")).toBe(false);
+    expect(stack.isOpen("git:17b6a55:src/a.ts")).toBe(true);
+    stack.open("src/a.ts");
+    expect(stack.snapshot().panels).toHaveLength(2);
+    stack.close("src/a.ts");
+    expect(stack.snapshot().panels.map(panel => panel.key)).toEqual(["git:17b6a55:src/a.ts"]);
+  });
 });
 
 describe("view requests", () => {
@@ -145,6 +199,15 @@ describe("view requests", () => {
       open: (path, line, absolute) => opened.push([path, line, absolute]),
     });
     expect(opened).toEqual([["/Users/x/project/a.ts", 7, true]]);
+  });
+
+  it("hands a git target over with its revision", () => {
+    const opened: Array<[string, number, boolean, string | undefined]> = [];
+    const result = consumeViewRequest("git:17b6a55:12:src/a b.ts", {
+      open: (path, line, absolute, revision) => opened.push([path, line, absolute, revision]),
+    });
+    expect(result).toBe(true);
+    expect(opened).toEqual([["src/a b.ts", 12, false, "17b6a55"]]);
   });
 
   it("leaves other focus payloads alone", () => {

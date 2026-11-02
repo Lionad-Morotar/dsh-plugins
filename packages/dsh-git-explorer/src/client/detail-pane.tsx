@@ -19,6 +19,8 @@ export interface DetailPaneProps {
   readonly remote: GitRemoteFace | undefined;
   readonly t: Translate;
   readonly onSelect: (hash: string) => void;
+  /** Open one changed file of this commit in the file workbench. */
+  readonly onOpenFile?: (path: string, line?: number) => void;
 }
 
 function FileStat({ additions, deletions }: { readonly additions: number | null; readonly deletions: number | null }) {
@@ -36,7 +38,7 @@ function FileStat({ additions, deletions }: { readonly additions: number | null;
  * @param props - session, selected hash, the Remote face and copy.
  * @returns the detail pane element.
  */
-export function DetailPane({ sessionId, hash, remote, t, onSelect }: DetailPaneProps) {
+export function DetailPane({ sessionId, hash, remote, t, onSelect, onOpenFile }: DetailPaneProps) {
   const [state, setState] = useState<DetailState>({ kind: "idle" });
   const [retryToken, setRetryToken] = useState(0);
   const cache = useRef(new Map<string, GitCommitDetail>());
@@ -140,7 +142,14 @@ export function DetailPane({ sessionId, hash, remote, t, onSelect }: DetailPaneP
                   <div key={group.dir === "" ? "." : group.dir} className="gx-detail-group">
                     <div className="gx-detail-dir">{group.dir === "" ? t("changes.root") : group.dir}</div>
                     {group.files.map(file => (
-                      <div key={file.path} className="gx-detail-file">
+                      <button
+                        key={file.path}
+                        type="button"
+                        className="gx-detail-file"
+                        data-testid="gx-detail-file"
+                        title={file.path}
+                        onClick={() => onOpenFile?.(file.path)}
+                      >
                         <span className="gx-badge" data-status={file.status}>
                           {statusLetter(file.status)}
                         </span>
@@ -151,7 +160,7 @@ export function DetailPane({ sessionId, hash, remote, t, onSelect }: DetailPaneP
                         <span className="gx-file-stats">
                           <FileStat additions={file.additions} deletions={file.deletions} />
                         </span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 ))

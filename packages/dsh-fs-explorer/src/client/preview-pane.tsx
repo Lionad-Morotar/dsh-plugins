@@ -40,13 +40,17 @@ import {
   type PreviewChunkModule,
 } from "./preview-chunk.ts";
 import { PreviewFailureView, PreviewLoadingView } from "./preview-failure.tsx";
-import { createByteReader, createPreviewReader, type WorkspaceFilesFace } from "./wire.ts";
+import { createByteReader, createGitPreviewReader, createPreviewReader, type GitShowFace, type WorkspaceFilesFace } from "./wire.ts";
 
 /** Props the view hands the preview pane. */
 export interface PreviewPaneProps {
   readonly sessionId?: string;
   readonly files?: WorkspaceFilesFace;
   readonly path?: string;
+  /** Commit object id when this panel shows a commit version. */
+  readonly revision?: string;
+  /** The Git `show` face; only read when {@link revision} is set. */
+  readonly git?: GitShowFace;
   readonly t: Translate;
   /**
    * Whether this panel is the active one.
@@ -126,9 +130,17 @@ function CodeSurface({
  * @param props - session, file face, selected path and translator.
  * @returns the preview column.
  */
-export function PreviewPane({ sessionId, files, path, t, visible = true }: PreviewPaneProps) {
-  const reader = useMemo(() => createPreviewReader(files, sessionId), [files, sessionId]);
-  const byteReader = useMemo(() => createByteReader(files), [files]);
+export function PreviewPane({ sessionId, files, path, revision, git, t, visible = true }: PreviewPaneProps) {
+  const reader = useMemo(
+    () =>
+      revision === undefined
+        ? createPreviewReader(files, sessionId)
+        : git === undefined || sessionId === undefined
+          ? undefined
+          : createGitPreviewReader(git, sessionId, revision),
+    [files, sessionId, revision, git],
+  );
+  const byteReader = useMemo(() => (revision === undefined ? createByteReader(files) : undefined), [files, revision]);
   // Resolved once per mount: the pane is created per open file, so the family
   // cannot change under a mounted loader.
   const family = path === undefined ? null : familyOf(path);
@@ -199,9 +211,11 @@ export function PreviewPane({ sessionId, files, path, t, visible = true }: Previ
 
   // One family chunk, fetched the first time a file of that family is opened
   // and never before. The engine is the whole point of the split: a reader who
-  // opens a .txt must not download three.js.
+  // opens a .txt must not download three.js. A commit version never takes this
+  // path: its bytes are not read here (that is a later slice), and falling back
+  // to the working-tree reader would show the wrong revision.
   useEffect(() => {
-    if (family === null) return;
+    if (family === null || revision !== undefined) return;
     let alive = true;
     setFamilyChunk(null);
     setFamilyFailure(null);
@@ -229,29 +243,37 @@ export function PreviewPane({ sessionId, files, path, t, visible = true }: Previ
   }
 
   const binary = family !== null;
+  // A commit version has no byte reader in this slice: its file bytes belong to
+  // the Git object store, not the workspace file service, so reading through
+  // `workspaceFiles.readBytes` would silently show the working-tree file.
+  const commitBinary = binary && revision !== undefined;
   // A family file needs the byte read; the text pager needs the page read. The
   // two are separate optional methods, so the unavailable state is decided per
   // path rather than once for the pane. The pair travels together because a
   // renderer cannot read without a session to resolve the path against.
   const byteSource =
-    sessionId !== undefined && byteReader !== undefined ? { sessionId, readFile: byteReader } : null;
-  const binaryUnavailable = binary && byteSource === null;
+    revision === undefined && sessionId !== undefined && byteReader !== undefined
+      ? { sessionId, readFile: byteReader }
+      : null;
+  const binaryUnavailable = binary && !commitBinary && byteSource === null;
   const page = describePage(snapshot);
   const markdown = !binary && isMarkdownFile(path);
   const busy = binary
-    ? !binaryUnavailable && familyChunk === null && familyFailure === null
+    ? !commitBinary && !binaryUnavailable && familyChunk === null && familyFailure === null
     : snapshot.status === "loading";
   // The page gestures exist only on the text path, so this answers for it alone.
   const textReady = snapshot.status === "ready";
   const reading = markdown && mode === "reading";
   const state = binary
-    ? binaryUnavailable
+    ? commitBinary
       ? "unavailable"
-      : familyFailure !== null
-        ? "failed"
-        : familyChunk === null
-          ? "loading"
-          : "ready"
+      : binaryUnavailable
+        ? "unavailable"
+        : familyFailure !== null
+          ? "failed"
+          : familyChunk === null
+            ? "loading"
+            : "ready"
     : snapshot.status;
 
   const copyPath = (): void => {
@@ -265,13 +287,17 @@ export function PreviewPane({ sessionId, files, path, t, visible = true }: Previ
 
   let body: ReactElement;
   if (binary) {
-    body =
-      byteSource === null ? (
-        <div className="fx-empty" data-testid="fs-preview-unavailable">
-          <strong>{t("preview.unavailable.title")}</strong>
-          <span>{t("preview.unavailable.description")}</span>
-        </div>
-      ) : familyFailure !== null ? (
+    body = commitBinary ? (
+      <div className="fx-empty" data-testid="fs-preview-commit-binary">
+        <strong>{t("preview.commitBinary.title")}</strong>
+        <span>{t("preview.commitBinary.description")}</span>
+      </div>
+    ) : byteSource === null ? (
+      <div className="fx-empty" data-testid="fs-preview-unavailable">
+        <strong>{t("preview.unavailable.title")}</strong>
+        <span>{t("preview.unavailable.description")}</span>
+      </div>
+    ) : familyFailure !== null ? (
         <PreviewFailureView failure={familyFailure} t={t} onRetry={() => setFamilyAttempt(value => value + 1)} />
       ) : familyChunk === null ? (
         <PreviewLoadingView t={t} />

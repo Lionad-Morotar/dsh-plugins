@@ -377,7 +377,24 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 .gx-detail-files-title { color: var(--gx-caption); font-size: 10px; letter-spacing: .02em; margin-bottom: 2px; }
 .gx-detail-group { margin-top: 4px; }
 .gx-detail-dir { color: var(--gx-caption); font-family: var(--gx-mono); font-size: 10px; }
-.gx-detail-file { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; align-items: center; gap: 6px; height: 20px; padding: 0 2px; }
+.gx-detail-file {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 20px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.gx-detail-file:hover { background: var(--gx-hover); }
+.gx-detail-file:focus-visible { outline: 2px solid var(--gx-accent); outline-offset: -2px; }
 .gx-detail-file .gx-file-name { font-size: 11px; }
 
 .gx-empty {
