@@ -14,12 +14,13 @@
 import type {
   GitExplorerRemote,
   GitQueryOutcome,
+  HostShutdownRemote,
   PathExplorerRemote,
   RemoteResult,
   SessionOpenFace,
 } from "./dsh.ts";
-import type { PathResolveResult } from "../shared.ts";
-import { PATH_SERVICE } from "../shared.ts";
+import type { PathResolveResult, ShutdownRequestResult } from "../shared.ts";
+import { PATH_SERVICE, SHUTDOWN_SERVICE } from "../shared.ts";
 
 /** The gateway's unary caller, as the connection service exposes it. */
 export interface GatewayRpc {
@@ -94,6 +95,14 @@ async function invoke(
       error: { code: "rpc-error", message: error instanceof Error ? error.message : String(error) },
     };
   }
+}
+
+/** The hostShutdown face over the raw channel. */
+export function createHostShutdownFace(rpc: GatewayRpc): HostShutdownRemote {
+  return {
+    request: signal =>
+      invoke(rpc, SHUTDOWN_SERVICE, "request", {}, signal) as Promise<RemoteResult<ShutdownRequestResult>>,
+  };
 }
 
 /** The pathExplorer face over the raw channel. */

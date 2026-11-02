@@ -67,6 +67,8 @@ export interface Copy {
   readonly noticeExecuteFailed: (name: string, text: string | undefined) => string;
   readonly noticeWorkspaceEmpty: string;
   readonly noticeClaimFailed: (keys: string) => string;
+  /** The quit row's armed wording: what a second Enter will do, plainly. */
+  readonly confirmQuit: string;
   /** Human age for a session's last update, given the elapsed milliseconds. */
   readonly age: (elapsed: number) => string;
   /** Category word prefixed to every catalogue row label. */
@@ -87,6 +89,8 @@ export interface Copy {
     /** The unarchive write itself failed; the session stays archived. */
     readonly restoreFailed: (code: string | undefined) => string;
     readonly themeSwitched: (dark: boolean) => string;
+    /** The host combination offers no `appExit`, so the quit cannot run. */
+    readonly shutdownUnavailable: string;
     readonly failed: (what: string, code: string | undefined) => string;
   };
 }
@@ -152,11 +156,13 @@ const ZH: Copy = {
   noticeExecuteFailed: (name, text) => `/${name} 执行失败${text === undefined || text === "" ? "" : `：${text}`}`,
   noticeWorkspaceEmpty: "这个工作区还没有会话",
   noticeClaimFailed: keys => `快捷键 ${keys} 已被占用，可在设置 → 快捷键里改绑`,
+  confirmQuit: "再按一次回车关闭 DSH：正在运行的任务会被打断，应用不会自动重新打开",
   categoryNames: { panel: "面板", session: "会话", navigate: "导航", view: "视图" },
   actionLabels: {
     "panel.navigate": "文件导航",
     "panel.commands": "指令",
     "panel.switch": "切换",
+    "app.quit": "关闭 DSH",
     "session.newInWorkspace": "在当前工作区创建新会话",
     "session.newUngrouped": "创建未分组新会话",
     "session.rename": "重命名当前会话",
@@ -184,6 +190,7 @@ const ZH: Copy = {
     restoreOpenFailed: "已恢复该会话，但打开失败；请从侧栏进入",
     restoreFailed: code => `恢复会话失败${code === undefined || code === "" ? "" : `：${code}`}`,
     themeSwitched: dark => (dark ? "已切到深色主题" : "已切到浅色主题"),
+    shutdownUnavailable: "当前宿主组合没有关闭能力，无法退出 DSH",
     failed: (what, code) => `${what}失败${code === undefined || code === "" ? "" : `：${code}`}`,
   },
   age: elapsed => {
@@ -257,11 +264,13 @@ const EN: Copy = {
   noticeExecuteFailed: (name, text) => `/${name} failed${text === undefined || text === "" ? "" : `: ${text}`}`,
   noticeWorkspaceEmpty: "This workspace has no sessions yet",
   noticeClaimFailed: keys => `${keys} is taken; rebind it in Settings → Shortcuts`,
+  confirmQuit: "Press Enter again to quit DSH: running tasks will be interrupted, and the app will not reopen",
   categoryNames: { panel: "Panel", session: "Session", navigate: "Go", view: "View" },
   actionLabels: {
     "panel.navigate": "Files",
     "panel.commands": "Commands",
     "panel.switch": "Switch",
+    "app.quit": "Quit DSH",
     "session.newInWorkspace": "New session in this workspace",
     "session.newUngrouped": "New ungrouped session",
     "session.rename": "Rename this session",
@@ -289,6 +298,7 @@ const EN: Copy = {
     restoreOpenFailed: "The session was restored, but opening it failed; use the sidebar",
     restoreFailed: code => `Restore failed${code === undefined || code === "" ? "" : `: ${code}`}`,
     themeSwitched: dark => (dark ? "Switched to the dark theme" : "Switched to the light theme"),
+    shutdownUnavailable: "This host combination has no shutdown capability, so DSH cannot be quit",
     failed: (what, code) => `${what} failed${code === undefined || code === "" ? "" : `: ${code}`}`,
   },
   age: elapsed => {

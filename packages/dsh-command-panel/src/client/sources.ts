@@ -121,18 +121,30 @@ function loadSwitch(services: SourceServices, request: LoadRequest): LoadResult 
   }
   const list = sessions.list.getSnapshot();
   const snapshot = workspaces.list.getSnapshot();
-  const rows =
-    request.level === "sessions"
-      ? sessionRows(
-          list,
-          snapshot,
-          request.scope ?? { kind: "all" },
-          request.copy,
-          services.now(),
-          request.archivedOnly === true,
-        )
-      : workspaceRows(snapshot, list, request.copy, services.now());
-  return { rows, status: "ready" };
+  if (request.level === "sessions") {
+    return {
+      rows: sessionRows(
+        list,
+        snapshot,
+        request.scope ?? { kind: "all" },
+        request.copy,
+        services.now(),
+        request.archivedOnly === true,
+      ),
+      status: "ready",
+    };
+  }
+  const rows = workspaceRows(snapshot, list, request.copy, services.now());
+  // Workspace titles live in the root rows, session titles only in the second
+  // level — so a typed query merges the cross-workspace session plane in, and
+  // a title hit reaches the session without the drill. The empty query keeps
+  // the workspace-only first frame; the reload-on-keystroke path (the 90 ms
+  // debounce in the runtime) refreshes this row set as the query changes, and
+  // ranking scores workspace rows ahead of session rows on ties because they
+  // come first in provider order.
+  if (request.query.trim() === "") return { rows, status: "ready" };
+  const sessionPlane = sessionRows(list, snapshot, { kind: "all" }, request.copy, services.now());
+  return { rows: [...rows, ...sessionPlane], status: "ready" };
 }
 
 async function loadFiles(services: SourceServices, request: LoadRequest): Promise<LoadResult> {

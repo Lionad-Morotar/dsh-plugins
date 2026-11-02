@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { copyFor } from "../src/client/copy.ts";
+import { rankRows } from "../src/client/ranking.ts";
 import { loadRows, type LoadRequest, type SourceServices } from "../src/client/sources.ts";
 import type { GitExplorerRemote } from "../src/client/dsh.ts";
 import {
@@ -269,6 +270,27 @@ describe("loadRows: switch", () => {
       request({ mode: "switch", sessionId: null }),
     );
     expect(result.status).toBe("ready");
+  });
+
+  it("merges cross-workspace session rows once the root query is non-empty", async () => {
+    const result = await loadRows(services(), request({ mode: "switch", query: "调研" }));
+    expect(result.status).toBe("ready");
+    // The loader returns the merged unranked plane — the title lives on no
+    // workspace row, so only this addition can answer a session-title query.
+    const merged = result.rows.find(row => row.label === SESSION_B.displayTitle);
+    expect(merged?.action).toEqual({ kind: "open-session", sessionId: SESSION_B.id });
+    // Ranked the way the runtime projects it, the title reaches the session
+    // without the drill: workspace and aggregate rows stay silent.
+    expect(rankRows(result.rows, "调研").map(row => row.label)).toEqual([SESSION_B.displayTitle]);
+  });
+
+  it("keeps a workspace query answered by its row first, its sessions below", async () => {
+    const result = await loadRows(services(), request({ mode: "switch", query: "dsh-plugins" }));
+    const ranked = rankRows(result.rows, "dsh-plugins").map(row => row.label);
+    expect(ranked.indexOf("dsh-plugins")).toBeLessThan(ranked.indexOf(SESSION_A.displayTitle));
+    // The other workspace's session rides in only via its own title, and
+    // "dsh-plugins" is not part of it.
+    expect(ranked).not.toContain(SESSION_B.displayTitle);
   });
 });
 

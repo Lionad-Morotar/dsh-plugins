@@ -23,6 +23,7 @@ import type {
   ConversationService,
   FileReferencesRemote,
   GitExplorerRemote,
+  HostShutdownRemote,
   InputActions,
   LayoutService,
   LocaleService,
@@ -40,7 +41,7 @@ import type {
   Unsubscribe,
   WorkspacesService,
 } from "./dsh.ts";
-import { isGitExplorerFace, isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
+import { isGitExplorerFace, isHostShutdownFace, isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
 import { runCatalogAction, type ActionDeps } from "./actions.ts";
 import { createBridgeView, type BridgeState } from "./bridge.ts";
 import { planClaim, type ClaimProbe, type ClaimTarget } from "./claims.ts";
@@ -62,6 +63,7 @@ import {
   modelFor,
   moveHighlight,
   readPrefix,
+  readQuitAccept,
   withQuery,
   type PanelMode,
   type SessionScope,
@@ -69,12 +71,12 @@ import {
 import { composeInsertion } from "./paths.ts";
 import { rankRows } from "./ranking.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
-import { catalogRows, shortcutRows, type PanelRow } from "./rows.ts";
+import { catalogRows, shortcutRows, withConfirmLabel, type PanelRow } from "./rows.ts";
 import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from "./sources.ts";
 import { statusStamp } from "./status.ts";
 import { createPanelStore } from "./store.ts";
 import { directoryQuery, focusPath, parentQuery } from "./tree.ts";
-import { createPathExplorerFace, createGitExplorerFace, createSessionOpenFace, gatewayRpcOf } from "./wire.ts";
+import { createPathExplorerFace, createGitExplorerFace, createHostShutdownFace, createSessionOpenFace, gatewayRpcOf } from "./wire.ts";
 import { insertPanelStyles } from "./styles.ts";
 
 /** The three command ids; also the settings rows the reader can rebind. */
@@ -194,6 +196,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     commands?: CommandsRemote;
     pathExplorer?: PathExplorerRemote;
     gitExplorer?: GitExplorerRemote;
+    hostShutdown?: HostShutdownRemote;
     sessionOpen?: SessionOpenFace;
     sessions?: SessionsService;
     workspaces?: WorkspacesService;
@@ -221,6 +224,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   let rpcPathExplorer: PathExplorerRemote | null | undefined;
   let rpcSessionOpen: SessionOpenFace | null | undefined;
   let rpcGitExplorer: GitExplorerRemote | null | undefined;
+  let rpcHostShutdown: HostShutdownRemote | null | undefined;
 
   function pathExplorerFace(): PathExplorerRemote | undefined {
     if (isPathExplorerFace(refs.pathExplorer)) return refs.pathExplorer;
@@ -395,6 +399,31 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   }
 
   /**
+   * Whether the host half's remote shutdown face is in hand.
+   *
+   * The face is the whole availability story: `appExit` lives only on the host
+   * process's Cordis tree, so no client-context read can ever see it (the
+   * defect this seam once had). The injected face arrives and leaves through
+   * the injection below, and a composition that misses it simply costs one
+   * row — no caching, no stale row after a namespace goes away.
+   */
+  /**
+   * The quit face, injected namespace first and the raw gateway caller after.
+   *
+   * `remote.hostShutdown` is never generated for a third-party package, so the
+   * reliable tier is the same `/api` route the host half publishes. The raw
+   * face is cached once; an injected face that arrives later still wins.
+   */
+  function hostShutdownFace(): HostShutdownRemote | undefined {
+    if (isHostShutdownFace(refs.hostShutdown)) return refs.hostShutdown;
+    if (rpcHostShutdown === undefined) {
+      const rpc = gatewayRpcOf(deps.ctx);
+      rpcHostShutdown = rpc === undefined ? null : createHostShutdownFace(rpc);
+    }
+    return rpcHostShutdown ?? undefined;
+  }
+
+  /**
    * The panel's own rows, ahead of the host's slash commands.
    *
    * Built synchronously so the command mode can show content on the very first
@@ -406,6 +435,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   function composeCommandRows(hostRows: readonly PanelRow[]): PanelRow[] {
     const entries = availableCatalog(actionContext(), {
       seatSurfaces: deps.config?.seatSurfaces !== false,
+      hostShutdown: hostShutdownFace() !== undefined,
       hostCommands: knownHostCommands,
     });
     const shortcuts = services.shortcuts();
@@ -430,6 +460,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       sidebarRight: () => refs.sidebarRight,
       slots: () => refs.slots,
       shortcuts: () => refs.shortcuts,
+      shutdownRequest: hostShutdownFace,
       currentSessionId,
       insert,
       close,
@@ -457,11 +488,22 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     };
   }
 
+  /**
+   * Rank the rows in hand for the current query, then project the armed wording.
+   *
+   * The order matters: ranking must read the canonical labels, because the
+   * confirmation text does not answer the query — ranking on it would drop or
+   * move the armed row mid-confirmation and strand the highlight index that the
+   * second Enter trusts.
+   */
+  function projectRows(rows: readonly PanelRow[], confirmQuit: boolean, query: string): readonly PanelRow[] {
+    return withConfirmLabel(rankRows(rows, query).slice(0, MAX_ROWS), confirmQuit, copy());
+  }
+
   /** Re-project the rows already in hand for the current query, without a round trip. */
   function rankLocal(): void {
     const snapshot = store.getSnapshot();
-    const ranked = rankRows(rawRows, snapshot.model.query).slice(0, MAX_ROWS);
-    store.set({ rows: ranked });
+    store.set({ rows: projectRows(rawRows, snapshot.model.confirmQuit, snapshot.model.query) });
   }
 
   async function runLoad(): Promise<void> {
@@ -495,7 +537,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       rawRows = composed;
       cache.set(keyOf(latest), composed);
       store.set({
-        rows: rankRows(composed, latest.model.query).slice(0, MAX_ROWS),
+        rows: projectRows(composed, latest.model.confirmQuit, latest.model.query),
         status: result.status,
         message: result.message ?? null,
         // A degraded catalogue still leaves usable rows, so its reason rides the
@@ -582,7 +624,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     store.set({
       open: true,
       model,
-      rows: rankRows(seeded, initialQuery).slice(0, MAX_ROWS),
+      rows: projectRows(seeded, model.confirmQuit, initialQuery),
       status: "loading",
       message: null,
       notice: null,
@@ -784,6 +826,18 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       case "open-session":
         acceptSession(row.action.sessionId);
         return;
+      case "request-shutdown": {
+        const reading = readQuitAccept(store.getSnapshot().model);
+        if (reading.kind === "arm") {
+          // The first press only arms: the row becomes its own confirmation,
+          // and nothing is asked of the host yet.
+          store.set({ model: reading.model });
+          rankLocal();
+          return;
+        }
+        void runCatalogAction(row.action, actionDeps());
+        return;
+      }
       default:
         // Catalogue kinds (session lifecycle, surfaces, theme) run in their own
         // layer, which owns their notices and their failure vocabulary.
@@ -1302,6 +1356,17 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       if (isPathExplorerFace(face)) refs.pathExplorer = face;
       return () => {
         refs.pathExplorer = undefined;
+      };
+    }),
+  );
+  // The quit row's channel, published by this package's own host half in the
+  // same way. A host without it loses one row and nothing else.
+  disposers.push(
+    deps.ctx.inject(["remote.hostShutdown"], scope => {
+      const face = scope.get("remote.hostShutdown");
+      if (isHostShutdownFace(face)) refs.hostShutdown = face;
+      return () => {
+        refs.hostShutdown = undefined;
       };
     }),
   );

@@ -54,7 +54,9 @@ export type RowAction =
   /** Run one shortcuts-catalog command the default catalogue does not cover. */
   | { readonly kind: "invoke-shortcut"; readonly id: string }
   /** Open the git workbench on one commit's detail (`commit:<hash>` focus). */
-  | { readonly kind: "open-commit"; readonly hash: string };
+  | { readonly kind: "open-commit"; readonly hash: string }
+  /** Ask the host for a graceful exit; the runtime confirms before firing. */
+  | { readonly kind: "request-shutdown" };
 
 /** The default catalogue's domain, re-exported so callers keep one import. */
 export type { ActionCategory, CatalogEntry } from "./catalog.ts";
@@ -245,6 +247,23 @@ export function catalogRows(
     hint: entry.shortcutId === undefined ? undefined : hints.get(entry.shortcutId),
     action: entry.action,
   }));
+}
+
+/**
+ * The armed quit row speaks the confirmation instead of its label.
+ *
+ * This is a display projection, applied after ranking and never on the stored
+ * rows: ranking scores the canonical labels, so the query keeps matching the
+ * armed row at the seat it already held, and disarming (a retyped query, going
+ * back, reopening) drops the wording without recomposition.
+ */
+export function withConfirmLabel(
+  rows: readonly PanelRow[],
+  confirmQuit: boolean,
+  copy: Copy,
+): readonly PanelRow[] {
+  if (!confirmQuit) return rows;
+  return rows.map(row => (row.action.kind === "request-shutdown" ? { ...row, label: copy.confirmQuit } : row));
 }
 
 /** Sessions that belong in a list: not archived, not blank, not a subagent. */
