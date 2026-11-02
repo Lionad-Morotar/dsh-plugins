@@ -200,7 +200,9 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       // plate. Fit the widest line instead, and keep the height bound only as
       // an upper limit.
       const widest = Math.max(...lines.map(line => measureEm(line)), 1);
-      const fontSize = Math.min(lineHeight * 0.78, (box.width * 0.92) / widest);
+      // One step above the plate's own type size. The plate was measured for
+      // the smaller size, so a line that no longer fits is squeezed to it.
+      const fontSize = Math.min(Math.max(lineHeight * 0.78, 14), (box.width * 0.92) / widest);
       for (const [index, line] of lines.entries()) {
         const attrs: Record<string, string | number> = {
           x: box.x,
@@ -209,6 +211,10 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
           "font-size": fontSize,
           "font-family": "system-ui,sans-serif",
         };
+        if (measureEm(line) * fontSize > box.width) {
+          attrs.textLength = box.width;
+          attrs.lengthAdjust = "spacingAndGlyphs";
+        }
         const text = el("text", attrs);
         text.textContent = line;
         g.append(text);
@@ -224,9 +230,10 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     const g = el("g", { transform: `translate(${node.x} ${node.y})`, style: "cursor:move" });
     g.setAttribute("data-id", node.id);
     const isContainer = (node.children ?? []).length > 0;
-    // Containers stay opaque. A translucent fill over the light canvas reads as
-    // near-white, and the light text drawn on it disappears.
-    const fill = isContainer ? "#1e3a8a" : node.color === "secondary" ? "#475569" : "#3b82f6";
+    // A container is a grouping frame, not a card: a wash of blue with a
+    // border, so the children stay the only solid shapes. Its own caption
+    // therefore needs dark ink, where the cards use light ink on blue.
+    const fill = isContainer ? "#eff6ff" : node.color === "secondary" ? "#475569" : "#3b82f6";
     g.append(
       el("rect", {
         width: node.width,
@@ -234,21 +241,27 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
         rx: 8,
         fill,
         stroke: isContainer ? "#60a5fa" : "#2563eb",
-        "stroke-width": 1.5,
+        "stroke-width": isContainer ? 2 : 1.5,
       }),
     );
     const title = el("text", {
       x: 10,
-      y: 22,
-      fill: "#eff6ff",
-      "font-size": 14,
+      y: 24,
+      fill: isContainer ? "#1e3a8a" : "#eff6ff",
+      "font-size": 16,
       "font-weight": 600,
       "font-family": "system-ui,sans-serif",
     });
     title.textContent = node.title;
     g.append(title);
     if (node.technology) {
-      const tech = el("text", { x: 10, y: 40, fill: "#bfdbfe", "font-size": 11, "font-family": "system-ui,sans-serif" });
+      const tech = el("text", {
+        x: 10,
+        y: 44,
+        fill: isContainer ? "#1d4ed8" : "#bfdbfe",
+        "font-size": 13,
+        "font-family": "system-ui,sans-serif",
+      });
       tech.textContent = node.technology;
       g.append(tech);
     }
@@ -256,9 +269,9 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     if (description) {
       const desc = el("text", {
         x: 10,
-        y: node.technology ? 58 : 40,
-        fill: "#e0edff",
-        "font-size": 10,
+        y: node.technology ? 64 : 44,
+        fill: isContainer ? "#1e40af" : "#e0edff",
+        "font-size": 12,
         "font-family": "system-ui,sans-serif",
       });
       const sliced = slicedDescription(description);
