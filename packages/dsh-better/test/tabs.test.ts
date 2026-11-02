@@ -21,8 +21,10 @@ import {
   TABS_SECTION_SLOT,
   TABS_STORAGE_KEY,
   VIEW_SLOT,
+  HIDDEN_TAB_RULE,
+  applyHiddenButtons,
   createTabController,
-  planHiddenRules,
+  planHiddenButtons,
   readHidden,
   readStripButtons,
   resolveViewLabel,
@@ -150,10 +152,21 @@ describe("readStripButtons", () => {
   function hostButton(label: string, tooltipFallback: string): {
     textContent: string;
     querySelector(selector: string): { textContent: string } | null;
+    hasAttribute(name: string): boolean;
+    setAttribute(name: string, value: string): void;
+    removeAttribute(name: string): void;
   } {
+    const attrs = new Set<string>();
     return {
       textContent: `${label}${tooltipFallback}`,
       querySelector: selector => (selector === "[class*='tabLabel']" ? { textContent: ` ${label} ` } : null),
+      hasAttribute: name => attrs.has(name),
+      setAttribute: name => {
+        attrs.add(name);
+      },
+      removeAttribute: name => {
+        attrs.delete(name);
+      },
     };
   }
 
@@ -164,57 +177,89 @@ describe("readStripButtons", () => {
         querySelectorAll: () => Object.assign([...buttons], { length: buttons.length }),
       }),
     };
-    expect(readStripButtons(doc)).toEqual(["对话", "WakaTime", "文件"]);
+    expect(readStripButtons(doc)?.map(button => button.label)).toEqual(["对话", "WakaTime", "文件"]);
   });
 
   it("falls back to the button's own text when the host renders the label bare", () => {
     const doc = {
       querySelector: () => ({
-        querySelectorAll: () => Object.assign([{ textContent: " 对话 ", querySelector: () => null }], { length: 1 }),
+        querySelectorAll: () =>
+          Object.assign(
+            [{ textContent: " 对话 ", querySelector: () => null, hasAttribute: () => false, setAttribute() {}, removeAttribute() {} }],
+            { length: 1 },
+          ),
       }),
     };
-    expect(readStripButtons(doc)).toEqual(["对话"]);
+    expect(readStripButtons(doc)?.map(button => button.label)).toEqual(["对话"]);
   });
 });
 
-describe("planHiddenRules", () => {
-  it("hides exactly the named views by position when the strip matches the ledger", () => {
+/** A strip button the planner can see: its label and whether it is already marked. */
+function shown(label: string, hidden = false): { label: string; hidden: boolean } {
+  return { label, hidden };
+}
+
+describe("planHiddenButtons", () => {
+  it("hides the one button whose label the preference names", () => {
     const entries = [view("files", "文件"), view("wakatime", "WakaTime"), view("git", "Git")];
-    const rules = planHiddenRules(entries, new Set(["wakatime", "not-registered"]), stripTexts(["文件", "WakaTime", "Git"]));
-    // Chat is child 1; wakatime is the second ledger row, so child 3.
-    expect(rules).toEqual([`${STRIP_CONTAINER_SELECTOR} > button:nth-child(3)`]);
+    const planned = planHiddenButtons(
+      entries,
+      new Set(["wakatime", "not-registered"]),
+      [shown("对话"), shown("文件"), shown("WakaTime"), shown("Git")],
+    );
+    expect(planned).toEqual([false, false, true, false]);
   });
 
-  it("never plans a rule for chat", () => {
-    const entries = [view(FIXED_VIEW_ID), view("files", "文件")];
-    const rules = planHiddenRules(entries, new Set([FIXED_VIEW_ID, "files"]), stripTexts(["文件"]));
-    expect(rules).toEqual([`${STRIP_CONTAINER_SELECTOR} > button:nth-child(2)`]);
+  it("never hides chat, even when the preference names it", () => {
+    const entries = [view(FIXED_VIEW_ID, "对话"), view("files", "文件")];
+    const planned = planHiddenButtons(entries, new Set([FIXED_VIEW_ID, "files"]), [shown("对话"), shown("文件")]);
+    expect(planned).toEqual([false, true]);
   });
 
-  it("plans nothing before the strip has rendered", () => {
-    const entries = [view("files", "文件")];
-    expect(planHiddenRules(entries, new Set(["files"]), undefined)).toEqual([]);
-    expect(planHiddenRules(entries, new Set(["files"]), [])).toEqual([]);
+  it("plans nothing for an empty strip", () => {
+    expect(planHiddenButtons([view("files", "文件")], new Set(["files"]), [])).toEqual([]);
   });
 
-  it("falls back to a label scan when the host filtered a view the ledger still has", () => {
-    // Developer tools off: the host drops `trajectory` from the strip, so the
-    // positional walk disagrees and the plan must not trust positions.
+  it("still finds the button when the host dropped a view the ledger has", () => {
+    // Developer tools off: the host omits `trajectory`, so the button is not
+    // where a positional count would put it. The label is what remains.
     const entries = [view("trajectory", "Trajectory"), view("files", "文件"), view("wakatime", "WakaTime")];
-    const texts = stripTexts(["文件", "WakaTime"]);
-    expect(planHiddenRules(entries, new Set(["wakatime"]), texts))
-      .toEqual([`${STRIP_CONTAINER_SELECTOR} > button:nth-child(3)`]);
+    const planned = planHiddenButtons(
+      entries,
+      new Set(["wakatime"]),
+      [shown("对话"), shown("文件"), shown("WakaTime")],
+    );
+    expect(planned).toEqual([false, false, true]);
   });
 
-  it("skips a hidden view whose label is ambiguous or absent", () => {
+  it("hides nothing when a label is shared by two buttons", () => {
     const entries = [view("files", "文件"), view("clone", "文件")];
-    const rules = planHiddenRules(entries, new Set(["clone", "files"]), stripTexts(["文件", "文件", "其他"]));
-    expect(rules).toEqual([]);
+    const planned = planHiddenButtons(
+      entries,
+      new Set(["clone", "files"]),
+      [shown("文件"), shown("文件"), shown("其他")],
+    );
+    expect(planned).toEqual([false, false, false]);
   });
 
-  it("shows everything when the strip cannot be read at all", () => {
-    const entries = [view("files", "文件")];
-    expect(planHiddenRules(entries, new Set(["files"]), stripTexts(["看不懂的标签"]))).toEqual([]);
+  it("hides nothing when the strip shows labels the ledger does not", () => {
+    const planned = planHiddenButtons([view("files", "文件")], new Set(["files"]), [shown("看不懂的标签")]);
+    expect(planned).toEqual([false]);
+  });
+});
+
+describe("applyHiddenButtons", () => {
+  it("marks only the buttons whose state disagrees with the plan", () => {
+    const marks: [number, boolean][] = [];
+    const buttons = [
+      { label: "对话", hidden: false, mark: (hidden: boolean) => marks.push([0, hidden]) },
+      { label: "WakaTime", hidden: false, mark: (hidden: boolean) => marks.push([1, hidden]) },
+      { label: "文件", hidden: true, mark: (hidden: boolean) => marks.push([2, hidden]) },
+    ];
+    const changed = applyHiddenButtons(buttons, [false, true, false]);
+    expect(changed).toBe(true);
+    // The first button already agrees, so it is not touched.
+    expect(marks).toEqual([[1, true], [2, false]]);
   });
 });
 
@@ -224,11 +269,13 @@ describe("createTabController", () => {
     texts: readonly string[] | undefined,
   ): StripHostDocument & {
     readonly sheet: StripStyleTag | undefined;
-    readonly texts: readonly string[] | undefined;
-    set(texts: readonly string[] | undefined): void;
+    /** The buttons the strip currently shows, Chat included. */
+    buttons: { label: string; hidden: boolean; mark(hidden: boolean): void }[];
+    set(labels: readonly string[] | undefined): void;
   } {
     let sheet: StripStyleTag | undefined;
-    let texts$ = texts;
+    let buttons: { label: string; hidden: boolean; mark(hidden: boolean): void }[] =
+      texts === undefined ? [] : texts.map(label => liveButton(label));
     const callbacks: (() => void)[] = [];
     const doc = {
       querySelector: (selector: string) => (selector === STRIP_CONTAINER_SELECTOR ? {} : null),
@@ -257,21 +304,40 @@ describe("createTabController", () => {
         cancelAnimationFrame() {},
       },
       set(next: readonly string[] | undefined) {
-        texts$ = next;
+        const replacement = next === undefined ? [] : next.map(label => liveButton(label));
+        buttons.splice(0, buttons.length, ...replacement);
         for (const callback of callbacks.splice(0)) callback();
       },
     };
-    return {
+    const face = {
       ...doc,
-      // Getters, not copied values: `sheet` tracks the teardown and `texts`
-      // tracks `set`, which is the whole point of reading them afterwards.
       get sheet() {
         return sheet;
       },
-      get texts() {
-        return texts$;
+      // The same array the reader walks. A getter would hand back a fresh
+      // view, and the marks the controller writes would land on a copy the
+      // assertion never sees. `set` replaces the contents in place so the
+      // reader, which closed over this array, sees the replacement.
+      buttons,
+    };
+    return face;
+  }
+
+  /** A button that records its own marker, the way the DOM button does. */
+  function liveButton(label: string): { label: string; hidden: boolean; mark(hidden: boolean): void } {
+    const button = {
+      label,
+      hidden: false,
+      mark(hidden: boolean) {
+        button.hidden = hidden;
       },
     };
+    return button;
+  }
+
+  /** The labels currently marked hidden, in strip order. */
+  function hiddenLabels(doc: ReturnType<typeof stripDoc>): string[] {
+    return doc.buttons.filter(button => button.hidden).map(button => button.label);
   }
 
   /** The controller wired to read its strip from the fake document. */
@@ -280,7 +346,11 @@ describe("createTabController", () => {
     doc: ReturnType<typeof stripDoc>,
     storage?: TabStorage,
   ): ReturnType<typeof createTabController> {
-    return createTabController({ ledger: views, storage, readButtons: () => doc.texts });
+    return createTabController({
+      ledger: views,
+      storage,
+      readButtons: () => (doc.buttons.length === 0 ? undefined : doc.buttons),
+    });
   }
 
   it("applies a stored choice once the strip renders, and follows a plugin that registers later", () => {
@@ -290,10 +360,10 @@ describe("createTabController", () => {
     const controller = controllerFor(views, doc, storage);
     const stop = controller.attach(doc);
 
-    // Before the strip renders the sheet stays empty; the retry lands it.
-    expect(doc.sheet?.textContent).toBe("");
+    // Before the strip renders nothing is marked; the retry lands it.
+    expect(hiddenLabels(doc)).toEqual([]);
     doc.set(stripTexts(["文件", "WakaTime"]));
-    expect(doc.sheet?.textContent).toBe(`${STRIP_CONTAINER_SELECTOR} > button:nth-child(3)`);
+    expect(hiddenLabels(doc)).toEqual(["WakaTime"]);
     expect(controller.rows().map(row => [row.id, row.enabled])).toEqual([
       ["files", true],
       ["wakatime", false],
@@ -302,9 +372,9 @@ describe("createTabController", () => {
     views.set([view("files", "文件"), view("wakatime", "WakaTime"), view("git", "Git")]);
     expect(controller.rows().map(row => row.id)).toEqual(["files", "wakatime", "git"]);
     // A newly registered view is shown: the preference only hides what it names.
-    // Positions shifted, and the plan re-walked the ledger on its own.
     doc.set(stripTexts(["文件", "WakaTime", "Git"]));
-    expect(doc.sheet?.textContent).toBe(`${STRIP_CONTAINER_SELECTOR} > button:nth-child(3)`);
+    views.set([view("files", "文件"), view("wakatime", "WakaTime"), view("git", "Git")]);
+    expect(hiddenLabels(doc)).toEqual(["WakaTime"]);
     stop();
   });
 
@@ -316,12 +386,12 @@ describe("createTabController", () => {
     const stop = controller.attach(doc);
 
     expect(controller.setEnabled("wakatime", false)).toBe(true);
-    expect(doc.sheet?.textContent).toBe(`${STRIP_CONTAINER_SELECTOR} > button:nth-child(3)`);
+    expect(hiddenLabels(doc)).toEqual(["WakaTime"]);
     expect(views.entriesOfSlot(VIEW_SLOT).map(entry => entry.options.id)).toEqual(["files", "wakatime"]);
     expect(readHidden(storage)).toEqual(new Set(["wakatime"]));
 
     expect(controller.setEnabled("wakatime", true)).toBe(true);
-    expect(doc.sheet?.textContent).toBe("");
+    expect(hiddenLabels(doc)).toEqual([]);
     expect(readHidden(storage)).toEqual(new Set());
     // Repeating a choice that already holds changes nothing.
     expect(controller.setEnabled("wakatime", true)).toBe(false);
@@ -330,18 +400,25 @@ describe("createTabController", () => {
 
   it("stops following the ledger once detached, and removes the sheet", () => {
     const views = ledger([view("files", "文件")]);
+    const storage = memoryStorage();
     const doc = stripDoc(stripTexts(["文件"]));
-    const controller = controllerFor(views, doc, memoryStorage());
+    const controller = controllerFor(views, doc, storage);
     const stop = controller.attach(doc);
+    controller.setEnabled("files", false);
+    expect(hiddenLabels(doc)).toEqual(["文件"]);
     stop();
+    // The sheet is gone, and a ledger change afterwards does not come back to
+    // mark anything: there is no strip subscription left to fire.
     expect(doc.sheet).toBeUndefined();
     views.set([view("files", "文件"), view("wakatime", "WakaTime")]);
     expect(doc.sheet).toBeUndefined();
-    // The choice itself is kept: the next attach applies it again.
-    controller.setEnabled("files", false);
+    // The choice is the part that survives. A new controller, the shape a
+    // reload gets, reads it back and marks the strip it is given.
+    expect(readHidden(storage)).toEqual(new Set(["files"]));
     const next = stripDoc(stripTexts(["文件", "WakaTime"]));
-    const stopNext = controller.attach(next);
-    expect(next.sheet?.textContent).toBe(`${STRIP_CONTAINER_SELECTOR} > button:nth-child(2)`);
+    const reloaded = controllerFor(views, next, storage);
+    const stopNext = reloaded.attach(next);
+    expect(hiddenLabels(next)).toEqual(["文件"]);
     stopNext();
   });
 
@@ -352,6 +429,10 @@ describe("createTabController", () => {
     controller.attach(doc);
     expect(doc.sheet?.dataset.plugin).toBe("dsh-better");
     expect(doc.sheet?.dataset.pluginCss).toBe(STRIP_STYLE_TAG);
+    // The rule addresses the marker, not a child position: the host puts text
+    // and comment nodes between the buttons, so a positional selector matches
+    // nothing.
+    expect(doc.sheet?.textContent).toBe(HIDDEN_TAB_RULE);
   });
 });
 

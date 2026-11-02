@@ -18,6 +18,13 @@
 export interface ViewSwitcherElement {
   readonly textContent?: string | null;
   getAttribute?(name: string): string | null;
+  /**
+   * Whether the element carries an attribute.
+   *
+   * Optional because the digit switcher is the only caller that cares, and the
+   * label matcher predates it. A node without the method is treated as visible.
+   */
+  hasAttribute?(name: string): boolean;
   click?(): void;
 }
 
@@ -72,6 +79,21 @@ const TAB_ROW_SELECTOR = "[data-conversation-tabs]";
  * overflow menu button living in the same row would shift every digit after it.
  */
 const TAB_ONLY_SELECTOR = '[role="tab"]';
+
+/**
+ * The marker `dsh-better` puts on a tab the reader hid.
+ *
+ * Named here rather than imported: the workbench package does not depend on
+ * dsh-better, and the marker is a DOM contract, not a code one. A tab carrying
+ * it is still in the strip — `display: none` does not remove it — so a count of
+ * every `[role="tab"]` would hand `⌘2` to a tab the reader can no longer see.
+ */
+const HIDDEN_TAB_ATTR = "data-dsh-better-tab-hidden";
+
+/** Whether a tab is one the reader can still see and therefore address. */
+function tabVisible(tab: ViewSwitcherElement): boolean {
+  return tab.hasAttribute?.(HIDDEN_TAB_ATTR) !== true;
+}
 
 /**
  * Labels the host renders for the views this workbench opens.
@@ -149,7 +171,8 @@ function clickLabels(doc: ViewSwitcherDocument | undefined, labels: readonly str
  * The row marker is tried first so a same-named control elsewhere in the shell
  * cannot be counted; a document that drops the marker still answers through the
  * scoped selector. Views parked in the "更多会话视图" overflow menu are not in
- * the strip, so they are not counted either.
+ * the strip, so they are not counted either. A tab the reader hid stays in the
+ * strip but is dropped here, so the digits follow the tabs that are on screen.
  * @param doc - document face, or undefined outside a browser.
  * @returns the tabs in render order; empty when there is no strip.
  */
@@ -157,9 +180,9 @@ export function listViewTabs(doc: ViewSwitcherDocument | undefined): ViewSwitche
   if (doc === undefined) return [];
   const row = doc.querySelector?.(TAB_ROW_SELECTOR);
   const scoped = row?.querySelectorAll?.(TAB_ONLY_SELECTOR);
-  if (scoped !== undefined && scoped !== null) return Array.from(scoped);
+  if (scoped !== undefined && scoped !== null) return Array.from(scoped).filter(tabVisible);
   const loose = doc.querySelectorAll?.(`${TAB_ROW_SELECTOR} ${TAB_ONLY_SELECTOR}`);
-  return loose === undefined || loose === null ? [] : Array.from(loose);
+  return loose === undefined || loose === null ? [] : Array.from(loose).filter(tabVisible);
 }
 
 /**

@@ -172,6 +172,23 @@ describe("switching by tab index", () => {
     expect(clicked).toEqual(["对话", "文件"]);
   });
 
+  it("skips a tab the reader hid, so the digits follow the tabs still on screen", () => {
+    const clicked: string[] = [];
+    const hidden = tab("WakaTime", clicked);
+    hidden.hasAttribute = name => name === "data-dsh-better-tab-hidden";
+    const tabs = [tab("对话", clicked), hidden, tab("文件", clicked), tab("Git", clicked)];
+    const doc: ViewSwitcherDocument = {
+      querySelector: () => ({ querySelectorAll: () => tabs }),
+      querySelectorAll: () => tabs,
+    };
+
+    // ⌘2 is the second tab the reader can see, which is 文件, not the hidden one.
+    expect(switchToViewTab(doc, 2)).toBe(true);
+    // ⌘0 is the last visible tab, and the hidden one is not a candidate for it.
+    expect(switchToLastViewTab(doc)).toBe(true);
+    expect(clicked).toEqual(["文件", "Git"]);
+  });
+
   it("refuses an index past the last tab instead of wrapping", () => {
     const clicked: string[] = [];
     const doc = documentWith(["对话", "轨迹"], clicked);

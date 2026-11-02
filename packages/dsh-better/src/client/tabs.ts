@@ -208,56 +208,40 @@ export function stripRows(entries: readonly ViewEntry[]): readonly StripRow[] {
   return rows;
 }
 
+/** One tab button, narrowed to the label it shows and the marker it carries. */
+export interface StripButton {
+  /** The visible label, already trimmed. */
+  readonly label: string;
+  /** Whether this button is currently marked hidden. */
+  readonly hidden: boolean;
+}
+
 /**
- * The stylesheet rules that hide the chosen tabs, given the strip's texts.
+ * Which buttons should carry the hidden marker, given the strip right now.
  *
- * `buttonTexts` is what the strip shows right now, in DOM order, Chat first;
- * `undefined` means the strip is not in the document yet and nothing can be
- * verified. Two modes, safest first:
+ * The decision is by label, never by position. Position is what the previous
+ * version used, and it cannot be trusted: the host's renderer places text and
+ * comment nodes between the buttons, so the third button is not the third
+ * child and a positional selector matches nothing. A label that more than one
+ * button shows is left alone, because there is no way to tell which view it
+ * belongs to; a label the strip does not show is a no-op rather than a guess.
  *
- * - Positional. When the button count is exactly Chat plus one per strip row
- *   and every row's label sits where the ledger says, positions are trusted:
- *   ledger row `i` is the `i + 2`th child (Chat takes the first slot).
- * - By label. Otherwise — the host filtered a view, a label differs, or the
- *   host reordered — each hidden id's label is looked up in the button texts,
- *   and only an unambiguous single match is hidden. A strip this package
- *   cannot read stays whole rather than losing a neighbour.
- *
- * @returns selectors, one per hidden button, in ledger order.
+ * @returns one boolean per button, true when that button should be hidden.
  */
-export function planHiddenRules(
+export function planHiddenButtons(
   entries: readonly ViewEntry[],
   hidden: ReadonlySet<string>,
-  buttonTexts: readonly string[] | undefined,
-): readonly string[] {
-  if (buttonTexts === undefined || buttonTexts.length === 0) return [];
-  const rows = stripRows(entries);
-  const rule = (position: number): string =>
-    `${STRIP_CONTAINER_SELECTOR} > button:nth-child(${String(position)})`;
-  const rules: string[] = [];
-
-  // Positional: Chat occupies child 1, ledger row i occupies child i + 2. The
-  // walk checks the whole strip, not just the hidden rows — one disagreement
-  // anywhere means the position model is wrong for all of it.
-  if (buttonTexts.length === rows.length + 1 && rows.every((row, index) => buttonTexts[index + 1] === row.label)) {
-    for (const [index, row] of rows.entries()) {
-      if (!hidden.has(row.id)) continue;
-      rules.push(rule(index + 2));
-    }
-    return rules;
+  buttons: readonly StripButton[],
+): readonly boolean[] {
+  const wanted = new Set<string>();
+  for (const row of stripRows(entries)) {
+    if (!hidden.has(row.id) || row.label === "") continue;
+    const shown = buttons.filter(button => button.label === row.label).length;
+    // One button, one view. Two buttons with the same label cannot be told
+    // apart, and hiding both would remove a view the reader did not name.
+    if (shown === 1) wanted.add(row.label);
   }
-
-  // By label: exact text, and only when exactly one button carries it. A label
-  // shared with another view cannot be told apart, so it is left alone.
-  for (const row of rows) {
-    if (!hidden.has(row.id)) continue;
-    const matches: number[] = [];
-    for (const [index, text] of buttonTexts.entries()) {
-      if (text === row.label) matches.push(index + 1);
-    }
-    if (matches.length === 1) rules.push(rule(matches[0]!));
-  }
-  return rules;
+  return buttons.map(button => wanted.has(button.label));
 }
 
 /**
@@ -291,6 +275,12 @@ export interface TabController {
   attach(doc: StripHostDocument): () => void;
 }
 
+/** A tab button as the reader sees it: its label and its marker. */
+export interface ReadableStripButton extends StripButton {
+  /** Set or clear the hidden marker. The host re-renders the button without it. */
+  mark(hidden: boolean): void;
+}
+
 /** The slice of `Document` the strip reader needs, so tests can stand in. */
 export interface StripDocument {
   querySelector(selector: string): unknown;
@@ -314,41 +304,80 @@ export interface StripHostDocument extends StripDocument {
 }
 
 /**
- * Read the strip's button texts from a document.
+ * Read the strip's buttons from a document.
  *
  * `undefined`, not empty, when the container is absent: the header has not
  * rendered yet, which is a timing fact the caller reacts to, different from a
  * strip that genuinely shows no view tab.
  */
-export function readStripButtons(doc: StripDocument): readonly string[] | undefined {
+export function readStripButtons(doc: StripDocument): readonly ReadableStripButton[] | undefined {
   const container = doc.querySelector(STRIP_CONTAINER_SELECTOR);
   if (container === null || typeof container !== "object") return undefined;
   const owner = container as {
-    querySelectorAll?(selector: string): { length: number; [index: number]: { textContent?: string | null } };
+    querySelectorAll?(selector: string): {
+      length: number;
+      [index: number]: StripButtonElement | undefined;
+    };
   };
   const buttons = owner.querySelectorAll?.(":scope > button[role='tab']");
   if (buttons === undefined) return undefined;
-  const texts: string[] = [];
+  const read: ReadableStripButton[] = [];
   for (let index = 0; index < buttons.length; index += 1) {
-    texts.push(buttonLabel(buttons[index]));
+    const button = buttons[index];
+    if (button === undefined) continue;
+    read.push({
+      label: buttonLabel(button),
+      hidden: button.hasAttribute(HIDDEN_TAB_ATTR),
+      mark: hidden => {
+        if (hidden) button.setAttribute(HIDDEN_TAB_ATTR, "");
+        else button.removeAttribute(HIDDEN_TAB_ATTR);
+      },
+    });
   }
-  return texts;
+  return read;
+}
+
+/** The button surface the reader touches. */
+interface StripButtonElement {
+  textContent?: string | null;
+  querySelector?(selector: string): { textContent?: string | null } | null;
+  hasAttribute(name: string): boolean;
+  setAttribute(name: string, value: string): void;
+  removeAttribute(name: string): void;
 }
 
 /**
  * The label a tab button shows.
  *
- * The host wraps the label in a tooltip, and the tooltip's accessible name is
- * the button's text. Reading `textContent` instead returns the tooltip's own
- * fallback copy when the label is short enough not to overflow, which is every
- * tab here, so the comparison against the ledger finds nothing and the strip
- * stays whole. The visible label is the `.tabLabel` span; the button's own text
- * is the fallback for a host that renders the label bare.
+ * The host wraps the label in a tooltip, so the button's own text is the label
+ * plus whatever the tooltip rendered into it. The visible label is the
+ * `.tabLabel` span; the button's own text is the fallback for a host that
+ * renders the label bare.
  */
-function buttonLabel(button: { textContent?: string | null; querySelector?: (selector: string) => { textContent?: string | null } | null } | undefined): string {
-  const label = button?.querySelector?.("[class*='tabLabel']");
-  const text = label?.textContent ?? button?.textContent ?? "";
+function buttonLabel(button: {
+  textContent?: string | null;
+  querySelector?(selector: string): { textContent?: string | null } | null;
+}): string {
+  const label = button.querySelector?.("[class*='tabLabel']");
+  const text = label?.textContent ?? button.textContent ?? "";
   return text.trim();
+}
+
+/**
+ * Move the strip to the planned marking.
+ *
+ * Writes only the buttons whose marker disagrees with the plan, so a repaint
+ * that changes nothing does not touch the DOM. Returns whether anything moved.
+ */
+export function applyHiddenButtons(buttons: readonly ReadableStripButton[], planned: readonly boolean[]): boolean {
+  let changed = false;
+  for (const [index, button] of buttons.entries()) {
+    const hide = planned[index] ?? false;
+    if (hide === button.hidden) continue;
+    button.mark(hide);
+    changed = true;
+  }
+  return changed;
 }
 
 /**
@@ -361,7 +390,7 @@ export function createTabController(deps: {
   ledger: ViewLedger;
   storage?: TabStorage;
   /** The strip reader; defaults to the DOM walk and stands in for tests. */
-  readButtons?: (doc: StripDocument) => readonly string[] | undefined;
+  readButtons?: (doc: StripDocument) => readonly ReadableStripButton[] | undefined;
 }): TabController {
   const { ledger, storage } = deps;
   const readButtons = deps.readButtons ?? readStripButtons;
@@ -400,6 +429,9 @@ export function createTabController(deps: {
       const tag = doc.createElement("style");
       tag.dataset.plugin = "dsh-better";
       tag.dataset.pluginCss = STRIP_STYLE_TAG;
+      // One rule for the life of the sheet. Which button it matches changes
+      // with the marker, and the marker is rewritten below.
+      tag.textContent = HIDDEN_TAB_RULE;
       doc.head.append(tag);
       const schedule = doc.defaultView?.requestAnimationFrame?.bind(doc.defaultView);
       const cancel = doc.defaultView?.cancelAnimationFrame?.bind(doc.defaultView);
@@ -419,7 +451,7 @@ export function createTabController(deps: {
           return;
         }
         frame = undefined;
-        tag.textContent = planHiddenRules(entries, hidden, buttons).join("\n");
+        applyHiddenButtons(buttons, planHiddenButtons(entries, hidden, buttons));
       };
 
       const unsubscribe = ledger.subscribe(VIEW_SLOT, refresh);
@@ -440,3 +472,16 @@ export function createTabController(deps: {
  * second copy and a teardown can find its own sheet.
  */
 export const STRIP_STYLE_TAG = "dsh-better/strip.css";
+
+/**
+ * The marker a hidden tab button carries.
+ *
+ * A selector by position cannot name these buttons. The strip's children are
+ * not only buttons: the host inserts text and comment nodes between them, and
+ * `nth-child` counts every child, so a rule written for "the third button"
+ * matches nothing. Marking the button itself is what survives that.
+ */
+export const HIDDEN_TAB_ATTR = "data-dsh-better-tab-hidden";
+
+/** The one rule the sheet holds: a marked button is not in the strip. */
+export const HIDDEN_TAB_RULE = `${STRIP_CONTAINER_SELECTOR} > button[${HIDDEN_TAB_ATTR}] { display: none; }`;
