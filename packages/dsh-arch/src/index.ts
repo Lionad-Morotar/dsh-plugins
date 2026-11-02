@@ -30,7 +30,6 @@ import {
   resolveSessionRoot,
   type SessionPersistenceFace,
   type SessionsFace,
-  type WorkspaceRegistryFace,
 } from "./host/workspace.ts";
 import {
   PACKAGE_NAME,
@@ -54,6 +53,7 @@ export const inject: string[] = [];
 interface HostContext {
   get?(name: string): unknown;
   effect?(onCleanup: () => void | Promise<void>): void;
+  inject?(names: readonly string[], callback: (ctx: HostContext) => void): unknown;
 }
 
 function readService(ctx: HostContext, name: string): unknown {
@@ -61,27 +61,63 @@ function readService(ctx: HostContext, name: string): unknown {
   return value === null ? undefined : value;
 }
 
+/**
+ * Register the routes once `webServer` exists.
+ *
+ * A one-shot `ctx.get("webServer")` during `apply` misses the desktop
+ * composition: this row activates before the web app provides the server, the
+ * probe reads undefined, and the routes are never registered. `inject` waits
+ * for that service and runs the callback when it appears; a host that never
+ * grows one (headless) simply never calls back, which is the same degraded
+ * outcome as before, without blocking boot.
+ *
+ * @param host - the context `apply` received.
+ * @param register - mounts the prefix; receives the context that owns the server.
+ */
+function whenWebServer(host: HostContext, register: (ctx: HostContext, webServer: WebServerFace) => void): void {
+  const present = readService(host, "webServer") as WebServerFace | undefined;
+  if (present !== undefined) {
+    register(host, present);
+    return;
+  }
+  host.inject?.(["webServer"], ctx => {
+    const webServer = readService(ctx, "webServer") as WebServerFace | undefined;
+    if (webServer !== undefined) register(ctx, webServer);
+  });
+}
+
 export function apply(ctx: Context): void {
   const host = ctx as unknown as HostContext;
-  const webServer = readService(host, "webServer") as WebServerFace | undefined;
+
+  whenWebServer(host, (ready, webServer) => {
+    mountRoutes(ready, webServer);
+  });
+}
+
+/**
+ * Mount `/arch/api` on one live web server.
+ *
+ * Collaborators other than the server stay one-shot probes: a missing store or
+ * session catalogue degrades that one capability, it does not withhold the routes.
+ *
+ * @param host - the context that owns the server (the deferred one when we waited).
+ * @param webServer - the server the routes register on.
+ */
+function mountRoutes(host: HostContext, webServer: WebServerFace): void {
   const sessions = readService(host, "sessions") as SessionsFace | undefined;
   const sessionPersistence = readService(host, "sessionPersistence") as SessionPersistenceFace | undefined;
-  const workspaceRegistry = readService(host, "workspaceRegistry") as WorkspaceRegistryFace | undefined;
   const storageDomain = readService(host, "storageDomain") as StorageDomainFace | undefined;
 
   // Activation observability: a silent pending fiber is indistinguishable from
   // a missing module from the outside, and both have bitten already.
   console.info(
     `[dsh-arch] activating; services=${JSON.stringify({
-      webServer: webServer !== undefined,
+      webServer: true,
       sessions: sessions !== undefined,
       sessionPersistence: sessionPersistence !== undefined,
-      workspaceRegistry: workspaceRegistry !== undefined,
       storageDomain: storageDomain !== undefined,
     })}`,
   );
-
-  if (webServer === undefined) return;
 
   const renderer: WorkspaceRenderer = createRenderer();
   // Awaited per request, not assigned on resolve: assigning would leave a

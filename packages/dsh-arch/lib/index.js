@@ -333,23 +333,35 @@ function readService(ctx, name2) {
   const value = ctx.get?.(name2);
   return value === null ? void 0 : value;
 }
+function whenWebServer(host, register) {
+  const present = readService(host, "webServer");
+  if (present !== void 0) {
+    register(host, present);
+    return;
+  }
+  host.inject?.(["webServer"], (ctx) => {
+    const webServer = readService(ctx, "webServer");
+    if (webServer !== void 0) register(ctx, webServer);
+  });
+}
 function apply(ctx) {
   const host = ctx;
-  const webServer = readService(host, "webServer");
+  whenWebServer(host, (ready, webServer) => {
+    mountRoutes(ready, webServer);
+  });
+}
+function mountRoutes(host, webServer) {
   const sessions = readService(host, "sessions");
   const sessionPersistence = readService(host, "sessionPersistence");
-  const workspaceRegistry = readService(host, "workspaceRegistry");
   const storageDomain = readService(host, "storageDomain");
   console.info(
     `[dsh-arch] activating; services=${JSON.stringify({
-      webServer: webServer !== void 0,
+      webServer: true,
       sessions: sessions !== void 0,
       sessionPersistence: sessionPersistence !== void 0,
-      workspaceRegistry: workspaceRegistry !== void 0,
       storageDomain: storageDomain !== void 0
     })}`
   );
-  if (webServer === void 0) return;
   const renderer = createRenderer();
   const storePromise = openArchStore(storageDomain);
   async function resolveWorkspaceRoot(sessionId) {
