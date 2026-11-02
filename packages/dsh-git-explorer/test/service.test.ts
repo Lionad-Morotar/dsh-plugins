@@ -27,6 +27,7 @@ describe("GitExplorerService", () => {
       "commit",
       "run",
       "branches",
+      "switchBranch",
     ]);
   });
 

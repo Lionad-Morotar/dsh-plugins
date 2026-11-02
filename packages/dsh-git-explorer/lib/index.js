@@ -921,6 +921,74 @@ async function collectSnapshot(options, request = {}, signal) {
   };
 }
 
+// src/host/switch.ts
+var REF_FORMAT2 = "--format=%(refname)";
+var HEADS_PREFIX = "refs/heads/";
+var MAX_NAME_LENGTH = 255;
+var MAX_DETAIL_LINES = 3;
+var NAME_RULES = [
+  ["must not contain a NUL byte", (name2) => name2.includes("\0")],
+  ["must not contain a space", (name2) => name2.includes(" ")],
+  ['must not contain ".."', (name2) => name2.includes("..")],
+  ['must not contain "~"', (name2) => name2.includes("~")],
+  ['must not contain "^"', (name2) => name2.includes("^")],
+  ['must not contain "@{"', (name2) => name2.includes("@{")],
+  ["must not start with a dash", (name2) => name2.startsWith("-")],
+  ["must not end with a slash", (name2) => name2.endsWith("/")]
+];
+function nameProblem(value) {
+  if (typeof value !== "string" || value === "") return "name must be a non-empty string";
+  if (value.length > MAX_NAME_LENGTH) return `name must be at most ${String(MAX_NAME_LENGTH)} characters`;
+  for (const [reason, invalid] of NAME_RULES) {
+    if (invalid(value)) return `name ${reason}`;
+  }
+  return null;
+}
+function localBranchNames(text) {
+  const names = /* @__PURE__ */ new Set();
+  for (const raw of text.split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line.startsWith(HEADS_PREFIX)) names.add(line.slice(HEADS_PREFIX.length));
+  }
+  return names;
+}
+function detailOf(result) {
+  const lines = result.stderr.split("\n").map((line) => line.trim()).filter((line) => line !== "").slice(0, MAX_DETAIL_LINES);
+  if (lines.length > 0) return lines.join("; ");
+  return result.exitCode === null ? "the command was terminated by a signal" : `the command exited with code ${String(result.exitCode)}`;
+}
+function inventoryFailure(result) {
+  if (result.timedOut) return { code: "timeout", message: "the command exceeded its deadline" };
+  if (result.cancelled) return { code: "git-failed", message: "cancelled" };
+  if (result.exitCode !== 0) return { code: "git-failed", message: detailOf(result) };
+  if (result.stdoutLossy) return { code: "git-failed", message: "command output exceeded the collection budget" };
+  return null;
+}
+function switchFailure(result) {
+  if (result.timedOut) return { code: "timeout", message: "the command exceeded its deadline" };
+  if (result.cancelled) return { code: "git-failed", message: "cancelled" };
+  if (result.stderr.includes("did not match any file(s) known to git") || result.stderr.includes("invalid reference")) {
+    return { code: "invalid-request", message: `git rejected the branch name: ${detailOf(result)}` };
+  }
+  return { code: "git-failed", message: detailOf(result) };
+}
+async function switchToBranch(options, request, signal) {
+  const cwd = request.cwd ?? options.cwd;
+  const problem = nameProblem(request.name);
+  if (problem !== null) return fail("invalid-request", problem);
+  const inventory = await options.runner.run(["for-each-ref", REF_FORMAT2, "refs/heads"], { cwd, signal });
+  const inventoryError = inventoryFailure(inventory);
+  if (inventoryError !== null) return { ok: false, error: inventoryError };
+  if (!localBranchNames(inventory.stdout).has(request.name)) {
+    return fail("invalid-request", `branch not found: ${request.name}`);
+  }
+  const switched = await options.runner.run(["switch", "--no-guess", request.name], { cwd, signal });
+  if (switched.timedOut || switched.cancelled || switched.exitCode !== 0) {
+    return { ok: false, error: switchFailure(switched) };
+  }
+  return { ok: true, branch: request.name };
+}
+
 // src/shared.ts
 var PACKAGE_NAME = "dsh-git-explorer";
 var GIT_SERVICE = "gitExplorer";
@@ -947,8 +1015,8 @@ function normalizeConfig(config) {
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
-var _branches_dec, _run_dec, _commit_dec, _query_dec, _snapshot_dec, _a, _init;
-var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec = [Remote("snapshot")], _query_dec = [Remote("query")], _commit_dec = [Remote("commit")], _run_dec = [Remote("run")], _branches_dec = [Remote("branches")], _a) {
+var _switchBranch_dec, _branches_dec, _run_dec, _commit_dec, _query_dec, _snapshot_dec, _a, _init;
+var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec = [Remote("snapshot")], _query_dec = [Remote("query")], _commit_dec = [Remote("commit")], _run_dec = [Remote("run")], _branches_dec = [Remote("branches")], _switchBranch_dec = [Remote("switchBranch")], _a) {
   constructor(ctx, config) {
     super(ctx, GIT_SERVICE);
     __runInitializers(_init, 5, this);
@@ -1042,6 +1110,14 @@ var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec 
       return fail("internal", messageOf(error));
     }
   }
+  async switchBranch(request, signal) {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
+    try {
+      return await switchToBranch({ runner: this.runnerFor(cwd), cwd }, request, signal);
+    } catch (error) {
+      return fail("internal", messageOf(error));
+    }
+  }
 };
 _init = __decoratorStart(_a);
 __decorateElement(_init, 1, "snapshot", _snapshot_dec, GitExplorerService);
@@ -1049,6 +1125,7 @@ __decorateElement(_init, 1, "query", _query_dec, GitExplorerService);
 __decorateElement(_init, 1, "commit", _commit_dec, GitExplorerService);
 __decorateElement(_init, 1, "run", _run_dec, GitExplorerService);
 __decorateElement(_init, 1, "branches", _branches_dec, GitExplorerService);
+__decorateElement(_init, 1, "switchBranch", _switchBranch_dec, GitExplorerService);
 __decoratorMetadata(_init, GitExplorerService);
 __publicField(GitExplorerService, "inject", inject);
 __publicField(GitExplorerService, "Config", Schema.object({

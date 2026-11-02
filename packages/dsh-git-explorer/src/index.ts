@@ -1,11 +1,13 @@
 /**
  * Host half: the Git data service behind the workbench panel.
  *
- * `GitExplorerService` owns five Remote endpoints. `snapshot`, `query`,
- * `commit` and `branches` are real reads; `run` is a typed placeholder until
- * the action slice lands. The heavy lifting lives in `host/`: parsers, the lane
- * layout and the branch inventory are pure, the runner is the only place that
- * touches the host subprocess service.
+ * `GitExplorerService` owns six Remote endpoints. `snapshot`, `query`,
+ * `commit` and `branches` are real reads; `switchBranch` is the one write, and
+ * it only checks out a branch that already exists; `run` is a typed
+ * placeholder until the remaining action slice lands. The heavy lifting lives
+ * in `host/`: parsers, the lane layout, the branch inventory and the switch
+ * are pure, the runner is the only place that touches the host subprocess
+ * service.
  */
 import { isAbsolute } from "node:path";
 
@@ -21,6 +23,7 @@ import { assignLanes } from "./host/lanes.ts";
 import { parseLog, parseRefs, parseStatusZ } from "./host/parse.ts";
 import { collectQuery } from "./host/query.ts";
 import { collectSnapshot } from "./host/snapshot.ts";
+import { switchToBranch } from "./host/switch.ts";
 import type {
   GitBranchListRequest,
   GitBranchListResult,
@@ -32,6 +35,8 @@ import type {
   GitRunResult,
   GitSnapshotRequest,
   GitSnapshotResult,
+  GitSwitchRequest,
+  GitSwitchResult,
 } from "./host/types.ts";
 import { GIT_SERVICE, PACKAGE_NAME } from "./shared.ts";
 
@@ -58,6 +63,8 @@ export type {
   GitSnapshot,
   GitSnapshotRequest,
   GitSnapshotResult,
+  GitSwitchRequest,
+  GitSwitchResult,
 } from "./host/types.ts";
 export type { LaneEdge, LaneRow } from "./host/lanes.ts";
 
@@ -241,6 +248,16 @@ export class GitExplorerService extends TypertRemoteService {
     const cwd = await this.baseDirectory(request.sessionId, request.cwd);
     try {
       return await collectBranches({ runner: this.runnerFor(cwd), cwd }, request, signal);
+    } catch (error) {
+      return fail("internal", messageOf(error));
+    }
+  }
+
+  @Remote("switchBranch")
+  async switchBranch(request: GitSwitchRequest, signal?: AbortSignal): Promise<GitSwitchResult> {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
+    try {
+      return await switchToBranch({ runner: this.runnerFor(cwd), cwd }, request, signal);
     } catch (error) {
       return fail("internal", messageOf(error));
     }

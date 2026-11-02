@@ -238,3 +238,17 @@ export interface GitBranchListRequest {
   /** Absolute directory override; when absent the session's cwd is used. */
   readonly cwd?: string;
 }
+
+/** Ask one worktree to check out a branch it already has. */
+export interface GitSwitchRequest {
+  /** Session whose working directory backs this call; resolved server-side. */
+  readonly sessionId: string;
+  /** Local branch name without the `refs/heads/` prefix. */
+  readonly name: string;
+  /** Absolute directory override; when absent the session's cwd is used. */
+  readonly cwd?: string;
+}
+
+export type GitSwitchResult =
+  | { readonly ok: true; readonly branch: string }
+  | { readonly ok: false; readonly error: GitFailure };
