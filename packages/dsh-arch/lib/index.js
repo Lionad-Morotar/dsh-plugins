@@ -1,28 +1,29 @@
 // src/host/arch-store.ts
-import Schema from "@deepseek-ai/schemastery";
+import { z } from "zod";
 var ARCH_DOMAIN_NAME = "dsh_arch";
 var ARCH_TABLE_NAME = "workspaces";
-var nodeOffsetSchema = Schema.object({
-  dx: Schema.number(),
-  dy: Schema.number(),
-  baseX: Schema.number(),
-  baseY: Schema.number()
+var nodeOffsetSchema = z.object({
+  dx: z.number(),
+  dy: z.number(),
+  baseX: z.number(),
+  baseY: z.number()
 });
-var workspaceStateSchema = Schema.object({
-  viewId: Schema.string(),
-  viewport: Schema.object({
-    scale: Schema.number(),
-    tx: Schema.number(),
-    ty: Schema.number()
+var workspaceStateSchema = z.object({
+  viewId: z.string(),
+  viewport: z.object({
+    scale: z.number(),
+    tx: z.number(),
+    ty: z.number()
   }),
-  viewHash: Schema.string(),
-  offsets: Schema.dict(Schema.dict(nodeOffsetSchema)),
-  updatedAt: Schema.string()
+  viewHash: z.string(),
+  offsets: z.record(z.string(), z.record(z.string(), nodeOffsetSchema)),
+  updatedAt: z.string()
 });
 var ARCH_DOMAIN_SPEC = {
   name: ARCH_DOMAIN_NAME,
   version: 1,
-  tables: { [ARCH_TABLE_NAME]: workspaceStateSchema }
+  invalidRecords: "backup-and-skip",
+  tables: { [ARCH_TABLE_NAME]: { valueSchema: workspaceStateSchema } }
 };
 async function openArchStore(storageDomain) {
   if (storageDomain === void 0) return null;
@@ -34,7 +35,7 @@ async function openArchStore(storageDomain) {
       return stored === void 0 || stored === null ? null : stored;
     },
     async saveWorkspace(key, state) {
-      await table.put(key, workspaceStateSchema(state));
+      await table.put(key, workspaceStateSchema.parse(state));
     },
     async close() {
       await domain.close();
