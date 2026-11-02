@@ -191,8 +191,8 @@ __publicField(HostShutdownService, "inject", []);
 var name = "dsh-command-panel";
 var inject = [];
 function apply(ctx) {
-  ctx.plugin(PathExplorerService);
-  ctx.plugin(HostShutdownService);
+  new PathExplorerService(ctx);
+  new HostShutdownService(ctx);
 }
 export {
   HostShutdownService,

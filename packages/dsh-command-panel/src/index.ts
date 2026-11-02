@@ -20,8 +20,14 @@ export type { PathEntry, PathResolveRequest, PathResolveResult, ShutdownRequestR
 export const name = "dsh-command-panel";
 export const inject: string[] = [];
 
-/** Mount both host halves; the two namespaces have no ordering between them. */
+/**
+ * Register both host halves.
+ *
+ * Constructed rather than handed to `ctx.plugin`: a Service class has no
+ * `apply`, and Cordis resolves a class plugin to that method, so the plugin
+ * call rejects it and neither namespace is ever published.
+ */
 export default function apply(ctx: Context): void {
-  ctx.plugin(PathExplorerService);
-  ctx.plugin(HostShutdownService);
+  new PathExplorerService(ctx);
+  new HostShutdownService(ctx);
 }
