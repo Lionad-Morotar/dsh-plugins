@@ -16,7 +16,7 @@
  */
 import { bindingCaps, WORKBENCH_COMMANDS, type KeyBinding, type WorkbenchCommandSpec, type WorkbenchGroup } from "./keymap.ts";
 import { GLOBAL_KEY_ROUTES } from "./shortcut-router.ts";
-import { VIEW_DIGIT_COMMANDS } from "./view-digits.ts";
+import { VIEW_TAB_COMMANDS } from "./view-digits.ts";
 
 /** Commands the browser shell receives from the local capture-phase router. */
 const LOCAL_WEB_COMMANDS: ReadonlySet<string> = new Set(GLOBAL_KEY_ROUTES.map(route => route.commandId));
@@ -189,16 +189,18 @@ function toSettingsRow(entry: ShortcutCatalogEntryLike, runtime: "desktop" | "we
 /**
  * Generated command ids the matrix hides.
  *
- * The nine view-digit chords are one toggle in the section, not nine editable
- * rows: they exist only while the switch is on, and the switch's own detail line
- * names the chord range. Listing them here would make the matrix look like the
- * feature packages had mounted nine commands nobody can rebind individually.
+ * The view-digit chords, including the last-tab chord, are one toggle in the
+ * section, not ten editable rows: they exist only while the switch is on, and
+ * the switch's own detail line names the chord range. Listing them here would
+ * make the matrix look like the feature packages had mounted commands nobody
+ * can rebind individually.
  */
+const HIDDEN_COMMAND_IDS: ReadonlySet<string> = new Set(["workbench.view.last"]);
 const HIDDEN_COMMAND_PREFIXES: readonly string[] = ["workbench.view.digit"];
 
 /** Whether one catalog id belongs to a generated row the matrix leaves out. */
 function isHiddenCommand(id: string): boolean {
-  return HIDDEN_COMMAND_PREFIXES.some(prefix => id.startsWith(prefix));
+  return HIDDEN_COMMAND_IDS.has(id) || HIDDEN_COMMAND_PREFIXES.some(prefix => id.startsWith(prefix));
 }
 
 /**
@@ -250,7 +252,7 @@ export interface CheckBindingsOptions {
   /**
    * Include the generated digit chords. They are registered only while the
    * settings switch is on, so the count follows the switch instead of claiming
-   * twelve checked chords on a workbench that binds three.
+   * thirteen checked chords on a workbench that binds three.
    */
   readonly digits?: boolean;
 }
@@ -265,7 +267,7 @@ function reportedCommands(options: CheckBindingsOptions): Array<{
     desktop: spec.desktop,
   }));
   if (options.digits !== true) return globals;
-  return [...globals, ...VIEW_DIGIT_COMMANDS.map(spec => ({ id: spec.id, desktop: spec.desktop }))];
+  return [...globals, ...VIEW_TAB_COMMANDS.map(spec => ({ id: spec.id, desktop: spec.desktop }))];
 }
 
 /**

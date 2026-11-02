@@ -181,6 +181,25 @@ export function switchToViewTab(doc: ViewSwitcherDocument | undefined, index: nu
 }
 
 /**
+ * Switch to the last visible conversation view.
+ *
+ * This does not name a position: four tabs and twelve tabs both land on
+ * whatever the strip currently renders last. An empty strip answers false.
+ * Overflow entries parked in "更多会话视图" are not in the strip, so they are
+ * not selectable from here either. Index 0 stays refused by `switchToViewTab`;
+ * callers that mean "last" come through this function.
+ * @param doc - document face, or undefined outside a browser.
+ * @returns whether a tab was clicked.
+ */
+export function switchToLastViewTab(doc: ViewSwitcherDocument | undefined): boolean {
+  const tabs = listViewTabs(doc);
+  const target = tabs[tabs.length - 1];
+  if (target === undefined) return false;
+  target.click?.();
+  return true;
+}
+
+/**
  * Build the two-path switcher for one session.
  * @param options - seam, session and the optional document face.
  * @returns `open` / `showChat`; both try the seam first and the DOM second.

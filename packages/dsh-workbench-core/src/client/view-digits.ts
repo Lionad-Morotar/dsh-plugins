@@ -6,16 +6,19 @@
  * delivered by this bundle's own capture-phase router instead.
  *
  * Three decisions live here:
- * - the preference: a persisted on/off switch, so the nine chords are opt-out
+ * - the preference: a persisted on/off switch, so the chords are opt-out
  *   rather than silently installed global bindings;
- * - the command table: nine identical rows generated once, so registration,
- *   labels and the settings explanation cannot drift apart;
- * - the web router: alt+digit, matched exactly (no extra modifier, no digit 0)
- *   and consumed only after a tab actually accepted the switch.
+ * - the command table: nine identical rows generated once, plus one hand-written
+ *   last-tab row, so registration, labels and the settings explanation cannot
+ *   drift apart;
+ * - the web router: alt+digit, matched exactly (no extra modifier) and consumed
+ *   only after a tab actually accepted the switch. `0` is the last visible tab,
+ *   not a tenth position.
  *
  * Position, not identity: the digits follow the visible tab order, so a view a
  * feature package registers later needs no change here, and an overflow entry
- * parked in the "更多会话视图" menu is simply not addressable by digit.
+ * parked in the "更多会话视图" menu is simply not addressable by digit. `⌘0`
+ * lands on the last tab still in the strip, which moves as tabs open and close.
  */
 import type { BindingPlatform, KeyBinding } from "./keymap.ts";
 import { isWebShortcutRuntime, type GlobalKeyTarget } from "./shortcut-router.ts";
@@ -40,7 +43,10 @@ export function viewDigitCommandId(index: number): string {
 
 /** One digit row: identity, label key and the desktop default. */
 export interface ViewDigitSpec {
-  /** 1-based position in the tab strip this digit addresses. */
+  /**
+   * 1-based position in the tab strip, or `0` for the last visible tab.
+   * Zero is a sentinel, not a position: the switcher refuses index 0.
+   */
   readonly index: number;
   readonly id: string;
   readonly labelKey: string;
@@ -61,6 +67,30 @@ export const VIEW_DIGIT_COMMANDS: readonly ViewDigitSpec[] = Array.from(
     };
   },
 );
+
+/**
+ * Sentinel passed to the tab-strip runtime for the last visible tab.
+ *
+ * Not a position. `switchToViewTab` still refuses 0; the runtime maps this
+ * value onto the last-tab click, so the chord follows the strip as it changes.
+ */
+export const VIEW_LAST_INDEX = 0;
+
+/** `⌘0` on desktop, `⌥0` on web: the last visible conversation-view tab. */
+export const VIEW_LAST_COMMAND: ViewDigitSpec = {
+  index: VIEW_LAST_INDEX,
+  id: "workbench.view.last",
+  labelKey: "keymap.viewLast",
+  desktop: { code: "Digit0", modifiers: ["primary"] },
+};
+
+/**
+ * Every chord this preference installs, in catalog order.
+ *
+ * The last-tab row stays after `⌘9` so a host that lists registrations in
+ * order paints it at the bottom of the digit group.
+ */
+export const VIEW_TAB_COMMANDS: readonly ViewDigitSpec[] = [...VIEW_DIGIT_COMMANDS, VIEW_LAST_COMMAND];
 
 /** The storage face the preference reads; `localStorage` satisfies it. */
 export interface StorageLike {
@@ -181,13 +211,17 @@ export function viewDigitChord(runtime: "desktop" | "web", platform: BindingPlat
   return platform === "macos" ? "⌘" : "Ctrl";
 }
 
-/** Physical digit codes the workbench binds; `Digit0` is deliberately absent. */
-const DIGIT_CODE = /^Digit([1-9])$/u;
+/**
+ * Physical digit codes the workbench binds.
+ * `Digit1`–`Digit9` are positions; `Digit0` is {@link VIEW_LAST_INDEX}.
+ */
+const DIGIT_CODE = /^Digit([0-9])$/u;
 
 /**
- * Read a 1-based position out of a physical digit code.
+ * Read a tab target out of a physical digit code.
  * @param code - `KeyboardEvent.code`, or undefined.
- * @returns 1 through 9, or null for anything else.
+ * @returns 1 through 9, {@link VIEW_LAST_INDEX} for `Digit0`, or null otherwise.
+ * Numpad digits stay null: the row matches the number row, same as `⌘1`–`⌘9`.
  */
 export function viewDigitIndexFromCode(code: string | undefined): number | null {
   if (code === undefined) return null;

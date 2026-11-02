@@ -7,21 +7,23 @@
  * description under it, because the layout already says which view and which
  * state.
  *
- * React arrives from the module loader, so the tree is built with
- * `createElement`. The page subscribes with `useSyncExternalStore` because a
- * plugin can register a view while the page is open, and the new row has to
- * appear without a navigation.
+ * The host mounts one element and never re-renders it, so the page builds its
+ * rows as DOM inside that element and replaces them whenever the ledger or the
+ * choice changes. No React hook is involved at any point.
  */
 import type { TabController } from "./tabs.ts";
 
-/** The slice of React the page uses. Structural, so the loader's copy satisfies it. */
+/**
+ * The slice of React the page uses.
+ *
+ * Only `createElement`, and only to hand the host the one element it mounts.
+ * Everything inside that element is DOM. The host calls a section component as
+ * a plain function with no hook dispatcher, so a hook here throws on first
+ * paint and the panel stays blank while the nav entry, which only reads the
+ * registration, looks perfectly fine.
+ */
 export interface PageReact {
-  createElement: (
-    type: unknown,
-    props: Record<string, unknown> | null,
-    ...children: unknown[]
-  ) => unknown;
-  useSyncExternalStore: <T>(subscribe: (listener: () => void) => () => void, getSnapshot: () => T) => T;
+  createElement: (type: unknown, props: Record<string, unknown> | null) => unknown;
 }
 
 /** The strings the page renders, resolved by the caller per locale. */
@@ -112,35 +114,77 @@ export function insertTabPageStyles(doc: Document): () => void {
 /**
  * The page component the settings slot renders.
  *
- * A function rather than a component declaration because the host's registry
- * accepts any function, and keeping it a plain function lets a test render the
- * tree without a reconciler.
+ * Returns the one element the host mounts. The ref is where the rows come from:
+ * it is the only callback the host runs for an element, it fires with the node
+ * once that node is in the document, and it fires with null when the panel
+ * replaces the page. Between those two the page owns the node's contents.
  */
 export function TabSettingsPage(props: TabPageProps): unknown {
-  const { React, controller, copy } = props;
-  const rows = React.useSyncExternalStore(
-    listener => controller.subscribe(listener),
-    () => controller.rows(),
-  );
-  const heading = React.createElement("h2", { "data-dsh-better-tabs-heading": "" }, copy.heading);
-  const body =
-    rows.length === 0
-      ? React.createElement("p", { "data-dsh-better-tabs-empty": "" }, copy.empty)
-      : rows.map(row =>
-          React.createElement(
-            "label",
-            { "data-dsh-better-tabs-row": row.id, key: row.id },
-            React.createElement("span", { "data-dsh-better-tabs-name": "" }, row.label),
-            React.createElement("input", {
-              "data-dsh-better-tabs-check": row.id,
-              type: "checkbox",
-              checked: row.enabled,
-              "aria-label": copy.checkboxLabel(row.label, row.enabled),
-              onChange: (event: { currentTarget: { checked: boolean } }) => {
-                controller.setEnabled(row.id, event.currentTarget.checked);
-              },
-            }),
-          ),
-        );
-  return React.createElement("section", { "data-dsh-better-tabs": "" }, heading, body);
+  let unsubscribe: (() => void) | undefined;
+  return props.React.createElement("section", {
+    "data-dsh-better-tabs": "",
+    ref: (node: Element | null) => {
+      unsubscribe?.();
+      unsubscribe = undefined;
+      if (node === null) return;
+      const paint = (): void => {
+        paintRows(node, props);
+      };
+      paint();
+      unsubscribe = props.controller.subscribe(paint);
+    },
+  });
+}
+
+/**
+ * Write the current rows into the mounted section.
+ *
+ * Rebuilt from scratch on every change rather than reconciled. The list is a
+ * handful of rows, and rebuilding is what keeps a row that disappeared from
+ * staying on screen. The checkbox is the one piece of state, and it is set from
+ * the controller before the node is attached, so the browser never gets to
+ * disagree with it.
+ *
+ * Exported so a test can paint into a document and read the result back. The
+ * host never calls it; the ref does.
+ */
+export function paintRows(section: Element, props: TabPageProps): void {
+  const doc = section.ownerDocument;
+  const { controller, copy } = props;
+  section.replaceChildren();
+
+  const heading = doc.createElement("h2");
+  heading.setAttribute("data-dsh-better-tabs-heading", "");
+  heading.textContent = copy.heading;
+  section.append(heading);
+
+  const rows = controller.rows();
+  if (rows.length === 0) {
+    const empty = doc.createElement("p");
+    empty.setAttribute("data-dsh-better-tabs-empty", "");
+    empty.textContent = copy.empty;
+    section.append(empty);
+    return;
+  }
+
+  for (const row of rows) {
+    const label = doc.createElement("label");
+    label.setAttribute("data-dsh-better-tabs-row", row.id);
+
+    const name = doc.createElement("span");
+    name.setAttribute("data-dsh-better-tabs-name", "");
+    name.textContent = row.label;
+
+    const box = doc.createElement("input");
+    box.setAttribute("data-dsh-better-tabs-check", row.id);
+    box.type = "checkbox";
+    box.checked = row.enabled;
+    box.setAttribute("aria-label", copy.checkboxLabel(row.label, row.enabled));
+    box.addEventListener("change", () => {
+      controller.setEnabled(row.id, box.checked);
+    });
+
+    label.append(name, box);
+    section.append(label);
+  }
 }
