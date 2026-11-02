@@ -6,7 +6,7 @@
  * synthetic keyboard events: jsdom does not run CodeMirror's input pipeline,
  * and a test that pretended otherwise would only test the DOM shim.
  */
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -115,6 +115,20 @@ describe("EditorBody", () => {
 
     expect(view().state.doc.toString()).toBe("replaced by the session");
     expect(changes).toEqual([]);
+  });
+
+  it("registers the save chord so it never reaches the host", async () => {
+    let saves = 0;
+    await show({ onSave: () => { saves += 1; } });
+
+    const binding = view()
+      .state.facet(keymap)
+      .flat()
+      .find(candidate => candidate.key === "Mod-s");
+    expect(binding).toBeDefined();
+    expect(binding?.preventDefault).toBe(true);
+    expect(binding?.run?.(view())).toBe(true);
+    expect(saves).toBe(1);
   });
 
   it("keeps one view and only switches decorations between modes", async () => {

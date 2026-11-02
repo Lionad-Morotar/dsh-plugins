@@ -25,12 +25,13 @@ import { translatorFor } from "../src/client/copy.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-function FakeEditor({ text, onChange }: EditorBodyProps) {
+function FakeEditor({ text, onChange, onSave }: EditorBodyProps) {
   return createElement(
     "div",
     { "data-testid": "fake-editor" },
     createElement("span", { "data-testid": "fake-text" }, text),
     createElement("button", { type: "button", "data-testid": "fake-type", onClick: () => onChange(`${text}!`) }, "type"),
+    createElement("button", { type: "button", "data-testid": "fake-save", onClick: () => onSave?.() }, "save"),
   );
 }
 
@@ -47,6 +48,7 @@ interface FakeSession extends DocumentSessionFace {
   readonly path: string;
   readonly snapshots: DocumentSnapshotFace[];
   reloads: number;
+  saves: number;
 }
 
 interface FakeStore extends DocumentStoreFace {
@@ -75,6 +77,8 @@ function createFakeStore(options: StoreOptions = {}): FakeStore {
       savedText: "",
       version: null,
       dirty: false,
+      saving: false,
+      conflict: false,
       error: null,
     };
     const listeners = new Set<() => void>();
@@ -83,6 +87,7 @@ function createFakeStore(options: StoreOptions = {}): FakeStore {
       path,
       snapshots: [],
       reloads: 0,
+      saves: 0,
       getSnapshot: () => snapshot,
       subscribe(listener) {
         listeners.add(listener);
@@ -94,7 +99,10 @@ function createFakeStore(options: StoreOptions = {}): FakeStore {
         snapshot = { ...snapshot, text, dirty: text !== snapshot.savedText };
         publish();
       },
-      async save() {},
+      async save() {
+        session.saves += 1;
+        return { ok: true as const, version: snapshot.version };
+      },
       async reload() {
         session.reloads += 1;
         snapshot = { ...snapshot, status: "loading" };
@@ -109,6 +117,8 @@ function createFakeStore(options: StoreOptions = {}): FakeStore {
             savedText: text,
             version: result.version ?? null,
             dirty: false,
+            saving: false,
+            conflict: false,
             error: null,
           };
         } else {
@@ -218,6 +228,17 @@ describe("MarkdownBody", () => {
 
     expect(store.sessions[0]?.getSnapshot().text).toBe("session-1:docs/a.md!");
     expect(store.sessions[0]?.getSnapshot().dirty).toBe(true);
+  });
+
+  it("hands the editor a save sink that reaches the acquired session", async () => {
+    const store = createFakeStore();
+    await show({}, store);
+
+    await act(async () => {
+      testId("fake-save")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(store.sessions[0]?.saves).toBe(1);
   });
 
   it("does not acquire or read again when only the mode changes", async () => {

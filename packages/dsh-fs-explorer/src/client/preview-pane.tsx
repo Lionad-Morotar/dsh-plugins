@@ -17,11 +17,12 @@
  * nothing else; the text pager never sees a binary file, and a family renderer
  * never sees a page.
  */
-import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from "react";
 
 import { FAMILY_CHUNKS } from "../shared.ts";
 import { writeClipboard } from "./clipboard.ts";
 import type { Translate } from "./copy.ts";
+import type { DocumentStore } from "./document-session.ts";
 import { renderMarkdown } from "./markdown.ts";
 import {
   classifyPreviewFailure,
@@ -76,6 +77,71 @@ export interface PreviewPaneProps {
    * then uses a pane-local registry with the shipped renderers only.
    */
   readonly renderers?: RendererRegistry;
+  /**
+   * The shared draft store.
+   *
+   * The toolbar reads it to paint the save affordance; it never acquires a
+   * session here, because a file whose renderer keeps no draft must not gain one
+   * just because a toolbar wanted to offer a button.
+   */
+  readonly documents?: DocumentStore;
+}
+
+/** Copy this pane owns; the entry merges it into the package namespace. */
+export const PREVIEW_COPY = {
+  zh: {
+    "preview.save": "保存",
+    "preview.saving": "保存中…",
+    "preview.saveFailed": "保存失败：{message}",
+    "preview.saveUnavailable": "当前部署没有提供保存通道",
+    "preview.saveNotReady": "文档还没有读取完成",
+    "preview.saveBusy": "正在保存，请稍候",
+    "preview.conflict.title": "磁盘文件已变化",
+    "preview.conflict.hint": "你的草稿还在内存里，没有被覆盖。",
+    "preview.conflict.reload": "重新载入",
+    "preview.conflict.copy": "复制草稿",
+    "preview.conflict.copied": "已复制",
+  },
+  en: {
+    "preview.save": "Save",
+    "preview.saving": "Saving…",
+    "preview.saveFailed": "Save failed: {message}",
+    "preview.saveUnavailable": "This deployment exposes no save channel",
+    "preview.saveNotReady": "The document has not been read yet",
+    "preview.saveBusy": "A save is already running",
+    "preview.conflict.title": "The file changed on disk",
+    "preview.conflict.hint": "Your draft is still in memory; it was not overwritten.",
+    "preview.conflict.reload": "Reload",
+    "preview.conflict.copy": "Copy draft",
+    "preview.conflict.copied": "Copied",
+  },
+} as const;
+
+const NO_SUBSCRIBE = (): (() => void) => () => undefined;
+const NO_DRAFT = (): undefined => undefined;
+
+/**
+ * The human half of a refused save, without the sentence it is embedded in.
+ *
+ * The pane wraps it in "save failed" and the close bar wraps it in "the panel
+ * stays open"; only this function knows which codes have their own wording.
+ * @param code - the transport or session failure code.
+ * @param message - the backend message, when it sent one.
+ * @param t - the explorer's translator.
+ * @returns one short reason.
+ */
+export function saveFailureReason(code: string, message: string, t: Translate): string {
+  switch (code) {
+    case "unavailable":
+      return t("preview.saveUnavailable");
+    case "not-ready":
+    case "closed":
+      return t("preview.saveNotReady");
+    case "busy":
+      return t("preview.saveBusy");
+    default:
+      return message === "" ? code : message;
+  }
 }
 
 type PreviewMode = "reading" | "source";
@@ -300,7 +366,7 @@ function fallbackRegistry(): RendererRegistry {
  * @param props - session, file face, selected path, translator and registry.
  * @returns the preview column.
  */
-export function PreviewPane({ sessionId, files, path, t, visible = true, renderers }: PreviewPaneProps) {
+export function PreviewPane({ sessionId, files, path, t, visible = true, renderers, documents }: PreviewPaneProps) {
   const reader = useMemo(() => createPreviewReader(files, sessionId), [files, sessionId]);
   const byteReader = useMemo(() => createByteReader(files), [files]);
   const registry = renderers ?? fallbackRegistry();
@@ -320,7 +386,24 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
   const [rendererAttempt, setRendererAttempt] = useState(0);
   const [mode, setMode] = useState<PreviewMode>("reading");
   const [copied, setCopied] = useState(false);
+  const [draftCopied, setDraftCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const draftCopyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // The toolbar is a reader of the shared draft, never its owner: `peek` answers
+  // only for a session a renderer already acquired, so a plain text or binary
+  // file never grows a save button it cannot honour.
+  const draft = useSyncExternalStore(
+    documents?.subscribe ?? NO_SUBSCRIBE,
+    () => (documents === undefined || sessionId === undefined || path === undefined
+      ? NO_DRAFT()
+      : documents.peek(sessionId, path)),
+    NO_DRAFT,
+  );
+  const draftSession =
+    documents === undefined || sessionId === undefined || path === undefined
+      ? undefined
+      : documents.find(sessionId, path);
 
   useEffect(() => {
     if (reader === undefined) {
@@ -356,9 +439,18 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
   useEffect(
     () => () => {
       if (copyTimer.current !== undefined) clearTimeout(copyTimer.current);
+      if (draftCopyTimer.current !== undefined) clearTimeout(draftCopyTimer.current);
     },
     [],
   );
+
+  // The bar goes away on its own; a stale "copied" label would otherwise greet
+  // the next conflict as if the reader had already copied that draft.
+  useEffect(() => {
+    if (draft?.conflict === true) return;
+    setDraftCopied(false);
+    if (draftCopyTimer.current !== undefined) clearTimeout(draftCopyTimer.current);
+  }, [draft?.conflict]);
 
   useEffect(() => {
     // A late registration must be able to take over a pane that is already
@@ -460,6 +552,22 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
     });
   };
 
+  // The conflict answer that never depends on the disk: whatever the reader
+  // typed is handed over verbatim, because the alternative is losing it.
+  const copyDraft = (): void => {
+    const text = draftSession?.copyDraft();
+    if (text === undefined) return;
+    void writeClipboard(text).then(ok => {
+      if (!ok) return;
+      setDraftCopied(true);
+      if (draftCopyTimer.current !== undefined) clearTimeout(draftCopyTimer.current);
+      draftCopyTimer.current = setTimeout(() => setDraftCopied(false), 1400);
+    });
+  };
+
+  const saveError = draft?.error;
+  const showSaveError = saveError !== null && saveError !== undefined && draft?.conflict !== true;
+
   let body: ReactElement;
   if (binary) {
     const Body = rendererState.status === "ready" ? rendererState.module.Body : undefined;
@@ -517,6 +625,17 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
           </span>
         )}
         <div className="fx-preview-actions">
+          {draft === undefined ? null : (
+            <button
+              type="button"
+              className="fx-pbtn"
+              data-testid="fs-preview-save"
+              disabled={!draft.dirty || draft.saving || draft.status !== "ready"}
+              onClick={() => void draftSession?.save()}
+            >
+              {draft.saving ? t("preview.saving") : t("preview.save")}
+            </button>
+          )}
           {markdown ? (
             <button
               type="button"
@@ -555,6 +674,27 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
           {busy ? <span className="fx-spinner" aria-hidden="true" /> : null}
         </div>
       </header>
+      {draft?.conflict === true ? (
+        <div className="fx-conflict" role="alert" data-testid="fs-preview-conflict">
+          <strong>{t("preview.conflict.title")}</strong>
+          <span className="fx-conflict-hint">{t("preview.conflict.hint")}</span>
+          <span className="fx-spacer" />
+          <button type="button" className="fx-pbtn" data-testid="fs-conflict-reload" onClick={() => void draftSession?.reload()}>
+            {t("preview.conflict.reload")}
+          </button>
+          <button type="button" className="fx-pbtn" data-testid="fs-conflict-copy" onClick={copyDraft}>
+            {draftCopied ? t("preview.conflict.copied") : t("preview.conflict.copy")}
+          </button>
+        </div>
+      ) : null}
+      {showSaveError ? (
+        <div className="fx-save-error" role="alert" data-testid="fs-preview-save-error">
+          {t("preview.saveFailed").replace(
+            "{message}",
+            saveFailureReason(saveError?.code ?? "io-error", saveError?.message ?? "", t),
+          )}
+        </div>
+      ) : null}
       <div className="fx-preview-body" data-scroll={reading ? "y" : "none"}>
         {body}
       </div>

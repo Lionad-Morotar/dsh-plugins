@@ -225,7 +225,12 @@ export function MarkdownBody(props: RendererBodyProps): ReactElement {
         data-testid={mode === "source" ? "fs-md-source" : "fs-md-reading"}
         data-renderer="codemirror"
       >
-        <chunk.chunk.EditorBody {...props} text={snapshot.text} onChange={text => acquired.session.setDraft(text)} />
+        <chunk.chunk.EditorBody
+          {...props}
+          text={snapshot.text}
+          onChange={text => acquired.session.setDraft(text)}
+          onSave={() => void acquired.session.save()}
+        />
       </div>
     );
   }

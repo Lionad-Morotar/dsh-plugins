@@ -14,7 +14,7 @@
 import { defaultKeymap, history } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
-import { Decoration, EditorView, drawSelection, keymap } from "@codemirror/view";
+import { Decoration, EditorView, drawSelection, keymap, type KeyBinding } from "@codemirror/view";
 import { useEffect, useRef, type ReactElement } from "react";
 
 import type { EditorBodyProps } from "../contracts.ts";
@@ -60,6 +60,26 @@ function decorationExtension(enabled: boolean): Extension {
 }
 
 /**
+ * The save chord, as a keymap entry rather than a DOM listener.
+ *
+ * `preventDefault` is the whole point: the editor holds an unsaved draft, so
+ * letting the browser or the host shell answer ⌘S first would offer to save a
+ * page or open a file dialog instead of writing this document.
+ * @param onSave - the session write the body handed down.
+ * @returns the binding for `Mod-s` (Command on macOS, Control elsewhere).
+ */
+function saveKeyBinding(onSave: () => void): KeyBinding {
+  return {
+    key: "Mod-s",
+    preventDefault: true,
+    run: () => {
+      onSave();
+      return true;
+    },
+  };
+}
+
+/**
  * Mount the editor for one document.
  *
  * The view is created once; text and mode arrive as effects afterwards. That is
@@ -75,6 +95,8 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
   const decorationCompartment = useRef(new Compartment());
   const onChange = useRef(props.onChange);
   onChange.current = props.onChange;
+  const onSave = useRef(props.onSave);
+  onSave.current = props.onSave;
 
   useEffect(() => {
     const element = host.current;
@@ -85,6 +107,7 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
         doc: text,
         extensions: [
           history(),
+          keymap.of([saveKeyBinding(() => onSave.current?.())]),
           keymap.of(defaultKeymap),
           drawSelection(),
           EditorView.lineWrapping,

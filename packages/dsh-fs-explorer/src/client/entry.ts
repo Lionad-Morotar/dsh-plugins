@@ -15,7 +15,7 @@ import {
   type BridgeContextLike,
 } from "./bridge.ts";
 import { EN, ZH, tabLabel } from "./copy.ts";
-import { createDocumentOpener, createDocumentStore, type DocumentStore } from "./document-session.ts";
+import { createDocumentOpener, createDocumentSaver, createDocumentStore, type DocumentStore } from "./document-session.ts";
 import { LOCALE_NAMESPACE, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
 import { KEYMAP, createEscapeHandler } from "./keyboard.ts";
 import {
@@ -30,6 +30,7 @@ import {
   listingPath,
   parseFocus,
 } from "./model.ts";
+import { PANEL_COPY } from "./panel-tabs.tsx";
 import { consumeViewRequest, createPanelStack } from "./panels.ts";
 import { renderMarkdown } from "./markdown.ts";
 import {
@@ -41,7 +42,7 @@ import {
   normalizePreviewPage,
 } from "./preview.ts";
 import { boot, previewChunkRoute } from "./preview-chunk.ts";
-import { createBuiltinRenderers } from "./preview-pane.tsx";
+import { PREVIEW_COPY, createBuiltinRenderers } from "./preview-pane.tsx";
 import {
   createRendererRegistry,
   FS_EXPLORER_SERVICE,
@@ -139,6 +140,13 @@ function documentsStore(ctx: ClientContextLike): DocumentStore {
       }
       return createDocumentOpener(active)(sessionId, path, signal);
     },
+    save: (request, signal) => {
+      const active = documentsContext;
+      if (active === undefined) {
+        return Promise.resolve({ ok: false, code: "unavailable", message: "the client context is gone" });
+      }
+      return createDocumentSaver(active)(request, signal);
+    },
   });
   return sharedDocuments;
 }
@@ -193,7 +201,13 @@ export function apply(ctx: ClientContextLike): () => void {
   // Register before binding: the label thunk may run during slot registration,
   // and a dictionary that arrives afterwards would paint the English fallback.
   registeredDictionaries?.();
-  const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
+  // The save closure ships its copy next to the markup that paints it; the
+  // entry is the one place that composes the namespace, so a translator bound
+  // to it answers every surface without the panels knowing each other.
+  const offLocale = ctx.locale.register(LOCALE_NAMESPACE, {
+    zh: { ...ZH, ...PANEL_COPY.zh, ...PREVIEW_COPY.zh },
+    en: { ...EN, ...PANEL_COPY.en, ...PREVIEW_COPY.en },
+  });
   registeredDictionaries = offLocale;
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
   const offStyles = insertStyles(typeof document === "undefined" ? undefined : document);
@@ -204,6 +218,7 @@ export function apply(ctx: ClientContextLike): () => void {
     files: createFilesResolver(ctx),
     status: createGitStatusResolver(ctx),
     renderers: registry,
+    documents: documentsStore(ctx),
   });
 
   // The address bridge hangs off the optional right sidebar; it registers

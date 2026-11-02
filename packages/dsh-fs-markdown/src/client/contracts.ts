@@ -44,6 +44,8 @@ export interface EditorBodyProps extends RendererBodyProps {
   readonly text: string;
   /** Push one user edit back to the document session. */
   onChange(text: string): void;
+  /** Write the draft; bound to the session so ⌘S needs no pane round-trip. */
+  readonly onSave?: () => void;
 }
 
 /** One rendered failure, after transport envelopes are folded away. */
@@ -52,6 +54,11 @@ export interface DocumentErrorFace {
   readonly message: string;
 }
 
+/** What one save answered, in the shape the shell needs to keep a panel open. */
+export type SaveOutcomeFace =
+  | { readonly ok: true; readonly version: string | null }
+  | { readonly ok: false; readonly code: string };
+
 /** The immutable state a mounted body paints. */
 export interface DocumentSnapshotFace {
   readonly status: "idle" | "loading" | "ready" | "failed";
@@ -59,6 +66,9 @@ export interface DocumentSnapshotFace {
   readonly savedText: string;
   readonly version: string | null;
   readonly dirty: boolean;
+  /** Absent on an explorer half that predates the write channel. */
+  readonly saving?: boolean;
+  readonly conflict?: boolean;
   readonly error: DocumentErrorFace | null;
 }
 
@@ -67,7 +77,7 @@ export interface DocumentSessionFace {
   getSnapshot(): DocumentSnapshotFace;
   subscribe(listener: () => void): () => void;
   setDraft(text: string): void;
-  save(): Promise<void>;
+  save(): Promise<SaveOutcomeFace>;
   reload(): Promise<void>;
   dispose(): void;
 }
