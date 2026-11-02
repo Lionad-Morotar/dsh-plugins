@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "DeepSeek Harness native improvements: provider-aware search in the /model picker, a rebindable shortcut that returns focus to the message input, composer attachment selection with clipboard round-trip, a session compaction count beside the context meter, and a settings page that shows or hides registered conversation tabs",
+  "description": "DeepSeek Harness native improvements: provider-aware search in the /model picker, a rebindable shortcut that returns focus to the message input, composer attachment selection with clipboard round-trip, a session compaction count beside the context meter, a settings page that shows or hides registered conversation tabs, and a memory for the conversation shell's panel widths",
   "license": "MIT",
   "author": "Lionad <1806234223@qq.com>",
   "homepage": "https://github.com/Lionad-Morotar/dsh-plugins/tree/main/packages/dsh-better#readme",

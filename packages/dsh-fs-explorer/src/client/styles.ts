@@ -219,6 +219,16 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-tab-main:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -2px; }
 .fx-tab-badge { width: 16px; height: 14px; }
 .fx-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-tab-rev {
+  flex: none;
+  padding: 0 3px;
+  border: 1px solid var(--fx-border-soft);
+  border-radius: 4px;
+  color: var(--fx-caption);
+  font-family: var(--fx-mono);
+  font-size: 9px;
+  line-height: 13px;
+}
 /* The unsaved dot sits where an editor puts it: after the caption, before the
    close button, so sweeping for the close target does not land on it. */
 .fx-tab-dirty {
@@ -634,6 +644,13 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-pbtn:hover:not(:disabled) { background: var(--fx-hover); color: var(--fx-text); border-color: var(--fx-border); }
 .fx-pbtn:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -2px; }
 .fx-pbtn:disabled { opacity: .35; cursor: default; }
+.fx-preview-notice {
+  flex: none;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--fx-border-soft);
+  color: var(--fx-caption);
+  font-size: 10.5px;
+}
 .fx-conflict {
   display: flex;
   align-items: center;

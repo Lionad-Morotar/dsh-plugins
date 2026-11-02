@@ -73,6 +73,17 @@ export const ZH: Record<string, string> = {
   "detail.body": "提交说明",
   "detail.failed": "读取提交详情失败",
   "detail.empty": "选择一个提交查看详情",
+  "preview.revision": "该提交时的版本",
+  "preview.loading": "正在读取该提交的版本…",
+  "preview.unavailable": "预览不可用",
+  "preview.noService": "当前宿主不支持文件预览",
+  "preview.binary": "二进制文件，暂不支持预览",
+  "preview.submodule": "子模块，暂不支持预览",
+  "preview.tooLarge": "文件过大，无法预览",
+  "preview.notFound": "该提交中找不到此文件",
+  "preview.deleted": "该提交删除了此文件，显示第一父版本",
+  "preview.truncated": "已截断，仅显示前 40 行",
+  "preview.empty": "（空文件）",
 };
 
 export const EN: Record<string, string> = {
@@ -146,4 +157,15 @@ export const EN: Record<string, string> = {
   "detail.body": "Message",
   "detail.failed": "Could not load the commit",
   "detail.empty": "Select a commit to see its detail",
+  "preview.revision": "version at this commit",
+  "preview.loading": "Reading this commit's version…",
+  "preview.unavailable": "Preview unavailable",
+  "preview.noService": "This host does not provide file previews",
+  "preview.binary": "Binary file, no preview",
+  "preview.submodule": "Submodule, no preview",
+  "preview.tooLarge": "File too large to preview",
+  "preview.notFound": "File not found in this commit",
+  "preview.deleted": "This commit deleted the file; showing the first parent",
+  "preview.truncated": "Truncated to the first 40 lines",
+  "preview.empty": "(empty file)",
 };

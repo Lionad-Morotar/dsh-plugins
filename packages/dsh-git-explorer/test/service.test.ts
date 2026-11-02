@@ -25,6 +25,7 @@ describe("GitExplorerService", () => {
       "snapshot",
       "query",
       "commit",
+      "show",
       "run",
       "branches",
       "switchBranch",
@@ -73,6 +74,10 @@ describe("GitExplorerService", () => {
     await expect(service.commit({ sessionId: "s1", hash: "--all" })).resolves.toEqual({
       ok: false,
       error: { code: "invalid-request", message: "hash must be a hexadecimal object id" },
+    });
+    await expect(service.show({ sessionId: "s1", hash: "zzz", path: "a.ts" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "invalid-request" },
     });
   });
 

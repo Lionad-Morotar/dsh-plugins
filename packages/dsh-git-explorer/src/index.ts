@@ -1,9 +1,9 @@
 /**
  * Host half: the Git data service behind the workbench panel.
  *
- * `GitExplorerService` owns six Remote endpoints. `snapshot`, `query`,
- * `commit` and `branches` are real reads; `switchBranch` is the one write, and
- * it only checks out a branch that already exists; `run` is a typed
+ * `GitExplorerService` owns seven Remote endpoints. `snapshot`, `query`,
+ * `commit`, `show` and `branches` are real reads; `switchBranch` is the one
+ * write, and it only checks out a branch that already exists; `run` is a typed
  * placeholder until the remaining action slice lands. The heavy lifting lives
  * in `host/`: parsers, the lane layout, the branch inventory and the switch
  * are pure, the runner is the only place that touches the host subprocess
@@ -22,6 +22,7 @@ import { createGitRunner, type GitRunner, type SubprocessLike } from "./host/git
 import { assignLanes } from "./host/lanes.ts";
 import { parseLog, parseRefs, parseStatusZ } from "./host/parse.ts";
 import { collectQuery } from "./host/query.ts";
+import { collectShow } from "./host/show.ts";
 import { collectSnapshot } from "./host/snapshot.ts";
 import { switchToBranch } from "./host/switch.ts";
 import type {
@@ -33,6 +34,8 @@ import type {
   GitQueryResult,
   GitRunRequest,
   GitRunResult,
+  GitShowRequest,
+  GitShowResult,
   GitSnapshotRequest,
   GitSnapshotResult,
   GitSwitchRequest,
@@ -42,6 +45,7 @@ import { GIT_SERVICE, PACKAGE_NAME } from "./shared.ts";
 
 export { PACKAGE_NAME, GIT_SERVICE };
 export type {
+  GitBlobPage,
   GitBranch,
   GitBranchList,
   GitBranchListRequest,
@@ -60,6 +64,8 @@ export type {
   GitQueryRequest,
   GitRunRequest,
   GitRunResult,
+  GitShowRequest,
+  GitShowResult,
   GitSnapshot,
   GitSnapshotRequest,
   GitSnapshotResult,
@@ -231,6 +237,20 @@ export class GitExplorerService extends TypertRemoteService {
     const cwd = await this.baseDirectory(request.sessionId, request.cwd);
     try {
       return await collectCommit({ runner: this.runnerFor(cwd), cwd }, request, signal);
+    } catch (error) {
+      return fail("internal", messageOf(error));
+    }
+  }
+
+  @Remote("show")
+  async show(request: GitShowRequest, signal?: AbortSignal): Promise<GitShowResult> {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
+    try {
+      return await collectShow(
+        { runner: this.runnerFor(cwd), cwd, maxBytes: this.config.maxBytes },
+        request,
+        signal,
+      );
     } catch (error) {
       return fail("internal", messageOf(error));
     }

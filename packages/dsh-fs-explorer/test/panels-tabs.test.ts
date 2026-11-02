@@ -21,7 +21,7 @@ import { VIEW_ID } from "../src/shared.ts";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function panel(path: string): PanelEntry {
-  return { path, line: 1, absolute: false };
+  return { key: path, path, line: 1, absolute: false };
 }
 
 const t = (key: string): string => key;

@@ -396,6 +396,14 @@ export interface FocusTarget {
    * resolves against the session's workspace root as it always has.
    */
   readonly absolute: boolean;
+  /**
+   * Commit object id when this target names a commit version.
+   *
+   * A revision target is read through the Git `show` endpoint instead of the
+   * working-tree file service, and the panel stack keys it by
+   * `(revision, path)` so two versions of one file stay two tabs.
+   */
+  readonly revision?: string;
 }
 
 /** Parse the optional `:<line>` suffix; a missing or bad value reads as line 1. */
@@ -406,21 +414,32 @@ function lineOf(raw: string | undefined): number {
 /**
  * Parse the focus string a caller hands this view.
  *
- * Two spellings travel. `path:<workspace path>[:<line>]` comes from the Git
- * panel and the command palette and stays relative to the session's workspace
- * root. `abs:<filesystem path>[:<line>]` comes from the address bridge, which
- * forwards files that may sit outside that root — its leading `/` is the
- * difference between `/Users/x/a.ts` and a workspace-relative `Users/x/a.ts`,
- * so unlike `path:` it must survive.
+ * Three spellings travel. `path:<workspace path>[:<line>]` comes from the Git
+ * changes pane and the command palette and stays relative to the session's
+ * workspace root. `abs:<filesystem path>[:<line>]` comes from the address
+ * bridge, which forwards files that may sit outside that root — its leading `/`
+ * is the difference between `/Users/x/a.ts` and a workspace-relative
+ * `Users/x/a.ts`, so unlike `path:` it must survive. `git:<hash>:<line>:<path>`
+ * comes from commit details and names a file as one commit holds it; its
+ * revision is normalized to lowercase and its line segment is mandatory
+ * because a git path may itself end in digits.
  *
- * The line suffix is optional in both. Backslashes are normalized because the
- * same jump is produced on Windows hosts.
+ * The line suffix is optional in the first two spellings. Backslashes are
+ * normalized because the same jump is produced on Windows hosts.
  * @param focus - the raw focus string, or undefined when the tab was opened directly.
  * @returns the normalized target, or undefined when the focus is not a path.
  */
 export function parseFocus(focus: string | undefined): FocusTarget | undefined {
   if (typeof focus !== "string") return undefined;
   const trimmed = focus.trim();
+
+  const gitMatch = /^git:([0-9a-f]{4,64}):(\d+):(.+)$/iu.exec(trimmed);
+  if (gitMatch !== null) {
+    const line = lineOf(gitMatch[2]);
+    const path = (gitMatch[3] ?? "").replace(/\\/gu, "/").replace(/^(?:\.\/)+/u, "").replace(/^\/+/u, "");
+    if (path === "" || line < 1) return undefined;
+    return { path, line, absolute: false, revision: (gitMatch[1] ?? "").toLowerCase() };
+  }
 
   const absoluteMatch = /^abs:(.+?)(?::(\d+))?$/u.exec(trimmed);
   if (absoluteMatch !== null) {

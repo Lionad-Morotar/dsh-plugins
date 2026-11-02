@@ -1,5 +1,5 @@
 /**
- * The three Remote endpoints this panel consumes, narrowed to the payloads the
+ * The Remote endpoints this panel consumes, narrowed to the payloads the
  * view actually reads.
  *
  * Typert wraps every unary call in `RemoteResult<T>`. These Host endpoints
@@ -16,6 +16,8 @@ import type {
   GitCommitResult,
   GitQueryRequest,
   GitQueryResult,
+  GitShowRequest,
+  GitShowResult,
   GitSnapshotRequest,
   GitSnapshotResult,
   GitSwitchRequest,
@@ -36,6 +38,8 @@ export interface GitRemoteFace {
   branches(request: GitBranchListRequest, signal?: AbortSignal): Promise<RemoteResult<GitBranchListResult>>;
   /** Check out an existing local branch in the session worktree. */
   switchBranch(request: GitSwitchRequest, signal?: AbortSignal): Promise<RemoteResult<GitSwitchResult>>;
+  /** One file as a specific commit holds it. */
+  show(request: GitShowRequest, signal?: AbortSignal): Promise<RemoteResult<GitShowResult>>;
 }
 
 /** Read the optional service on each call so a late mount starts working. */
@@ -55,7 +59,7 @@ export interface RpcCall {
 }
 
 /** Methods this panel calls, in the order the RPC face exposes them. */
-const RPC_METHODS = ["snapshot", "query", "commit", "branches", "switchBranch"] as const;
+const RPC_METHODS = ["snapshot", "query", "commit", "show", "branches", "switchBranch"] as const;
 
 /**
  * Build the Git face over the raw gateway channel.
@@ -74,6 +78,7 @@ export function createRpcRemoteFace(call: RpcCall): GitRemoteFace {
     commit: invoke("commit") as GitRemoteFace["commit"],
     branches: invoke("branches") as GitRemoteFace["branches"],
     switchBranch: invoke("switchBranch") as GitRemoteFace["switchBranch"],
+    show: invoke("show") as GitRemoteFace["show"],
   };
 }
 

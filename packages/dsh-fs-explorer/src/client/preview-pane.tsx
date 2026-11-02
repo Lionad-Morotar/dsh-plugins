@@ -54,13 +54,17 @@ import {
   type RendererModule,
   type RendererRegistry,
 } from "./renderer-registry.ts";
-import { createByteReader, createPreviewReader, type WorkspaceFilesFace } from "./wire.ts";
+import { createByteReader, createGitPreviewReader, createPreviewReader, type GitShowFace, type WorkspaceFilesFace } from "./wire.ts";
 
 /** Props the view hands the preview pane. */
 export interface PreviewPaneProps {
   readonly sessionId?: string;
   readonly files?: WorkspaceFilesFace;
   readonly path?: string;
+  /** Commit object id when this panel shows a commit version. */
+  readonly revision?: string;
+  /** The Git `show` face; only read when {@link revision} is set. */
+  readonly git?: GitShowFace;
   readonly t: Translate;
   /**
    * Whether this panel is the active one.
@@ -374,18 +378,29 @@ function fallbackRegistry(): RendererRegistry {
  * @param props - session, file face, selected path, translator and registry.
  * @returns the preview column.
  */
-export function PreviewPane({ sessionId, files, path, t, visible = true, renderers, documents }: PreviewPaneProps) {
-  const reader = useMemo(() => createPreviewReader(files, sessionId), [files, sessionId]);
-  const byteReader = useMemo(() => createByteReader(files), [files]);
+export function PreviewPane({ sessionId, files, path, revision, git, t, visible = true, renderers, documents }: PreviewPaneProps) {
+  const reader = useMemo(
+    () =>
+      revision === undefined
+        ? createPreviewReader(files, sessionId)
+        : git === undefined || sessionId === undefined
+          ? undefined
+          : createGitPreviewReader(git, sessionId, revision),
+    [files, sessionId, revision, git],
+  );
+  const byteReader = useMemo(() => (revision === undefined ? createByteReader(files) : undefined), [files, revision]);
   const registry = renderers ?? fallbackRegistry();
   // Resolved once per mount: the pane is created per open file, so the family
   // cannot change under a mounted loader.
   const family = path === undefined ? null : familyOf(path);
   const binary = family !== null;
-  // The path decides which read the pane needs, and the pair travels together
-  // because a renderer cannot read without a session to resolve against.
+  // A commit version's bytes belong to the Git object store. Reading them
+  // through the workspace file service would show the working tree under the
+  // same name, so a revision panel has no byte source on purpose.
   const byteSource =
-    sessionId !== undefined && byteReader !== undefined ? { sessionId, readFile: byteReader } : null;
+    revision === undefined && sessionId !== undefined && byteReader !== undefined
+      ? { sessionId, readFile: byteReader }
+      : null;
 
   const [loader, setLoader] = useState<PreviewLoader | null>(null);
   const [snapshot, setSnapshot] = useState<PreviewSnapshot>(IDLE_PREVIEW);
@@ -474,7 +489,9 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
   // The renderer is fetched only for the winner of the synchronous match; a
   // losing contribution is never downloaded, whatever its priority.
   useEffect(() => {
-    if (path === undefined) {
+    // A commit version has no byte reader. Loading its family renderer would
+    // ask the working tree for the file and paint the wrong revision.
+    if (path === undefined || revision !== undefined) {
       setRendererState(IDLE_RENDERER);
       return;
     }
@@ -501,7 +518,7 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
     return () => {
       alive = false;
     };
-  }, [registry, path, rendererRevision, rendererAttempt]);
+  }, [registry, path, revision, rendererRevision, rendererAttempt]);
 
   if (path === undefined) {
     return (
@@ -514,16 +531,17 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
     );
   }
 
+  const commitBinary = binary && revision !== undefined;
   const page = describePage(snapshot);
   const markdown = !binary && isMarkdownFile(path);
   const busy = binary
-    ? byteSource !== null && rendererState.status !== "ready" && rendererState.status !== "failed"
+    ? !commitBinary && byteSource !== null && rendererState.status !== "ready" && rendererState.status !== "failed"
     : snapshot.status === "loading";
   // The page gestures exist only on the text path, so this answers for it alone.
   const textReady = snapshot.status === "ready";
   const reading = markdown && mode === "reading";
   const state = binary
-    ? byteSource === null
+    ? commitBinary || byteSource === null
       ? "unavailable"
       : rendererState.status === "failed"
         ? "failed"
@@ -589,7 +607,12 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
   if (binary) {
     const Body = rendererState.status === "ready" ? rendererState.module.Body : undefined;
     body =
-      byteSource === null ? (
+      commitBinary ? (
+        <div className="fx-empty" data-testid="fs-preview-commit-binary">
+          <strong>{t("preview.commitBinary.title")}</strong>
+          <span>{t("preview.commitBinary.description")}</span>
+        </div>
+      ) : byteSource === null ? (
         <UnavailableBody t={t} />
       ) : rendererState.status === "failed" ? (
         <PreviewFailureView failure={rendererState.failure} t={t} onRetry={() => setRendererAttempt(value => value + 1)} />
@@ -691,6 +714,11 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
           {busy ? <span className="fx-spinner" aria-hidden="true" /> : null}
         </div>
       </header>
+      {snapshot.source === "first-parent" ? (
+        <div className="fx-preview-notice" data-testid="fs-preview-deleted">
+          {t("preview.deletedCommit")}
+        </div>
+      ) : null}
       {conflict || offerRestore ? (
         <div
           className="fx-conflict"

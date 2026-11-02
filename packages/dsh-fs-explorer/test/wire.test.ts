@@ -4,6 +4,8 @@ import { PreviewReadError } from "../src/client/preview.ts";
 import {
   createByteReader,
   createFilesResolver,
+  createGitPreviewReader,
+  createGitShowResolver,
   createGitStatusResolver,
   normalizeBytes,
   normalizeListing,
@@ -282,5 +284,134 @@ describe("createByteReader", () => {
       readBytes: async () => ({ ok: false, error: { code: "workspace-file/too-large", message: "too large" } }),
     });
     await expect(reader?.(sessionId, "big.glb", signal)).rejects.toMatchObject({ code: "workspace-file/too-large" });
+  });
+});
+
+
+describe("createGitShowResolver", () => {
+  it("resolves the Git namespace by its show method, from either probe path", () => {
+    const face = { show: () => undefined, snapshot: () => undefined };
+    expect(createGitShowResolver({ remote: { gitExplorer: face } })()).toBe(face);
+    expect(createGitShowResolver({ get: name => (name === "remote.gitExplorer" ? face : undefined) })()).toBe(face);
+  });
+
+  it("answers undefined while the host half predates show", () => {
+    // A gitExplorer with only the data endpoints is an old host half: the
+    // commit-version preview degrades instead of calling a missing method.
+    expect(createGitShowResolver({ remote: { gitExplorer: { snapshot: () => undefined } } })()).toBeUndefined();
+    expect(createGitShowResolver({})()).toBeUndefined();
+  });
+});
+
+describe("createGitPreviewReader", () => {
+  it("pages the commit version and folds both envelopes into a page", async () => {
+    const calls: unknown[] = [];
+    const reader = createGitPreviewReader(
+      {
+        show: async request => {
+          calls.push(request);
+          return {
+            ok: true,
+            value: {
+              ok: true,
+              page: {
+                path: "src/a.ts",
+                revision: `${"e".repeat(39)}1`,
+                source: "commit",
+                offset: 41,
+                lines: 2,
+                text: "alpha\nbeta",
+                eof: false,
+                bytes: 3000,
+                binary: false,
+                kind: "text",
+              },
+            },
+          };
+        },
+      },
+      "s1",
+      "17b6a55",
+    );
+    const page = await reader.read("src/a.ts", { offset: 41, limit: 200 });
+    expect(calls).toEqual([
+      { sessionId: "s1", hash: "17b6a55", path: "src/a.ts", offset: 41, limit: 200 },
+    ]);
+    expect(page).toEqual({ text: "alpha\nbeta", lines: 2, offset: 41, eof: false, source: "commit" });
+  });
+
+  it("omits paging fields the caller did not ask for", async () => {
+    const calls: unknown[] = [];
+    const reader = createGitPreviewReader(
+      {
+        show: async request => {
+          calls.push(request);
+          return { ok: true, value: { ok: true, page: { text: "hi", lines: 1, offset: 1, eof: true, binary: false, kind: "text" } } };
+        },
+      },
+      "s1",
+      "17b6a55",
+    );
+    await reader.read("a.txt", { limit: 200 });
+    expect(calls).toEqual([{ sessionId: "s1", hash: "17b6a55", path: "a.txt", limit: 200 }]);
+  });
+
+  it("throws the business failure code for triage", async () => {
+    const reader = createGitPreviewReader(
+      { show: async () => ({ ok: true, value: { ok: false, error: { code: "not-found", message: "no such path" } } }) },
+      "s1",
+      "deadbeef",
+    );
+    await expect(reader.read("gone.txt", { limit: 40 })).rejects.toMatchObject({
+      code: "not-found",
+      message: "no such path",
+    });
+  });
+
+  it("refuses a binary or submodule answer instead of paging it", async () => {
+    const binary = createGitPreviewReader(
+      {
+        show: async () => ({
+          ok: true,
+          value: { ok: true, page: { text: "", lines: 0, offset: 1, eof: true, bytes: 9, binary: true, kind: "binary" } },
+        }),
+      },
+      "s1",
+      "17b6a55",
+    );
+    await expect(binary.read("x.png", { limit: 40 })).rejects.toMatchObject({ code: "git/binary" });
+    const submodule = createGitPreviewReader(
+      {
+        show: async () => ({
+          ok: true,
+          value: { ok: true, page: { text: "", lines: 0, offset: 1, eof: true, bytes: 0, binary: false, kind: "submodule" } },
+        }),
+      },
+      "s1",
+      "17b6a55",
+    );
+    await expect(submodule.read("vendor/lib", { limit: 40 })).rejects.toMatchObject({ code: "git/submodule" });
+  });
+
+  it("carries the abort signal through to the face", async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    const reader = createGitPreviewReader(
+      {
+        show: async (_request, signal) => {
+          signals.push(signal);
+          return { ok: true, value: { ok: true, page: { text: "hi", lines: 1, offset: 1, eof: true, binary: false, kind: "text" } } };
+        },
+      },
+      "s1",
+      "17b6a55",
+    );
+    const controller = new AbortController();
+    await reader.read("a.txt", { limit: 1 }, controller.signal);
+    expect(signals).toEqual([controller.signal]);
+  });
+
+  it("keeps PreviewReadError for a malformed transport answer", async () => {
+    const reader = createGitPreviewReader({ show: async () => null }, "s1", "17b6a55");
+    await expect(reader.read("a.txt", { limit: 1 })).rejects.toBeInstanceOf(PreviewReadError);
   });
 });
