@@ -22,8 +22,11 @@ export const MARKDOWN_STYLES = `
   --fmd-border: var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent));
   --fmd-panel: var(--dsw-alias-bg-layer-2, color-mix(in srgb, currentColor 4%, transparent));
   --fmd-accent: var(--dsw-alias-brand-primary, currentColor);
-  /* The pane owns the scroll container; this box only fills it so the empty
-     space below a short document stays part of the same surface. */
+  /* Fill the pane so CodeMirror's own scroller, not the pane, owns the
+     overflow. Height must be definite here: the editor's height: 100% below
+     resolves against this box, and a percentage of an auto height is auto,
+     which let a long document grow the box instead of scrolling it. */
+  height: 100%;
   min-height: 100%;
   box-sizing: border-box;
 }
