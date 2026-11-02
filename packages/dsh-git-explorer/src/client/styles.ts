@@ -475,6 +475,221 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 .gx-empty-inline { min-height: 80px; margin: 8px; padding: 10px; }
 .gx-skeleton { padding: 12px; color: var(--gx-caption); font-size: 11px; }
 
+/* Session header branch action. It renders outside .gx-root, so it cannot use
+   the panel variables above: every value is an alias token with a readable
+   fallback, which keeps light and dark themes on the shell's own colours. */
+.gx-branch-action { position: relative; display: inline-flex; align-items: center; }
+.gx-branch-trigger {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  min-height: 28px;
+  max-width: min(320px, 40vw);
+  padding: 3px 2px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: 0 0;
+  color: var(--dsw-alias-label-tertiary, inherit);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.gx-branch-trigger:hover,
+.gx-branch-trigger:focus-visible,
+.gx-branch-trigger[aria-expanded="true"] { color: var(--dsw-alias-label-primary, inherit); }
+.gx-branch-trigger:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, currentColor); outline-offset: -2px; }
+.gx-branch-icon, .gx-branch-chevron { flex: none; display: block; }
+.gx-branch-chevron { transition: transform .12s; }
+.gx-branch-trigger[aria-expanded="true"] .gx-branch-chevron { transform: rotate(180deg); }
+.gx-branch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The worktree reading sits right after the name; the trigger's 4px gap is the
+   separation, so the numbers keep their space even when the name ellipsizes.
+   Zero sides are not rendered at all, which leaves +128 or −34 alone. */
+.gx-branch-dirty {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gx-branch-add { color: var(--dsw-alias-state-success-primary, inherit); }
+.gx-branch-del { color: var(--dsw-alias-state-error-primary, inherit); }
+.gx-branch-dot { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); }
+
+.gx-branch-panel {
+  position: fixed;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 320px;
+  max-width: min(420px, 100vw - 32px);
+  max-height: min(420px, calc(100vh - 24px));
+  padding: 4px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: var(--dsw-radius-lg, 10px);
+  /* Frosted glass: the sidebar's own fill kept slightly translucent over a
+     blurred backdrop, plus a top-light gradient so the pane reads as a sheet
+     of glass rather than a flat tint. Both colours come from theme tokens, so
+     the light and dark themes each get their own version of the material. */
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--dsw-alias-label-primary, #000) 4%, transparent),
+      transparent 42%
+    ),
+    color-mix(
+      in srgb,
+      var(--dsw-specific-sidebar-fill, var(--dsw-menu-surface-fill, #f8f9fa)) 84%,
+      transparent
+    );
+  backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
+  -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
+  box-shadow:
+    var(--dsw-elevation-prominent, 0 8px 24px color-mix(in srgb, var(--dsw-alias-label-primary, currentColor) 16%, transparent)),
+    inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, #fff) 6%, transparent);
+  color: var(--dsw-alias-label-primary, inherit);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.gx-branch-list { display: flex; flex-direction: column; gap: 0; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+/* The scope line names the worktree the switch lands in. The parent chain is
+   the part that clips, so the repository or worktree name survives any width;
+   the full path stays on the row's title. */
+.gx-branch-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-width: 0;
+  padding: 4px 8px 5px;
+  color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit));
+  font-size: 11px;
+  line-height: 16px;
+}
+.gx-branch-scope-label { flex: none; }
+.gx-branch-scope-path { display: flex; flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+.gx-branch-scope-parent { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gx-branch-scope-name { flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary, inherit); }
+/* The search seat keeps the row's horizontal padding so the caret lines up with
+   the names below; a single hairline separates it without adding a second
+   surface inside the popover. */
+.gx-branch-search {
+  flex: none;
+  width: 100%;
+  height: 28px;
+  padding: 4px 8px;
+  box-sizing: border-box;
+  border: 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 10%, transparent));
+  border-radius: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, inherit);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.gx-branch-search::placeholder { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); }
+.gx-branch-search:focus-visible { border-bottom-color: var(--dsw-alias-brand-primary, currentColor); }
+.gx-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  padding: 5px 8px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--dsw-radius-md, 8px);
+  background: transparent;
+  color: var(--dsw-alias-label-primary, inherit);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.gx-branch-row:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent)); }
+/* The arrow-key cursor outlives the pointer leaving the row, so it reuses the
+   hover wash instead of inventing a second selection colour. */
+.gx-branch-row[data-active="true"]:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent)); }
+.gx-branch-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, currentColor); outline-offset: -2px; }
+.gx-branch-row[data-current="true"] { color: var(--dsw-alias-brand-primary, inherit); }
+.gx-branch-row:disabled { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); opacity: .55; cursor: default; }
+.gx-branch-row-name {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+.gx-branch-match { color: var(--dsw-alias-label-primary, inherit); font-weight: 500; }
+.gx-branch-tag {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  border-radius: 999px;
+  color: inherit;
+  font-size: 10px;
+  line-height: 15px;
+  opacity: .85;
+}
+/* The automatic stash can leave changes parked when applying them back hit a
+   conflict. This notice owns the top of the popover until it closes, and the
+   git stderr summary wraps underneath instead of widening the panel. */
+.gx-branch-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+  margin-bottom: 2px;
+  padding: 5px 8px;
+  border-radius: var(--dsw-radius-md, 8px);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary, currentColor) 12%, transparent);
+  color: var(--dsw-alias-state-warn-primary, currentColor);
+  font-size: 12px;
+}
+.gx-branch-warning-text { font-weight: 500; }
+.gx-branch-warning-detail {
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+}
+.gx-branch-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin-bottom: 2px;
+  padding: 5px 8px;
+  border-radius: var(--dsw-radius-md, 8px);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, currentColor) 12%, transparent);
+  color: var(--dsw-alias-state-error-primary, currentColor);
+  font-size: 12px;
+}
+.gx-branch-error-text { flex: 1; min-width: 0; word-break: break-word; }
+.gx-branch-retry {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.gx-branch-retry:hover { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 10%, transparent)); }
+.gx-branch-hint { padding: 8px 9px; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); font-size: 12px; }
+.gx-branch-nomatch { padding: 12px 9px; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); font-size: 12px; text-align: center; }
+
+
 @media (max-width: 720px) {
   .gx-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(140px, 34%) minmax(0, 1fr); }
   /* Stacked columns have no horizontal split to resize, so the handle and any

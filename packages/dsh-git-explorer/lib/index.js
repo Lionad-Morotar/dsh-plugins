@@ -68,6 +68,210 @@ function runFailure(result) {
   return null;
 }
 
+// src/host/branches.ts
+var HEADS_PREFIX = "refs/heads/";
+var REMOTES_PREFIX = "refs/remotes/";
+var BRANCH_FORMAT = "--format=%(refname)%00%(objectname)%00%(HEAD)%00%(upstream)";
+var WORKTREE_PREFIX = "worktree ";
+var WORKTREE_STATUS_ARGS = ["status", "--porcelain=v2", "-z", "--untracked-files=normal"];
+var WORKTREE_NUMSTAT_ARGS = ["diff", "HEAD", "--numstat"];
+var ZERO_HEAD = /^0+$/u;
+var UNSET_HEAD_STDERR = /unknown revision|ambiguous argument 'HEAD'/iu;
+function cleanWorktree() {
+  return { dirty: false, additions: 0, deletions: 0, trackedFiles: 0, untrackedFiles: 0 };
+}
+function shortRef(ref) {
+  if (ref.startsWith(HEADS_PREFIX)) return ref.slice(HEADS_PREFIX.length);
+  if (ref.startsWith(REMOTES_PREFIX)) return ref.slice(REMOTES_PREFIX.length);
+  return ref;
+}
+function parseBranchRefs(text) {
+  const branches = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line === "") continue;
+    const fields = line.split("\0");
+    const ref = fields[0] ?? "";
+    const hash = fields[1] ?? "";
+    if (!ref.startsWith(HEADS_PREFIX) || hash === "") continue;
+    const name2 = shortRef(ref);
+    if (name2 === "") continue;
+    const upstreamRef = fields[3] ?? "";
+    const upstream = upstreamRef === "" ? "" : shortRef(upstreamRef);
+    branches.push({
+      name: name2,
+      hash,
+      current: (fields[2] ?? "") === "*",
+      ...upstream === "" ? {} : { upstream }
+    });
+  }
+  return branches;
+}
+function parseWorktreeList(text) {
+  const worktrees = [];
+  let draft = null;
+  const flush = () => {
+    if (draft !== null && draft.path !== "") {
+      worktrees.push({
+        path: draft.path,
+        ...draft.head === void 0 ? {} : { head: draft.head },
+        ...draft.branch === void 0 ? {} : { branch: draft.branch },
+        detached: draft.detached,
+        bare: draft.bare,
+        locked: draft.locked,
+        prunable: draft.prunable
+      });
+    }
+    draft = null;
+  };
+  for (const raw of text.split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line === "") {
+      flush();
+      continue;
+    }
+    if (line.startsWith(WORKTREE_PREFIX)) {
+      flush();
+      draft = {
+        path: line.slice(WORKTREE_PREFIX.length),
+        detached: false,
+        bare: false,
+        locked: false,
+        prunable: false
+      };
+      continue;
+    }
+    if (draft === null) continue;
+    if (line.startsWith("HEAD ")) draft.head = line.slice("HEAD ".length);
+    else if (line.startsWith("branch ")) draft.branch = line.slice("branch ".length).replace(/^refs\/heads\//u, "");
+    else if (line === "detached") draft.detached = true;
+    else if (line === "bare") draft.bare = true;
+    else if (line === "locked" || line.startsWith("locked ")) draft.locked = true;
+    else if (line === "prunable" || line.startsWith("prunable ")) draft.prunable = true;
+  }
+  flush();
+  return worktrees;
+}
+function emptyList(root) {
+  return { root, isRepository: false, detached: false, headHash: null, branches: [], worktree: cleanWorktree() };
+}
+function countStatusEntries(text) {
+  const records = text.split("\0");
+  let trackedFiles = 0;
+  let untrackedFiles = 0;
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index] ?? "";
+    if (record === "") continue;
+    const kind = record[0];
+    if (kind === "?") {
+      untrackedFiles += 1;
+    } else if (kind === "1" || kind === "u") {
+      trackedFiles += 1;
+    } else if (kind === "2") {
+      trackedFiles += 1;
+      index += 1;
+    }
+  }
+  return { dirty: text !== "", trackedFiles, untrackedFiles };
+}
+function sumNumStat(text) {
+  let additions = 0;
+  let deletions = 0;
+  for (const raw of text.split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line === "") continue;
+    const fields = line.split("	");
+    const addRaw = fields[0] ?? "";
+    const delRaw = fields[1] ?? "";
+    if (addRaw === "-" || delRaw === "-") continue;
+    const add = Number.parseInt(addRaw, 10);
+    const del = Number.parseInt(delRaw, 10);
+    if (!Number.isFinite(add) || !Number.isFinite(del)) continue;
+    additions += add;
+    deletions += del;
+  }
+  return { additions, deletions };
+}
+function summarizeWorktreeDirty(statusText, numstatText) {
+  const counts = countStatusEntries(statusText);
+  const lines = sumNumStat(numstatText);
+  return {
+    dirty: counts.dirty,
+    additions: lines.additions,
+    deletions: lines.deletions,
+    trackedFiles: counts.trackedFiles,
+    untrackedFiles: counts.untrackedFiles
+  };
+}
+function unsetHead(worktrees, root, numstat) {
+  const current = worktrees.find((worktree) => worktree.path === root);
+  if (current?.head !== void 0 && ZERO_HEAD.test(current.head)) return true;
+  return numstat.exitCode !== 0 && !numstat.timedOut && !numstat.cancelled && UNSET_HEAD_STDERR.test(numstat.stderr);
+}
+async function collectBranches(options, request = {}, signal) {
+  const cwd = request.cwd ?? options.cwd;
+  const probe = await options.runner.run(["rev-parse", "--show-toplevel"], { cwd, signal });
+  const probeFailure = runFailure(probe);
+  if (probeFailure !== null) {
+    if (probeFailure.code === "git-failed") return { ok: true, list: emptyList(cwd) };
+    return { ok: false, error: probeFailure };
+  }
+  const root = probe.stdout.trim();
+  if (root === "") return { ok: true, list: emptyList(cwd) };
+  const [refsRun, worktreesRun, statusRun, numstatRun] = await Promise.all([
+    options.runner.run(["for-each-ref", BRANCH_FORMAT, "refs/heads"], { cwd: root, signal }),
+    options.runner.run(["worktree", "list", "--porcelain"], { cwd: root, signal }),
+    options.runner.run([...WORKTREE_STATUS_ARGS], { cwd: root, signal }),
+    options.runner.run([...WORKTREE_NUMSTAT_ARGS], { cwd: root, signal })
+  ]);
+  for (const result of [refsRun, worktreesRun, statusRun]) {
+    const failure = runFailure(result);
+    if (failure !== null) return { ok: false, error: failure };
+    if (result.stdoutLossy) return fail("git-failed", "command output exceeded the collection budget");
+  }
+  const refs = parseBranchRefs(refsRun.stdout);
+  const worktrees = parseWorktreeList(worktreesRun.stdout);
+  const headUnset = unsetHead(worktrees, root, numstatRun);
+  const numstatFailure = headUnset ? null : runFailure(numstatRun);
+  if (numstatFailure !== null) return { ok: false, error: numstatFailure };
+  if (!headUnset && numstatRun.stdoutLossy) {
+    return fail("git-failed", "command output exceeded the collection budget");
+  }
+  const worktree = summarizeWorktreeDirty(statusRun.stdout, headUnset ? "" : numstatRun.stdout);
+  const occupied = /* @__PURE__ */ new Map();
+  for (const worktreeEntry of worktrees) {
+    if (worktreeEntry.branch === void 0 || worktreeEntry.path === root) continue;
+    if (!occupied.has(worktreeEntry.branch)) occupied.set(worktreeEntry.branch, worktreeEntry.path);
+  }
+  const branches = refs.map((branch) => {
+    const worktreePath = occupied.get(branch.name);
+    return worktreePath === void 0 ? branch : { ...branch, worktreePath };
+  });
+  if (branches.some((branch) => branch.current)) {
+    return { ok: true, list: { root, isRepository: true, detached: false, headHash: null, branches, worktree } };
+  }
+  const headRun = await options.runner.run(["rev-parse", "--short", "HEAD"], { cwd: root, signal });
+  const headFailure = runFailure(headRun);
+  if (headFailure !== null) {
+    if (headFailure.code === "git-failed") {
+      return { ok: true, list: { root, isRepository: true, detached: false, headHash: null, branches, worktree } };
+    }
+    return { ok: false, error: headFailure };
+  }
+  const headHash = headRun.stdout.trim();
+  return {
+    ok: true,
+    list: {
+      root,
+      isRepository: true,
+      detached: true,
+      headHash: headHash === "" ? null : headHash,
+      branches,
+      worktree
+    }
+  };
+}
+
 // src/host/parse.ts
 var LOG_FIELDS = 5;
 var MAX_REF_NAME = 512;
@@ -955,6 +1159,121 @@ async function collectSnapshot(options, request = {}, signal) {
   };
 }
 
+// src/host/switch.ts
+var REF_FORMAT2 = "--format=%(refname)";
+var HEADS_PREFIX2 = "refs/heads/";
+var STASH_TOP_ARGS = ["stash", "list", "--format=%H", "-1"];
+var STASH_POP_ARGS = ["stash", "pop", "stash@{0}"];
+var MAX_NAME_LENGTH = 255;
+var MAX_DETAIL_LINES = 3;
+var NAME_RULES = [
+  ["must not contain a NUL byte", (name2) => name2.includes("\0")],
+  ["must not contain a space", (name2) => name2.includes(" ")],
+  ['must not contain ".."', (name2) => name2.includes("..")],
+  ['must not contain "~"', (name2) => name2.includes("~")],
+  ['must not contain "^"', (name2) => name2.includes("^")],
+  ['must not contain "@{"', (name2) => name2.includes("@{")],
+  ["must not start with a dash", (name2) => name2.startsWith("-")],
+  ["must not end with a slash", (name2) => name2.endsWith("/")]
+];
+function nameProblem(value) {
+  if (typeof value !== "string" || value === "") return "name must be a non-empty string";
+  if (value.length > MAX_NAME_LENGTH) return `name must be at most ${String(MAX_NAME_LENGTH)} characters`;
+  for (const [reason, invalid] of NAME_RULES) {
+    if (invalid(value)) return `name ${reason}`;
+  }
+  return null;
+}
+function localBranchNames(text) {
+  const names = /* @__PURE__ */ new Set();
+  for (const raw of text.split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (line.startsWith(HEADS_PREFIX2)) names.add(line.slice(HEADS_PREFIX2.length));
+  }
+  return names;
+}
+function detailOf(result) {
+  const lines = result.stderr.split("\n").map((line) => line.trim()).filter((line) => line !== "").slice(0, MAX_DETAIL_LINES);
+  if (lines.length > 0) return lines.join("; ");
+  return result.exitCode === null ? "the command was terminated by a signal" : `the command exited with code ${String(result.exitCode)}`;
+}
+function readFailure(result) {
+  if (result.timedOut) return { code: "timeout", message: "the command exceeded its deadline" };
+  if (result.cancelled) return { code: "git-failed", message: "cancelled" };
+  if (result.exitCode !== 0) return { code: "git-failed", message: detailOf(result) };
+  if (result.stdoutLossy) return { code: "git-failed", message: "command output exceeded the collection budget" };
+  return null;
+}
+async function readStashTop(runner, cwd, signal) {
+  const listed = await runner.run([...STASH_TOP_ARGS], { cwd, signal });
+  const failure = readFailure(listed);
+  if (failure !== null) return { failure };
+  const [first = ""] = listed.stdout.split("\n");
+  const top = first.trim();
+  return { top: top === "" ? null : top };
+}
+function stashMessage(name2) {
+  return `git-explorer: \u5207\u6362 ${name2} \u524D\u81EA\u52A8\u6682\u5B58`;
+}
+function switchFailure(result) {
+  if (result.timedOut) return { code: "timeout", message: "the command exceeded its deadline" };
+  if (result.cancelled) return { code: "git-failed", message: "cancelled" };
+  if (result.stderr.includes("did not match any file(s) known to git") || result.stderr.includes("invalid reference")) {
+    return { code: "invalid-request", message: `git rejected the branch name: ${detailOf(result)}` };
+  }
+  return { code: "git-failed", message: detailOf(result) };
+}
+async function switchToBranch(options, request, signal) {
+  const cwd = request.cwd ?? options.cwd;
+  const problem = nameProblem(request.name);
+  if (problem !== null) return fail("invalid-request", problem);
+  const inventory = await options.runner.run(["for-each-ref", REF_FORMAT2, "refs/heads"], { cwd, signal });
+  const inventoryError = readFailure(inventory);
+  if (inventoryError !== null) return { ok: false, error: inventoryError };
+  if (!localBranchNames(inventory.stdout).has(request.name)) {
+    return fail("invalid-request", `branch not found: ${request.name}`);
+  }
+  const status = await options.runner.run([...WORKTREE_STATUS_ARGS], { cwd, signal });
+  const statusError = readFailure(status);
+  if (statusError !== null) return { ok: false, error: statusError };
+  const dirty = status.stdout !== "";
+  let stashEntry = null;
+  if (dirty) {
+    const before = await readStashTop(options.runner, cwd, signal);
+    if (before.failure !== void 0) return { ok: false, error: before.failure };
+    const stash = await options.runner.run(
+      ["stash", "push", "--include-untracked", "-m", stashMessage(request.name)],
+      { cwd, signal }
+    );
+    const stashError = readFailure(stash);
+    if (stashError !== null) return { ok: false, error: stashError };
+    const after = await readStashTop(options.runner, cwd, signal);
+    if (after.failure !== void 0) return { ok: false, error: after.failure };
+    if (after.top !== null && after.top !== before.top) stashEntry = after.top;
+  }
+  const switched = await options.runner.run(["switch", "--no-guess", request.name], { cwd, signal });
+  if (switched.timedOut || switched.cancelled || switched.exitCode !== 0) {
+    const failure = switchFailure(switched);
+    if (stashEntry === null) return { ok: false, error: failure };
+    const rollback = await options.runner.run([...STASH_POP_ARGS], { cwd });
+    const rollbackError = readFailure(rollback);
+    const note = rollbackError === null ? "auto-stash restored" : `auto-stash rollback failed: ${rollbackError.message}`;
+    return fail(failure.code, `${failure.message}; ${note}`);
+  }
+  if (stashEntry === null) return { ok: true, branch: request.name, stash: { stashed: false, restored: false } };
+  const popped = await options.runner.run([...STASH_POP_ARGS], { cwd });
+  const restoreError = readFailure(popped);
+  if (restoreError === null) {
+    return { ok: true, branch: request.name, stash: { stashed: true, restored: true } };
+  }
+  const message = popped.timedOut ? "the command exceeded its deadline" : detailOf(popped);
+  return {
+    ok: true,
+    branch: request.name,
+    stash: { stashed: true, restored: false, conflict: true, message }
+  };
+}
+
 // src/shared.ts
 var PACKAGE_NAME = "dsh-git-explorer";
 var GIT_SERVICE = "gitExplorer";
@@ -981,8 +1300,8 @@ function normalizeConfig(config) {
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
-var _run_dec, _show_dec, _commit_dec, _query_dec, _snapshot_dec, _a, _init;
-var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec = [Remote("snapshot")], _query_dec = [Remote("query")], _commit_dec = [Remote("commit")], _show_dec = [Remote("show")], _run_dec = [Remote("run")], _a) {
+var _switchBranch_dec, _branches_dec, _run_dec, _show_dec, _commit_dec, _query_dec, _snapshot_dec, _a, _init;
+var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec = [Remote("snapshot")], _query_dec = [Remote("query")], _commit_dec = [Remote("commit")], _show_dec = [Remote("show")], _run_dec = [Remote("run")], _branches_dec = [Remote("branches")], _switchBranch_dec = [Remote("switchBranch")], _a) {
   constructor(ctx, config) {
     super(ctx, GIT_SERVICE);
     __runInitializers(_init, 5, this);
@@ -1080,6 +1399,22 @@ var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec 
       error: { code: "not-implemented", message: "actions arrive in a later slice; the data layer is read-only" }
     };
   }
+  async branches(request, signal) {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
+    try {
+      return await collectBranches({ runner: this.runnerFor(cwd), cwd }, request, signal);
+    } catch (error) {
+      return fail("internal", messageOf(error));
+    }
+  }
+  async switchBranch(request, signal) {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
+    try {
+      return await switchToBranch({ runner: this.runnerFor(cwd), cwd }, request, signal);
+    } catch (error) {
+      return fail("internal", messageOf(error));
+    }
+  }
 };
 _init = __decoratorStart(_a);
 __decorateElement(_init, 1, "snapshot", _snapshot_dec, GitExplorerService);
@@ -1087,6 +1422,8 @@ __decorateElement(_init, 1, "query", _query_dec, GitExplorerService);
 __decorateElement(_init, 1, "commit", _commit_dec, GitExplorerService);
 __decorateElement(_init, 1, "show", _show_dec, GitExplorerService);
 __decorateElement(_init, 1, "run", _run_dec, GitExplorerService);
+__decorateElement(_init, 1, "branches", _branches_dec, GitExplorerService);
+__decorateElement(_init, 1, "switchBranch", _switchBranch_dec, GitExplorerService);
 __decoratorMetadata(_init, GitExplorerService);
 __publicField(GitExplorerService, "inject", inject);
 __publicField(GitExplorerService, "Config", Schema.object({
@@ -1094,7 +1431,14 @@ __publicField(GitExplorerService, "Config", Schema.object({
   maxBytes: Schema.number().default(DEFAULT_CONFIG.maxBytes).description("\u5355\u6761 git \u547D\u4EE4\u7684\u8F93\u51FA\u4E0A\u9650\uFF08\u5B57\u8282\uFF09"),
   maxCommits: Schema.number().default(DEFAULT_CONFIG.maxCommits).description("\u5FEB\u7167\u4E0E\u67E5\u8BE2\u9ED8\u8BA4\u7684\u63D0\u4EA4\u6761\u6570\u4E0A\u9650")
 }));
-var __test = { parseLog, parseRefs, parseStatusZ, assignLanes };
+var __test = {
+  parseLog,
+  parseRefs,
+  parseStatusZ,
+  assignLanes,
+  parseBranchRefs,
+  parseWorktreeList
+};
 var index_default = GitExplorerService;
 export {
   DEFAULT_CONFIG,

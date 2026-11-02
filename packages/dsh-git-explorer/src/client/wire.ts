@@ -10,6 +10,8 @@
  * payload.
  */
 import type {
+  GitBranchListRequest,
+  GitBranchListResult,
   GitCommitRequest,
   GitCommitResult,
   GitQueryRequest,
@@ -18,6 +20,8 @@ import type {
   GitShowResult,
   GitSnapshotRequest,
   GitSnapshotResult,
+  GitSwitchRequest,
+  GitSwitchResult,
 } from "../host/types.ts";
 
 /** The transport result the generated Remote method resolves to. */
@@ -30,6 +34,11 @@ export interface GitRemoteFace {
   snapshot(request: GitSnapshotRequest, signal?: AbortSignal): Promise<RemoteResult<GitSnapshotResult>>;
   query(request: GitQueryRequest, signal?: AbortSignal): Promise<RemoteResult<GitQueryResult>>;
   commit(request: GitCommitRequest, signal?: AbortSignal): Promise<RemoteResult<GitCommitResult>>;
+  /** Local branch inventory for the header switcher. */
+  branches(request: GitBranchListRequest, signal?: AbortSignal): Promise<RemoteResult<GitBranchListResult>>;
+  /** Check out an existing local branch in the session worktree. */
+  switchBranch(request: GitSwitchRequest, signal?: AbortSignal): Promise<RemoteResult<GitSwitchResult>>;
+  /** One file as a specific commit holds it. */
   show(request: GitShowRequest, signal?: AbortSignal): Promise<RemoteResult<GitShowResult>>;
 }
 
@@ -50,7 +59,7 @@ export interface RpcCall {
 }
 
 /** Methods this panel calls, in the order the RPC face exposes them. */
-const RPC_METHODS = ["snapshot", "query", "commit", "show"] as const;
+const RPC_METHODS = ["snapshot", "query", "commit", "show", "branches", "switchBranch"] as const;
 
 /**
  * Build the Git face over the raw gateway channel.
@@ -67,6 +76,8 @@ export function createRpcRemoteFace(call: RpcCall): GitRemoteFace {
     snapshot: invoke("snapshot") as GitRemoteFace["snapshot"],
     query: invoke("query") as GitRemoteFace["query"],
     commit: invoke("commit") as GitRemoteFace["commit"],
+    branches: invoke("branches") as GitRemoteFace["branches"],
+    switchBranch: invoke("switchBranch") as GitRemoteFace["switchBranch"],
     show: invoke("show") as GitRemoteFace["show"],
   };
 }

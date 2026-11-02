@@ -106,6 +106,46 @@ describe("git explorer client entry", () => {
     expect(calls.some(call => call.type === "locale.register" && call.name === "git-explorer")).toBe(true);
   });
 
+  it("registers the header branch action on a host without the workbench", () => {
+    // The two registrations have different requirements: the header only needs
+    // the slot table, the dictionary and the Remote face.
+    const calls: Registration[] = [];
+    const ctx = {
+      slots: {
+        inject(name: string, factory: () => () => void) {
+          calls.push({ type: "slots.inject", name });
+          factory();
+          return () => {};
+        },
+        register(spec: Record<string, unknown>) {
+          calls.push({
+            type: "slots.register",
+            name: spec.name as string,
+            id: spec.id as string,
+            order: spec.order as number,
+            hasComponent: true,
+          });
+          return () => {};
+        },
+      },
+      locale: {
+        register: () => () => {},
+        bind: () => (key: string) => key,
+      },
+    };
+
+    apply(ctx as never);
+
+    expect(calls).toContainEqual({
+      type: "slots.register",
+      name: "conversation.session.header.actions",
+      id: "git-branch",
+      order: 30,
+      hasComponent: true,
+    });
+    expect(calls.some(call => call.name === "conversation.view")).toBe(false);
+  });
+
   it("exposes the four acceptance surfaces on the default export", () => {
     expect(Object.keys(__test).sort()).toEqual(["computeWindow", "createJump", "formatCommitDetail", "groupChanges"]);
     expect(clientPlugin.__test).toBe(__test);
@@ -152,7 +192,7 @@ describe("connection RPC transport", () => {
     expect(calls[0]?.self).toBe(rpc);
   });
 
-  it("offers the three methods the panel consumes", async () => {
+  it("offers every method the header and the panel consume", async () => {
     const endpoints: string[] = [];
     const face = createRpcRemoteFace((endpoint) => {
       endpoints.push(endpoint);
@@ -161,7 +201,9 @@ describe("connection RPC transport", () => {
     await face.snapshot({ sessionId: "s1" });
     await face.query({ sessionId: "s1", skip: 0, limit: 10 });
     await face.commit({ sessionId: "s1", hash: "abc" });
-    expect(endpoints).toEqual(["snapshot", "query", "commit"]);
+    await face.branches({ sessionId: "s1" });
+    await face.switchBranch({ sessionId: "s1", name: "main" });
+    expect(endpoints).toEqual(["snapshot", "query", "commit", "branches", "switchBranch"]);
   });
 
   it("resolves to the RPC face when no generated contribution is mounted", () => {

@@ -19,6 +19,7 @@ import {
 } from "react";
 
 import { ChangesPane } from "./changes-pane.tsx";
+import { getBranchStore, type BranchStoreFace } from "./branch-store.ts";
 import { DetailPane } from "./detail-pane.tsx";
 import { HistoryPane, HISTORY_PAGE_SIZE } from "./history-pane.tsx";
 import type { Translate } from "./copy.ts";
@@ -128,6 +129,36 @@ export function consumeCommitFocus(focus: string | undefined, sink: CommitFocusS
   return target !== undefined;
 }
 
+/** The store slice this view watches: a revision number and its listeners. */
+export interface BranchRevisionFace {
+  subscribe(listener: () => void): () => void;
+  getSnapshot(): { readonly revision: number };
+}
+
+/**
+ * Reload the panel whenever a branch switch advances the store's revision.
+ *
+ * Subscribing alone would also fire on inventory loads and error rows, and the
+ * view already fetched its own snapshot on mount. Only a revision change means
+ * HEAD, the working tree or the refs moved under the panel; the callback then
+ * bumps the same token the header's refresh button uses, so the request stays
+ * in the one effect that owns it instead of a second fetch path that could
+ * race it.
+ * @param source - the shared branch store, or undefined before the host mounts it.
+ * @param bump - marks the painted snapshot stale.
+ * @returns the unsubscribe, safe to hand to an effect cleanup.
+ */
+export function watchBranchRevision(source: BranchRevisionFace | undefined, bump: () => void): () => void {
+  if (source === undefined) return () => {};
+  let revision = source.getSnapshot().revision;
+  return source.subscribe(() => {
+    const next = source.getSnapshot().revision;
+    if (next === revision) return;
+    revision = next;
+    bump();
+  });
+}
+
 type LoadState =
   | { readonly kind: "idle" }
   | { readonly kind: "loading" }
@@ -199,6 +230,9 @@ export function createGitExplorerView(wiring: ViewWiring) {
     // Resolve once per mount: the Remote namespace is a stable service, and a
     // fresh proxy identity on every render would restart the snapshot effect.
     const remote = useMemo(() => resolveRemote(), [resolveRemote]);
+    // The header action writes this same store; taking it once per mount keeps
+    // the subscription below from re-arming on every render.
+    const [branchStore] = useState<BranchStoreFace | undefined>(getBranchStore);
     const [load, setLoad] = useState<LoadState>(() => ({ kind: initialViewState(sessionId, remote !== undefined) }));
     const [reloadToken, setReloadToken] = useState(0);
     const [commits, setCommits] = useState<readonly GitCommitNode[]>([]);
@@ -516,8 +550,13 @@ export function createGitExplorerView(wiring: ViewWiring) {
       if (sessionId !== undefined && selected !== undefined) commitJump(selected, path, line);
     };
 
-    const refresh = (): void => setReloadToken(token => token + 1);
+    const refresh = useCallback((): void => setReloadToken(token => token + 1), []);
     const retry = (): void => setReloadToken(token => token + 1);
+
+    // A switch made in the header moves HEAD, the refs on the first history row
+    // and the working tree; bumping the token is enough because the snapshot
+    // effect above already owns the request and would otherwise double-fetch.
+    useEffect(() => watchBranchRevision(branchStore, refresh), [branchStore, refresh]);
 
     const head = snapshot?.head;
     const changedCount = groups.reduce((sum, group) => sum + group.files.length, 0);
@@ -586,13 +625,13 @@ export function createGitExplorerView(wiring: ViewWiring) {
             {t("state.loading")}
           </div>
         ) : load.kind === "failed" ? (
-          <StateBlock title={t("state.failed.title")} description={load.message} actionLabel={t("action.retry")} onAction={retry} />
+          <StateBlock title={t("state.failed.title")} description={load.message} actionLabel={t("action.retry")} onAction={refresh} />
         ) : load.kind === "ready" && !load.snapshot.isRepository ? (
           <StateBlock
             title={t("state.notRepository.title")}
             description={t("state.notRepository.description")}
             actionLabel={t("action.retry")}
-            onAction={retry}
+            onAction={refresh}
           />
         ) : load.kind === "ready" ? (
           <div
@@ -644,7 +683,7 @@ export function createGitExplorerView(wiring: ViewWiring) {
                   ? {
                       emptyTitle: t("state.emptyRepository.title"),
                       emptyDescription: t("state.emptyRepository.description"),
-                      onRetry: retry,
+                      onRetry: refresh,
                       retryLabel: t("action.retry"),
                     }
                   : {})}

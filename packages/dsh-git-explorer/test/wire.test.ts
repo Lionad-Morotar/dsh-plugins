@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { createRpcRemoteFace, GIT_RPC_METHODS, unwrapTransport } from "../src/client/wire.ts";
 
+describe("GIT_RPC_METHODS", () => {
+  it("mirrors the host endpoints the client consumes, branch pair and show included", () => {
+    expect(GIT_RPC_METHODS).toEqual(["snapshot", "query", "commit", "show", "branches", "switchBranch"]);
+  });
+});
+
 describe("unwrapTransport", () => {
   it("unwraps the transport envelope when the business result is nested", () => {
     const business = { ok: true as const, snapshot: { root: "/repo" } };
@@ -29,7 +35,7 @@ describe("unwrapTransport", () => {
 
 describe("rpc face", () => {
   it("covers show alongside the data endpoints", async () => {
-    expect(GIT_RPC_METHODS).toEqual(["snapshot", "query", "commit", "show"]);
+    expect(GIT_RPC_METHODS).toEqual(["snapshot", "query", "commit", "show", "branches", "switchBranch"]);
     const calls: Array<[string, unknown]> = [];
     const face = createRpcRemoteFace((endpoint, payload) => {
       calls.push([endpoint, payload]);
