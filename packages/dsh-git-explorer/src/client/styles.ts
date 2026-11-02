@@ -437,10 +437,11 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
   flex-direction: column;
   gap: 2px;
   width: 320px;
-  max-width: calc(100vw - 16px);
+  max-width: min(420px, 100vw - 32px);
   max-height: min(420px, calc(100vh - 24px));
   padding: 4px;
   box-sizing: border-box;
+  overflow: hidden;
   border-radius: var(--dsw-radius-lg, 10px);
   background: var(--dsw-menu-surface-fill, var(--dsw-alias-bg-layer-1, transparent));
   box-shadow: var(--dsw-elevation-prominent, 0 8px 24px color-mix(in srgb, var(--dsw-alias-label-primary, currentColor) 16%, transparent));
@@ -448,7 +449,7 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
   font-size: 13px;
   line-height: 1.45;
 }
-.gx-branch-list { display: flex; flex-direction: column; gap: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.gx-branch-list { display: flex; flex-direction: column; gap: 0; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 /* The search seat keeps the row's horizontal padding so the caret lines up with
    the names below; a single hairline separates it without adding a second
    surface inside the popover. */
@@ -474,8 +475,10 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
   align-items: center;
   gap: 6px;
   width: 100%;
+  min-width: 0;
   min-height: 30px;
   padding: 5px 8px;
+  box-sizing: border-box;
   border: 0;
   border-radius: var(--dsw-radius-md, 8px);
   background: transparent;
@@ -495,6 +498,7 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 .gx-branch-row-name {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

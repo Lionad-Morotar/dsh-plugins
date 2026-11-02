@@ -38,6 +38,9 @@ import type { GitBranch } from "../host/types.ts";
 /** Popover width, matching the host's own header dropdowns. */
 const PANEL_WIDTH = 320;
 
+/** Keep the panel inside a phone-width viewport with a gutter on both sides. */
+const PANEL_MAX_WIDTH = "min(420px, 100vw - 32px)";
+
 /** Distance kept between the trigger and the panel. */
 const PANEL_GAP = 5;
 
@@ -196,7 +199,9 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
     const panelRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const activeRowRef = useRef<HTMLButtonElement>(null);
+    const restoreFocusRef = useRef(false);
     const listId = useId();
+    const panelId = useId();
     const kit = resolveBranchKit();
     const portaled = kit.createPortal !== undefined;
     const IconBranch: IconLike = kit.IconBranch ?? FallbackBranchIcon;
@@ -212,8 +217,17 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
     }, []);
 
     const closeAndFocus = useCallback((): void => {
+      restoreFocusRef.current = true;
       close();
-      triggerRef.current?.focus();
+      triggerRef.current?.focus({ preventScroll: true });
+    }, [close]);
+
+    /** An outside press closes the popover without stealing focus from the
+     * control the press landed on; the effect below only reclaims it when the
+     * click gave focus to nothing else. */
+    const dismiss = useCallback((): void => {
+      restoreFocusRef.current = true;
+      close();
     }, [close]);
 
     // A session switch replaces the branch inventory wholesale; carrying the
@@ -226,8 +240,27 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
     }, [store, sessionId, close]);
 
     // The popover opens as a search field: typing works without a second click.
-    useEffect(() => {
-      if (open) inputRef.current?.focus();
+    // A layout effect beats the browser's click default, which would otherwise
+    // leave focus on the trigger (and on BODY after a keyboard-only open).
+    useLayoutEffect(() => {
+      if (open) inputRef.current?.focus({ preventScroll: true });
+    }, [open]);
+
+    // A close originated by Escape, a row pick or an outside press returns the
+    // keyboard to the trigger. An outside press that lands on another focusable
+    // control keeps focus there, so the popover does not fight the pointer.
+    useLayoutEffect(() => {
+      if (open || !restoreFocusRef.current) return;
+      restoreFocusRef.current = false;
+      const active = document.activeElement;
+      if (
+        active === null ||
+        active === document.body ||
+        active === triggerRef.current ||
+        rootRef.current?.contains(active) === true
+      ) {
+        triggerRef.current?.focus({ preventScroll: true });
+      }
     }, [open]);
 
     // Filtering changes what the cursor points at. Park it on the first usable
@@ -241,10 +274,14 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
       activeRowRef.current?.scrollIntoView?.({ block: "nearest" });
     }, [activeIndex, matches]);
 
+    // Escape is owned at the document level: the search field is focused on
+    // open, but a host surface may move focus, and a container-scoped handler
+    // would miss the popover entirely in that case.
     useEffect(() => {
       if (!open) return;
       const onKeyDown = (event: KeyboardEvent): void => {
-        if (event.key !== "Escape") return;
+        if (event.key !== "Escape" || event.isComposing) return;
+        event.preventDefault();
         closeAndFocus();
       };
       document.addEventListener("keydown", onKeyDown);
@@ -252,7 +289,7 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
     }, [open, closeAndFocus]);
 
     const position = usePanelPosition(kit, open, triggerRef, panelRef);
-    useDismiss(kit, rootRef, panelRef, portaled, open, close);
+    useDismiss(kit, rootRef, panelRef, portaled, open, dismiss);
 
     const toggle = (): void => {
       if (open) {
@@ -326,11 +363,12 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
     const panel = (
       <div
         ref={panelRef}
+        id={panelId}
         className="gx-branch-panel"
         data-testid="gx-branch-panel"
         role="dialog"
         aria-label={t("branch.title")}
-        style={position}
+        style={{ width: PANEL_WIDTH, maxWidth: PANEL_MAX_WIDTH, ...position }}
       >
         <input
           ref={inputRef}
@@ -349,6 +387,7 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
             activeIndex >= 0 && list !== undefined ? `${listId}-option-${activeIndex}` : undefined
           }
           autoComplete="off"
+          autoFocus
           spellCheck={false}
           onChange={event => setQuery(event.target.value)}
           onKeyDown={onSearchKeyDown}
@@ -390,8 +429,8 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
                   aria-current={branch.current ? "true" : undefined}
                   title={
                     branch.worktreePath === undefined
-                      ? undefined
-                      : `${t("branch.worktree")}: ${branch.worktreePath}`
+                      ? branch.name
+                      : `${branch.name} ${t("branch.worktree")}: ${branch.worktreePath}`
                   }
                   disabled={pending !== null || branch.worktreePath !== undefined}
                   onClick={() => {
@@ -415,8 +454,10 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
           type="button"
           className="gx-branch-trigger"
           data-testid="gx-branch-trigger"
+          aria-label={`${t("branch.title")}: ${list?.detached === true ? detachedTitle : label}`}
           aria-haspopup="dialog"
           aria-expanded={open}
+          aria-controls={open ? panelId : undefined}
           title={list?.detached === true ? detachedTitle : label}
           onClick={toggle}
         >

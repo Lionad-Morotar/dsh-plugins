@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createBranchAction } from "../src/client/branch-action.tsx";
 import { createBranchStore, type BranchListState, type BranchStoreFace } from "../src/client/branch-store.ts";
 import { setBranchKitForTest, type BranchKit, type DismissHook } from "../src/client/platform.ts";
+import { GIT_STYLES } from "../src/client/styles.ts";
 import type { GitBranchList } from "../src/host/types.ts";
 import type { GitRemoteFace } from "../src/client/wire.ts";
 
@@ -205,6 +206,23 @@ describe("header branch action", () => {
     expect(button?.textContent).toContain("main");
     expect(button?.getAttribute("aria-expanded")).toBe("false");
     expect(panel()).toBeNull();
+  });
+
+  it("names the trigger, the dialog and the search seat for assistive tech", async () => {
+    await renderReady();
+
+    const button = trigger();
+    expect(button?.getAttribute("aria-label")).toBe("branch.title: main");
+    expect(button?.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(button?.getAttribute("aria-expanded")).toBe("false");
+
+    await click(trigger());
+
+    expect(trigger()?.getAttribute("aria-expanded")).toBe("true");
+    expect(trigger()?.getAttribute("aria-controls")).toBe(panel()?.id);
+    expect(panel()?.getAttribute("role")).toBe("dialog");
+    expect(panel()?.getAttribute("aria-label")).toBe("branch.title");
+    expect(searchBox()?.getAttribute("aria-label")).toBe("branch.search");
   });
 
   it("renders nothing outside a Git repository", async () => {
@@ -418,6 +436,48 @@ describe("branch popover search and keyboard", () => {
     expect(document.activeElement).toBe(trigger());
   });
 
+  it("closes on Escape even when focus has fallen outside the search box", async () => {
+    await renderReady();
+    await click(trigger());
+    expect(document.activeElement).toBe(searchBox());
+
+    await act(async () => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(panel()).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it("puts focus back into the search box on every open", async () => {
+    await renderReady();
+    await click(trigger());
+
+    await press("Escape");
+    await click(trigger());
+
+    expect(document.activeElement).toBe(searchBox());
+  });
+
+  it("restores focus after an outside pointer closes the popover", async () => {
+    setBranchKitForTest({});
+    const fake = createFakeStore({ status: "ready", list: LIST, revision: 0, sessionId: "s1" });
+    const Action = createBranchAction({ store: fake.store, t });
+    await mount(<Action sessionId="s1" />);
+    await click(trigger());
+    expect(panel()).not.toBeNull();
+
+    await act(async () => {
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(panel()).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
   it("shows one centered hint when nothing matches and keeps Enter inert", async () => {
     const fake = await renderReady();
     await click(trigger());
@@ -432,6 +492,32 @@ describe("branch popover search and keyboard", () => {
 
     expect(fake.switches).toHaveLength(0);
     expect(panel()).not.toBeNull();
+  });
+});
+
+describe("branch popover width and full names", () => {
+  const LONG = "worktree-command-panel-restart-dsh";
+
+  it("fixes the panel width and keeps the full name reachable from every row", async () => {
+    await renderReady(undefined, {
+      ...LIST,
+      branches: [{ name: LONG, hash: "d4", current: false }, ...LIST.branches],
+    });
+
+    await click(trigger());
+
+    expect(panel()?.style.width).toBe("320px");
+    expect(panel()?.style.maxWidth).toContain("420px");
+    expect(panel()?.style.maxWidth).toContain("100vw");
+    expect(row(LONG)?.title).toBe(LONG);
+    expect(row("taken")?.title).toContain("taken");
+    expect(row("taken")?.title).toContain("/repo/.worktrees/taken");
+  });
+
+  it("keeps the stylesheet width fixed and clips names inside the row", () => {
+    expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*width: 320px/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-row-name \{[^}]*text-overflow: ellipsis/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-row \{[^}]*box-sizing: border-box/u);
   });
 });
 
