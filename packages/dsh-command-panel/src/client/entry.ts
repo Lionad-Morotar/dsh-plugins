@@ -87,6 +87,7 @@ export const inject = [
   "remote",
   "remote.fileReferences",
   "remote.commands",
+  "remote.hostShutdown",
   "locale",
 ] as const;
 
