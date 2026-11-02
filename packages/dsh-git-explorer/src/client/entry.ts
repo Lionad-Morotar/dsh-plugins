@@ -7,11 +7,24 @@
  * panel's "service unavailable" state instead of keeping the tab hidden.
  */
 import { EN, ZH } from "./copy.ts";
-import { GIT_SERVICE, LOCALE_NAMESPACE, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
+import {
+  GIT_SERVICE,
+  HEADER_ID,
+  HEADER_ORDER,
+  HEADER_SLOT,
+  LOCALE_NAMESPACE,
+  VIEW_ID,
+  VIEW_ORDER,
+  VIEW_SLOT,
+} from "../shared.ts";
+import { createBranchAction } from "./branch-action.tsx";
+import { createBranchStore } from "./branch-store.ts";
 import { computeWindow, createJump, formatCommitDetail, groupChanges } from "./model.ts";
 import { insertStyles } from "./styles.ts";
 import { createGitExplorerView, type WorkbenchFace } from "./view.tsx";
 import { createRpcRemoteFace, type GitRemoteFace, type RemoteResolver, type RpcCall } from "./wire.ts";
+
+export { boot } from "./platform.ts";
 
 /** The slice of the client context this entry uses. */
 export interface ClientContextLike {
@@ -101,7 +114,6 @@ export function createRpcCall(ctx: ClientContextLike): RpcCall | undefined {
   return (endpoint, payload, signal) => rpc.call("/api", `${GIT_SERVICE}/${endpoint}`, payload, signal);
 }
 
-/** Mount the Git workbench view. */
 /** Disposer of the dictionary currently sitting in the host's locale table.
 * A repeat apply on one host process (the desktop sync pass followed by the
 * mount pass) meets the same table, and the table refuses a second
@@ -111,29 +123,51 @@ export function createRpcCall(ctx: ClientContextLike): RpcCall | undefined {
 * removable by the very disposer that registered them. */
 let registeredDictionaries: (() => void) | undefined;
 
+/**
+ * Mount the header branch action and, when the workbench is present, the tab.
+ *
+ * The two registrations have different requirements. The header action only
+ * needs the slot table, the dictionary and the Remote face, so it mounts on
+ * hosts without the workbench core; the tab needs `workbench` for its view
+ * seam and stays absent there.
+ */
 export function apply(ctx: ClientContextLike): () => void {
-  const workbench = ctx.workbench;
-  if (workbench === undefined || workbench === null) return () => {};
-
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
   registeredDictionaries?.();
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
   registeredDictionaries = offLocale;
   const offStyles = insertStyles(typeof document === "undefined" ? undefined : document);
-  const View = createGitExplorerView({ workbench, version: workbench.version, t, remote: createRemoteResolver(ctx) });
+  const remote = createRemoteResolver(ctx);
 
-  ctx.slots.inject(VIEW_SLOT, () =>
+  const BranchAction = createBranchAction({ store: createBranchStore(remote), t });
+  ctx.slots.inject(HEADER_SLOT, () =>
     ctx.slots.register(
       {
-        name: VIEW_SLOT,
-        id: VIEW_ID,
-        order: VIEW_ORDER,
-        label: () => t("tab.label"),
+        name: HEADER_SLOT,
+        id: HEADER_ID,
+        order: HEADER_ORDER,
         locale: LOCALE_NAMESPACE,
       },
-      View,
+      BranchAction,
     ),
   );
+
+  const workbench = ctx.workbench;
+  if (workbench !== undefined && workbench !== null) {
+    const View = createGitExplorerView({ workbench, version: workbench.version, t, remote });
+    ctx.slots.inject(VIEW_SLOT, () =>
+      ctx.slots.register(
+        {
+          name: VIEW_SLOT,
+          id: VIEW_ID,
+          order: VIEW_ORDER,
+          label: () => t("tab.label"),
+          locale: LOCALE_NAMESPACE,
+        },
+        View,
+      ),
+    );
+  }
 
   return () => {
     offStyles();

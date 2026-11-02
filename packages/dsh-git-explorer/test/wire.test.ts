@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { unwrapTransport } from "../src/client/wire.ts";
+import { GIT_RPC_METHODS, unwrapTransport } from "../src/client/wire.ts";
+
+describe("GIT_RPC_METHODS", () => {
+  it("mirrors the host endpoints the client consumes, branch pair included", () => {
+    expect(GIT_RPC_METHODS).toEqual(["snapshot", "query", "commit", "branches", "switchBranch"]);
+  });
+});
 
 describe("unwrapTransport", () => {
   it("unwraps the transport envelope when the business result is nested", () => {

@@ -401,6 +401,120 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 .gx-empty-inline { min-height: 80px; margin: 8px; padding: 10px; }
 .gx-skeleton { padding: 12px; color: var(--gx-caption); font-size: 11px; }
 
+/* Session header branch action. It renders outside .gx-root, so it cannot use
+   the panel variables above: every value is an alias token with a readable
+   fallback, which keeps light and dark themes on the shell's own colours. */
+.gx-branch-action { position: relative; display: inline-flex; align-items: center; }
+.gx-branch-trigger {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  min-height: 28px;
+  max-width: 28ch;
+  padding: 3px 2px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: 0 0;
+  color: var(--dsw-alias-label-tertiary, inherit);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.gx-branch-trigger:hover,
+.gx-branch-trigger:focus-visible,
+.gx-branch-trigger[aria-expanded="true"] { color: var(--dsw-alias-label-primary, inherit); }
+.gx-branch-trigger:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, currentColor); outline-offset: -2px; }
+.gx-branch-icon, .gx-branch-chevron { flex: none; display: block; }
+.gx-branch-chevron { transition: transform .12s; }
+.gx-branch-trigger[aria-expanded="true"] .gx-branch-chevron { transform: rotate(180deg); }
+.gx-branch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.gx-branch-panel {
+  position: fixed;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  max-height: min(420px, calc(100vh - 24px));
+  padding: 4px;
+  box-sizing: border-box;
+  border-radius: var(--dsw-radius-lg, 10px);
+  background: var(--dsw-menu-surface-fill, var(--dsw-alias-bg-layer-1, transparent));
+  box-shadow: var(--dsw-elevation-prominent, 0 8px 24px color-mix(in srgb, var(--dsw-alias-label-primary, currentColor) 16%, transparent));
+  color: var(--dsw-alias-label-primary, inherit);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.gx-branch-list { display: flex; flex-direction: column; gap: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.gx-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--dsw-radius-md, 8px);
+  background: transparent;
+  color: var(--dsw-alias-label-primary, inherit);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.gx-branch-row:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent)); }
+.gx-branch-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, currentColor); outline-offset: -2px; }
+.gx-branch-row[data-current="true"] { color: var(--dsw-alias-brand-primary, inherit); }
+.gx-branch-row:disabled { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); opacity: .55; cursor: default; }
+.gx-branch-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+.gx-branch-tag {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  border-radius: 999px;
+  color: inherit;
+  font-size: 10px;
+  line-height: 15px;
+  opacity: .85;
+}
+.gx-branch-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin-bottom: 2px;
+  padding: 5px 8px;
+  border-radius: var(--dsw-radius-md, 8px);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary, currentColor) 12%, transparent);
+  color: var(--dsw-alias-state-error-primary, currentColor);
+  font-size: 12px;
+}
+.gx-branch-error-text { flex: 1; min-width: 0; word-break: break-word; }
+.gx-branch-retry {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.gx-branch-retry:hover { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 10%, transparent)); }
+.gx-branch-hint { padding: 8px 9px; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); font-size: 12px; }
+
+
 @media (max-width: 720px) {
   .gx-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(140px, 34%) minmax(0, 1fr); }
   /* Stacked columns have no horizontal split to resize, so the handle and any
