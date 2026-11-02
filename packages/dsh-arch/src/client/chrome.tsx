@@ -176,6 +176,22 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
   // the user switched to in the meantime.
   let chain: Promise<void> = Promise.resolve();
 
+  // Arrow keys walk the view tabs while the diagram owns focus. Bound once to
+  // the chrome root: the diagram element is rebuilt on some paths (a failed
+  // mount retried from a tab pick), and a listener on the old node would die
+  // with it. `contains` keeps fields elsewhere in the panel in charge of their
+  // own keys.
+  root.addEventListener("keydown", event => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (diagramHost === undefined || !(event.target instanceof Node) || !diagramHost.contains(event.target)) return;
+    const current = views?.findIndex(candidate => candidate.id === view?.id) ?? -1;
+    if (views === undefined || current < 0) return;
+    const target = views[current + (event.key === "ArrowRight" ? 1 : -1)];
+    if (target === undefined) return;
+    event.preventDefault();
+    select(target.id);
+  });
+
   // The details pane outlives body rebuilds (it is re-parented into each new
   // one) so an open pane survives a view switch's content re-render.
   const detailsHost = document.createElement("div");
@@ -440,20 +456,6 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
       if (first !== undefined) viewState.setViewport(defaultViewport(first.bounds, { width: 0, height: 0 }));
     }
     if (initial !== "") select(initial);
-
-    // Arrow keys walk the view tabs, but only while the diagram itself holds
-    // focus. A key typed into the chat box, or into any field inside the
-    // panel, keeps its own meaning.
-    diagramHost.addEventListener("keydown", event => {
-      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-      const current = views?.findIndex(candidate => candidate.id === view?.id) ?? -1;
-      if (current < 0 || views === undefined) return;
-      const next = current + (event.key === "ArrowRight" ? 1 : -1);
-      const target = views[next];
-      if (target === undefined) return;
-      event.preventDefault();
-      select(target.id);
-    });
 
     const section = host.closest("[data-workbench-dock]");
     if (section !== null && observer === undefined && typeof MutationObserver === "function") {

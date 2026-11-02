@@ -122,11 +122,15 @@ const pathOf = (edge: DiagramEdge): string => {
   return d;
 };
 
-/** Rough rendered width in model units: CJK sits on a full em, latin near 0.55. */
-const estimateTextWidth = (line: string, fontSize: number): number => {
+/**
+ * Approximate line width in ems: CJK sits on a full em, latin near 0.55.
+ * Only used to pick a font size that keeps a label inside its measured plate;
+ * no layout engine is available when the SVG is built.
+ */
+const measureEm = (line: string): number => {
   let width = 0;
   for (const char of line) {
-    width += /[\u2e80-\u9fff\uf900-\ufaff\uff00-\uffef]/u.test(char) ? fontSize : fontSize * 0.55;
+    width += /[\u2e80-\u9fff\uf900-\ufaff\uff00-\uffef]/u.test(char) ? 1 : 0.62;
   }
   return width;
 };
@@ -191,7 +195,12 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       // tail fell onto the white canvas.
       const lines = String(edge.label).split("\n");
       const lineHeight = box.height / lines.length;
-      const fontSize = lineHeight * 0.78;
+      // LikeC4 measured `labelBBox` at its own type size, so the height alone
+      // overshoots: a line of latin text at 0.78·lineHeight runs past the
+      // plate. Fit the widest line instead, and keep the height bound only as
+      // an upper limit.
+      const widest = Math.max(...lines.map(line => measureEm(line)), 1);
+      const fontSize = Math.min(lineHeight * 0.78, (box.width * 0.92) / widest);
       for (const [index, line] of lines.entries()) {
         const attrs: Record<string, string | number> = {
           x: box.x,
@@ -200,12 +209,6 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
           "font-size": fontSize,
           "font-family": "system-ui,sans-serif",
         };
-        // A line wider than the plate would still spill; squeeze it to the
-        // measured width instead of letting the background fall short.
-        if (estimateTextWidth(line, fontSize) > box.width) {
-          attrs.textLength = box.width;
-          attrs.lengthAdjust = "spacingAndGlyphs";
-        }
         const text = el("text", attrs);
         text.textContent = line;
         g.append(text);
