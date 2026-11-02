@@ -38,7 +38,14 @@ export interface BranchStoreFace {
   getSnapshot(): BranchListState;
   /** Read the inventory; a snapshot already at this revision is a no-op. */
   load(sessionId: string): Promise<void>;
-  /** Switch and, on success, adopt the host's branch as current. */
+  /**
+   * Switch and, on success, adopt the host's branch as current.
+   *
+   * The reply is adopted only while the snapshot still belongs to `sessionId`;
+   * one that lands after the store moved to another session is dropped, since
+   * its optimistic patch would describe the wrong worktree. The resolved value
+   * still reports whether the host accepted the switch.
+   */
   switchTo(sessionId: string, name: string): Promise<boolean>;
   /** Announce an external change (another surface wrote the branch). */
   bump(): void;
@@ -116,9 +123,16 @@ function buildBranchStore(remote: RemoteResolver): BranchStoreFace {
   };
 
   const switchTo = async (sessionId: string, name: string): Promise<boolean> => {
+    /**
+     * Whether a load for another session has published since the call started.
+     * `load` reports its session before awaiting, so this comparison is already
+     * decisive by the time the reply lands; `load`'s ticket cannot be reused
+     * here because a switch starts no read of its own to compare against.
+     */
+    const displaced = (): boolean => state.sessionId !== sessionId;
     const face = remote();
     if (typeof face?.switchBranch !== "function") {
-      publish({ ...state, error: SERVICE_UNAVAILABLE });
+      if (!displaced()) publish({ ...state, error: SERVICE_UNAVAILABLE });
       return false;
     }
     try {
@@ -132,9 +146,12 @@ function buildBranchStore(remote: RemoteResolver): BranchStoreFace {
       if (message !== undefined) {
         // The list stays as it was: the switch was refused, so the rows still
         // describe the worktree and only the message row is new.
-        publish({ ...state, error: message });
+        if (!displaced()) publish({ ...state, error: message });
         return false;
       }
+      // The host switched, but the snapshot now belongs to another session:
+      // report the outcome without naming that branch current in the wrong tree.
+      if (displaced()) return true;
       const branch = unwrapped.ok && unwrapped.result.ok === true ? unwrapped.result.branch : name;
       const list = state.list;
       publish({
@@ -147,7 +164,7 @@ function buildBranchStore(remote: RemoteResolver): BranchStoreFace {
       });
       return true;
     } catch (error) {
-      publish({ ...state, error: describeFailure(error) });
+      if (!displaced()) publish({ ...state, error: describeFailure(error) });
       return false;
     }
   };

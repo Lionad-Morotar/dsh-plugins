@@ -24,8 +24,8 @@ import {
 import { setBranchKitForTest, type BranchKit, type DismissHook } from "../src/client/platform.ts";
 import { GIT_STYLES } from "../src/client/styles.ts";
 import { watchBranchRevision } from "../src/client/view.tsx";
-import type { GitBranchList } from "../src/host/types.ts";
-import type { GitRemoteFace } from "../src/client/wire.ts";
+import type { GitBranchList, GitBranchListResult, GitSwitchResult } from "../src/host/types.ts";
+import type { GitRemoteFace, RemoteResult } from "../src/client/wire.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -110,6 +110,15 @@ function createFakeStore(
       },
     },
   };
+}
+
+/** A promise a test resolves by hand, so two replies can be ordered at will. */
+function deferred<T>(): { readonly promise: Promise<T>; resolve(value: T): void } {
+  let settle!: (value: T) => void;
+  const promise = new Promise<T>(resolve => {
+    settle = resolve;
+  });
+  return { promise, resolve: settle };
 }
 
 let container: HTMLDivElement;
@@ -601,6 +610,96 @@ describe("branch store", () => {
     expect(await store.switchTo("s1", "feature")).toBe(false);
     expect(store.getSnapshot().error).toBe("offline");
     expect(store.getSnapshot().list).toBe(listed);
+  });
+
+  // The store is shared across sessions, so a switch started in one session can
+  // be answered after the header already belongs to another one. Its optimistic
+  // patch and its error describe the old worktree and must not be adopted.
+
+  const OTHER: GitBranchList = {
+    ...LIST,
+    root: "/other-repo",
+    branches: [{ name: "trunk", hash: "e5", current: true }],
+  };
+
+  function storeWithDeferredReplies(
+    switchReply: Promise<RemoteResult<GitSwitchResult>>,
+    otherReply: Promise<RemoteResult<GitBranchListResult>>,
+  ) {
+    return createBranchStore(() =>
+      face({
+        branches: request =>
+          request.sessionId === "s2"
+            ? otherReply
+            : Promise.resolve({ ok: true, value: { ok: true, list: LIST } }),
+        switchBranch: () => switchReply,
+      }),
+    );
+  }
+
+  it("keeps the new session when a switch reply lands after the header moved", async () => {
+    const switchReply = deferred<RemoteResult<GitSwitchResult>>();
+    const otherReply = deferred<RemoteResult<GitBranchListResult>>();
+    const store = storeWithDeferredReplies(switchReply.promise, otherReply.promise);
+
+    await store.load("s1");
+    const switching = store.switchTo("s1", "feature");
+    const loading = store.load("s2");
+    otherReply.resolve({ ok: true, value: { ok: true, list: OTHER } });
+    await loading;
+    const settled = store.getSnapshot();
+    expect(settled.sessionId).toBe("s2");
+
+    switchReply.resolve({ ok: true, value: { ok: true, branch: "feature" } });
+
+    expect(await switching).toBe(true);
+    expect(store.getSnapshot()).toBe(settled);
+    expect(store.getSnapshot().list?.root).toBe("/other-repo");
+    expect(store.getSnapshot().list?.branches.find(branch => branch.current)?.name).toBe("trunk");
+  });
+
+  it("does not paint a late refusal onto the new session", async () => {
+    const switchReply = deferred<RemoteResult<GitSwitchResult>>();
+    const otherReply = deferred<RemoteResult<GitBranchListResult>>();
+    const store = storeWithDeferredReplies(switchReply.promise, otherReply.promise);
+
+    await store.load("s1");
+    const switching = store.switchTo("s1", "feature");
+    const loading = store.load("s2");
+    otherReply.resolve({ ok: true, value: { ok: true, list: OTHER } });
+    await loading;
+    const settled = store.getSnapshot();
+
+    switchReply.resolve({ ok: true, value: { ok: false, error: { code: "git-failed", message: "local changes" } } });
+
+    expect(await switching).toBe(false);
+    expect(store.getSnapshot()).toBe(settled);
+    expect(store.getSnapshot().error).toBeUndefined();
+  });
+
+  it("lets the new inventory land when a switch reply arrives during its load", async () => {
+    const switchReply = deferred<RemoteResult<GitSwitchResult>>();
+    const otherReply = deferred<RemoteResult<GitBranchListResult>>();
+    const store = storeWithDeferredReplies(switchReply.promise, otherReply.promise);
+
+    await store.load("s1");
+    const switching = store.switchTo("s1", "feature");
+    const loading = store.load("s2");
+    const loadingState = store.getSnapshot();
+    expect(loadingState.sessionId).toBe("s2");
+
+    switchReply.resolve({ ok: true, value: { ok: true, branch: "feature" } });
+    await switching;
+    expect(store.getSnapshot()).toBe(loadingState);
+
+    otherReply.resolve({ ok: true, value: { ok: true, list: OTHER } });
+    await loading;
+
+    const after = store.getSnapshot();
+    expect(after.sessionId).toBe("s2");
+    expect(after.status).toBe("ready");
+    expect(after.list?.root).toBe("/other-repo");
+    expect(after.list?.branches.find(branch => branch.current)?.name).toBe("trunk");
   });
 });
 
