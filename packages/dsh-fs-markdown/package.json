@@ -44,8 +44,7 @@
     "client": {
       "platform": "web",
       "inject": [
-        "dsh-fs-explorer",
-        "remote"
+        "dsh-fs-explorer"
       ]
     },
     "bundle": {
