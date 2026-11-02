@@ -15,6 +15,7 @@ import {
   type BridgeContextLike,
 } from "./bridge.ts";
 import { EN, ZH, tabLabel } from "./copy.ts";
+import { createDocumentOpener, createDocumentStore, type DocumentStore } from "./document-session.ts";
 import { LOCALE_NAMESPACE, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
 import { KEYMAP, createEscapeHandler } from "./keyboard.ts";
 import {
@@ -109,8 +110,38 @@ let providedService: (() => void) | undefined;
 /** The registry every pane in this package draws from, created once per module. */
 let sharedRegistry: RendererRegistry | undefined;
 
+/** Draft sessions shared by every renderer plugin in this host.
+ * Module state for the same reason as the registry: the desktop host applies
+ * this entry twice, and a draft must survive the second pass. */
+let sharedDocuments: DocumentStore | undefined;
+
+/** Latest context, so a store created by the sync pass still reads the Remote
+ * carrier a later mount pass installs. */
+let documentsContext: ClientContextLike | undefined;
+
 /** Updated on every apply so a late host logger still hears about refusals. */
 let reportWarning: ((message: string) => void) | undefined;
+
+/**
+ * Draft sessions shared by every renderer plugin in this host.
+ *
+ * The opener reads the latest applied context so a store created during the
+ * sync pass still finds the Remote carrier installed by the mount pass.
+ */
+function documentsStore(ctx: ClientContextLike): DocumentStore {
+  documentsContext = ctx;
+  if (sharedDocuments !== undefined) return sharedDocuments;
+  sharedDocuments = createDocumentStore({
+    open: (sessionId, path, signal) => {
+      const active = documentsContext;
+      if (active === undefined) {
+        return Promise.resolve({ ok: false, code: "unavailable", message: "the client context is gone" });
+      }
+      return createDocumentOpener(active)(sessionId, path, signal);
+    },
+  });
+  return sharedDocuments;
+}
 
 /**
  * The renderer registry, shared by every pane and every plugin in this host.
@@ -141,10 +172,11 @@ export function apply(ctx: ClientContextLike): () => void {
 
   reportWarning = message => ctx.logger?.warn?.(message);
   const registry = rendererRegistry();
-  const service: FsExplorerService = {
+  const service: FsExplorerService & { readonly documents: DocumentStore } = {
     version: FS_EXPLORER_SERVICE_VERSION,
     renderers: registry,
     registerRenderer: contribution => registry.register(contribution),
+    documents: documentsStore(ctx),
   };
   // Provided before the view registers: a renderer plugin that injects the
   // service has to find it before its own apply runs.
