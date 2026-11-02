@@ -7,6 +7,7 @@
 import { PathExplorerService } from "./host/path-explorer.ts";
 
 export { PathExplorerService };
+export { requestShutdown } from "./host/shutdown.ts";
 export { PATH_SERVICE } from "./shared.ts";
 export type { PathEntry, PathResolveRequest, PathResolveResult } from "./shared.ts";
 
