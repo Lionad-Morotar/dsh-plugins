@@ -38,11 +38,13 @@
 - 进入视图时的焦点：从标签栏点进 Git 面板，键盘焦点落在左侧变更列表的第一个文件行（目录行只做分组，跳过）。这次认领只在视图挂载后的第一份快照渲染时兑现一次，快照刷新不会重来；焦点已经落在变更区内、或列表里没有文件行时不动，免得把读者从已选的行上拽走。显式的 `commit:<hash>` 跳转优先，此时不抢焦点。
 - 焦点跳转：接受 `openView("git-explorer", "commit:<hash>")`（hash 为 4-64 位十六进制，大小写归一为小写），命令面板输入提交前缀跳转即按此协议寻址。焦点有两个来源：宿主经 `openView` 交下来的 `viewRequest`，以及 `workbench.viewFocus` 队列（视图已挂载时命令面板走的通道，挂载时取走等待中的请求并持续订阅）。命中即选中该提交，详情面板按 hash 经 `commit` 端点独立加载，hash 不在已加载列表也能展示；历史列表不插行以保住拓扑泳道序。解析失败也回执完成，宿主才会清掉这条请求。
 - 顶栏分支切换器：会话顶栏 action 行的分支触发器显示当前分支（游离 HEAD 显示短 hash），点开是本地分支浮层。图标、面板与配色都自带（`--dsw-alias-*` 语义 token），不借宿主的 action 类名，那些类名带构建哈希，每次宿主构建都会变。
+- 工作区判脏读数：分支名后紧跟 `+128 −34`（`+` 走 success 语义色、`−` 走 error 语义色，11px 表格数字），为零的一侧省略；两数皆零但工作区脏（只加了未跟踪文件、或只发生 rename）时显示 `•`，干净时不出任何数字。触发器 `title` 是工作区描述「工作区 +128 −34，3 个文件变更，1 个未跟踪文件」，干净时为「工作区干净」；`aria-label` 是「切换分支: main，工作区 +128 −34」。分支名过长先截断名字（名字自身另有完整 `title`），读数与 chevron 保留；整个触发器 `max-width: min(320px, 40vw)`。
 - 浮层作用域：顶部一行 `gx-branch-scope` 说明切换作用在这个工作树上，显示仓库或工作树名，父路径先被截断，`title` 是完整绝对路径。linked worktree 的根路径本身就带 `.claude/worktrees/<name>` 或 `.agents/worktrees/<name>`，直接显示，不做额外探测。非仓库会话整个触发器不渲染；游离 HEAD 时作用域行照常显示。
 - 分支列举与占用：只列 `refs/heads` 下的本地分支，当前分支带标记；已被另一个工作树检出的分支禁用，`title` 给出占用它的工作树路径。分支名按完整 ref 读取，同名 tag 存在时不会被染成 `heads/<name>`。
 - 搜索与键盘：浮层打开即聚焦搜索框，输入按子序列匹配分支名（大小写不敏感），命中片段高亮。`↓` / `↑` 移动光标并跳过被占用的行，停在两端不循环；`Enter` 切换到光标行，输入法组合中的 `Enter` 不算；`Esc` 关闭并把焦点还给触发器，点击浮层外部关闭时只有焦点没有落在别的控件上才回收。切换被拒绝时浮层保持打开，错误行带重试。
-- 切换后的刷新闭环：切换成功让共享 store 的 `revision` 自增，Git 面板订阅这个值后复用自身的重新加载路径重取快照，于是历史首行的 refs、工作区变更与 HEAD 一起更新。浮层内立即显示新分支，不依赖面板重挂载。
-- 宿主两个分支端点：`branches` 只读，回 `refs/heads` 清单、当前标记、游离 HEAD 的短 hash 与每个分支的工作树占用；仓库外返回 `isRepository: false` 而不是错误。`switchBranch` 是唯一写端点，只执行 `git switch --no-guess <分支名>`，不 stash、不 fetch、不 push、不 reset，也不新建、改名或删除分支。名称先按形状过滤（NUL、空格、`..`、`~`、`^`、`@{`、前导 `-`、尾随 `/`），再拿完整 ref 清单核对，所以 `HEAD~1` 这类修订表达式进不来；`--no-guess` 让只存在于远程跟踪引用的名字不会被悄悄建成新分支。工作区有冲突改动时 git 拒绝切换，stderr 前三行原样回给浮层。
+- 切换后的刷新闭环：切换成功让共享 store 的 `revision` 自增，Git 面板订阅这个值后复用自身的重新加载路径重取快照，于是历史首行的 refs、工作区变更与 HEAD 一起更新。顶栏同时重读分支清单，脏读数随宿主回报的新工作区状态更新（脏转干净时数字消失）；前端不自行把计数清零，避免与真实工作区短暂不一致。
+- 宿主两个分支端点：`branches` 只读，回 `refs/heads` 清单、当前标记、游离 HEAD 的短 hash、每个分支的工作树占用与工作区脏状态（`worktree: { dirty, additions, deletions, trackedFiles, untrackedFiles }`；行数只统计已跟踪路径，未跟踪文件按个数回报）；仓库外返回 `isRepository: false` 而不是错误。`switchBranch` 是唯一写端点，只执行 `git switch --no-guess <分支名>`，不 fetch、不 push、不 reset，也不新建、改名或删除分支。名称先按形状过滤（NUL、空格、`..`、`~`、`^`、`@{`、前导 `-`、尾随 `/`），再拿完整 ref 清单核对，所以 `HEAD~1` 这类修订表达式进不来；`--no-guess` 让只存在于远程跟踪引用的名字不会被悄悄建成新分支。
+- 自动 stash：工作区脏时先 `git stash push --include-untracked` 再切换，成功后 `stash pop` 把改动放回，浮层静默关闭；`pop` 冲突时保留 stash 条目并回 `stash: { stashed: true, restored: false, conflict: true, message }`，浮层保持打开，顶部黄色警告写明「改动已保存在 stash，恢复时发生冲突」并附 stderr 摘要，仍可继续选别的分支。切换本身失败时先 `pop` 回滚再报错，浮层沿用错误行，不额外承诺。
 - 分页：首屏默认 400 条（Loader 行 `config.maxCommits`），历史列表每点一次"加载更多"取 100 条，单次请求上限 5000。
 - 空态与错误态：未选会话、Git 服务不可用、不是 git 仓库、空仓库、读取失败各有文案与重试；头部有刷新按钮。
 
@@ -65,7 +67,7 @@ Git 面板本身没有自己的 keydown 表：面板内的交互都是点选，�
 
 - 面板仍是只读视图：`run` 端点没有实现，暂存、提交、reset 都不在这里做。唯一的写操作是顶栏切换本地分支。
 - 分支清单只列本地分支：不列远程跟踪分支，也不自动建跟踪分支。`--no-guess` 之后，只在 `origin` 上存在的名字不会被悄悄建成同名本地分支，需要先在终端里 checkout 或 `git branch --track`。
-- 切换不做工作区清理：不 stash、不自动合并，脏工作区与新分支冲突时 git 原样拒绝并回显 stderr；浮层保持打开，读者可以处理完再点。
+- 自动 stash 只负责切换前后的保存与放回：不做自动合并，冲突时改动留在 stash 条目里等人工处理；也不清理 stash 列表（本插件创建的条目带 `git-explorer: 切换 <分支> 前自动暂存` 说明，需要时自行 drop）。
 - 被另一个工作树检出的分支在浮层里禁用，键盘也会跳过：判定来自 `git worktree list --porcelain` 与当前工作树根的字符串比较。
 - 单条命令 20s 超时、4MB 单流预算。超大仓库的第一次 `git log` 可能先撞超时；stdout 被截断时查询整体失败，不会拿半页数据画一张缺边的图。
 - 首屏只取 400 条提交；更早的历史要点"加载更多"，按 100 条递增，单次请求硬上限 5000，`skip` 上限 1000000。
@@ -83,7 +85,7 @@ node .nsl/chain/accept-s2-git-data.mjs  # 父边集合对 oracle、泳道不变�
 node .nsl/chain/accept-s3-git-view.mjs  # 变更对真实 status、提交详情对 git show、跳转参数、行窗口
 ```
 
-单包：`pnpm --filter dsh-git-explorer test`（168 用例）、`typecheck`、`build`。`test/real-repo.test.ts` 会直接读本仓库，把快照的父边与 `git log --parents` 对一遍。
+单包：`pnpm --filter dsh-git-explorer test`（198 用例）、`typecheck`、`build`。`test/real-repo.test.ts` 会直接读本仓库，把快照的父边与 `git log --parents` 对一遍。
 
 ## 结构
 

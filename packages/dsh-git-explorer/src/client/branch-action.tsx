@@ -33,7 +33,7 @@ import {
   type BranchKit,
   type IconLike,
 } from "./platform.ts";
-import type { GitBranch } from "../host/types.ts";
+import type { GitBranch, GitSwitchStashOutcome, GitWorktreeDirty } from "../host/types.ts";
 
 /** Popover width, matching the host's own header dropdowns. */
 const PANEL_WIDTH = 320;
@@ -198,6 +198,54 @@ function splitRoot(root: string): { readonly parent: string; readonly name: stri
   return { parent: root.slice(0, index + 1), name: root.slice(index + 1) };
 }
 
+/** What the trigger shows between the branch name and the chevron. */
+interface WorktreeReading {
+  readonly additions: number;
+  readonly deletions: number;
+  /** Neither side has a line count, so a dot stands in for the dirtiness. */
+  readonly dot: boolean;
+  /** Full description for the trigger title and its accessible name. */
+  readonly description: string;
+}
+
+/**
+ * Turn the worktree counters into the trigger's reading.
+ *
+ * Line counts cover tracked paths only, so a tree can be dirty with both sides
+ * at zero (an untracked file, a rename). That case becomes a dot instead of a
+ * misleading `+0 −0`. Zero sides are dropped because a lone `+128` or `−34`
+ * reads better than padding it with a zero.
+ * @param worktree - the counters the host reported with the inventory.
+ * @param t - locale-bound translator.
+ * @returns the visible numbers plus the sentence used by title and aria.
+ */
+function readWorktree(worktree: GitWorktreeDirty, t: Translate): WorktreeReading {
+  if (!worktree.dirty) {
+    return { additions: 0, deletions: 0, dot: false, description: t("branch.worktreeClean") };
+  }
+  const numbers: string[] = [];
+  if (worktree.additions > 0) numbers.push(`+${worktree.additions}`);
+  if (worktree.deletions > 0) numbers.push(`−${worktree.deletions}`);
+  const facts: string[] = [];
+  if (worktree.trackedFiles > 0) {
+    const files = worktree.trackedFiles === 1 ? t("branch.worktreeFile") : t("branch.worktreeFiles");
+    facts.push(`${worktree.trackedFiles} ${files}`);
+  }
+  if (worktree.untrackedFiles > 0) {
+    const untracked =
+      worktree.untrackedFiles === 1 ? t("branch.worktreeUntracked") : t("branch.worktreeUntrackedFiles");
+    facts.push(`${worktree.untrackedFiles} ${untracked}`);
+  }
+  const lead =
+    numbers.length === 0 ? t("branch.worktreeDirty") : `${t("branch.worktreePrefix")} ${numbers.join(" ")}`;
+  return {
+    additions: worktree.additions,
+    deletions: worktree.deletions,
+    dot: numbers.length === 0,
+    description: [lead, ...facts].join(t("branch.worktreeSep")),
+  };
+}
+
 /**
  * Build the header action for one client mount.
  * @param wiring - the shared branch store and the locale-bound translator.
@@ -210,6 +258,9 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
     const [query, setQuery] = useState("");
     const [activeIndex, setActiveIndex] = useState(-1);
     const [pending, setPending] = useState<string | null>(null);
+    const [stashWarning, setStashWarning] = useState<GitSwitchStashOutcome | null>(null);
+    const sessionRef = useRef(sessionId);
+    sessionRef.current = sessionId;
     const rootRef = useRef<HTMLDivElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
@@ -231,6 +282,8 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
       // A reopened popover starts from the full inventory; carrying a filter
       // across would hide the row the trigger now names.
       setQuery("");
+      // The stash notice describes the last switch, not the next one.
+      setStashWarning(null);
     }, []);
 
     const closeAndFocus = useCallback((): void => {
@@ -330,11 +383,22 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
       }
       if (sessionId === undefined) return;
       setPending(branch.name);
-      const switched = await store.switchTo(sessionId, branch.name);
+      const outcome = await store.switchTo(sessionId, branch.name);
+      // A session switch already reset this popover; the reply describes the
+      // previous worktree, so it must not close or warn on the new one.
+      if (sessionRef.current !== sessionId) return;
       setPending(null);
-      // A refused switch keeps the popover open so the host message stays in
-      // view; the store owns that message, this only reacts to the outcome.
-      if (switched) closeAndFocus();
+      if (!outcome.switched) return;
+      // The host's inventory is the only source of the new counters: reload it
+      // so the reading follows the worktree instead of being cleared locally.
+      void store.load(sessionId);
+      if (outcome.stash?.conflict === true) {
+        // The changes are parked in a conflicted stash; the popover stays open
+        // so the notice cannot be missed and another branch stays reachable.
+        setStashWarning(outcome.stash);
+        return;
+      }
+      closeAndFocus();
     };
 
     const activate = (): void => {
@@ -375,6 +439,19 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
     if (!open && list?.isRepository !== true) return null;
 
     const detachedTitle = `${t("head.detached")} ${list?.headHash ?? ""}`.trim();
+    const shownLabel = list?.detached === true ? detachedTitle : label;
+    const worktree = list?.isRepository === true ? list.worktree : undefined;
+    const reading = worktree === undefined ? undefined : readWorktree(worktree, t);
+    const sep = t("branch.worktreeSep");
+    // Each part explains itself: the name span keeps the full branch name (it is
+    // the part that ellipsizes), the trigger title is the worktree sentence.
+    const triggerTitle = reading === undefined ? shownLabel : reading.description;
+    // Only dirtiness enters the accessible name: repeating "working tree clean"
+    // on every pass would make the counter row noisier for screen readers.
+    const triggerAriaLabel =
+      reading === undefined || worktree?.dirty !== true
+        ? `${t("branch.title")}: ${shownLabel}`
+        : `${t("branch.title")}: ${shownLabel}${sep}${reading.description}`;
     const message = state.error === SERVICE_UNAVAILABLE ? t("state.noService.title") : state.error;
 
     const panel = (
@@ -387,6 +464,14 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
         aria-label={t("branch.title")}
         style={{ width: PANEL_WIDTH, maxWidth: PANEL_MAX_WIDTH, ...position }}
       >
+        {stashWarning?.conflict === true ? (
+          <div className="gx-branch-warning" data-testid="gx-branch-stash-warning" role="alert">
+            <span className="gx-branch-warning-text">{t("branch.stashConflict")}</span>
+            {stashWarning.message === undefined || stashWarning.message === "" ? null : (
+              <span className="gx-branch-warning-detail">{stashWarning.message}</span>
+            )}
+          </div>
+        ) : null}
         {list === undefined || scope === undefined ? null : (
           <div className="gx-branch-scope" data-testid="gx-branch-scope" title={list.root}>
             <span className="gx-branch-scope-label">{t("branch.scope")}</span>
@@ -480,15 +565,29 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
           type="button"
           className="gx-branch-trigger"
           data-testid="gx-branch-trigger"
-          aria-label={`${t("branch.title")}: ${list?.detached === true ? detachedTitle : label}`}
+          aria-label={triggerAriaLabel}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-controls={open ? panelId : undefined}
-          title={list?.detached === true ? detachedTitle : label}
+          title={triggerTitle}
           onClick={toggle}
         >
           <IconBranch className="gx-branch-icon" />
-          <span className="gx-branch-name">{label}</span>
+          <span className="gx-branch-name" title={shownLabel}>
+            {label}
+          </span>
+          {reading === undefined || worktree?.dirty !== true ? null : (
+            <span
+              className="gx-branch-dirty"
+              data-testid="gx-branch-dirty"
+              aria-hidden="true"
+              title={reading.dot ? t("branch.worktreeDirty") : undefined}
+            >
+              {reading.additions > 0 ? <span className="gx-branch-add">+{reading.additions}</span> : null}
+              {reading.deletions > 0 ? <span className="gx-branch-del">−{reading.deletions}</span> : null}
+              {reading.dot ? <span className="gx-branch-dot">•</span> : null}
+            </span>
+          )}
           <IconChevron className="gx-branch-chevron" />
         </button>
         {open ? (kit.createPortal === undefined ? panel : kit.createPortal(panel, document.body)) : null}

@@ -8,11 +8,30 @@
  * compares snapshots by identity, so a state object is replaced only when
  * something changed; a read that changes nothing returns the previous object.
  */
-import type { GitBranchList, GitBranchListResult, GitSwitchResult } from "../host/types.ts";
+import type {
+  GitBranchList,
+  GitBranchListResult,
+  GitSwitchResult,
+  GitSwitchStashOutcome,
+} from "../host/types.ts";
 import { describeFailure, unwrapTransport, type RemoteResolver } from "./wire.ts";
 
 /** Marker for "the host half was not readable", localized by the panel. */
 export const SERVICE_UNAVAILABLE = "service-unavailable";
+
+/**
+ * What one switch request produced.
+ *
+ * A boolean used to be enough, but the automatic stash makes the outcome richer
+ * than accepted or refused: the popover has to know whether the changes came
+ * back or stayed parked in a conflicted stash. The stash report is only carried
+ * on a successful switch; a refusal has nothing to restore.
+ */
+export interface BranchSwitchOutcome {
+  readonly switched: boolean;
+  /** What the automatic stash did; absent when the host refused the switch. */
+  readonly stash?: GitSwitchStashOutcome;
+}
 
 /** What the trigger and the popover read. */
 export interface BranchListState {
@@ -43,10 +62,11 @@ export interface BranchStoreFace {
    *
    * The reply is adopted only while the snapshot still belongs to `sessionId`;
    * one that lands after the store moved to another session is dropped, since
-   * its optimistic patch would describe the wrong worktree. The resolved value
-   * still reports whether the host accepted the switch.
+   * its optimistic patch and its stash report would describe the wrong
+   * worktree. The resolved outcome still reports whether the host accepted the
+   * switch.
    */
-  switchTo(sessionId: string, name: string): Promise<boolean>;
+  switchTo(sessionId: string, name: string): Promise<BranchSwitchOutcome>;
   /** Announce an external change (another surface wrote the branch). */
   bump(): void;
 }
@@ -122,7 +142,7 @@ function buildBranchStore(remote: RemoteResolver): BranchStoreFace {
     }
   };
 
-  const switchTo = async (sessionId: string, name: string): Promise<boolean> => {
+  const switchTo = async (sessionId: string, name: string): Promise<BranchSwitchOutcome> => {
     /**
      * Whether a load for another session has published since the call started.
      * `load` reports its session before awaiting, so this comparison is already
@@ -133,7 +153,7 @@ function buildBranchStore(remote: RemoteResolver): BranchStoreFace {
     const face = remote();
     if (typeof face?.switchBranch !== "function") {
       if (!displaced()) publish({ ...state, error: SERVICE_UNAVAILABLE });
-      return false;
+      return { switched: false };
     }
     try {
       const transport = await face.switchBranch({ sessionId, name });
@@ -147,12 +167,14 @@ function buildBranchStore(remote: RemoteResolver): BranchStoreFace {
         // The list stays as it was: the switch was refused, so the rows still
         // describe the worktree and only the message row is new.
         if (!displaced()) publish({ ...state, error: message });
-        return false;
+        return { switched: false };
       }
       // The host switched, but the snapshot now belongs to another session:
-      // report the outcome without naming that branch current in the wrong tree.
-      if (displaced()) return true;
-      const branch = unwrapped.ok && unwrapped.result.ok === true ? unwrapped.result.branch : name;
+      // report the outcome without naming that branch current in the wrong
+      // tree, and without handing this popover another worktree's stash report.
+      if (displaced()) return { switched: true };
+      const result = unwrapped.ok && unwrapped.result.ok === true ? unwrapped.result : undefined;
+      const branch = result === undefined ? name : result.branch;
       const list = state.list;
       publish({
         status: list === undefined ? state.status : "ready",
@@ -162,10 +184,12 @@ function buildBranchStore(remote: RemoteResolver): BranchStoreFace {
         revision: state.revision + 1,
         sessionId,
       });
-      return true;
+      return result === undefined || result.stash === undefined
+        ? { switched: true }
+        : { switched: true, stash: result.stash };
     } catch (error) {
       if (!displaced()) publish({ ...state, error: describeFailure(error) });
-      return false;
+      return { switched: false };
     }
   };
 

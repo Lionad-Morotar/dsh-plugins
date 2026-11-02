@@ -410,7 +410,7 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
   display: inline-flex;
   gap: 4px;
   min-height: 28px;
-  max-width: 28ch;
+  max-width: min(320px, 40vw);
   padding: 3px 2px;
   border: 0;
   border-radius: var(--dsw-radius-sm, 6px);
@@ -429,6 +429,21 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 .gx-branch-chevron { transition: transform .12s; }
 .gx-branch-trigger[aria-expanded="true"] .gx-branch-chevron { transform: rotate(180deg); }
 .gx-branch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The worktree reading sits right after the name; the trigger's 4px gap is the
+   separation, so the numbers keep their space even when the name ellipsizes.
+   Zero sides are not rendered at all, which leaves +128 or −34 alone. */
+.gx-branch-dirty {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gx-branch-add { color: var(--dsw-alias-state-success-primary, inherit); }
+.gx-branch-del { color: var(--dsw-alias-state-error-primary, inherit); }
+.gx-branch-dot { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); }
 
 .gx-branch-panel {
   position: fixed;
@@ -532,6 +547,27 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
   font-size: 10px;
   line-height: 15px;
   opacity: .85;
+}
+/* The automatic stash can leave changes parked when applying them back hit a
+   conflict. This notice owns the top of the popover until it closes, and the
+   git stderr summary wraps underneath instead of widening the panel. */
+.gx-branch-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+  margin-bottom: 2px;
+  padding: 5px 8px;
+  border-radius: var(--dsw-radius-md, 8px);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary, currentColor) 12%, transparent);
+  color: var(--dsw-alias-state-warn-primary, currentColor);
+  font-size: 12px;
+}
+.gx-branch-warning-text { font-weight: 500; }
+.gx-branch-warning-detail {
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
 }
 .gx-branch-error {
   display: flex;

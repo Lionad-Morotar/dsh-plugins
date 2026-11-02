@@ -20,11 +20,13 @@ import {
   initBranchStore,
   type BranchListState,
   type BranchStoreFace,
+  type BranchSwitchOutcome,
 } from "../src/client/branch-store.ts";
+import { ZH } from "../src/client/copy.ts";
 import { setBranchKitForTest, type BranchKit, type DismissHook } from "../src/client/platform.ts";
 import { GIT_STYLES } from "../src/client/styles.ts";
 import { watchBranchRevision } from "../src/client/view.tsx";
-import type { GitBranchList, GitBranchListResult, GitSwitchResult } from "../src/host/types.ts";
+import type { GitBranchList, GitBranchListResult, GitSwitchResult, GitSwitchStashOutcome } from "../src/host/types.ts";
 import type { GitRemoteFace, RemoteResult } from "../src/client/wire.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -57,15 +59,20 @@ const KIT: BranchKit = {
 
 const t = (key: string): string => key;
 
+/** The shipped Chinese copy, for assertions that guard the reader-facing text. */
+const zh = (key: string): string => ZH[key] ?? key;
+
 interface FakeStore {
   readonly store: BranchStoreFace;
   readonly switches: { sessionId: string; name: string }[];
   readonly loads: string[];
+  /** Replace the inventory the way a host refresh would. */
+  setList(list: GitBranchList): void;
 }
 
 function createFakeStore(
   initial: BranchListState,
-  decide: (name: string) => Promise<boolean> = () => Promise.resolve(true),
+  decide: (name: string) => Promise<BranchSwitchOutcome> = () => Promise.resolve({ switched: true }),
 ): FakeStore {
   let state = initial;
   const listeners = new Set<() => void>();
@@ -77,6 +84,10 @@ function createFakeStore(
   return {
     switches,
     loads,
+    setList(list) {
+      state = { ...state, list };
+      emit();
+    },
     store: {
       subscribe(listener) {
         listeners.add(listener);
@@ -91,8 +102,8 @@ function createFakeStore(
       },
       async switchTo(sessionId, name) {
         switches.push({ sessionId, name });
-        const ok = await decide(name);
-        if (ok) {
+        const outcome = await decide(name);
+        if (outcome.switched) {
           state = {
             ...state,
             error: undefined,
@@ -106,7 +117,7 @@ function createFakeStore(
           state = { ...state, error: "boom" };
         }
         emit();
-        return ok;
+        return outcome;
       },
       bump() {
         state = { ...state, revision: state.revision + 1 };
@@ -173,11 +184,12 @@ function row(name: string): HTMLButtonElement | null {
 }
 
 async function renderReady(
-  decide?: (name: string) => Promise<boolean>,
+  decide?: (name: string) => Promise<BranchSwitchOutcome>,
   list: GitBranchList = LIST,
+  translate: (key: string) => string = t,
 ): Promise<FakeStore> {
   const fake = createFakeStore({ status: "ready", list, revision: 0, sessionId: "s1" }, decide);
-  const Action = createBranchAction({ store: fake.store, t });
+  const Action = createBranchAction({ store: fake.store, t: translate });
   await mount(<Action sessionId="s1" />);
   return fake;
 }
@@ -286,7 +298,7 @@ describe("header branch action", () => {
   });
 
   it("keeps the popover open with a readable message when the switch is refused", async () => {
-    const fake = await renderReady(() => Promise.resolve(false));
+    const fake = await renderReady(() => Promise.resolve({ switched: false }));
 
     await click(trigger());
     await click(row("feature"));
@@ -320,7 +332,7 @@ describe("header branch action", () => {
     await mount(<Action sessionId="s1" />);
 
     expect(trigger()?.textContent).toContain("abc1234");
-    expect(trigger()?.title).toContain("abc1234");
+    expect(trigger()?.querySelector(".gx-branch-name")?.getAttribute("title")).toContain("abc1234");
 
     await click(trigger());
 
@@ -350,6 +362,174 @@ describe("header branch action", () => {
 
     expect(panel()).toBeNull();
     expect(fake.loads).toContain("s2");
+  });
+});
+
+describe("header branch worktree reading", () => {
+  const withWorktree = (worktree: GitBranchList["worktree"]): GitBranchList => ({ ...LIST, worktree });
+  const reading = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('[data-testid="gx-branch-dirty"]');
+
+  it("shows +additions and −deletions right after the branch name", async () => {
+    await renderReady(undefined, withWorktree({
+      dirty: true,
+      additions: 128,
+      deletions: 34,
+      trackedFiles: 3,
+      untrackedFiles: 1,
+    }));
+
+    expect(reading()?.textContent).toContain("+128");
+    expect(reading()?.textContent).toContain("−34");
+    const name = trigger()?.querySelector(".gx-branch-name");
+    expect(name?.nextElementSibling).toBe(reading());
+    expect(trigger()?.querySelector(".gx-branch-chevron")?.previousElementSibling).toBe(reading());
+  });
+
+  it("describes the dirty worktree in the title and the accessible name", async () => {
+    await renderReady(
+      undefined,
+      withWorktree({ dirty: true, additions: 128, deletions: 34, trackedFiles: 3, untrackedFiles: 1 }),
+      zh,
+    );
+
+    expect(trigger()?.title).toContain("工作区 +128 −34");
+    expect(trigger()?.title).toContain("3 个文件变更");
+    expect(trigger()?.title).toContain("1 个未跟踪文件");
+    expect(trigger()?.getAttribute("aria-label")).toContain("工作区 +128 −34");
+  });
+
+  it("shows nothing, not +0 −0, on a clean worktree", async () => {
+    await renderReady();
+
+    expect(reading()).toBeNull();
+    expect(trigger()?.textContent).not.toContain("+0");
+    expect(trigger()?.textContent).not.toContain("−0");
+    expect(trigger()?.title).toBe("branch.worktreeClean");
+    expect(trigger()?.querySelector(".gx-branch-name")?.getAttribute("title")).toBe("main");
+    expect(trigger()?.getAttribute("aria-label")).toBe("branch.title: main");
+  });
+
+  it("keeps only the additions when nothing was deleted", async () => {
+    await renderReady(
+      undefined,
+      withWorktree({ dirty: true, additions: 7, deletions: 0, trackedFiles: 1, untrackedFiles: 0 }),
+    );
+
+    expect(reading()?.textContent).toContain("+7");
+    expect(reading()?.textContent).not.toContain("−");
+  });
+
+  it("keeps only the deletions when nothing was added", async () => {
+    await renderReady(
+      undefined,
+      withWorktree({ dirty: true, additions: 0, deletions: 9, trackedFiles: 1, untrackedFiles: 0 }),
+    );
+
+    expect(reading()?.textContent).toContain("−9");
+    expect(reading()?.textContent).not.toContain("+");
+  });
+
+  it("shows a dot when the tree is dirty without line counts", async () => {
+    await renderReady(
+      undefined,
+      withWorktree({ dirty: true, additions: 0, deletions: 0, trackedFiles: 1, untrackedFiles: 0 }),
+      zh,
+    );
+
+    expect(reading()?.textContent).toBe("•");
+    expect(reading()?.title).toBe("工作区有未提交改动");
+    expect(trigger()?.title).toContain("工作区有未提交改动");
+  });
+
+  it("drops the reading when a refresh reports a clean worktree", async () => {
+    const fake = await renderReady(
+      undefined,
+      withWorktree({ dirty: true, additions: 128, deletions: 34, trackedFiles: 3, untrackedFiles: 1 }),
+    );
+    expect(reading()).not.toBeNull();
+
+    await act(async () => {
+      fake.setList(LIST);
+    });
+
+    expect(reading()).toBeNull();
+  });
+
+  it("reloads the inventory after a successful switch so the reading follows the worktree", async () => {
+    const fake = await renderReady();
+    await click(trigger());
+    const loadsBeforeSwitch = fake.loads.length;
+
+    await click(row("feature"));
+
+    expect(fake.loads.length).toBe(loadsBeforeSwitch + 1);
+  });
+
+  it("pins the trigger width and the reading style", () => {
+    expect(GIT_STYLES).toMatch(/\.gx-branch-trigger \{[^}]*max-width: min\(320px, 40vw\)/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-dirty \{[^}]*font-size: 11px/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-dirty \{[^}]*font-variant-numeric: tabular-nums/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-add \{[^}]*--dsw-alias-state-success-primary/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-del \{[^}]*--dsw-alias-state-error-primary/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-warning \{[^}]*--dsw-alias-state-warn-primary/u);
+  });
+});
+
+describe("automatic stash feedback", () => {
+  const CONFLICT: GitSwitchStashOutcome = {
+    stashed: true,
+    restored: false,
+    conflict: true,
+    message: "CONFLICT (content): Merge conflict in src/a.ts",
+  };
+
+  const warning = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('[data-testid="gx-branch-stash-warning"]');
+
+  it("keeps the popover open with the stash conflict warning", async () => {
+    const fake = await renderReady(() => Promise.resolve({ switched: true, stash: CONFLICT }), LIST, zh);
+
+    await click(trigger());
+    await click(row("feature"));
+
+    expect(panel()).not.toBeNull();
+    expect(trigger()?.getAttribute("aria-expanded")).toBe("true");
+    expect(warning()).not.toBeNull();
+    expect(warning()?.getAttribute("role")).toBe("alert");
+    expect(warning()?.textContent).toContain("改动已保存在 stash，恢复时发生冲突");
+    expect(warning()?.textContent).toContain("CONFLICT (content)");
+
+    // The reader can still pick another branch without closing the popover.
+    expect(row("main")?.disabled).toBe(false);
+    await click(row("main"));
+    expect(fake.switches).toEqual([
+      { sessionId: "s1", name: "feature" },
+      { sessionId: "s1", name: "main" },
+    ]);
+    expect(panel()).not.toBeNull();
+  });
+
+  it("closes quietly when the automatic stash was restored", async () => {
+    await renderReady(() => Promise.resolve({ switched: true, stash: { stashed: true, restored: true } }), LIST, zh);
+
+    await click(trigger());
+    await click(row("feature"));
+
+    expect(panel()).toBeNull();
+    expect(trigger()?.getAttribute("aria-expanded")).toBe("false");
+
+    await click(trigger());
+    expect(warning()).toBeNull();
+  });
+
+  it("stays silent when the worktree was already clean", async () => {
+    await renderReady(() => Promise.resolve({ switched: true, stash: CLEAN_STASH }), LIST, zh);
+
+    await click(trigger());
+    await click(row("feature"));
+
+    expect(panel()).toBeNull();
   });
 });
 
@@ -577,7 +757,7 @@ describe("branch store", () => {
 
     const switched = await store.switchTo("s1", "feature");
 
-    expect(switched).toBe(false);
+    expect(switched.switched).toBe(false);
     expect(store.getSnapshot().error).toBe("local changes");
     expect(store.getSnapshot().list).toBe(listed);
   });
@@ -592,13 +772,28 @@ describe("branch store", () => {
     await store.load("s1");
     const before = store.getSnapshot().revision;
 
-    expect(await store.switchTo("s1", "feature")).toBe(true);
+    const outcome = await store.switchTo("s1", "feature");
+    expect(outcome.switched).toBe(true);
+    expect(outcome.stash).toEqual(CLEAN_STASH);
 
     const after = store.getSnapshot();
     expect(after.revision).toBe(before + 1);
     expect(after.error).toBeUndefined();
     expect(after.list?.branches.find(branch => branch.current)?.name).toBe("feature");
     expect(after.list?.detached).toBe(false);
+  });
+
+  it("hands a conflicted restore back to the popover", async () => {
+    const stash = { stashed: true, restored: false, conflict: true, message: "CONFLICT (content)" };
+    const store = createBranchStore(() =>
+      face({
+        branches: () => Promise.resolve({ ok: true, value: { ok: true, list: LIST } }),
+        switchBranch: () => Promise.resolve({ ok: true, value: { ok: true, branch: "feature", stash } }),
+      }),
+    );
+    await store.load("s1");
+
+    expect(await store.switchTo("s1", "feature")).toEqual({ switched: true, stash });
   });
 
   it("reports a dismissed request without touching the list", async () => {
@@ -611,7 +806,7 @@ describe("branch store", () => {
     await store.load("s1");
     const listed = store.getSnapshot().list;
 
-    expect(await store.switchTo("s1", "feature")).toBe(false);
+    expect((await store.switchTo("s1", "feature")).switched).toBe(false);
     expect(store.getSnapshot().error).toBe("offline");
     expect(store.getSnapshot().list).toBe(listed);
   });
@@ -656,7 +851,7 @@ describe("branch store", () => {
 
     switchReply.resolve({ ok: true, value: { ok: true, branch: "feature", stash: CLEAN_STASH } });
 
-    expect(await switching).toBe(true);
+    expect((await switching).switched).toBe(true);
     expect(store.getSnapshot()).toBe(settled);
     expect(store.getSnapshot().list?.root).toBe("/other-repo");
     expect(store.getSnapshot().list?.branches.find(branch => branch.current)?.name).toBe("trunk");
@@ -676,7 +871,7 @@ describe("branch store", () => {
 
     switchReply.resolve({ ok: true, value: { ok: false, error: { code: "git-failed", message: "local changes" } } });
 
-    expect(await switching).toBe(false);
+    expect((await switching).switched).toBe(false);
     expect(store.getSnapshot()).toBe(settled);
     expect(store.getSnapshot().error).toBeUndefined();
   });
