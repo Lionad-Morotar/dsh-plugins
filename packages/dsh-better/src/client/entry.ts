@@ -47,8 +47,8 @@ import {
   TABS_SECTION_ID,
   TABS_SECTION_ORDER,
   TABS_SECTION_SLOT,
+  type StripHostDocument,
   type ViewLedger,
-  type ViewPins,
 } from "./tabs.ts";
 
 /** Statically seeded primitives, resolved through the factory `require`. */
@@ -56,18 +56,6 @@ import type { Primitives } from "./primitives.ts";
 
 /** The overlay slot the picker lives in. */
 const OVERLAY_SLOT = "conversation.input.overlay";
-
-/**
- * The session header, which is where the host injects its view-pin seam.
- *
- * The seam is not a service: the header slot's `inject` callback is the only
- * place it exists. An entry here receives it, and rendering nothing is the
- * point, because the header itself is the host's.
- */
-const HEADER_SLOT = "conversation.session.header";
-
-/** Cell id of the entry that only exists to receive the pin seam. */
-const HEADER_ENTRY_ID = "better-tabs";
 
 /** The composer seat whose trigger opens the picker instead of its own menu. */
 const SEAT_SLOT = "conversation.input.model";
@@ -525,33 +513,11 @@ export const clientPlugin = {
       "dsh-better: tab management",
     );
 
-    // The pin seam is injected into the header slot, and the renderer runs an
-    // entry's inject exactly once per session binding, caching the result. So
-    // the seam is captured there and the controller is started once; stopping
-    // it is the registration disposer's job, because the callback's return
-    // value is business props and is not a lifecycle.
-    ctx.effect(
-      () =>
-        ctx.slots.inject(HEADER_SLOT, () => {
-          let stop: (() => void) | undefined;
-          const remove = registerPlain(ctx.slots, {
-            name: HEADER_SLOT,
-            id: HEADER_ENTRY_ID,
-            inject: (_sessionId, actions) => {
-              if (stop !== undefined) return {};
-              const seam = pinsOf(actions);
-              if (seam !== undefined) stop = tabs.start(seam);
-              return {};
-            },
-          }, () => null);
-          return () => {
-            remove();
-            stop?.();
-            stop = undefined;
-          };
-        }),
-      "dsh-better: tab visibility",
-    );
+    // The strip rules. The controller owns one stylesheet per document and
+    // re-plans on every ledger move; `attach` is the whole lifecycle, so the
+    // effect's disposer is the teardown. The host's pin seam is deliberately
+    // not involved — see tabs.ts for why it cannot be reached.
+    ctx.effect(() => tabs.attach(doc as unknown as StripHostDocument), "dsh-better: tab visibility");
 
     // The focus chord: one host-registered command, so it appears in 设置 →
     // 快捷键 next to the built-in bindings and is rebound there. `inject` is the
@@ -780,35 +746,6 @@ function tabCopy(ctx: ClientContextLike): {
       const pattern = text(enabled ? "tabs.hide" : "tabs.show", "{label}");
       return pattern.replace("{label}", label);
     },
-  };
-}
-
-/**
- * The pin seam, read off the header slot's injected actions.
- *
- * Structural on purpose. The host passes `setPinned` and `hooks.entryPins`; a
- * host that renames either one yields nothing, and the page still renders — it
- * just cannot move the strip until the seam is recognisable again.
- */
-function pinsOf(actions: unknown): ViewPins | undefined {
-  if (typeof actions !== "object" || actions === null) return undefined;
-  const candidate = actions as {
-    setPinned?: unknown;
-    hooks?: { entryPins?: { getSnapshot?: unknown; subscribe?: unknown } };
-  };
-  const pins = candidate.hooks?.entryPins;
-  if (typeof candidate.setPinned !== "function") return undefined;
-  if (typeof pins?.getSnapshot !== "function" || typeof pins.subscribe !== "function") return undefined;
-  const setPinned = candidate.setPinned as (id: string, pinned: boolean) => void;
-  return {
-    unpinned: {
-      getSnapshot: () => {
-        const snapshot = (pins.getSnapshot as () => unknown)();
-        return Array.isArray(snapshot) ? snapshot.filter((item): item is string => typeof item === "string") : [];
-      },
-      subscribe: listener => (pins.subscribe as (listener: () => void) => () => void)(listener),
-    },
-    setPinned,
   };
 }
 
