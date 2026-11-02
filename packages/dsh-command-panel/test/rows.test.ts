@@ -346,16 +346,29 @@ describe("sessionRows", () => {
     expect(labels(rows)).not.toContain("子代理");
   });
 
-  it("appends a new-session row only in a workspace scope", () => {
+  it("closes a workspace scope with new-session then that workspace's archived sessions", () => {
     const scoped = sessionRows(list, snapshot, { kind: "workspace", workspaceId: "ws-one" }, copy, now);
-    const across = sessionRows(list, snapshot, { kind: "all" }, copy, now);
-    expect(scoped.at(-1)?.key).toBe("scope:new-session");
-    expect(scoped.at(-1)?.action).toEqual({
+    expect(labels(scoped).slice(-2)).toEqual([copy.newSession, copy.archivedSessions]);
+    expect(scoped.at(-2)?.action).toEqual({
       kind: "create-session",
       scope: "workspace",
       workspaceId: "ws-one",
     });
-    expect(across.at(-1)?.key).not.toBe("scope:new-session");
+    const archiveRow = scoped.at(-1);
+    expect(archiveRow?.key).toBe("scope:archived");
+    expect(archiveRow?.hint).toBe(copy.sessionsCount(1));
+    expect(archiveRow?.action).toEqual({ kind: "drill-archived" });
+  });
+
+  it("keeps the archived-sessions row out of the all scope", () => {
+    const across = sessionRows(list, snapshot, { kind: "all" }, copy, now);
+    expect(across.find(row => row.key === "scope:archived")).toBeUndefined();
+  });
+
+  it("shows the workspace archive row with a zero count when nothing is archived there", () => {
+    const rows = sessionRows(list, snapshot, { kind: "workspace", workspaceId: "ws-two" }, copy, now);
+    expect(rows.at(-1)?.key).toBe("scope:archived");
+    expect(rows.at(-1)?.hint).toBe(copy.sessionsCount(0));
   });
 });
 

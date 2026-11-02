@@ -804,6 +804,32 @@ describe("archive view", () => {
     expect(h.verbs.crumbLabel()).not.toBe("已归档会话");
     expect(h.store.getSnapshot().open).toBe(true);
   });
+
+  it("prefixes the workspace name in the crumb when entering the archive from a workspace list", async () => {
+    const h = harness({
+      sessions: [SESSION_A, SESSION_B, SESSION_ARCHIVED],
+    });
+    runCommand(h, "command-panel.switch");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    const workspaceRow = h.store.getSnapshot().rows.find(row => row.key === "workspace:ws-one");
+    expect(workspaceRow).toBeDefined();
+    h.verbs.accept(workspaceRow!);
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    const archiveRow = h.store.getSnapshot().rows.find(row => row.key === "scope:archived");
+    expect(archiveRow).toBeDefined();
+    h.verbs.accept(archiveRow!);
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    expect(h.store.getSnapshot().model.archivedOnly).toBe(true);
+    expect(h.verbs.crumbLabel()).toBe("dsh-plugins · 已归档会话");
+
+    h.verbs.back();
+    await vi.waitFor(() => expect(h.store.getSnapshot().model.archivedOnly).toBe(false));
+    expect(h.verbs.crumbLabel()).toBe("dsh-plugins");
+    expect(h.store.getSnapshot().model.scope).toEqual({ kind: "workspace", workspaceId: "ws-one" });
+  });
 });
 
 describe("switch-mode status freshness", () => {

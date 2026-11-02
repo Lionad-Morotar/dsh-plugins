@@ -53,7 +53,7 @@ export interface ArchChromeStrings {
 
 /** Default strings (zh); the entry passes the locale-bound set instead. */
 export const ARCH_CHROME_STRINGS: ArchChromeStrings = {
-  tabTitle: "Arch",
+  tabTitle: "\u67b6\u6784",
   waitingSession: "等待会话…",
   empty: "本工作区还没有 C4 模型。用 flow-dx 的 agents-md 流程生成 .planning/c4 模型后，即可在此浏览架构图。",
   loadFailed: "架构数据加载失败",

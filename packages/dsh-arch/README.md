@@ -1,6 +1,6 @@
 # dsh-arch
 
-页面底部的架构图 tab：在终端 dock 的标签条上加一个 `Arch` 面板，浏览当前工作区的 LikeC4 视图（`.planning/c4/*.c4`），平移缩放、节点选中看详情、拖拽微调布局，视图选择与视口按工作区持久化，重启 DSH 后续上。布局在宿主进程内经 `@likec4/language-services` 完成，客户端只收到算好的坐标（自建 SVG 渲染器，gzip 1.75KB），经 `/arch/api` 三条路由下发。
+会话顶栏的架构图 tab：在「对话 / 文件 / Git」这一排加一个「架构」标签（order 120，紧跟 Git），浏览当前工作区的 LikeC4 视图（`.planning/c4/*.c4`），平移缩放、节点选中看详情、拖拽微调布局，视图选择与视口按工作区持久化，重启 DSH 后续上。布局在宿主进程内经 `@likec4/language-services` 完成，客户端只收到算好的坐标（自建 SVG 渲染器，gzip 1.75KB），经 `/arch/api` 三条路由下发。
 
 ## 安装
 
@@ -27,7 +27,7 @@
       name: 'dsh-arch'
 ```
 
-`dsh plugin --profile web install` 后重启宿主；desktop 用插件管理器装同一个 `link:` 路径。Arch 面板经 workbench core 的面板种类注册挂进 term-dock 的标签条，所以 core 与 term-dock 必须先装。`lib/` 是提交入库的产物，安装态不跑构建。
+`dsh plugin --profile web install` 后重启宿主；desktop 用插件管理器装同一个 `link:` 路径。主入口是会话顶栏的 `conversation.view`，跟文件与 Git 同一排；底部终端 dock 仍可选多一个 Arch 面板，core 不在时顶栏标签依然在。`lib/` 是提交入库的产物，安装态不跑构建。
 
 ## 体积代价（首屏须知）
 

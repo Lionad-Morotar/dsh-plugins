@@ -13,11 +13,26 @@ interface KindRegistration {
   disposed: boolean;
 }
 
-function createContext() {
+interface SlotRegistration {
+  readonly options: Record<string, unknown>;
+  readonly component: unknown;
+}
+
+function createContext(options: { workbench?: boolean } = {}) {
   const registrations: KindRegistration[] = [];
+  const slots: SlotRegistration[] = [];
   const localeCalls: string[] = [];
   const dictionaries = new Map<string, () => void>();
   const ctx = {
+    slots: {
+      inject(_slot: string, factory: () => () => void) {
+        return factory();
+      },
+      register(slotOptions: Record<string, unknown>, component: unknown) {
+        slots.push({ options: slotOptions, component });
+        return () => {};
+      },
+    },
     locale: {
       register(namespace: string, dictionariesForNamespace: Record<string, Record<string, string>>) {
         localeCalls.push(namespace);
@@ -29,26 +44,45 @@ function createContext() {
         return dispose;
       },
       bind: (namespace: string) => (key: string) => `${namespace}:${key}`,
+      getSnapshot: () => ({ active: "zh" }),
     },
-    workbench: {
-      version: 1,
-      registerDockPanelKind: (descriptor: KindRegistration["descriptor"]) => {
-        const registration: KindRegistration = { descriptor, disposed: false };
-        registrations.push(registration);
-        return () => {
-          registration.disposed = true;
-        };
-      },
-    },
+    ...(options.workbench === false
+      ? {}
+      : {
+          workbench: {
+            version: 1,
+            registerDockPanelKind: (descriptor: KindRegistration["descriptor"]) => {
+              const registration: KindRegistration = { descriptor, disposed: false };
+              registrations.push(registration);
+              return () => {
+                registration.disposed = true;
+              };
+            },
+          },
+        }),
     get: () => undefined,
   };
-  return { ctx, registrations, localeCalls, dictionaries };
+  return { ctx, registrations, slots, localeCalls, dictionaries };
 }
 
 describe("arch entry wiring", () => {
-  it("declares the locale and workbench services it waits for", () => {
+  it("declares the slots, locale and workbench services it waits for", () => {
     expect(clientPlugin.name).toBe("dsh-arch");
-    expect(clientPlugin.inject).toEqual(["locale", "workbench"]);
+    expect(clientPlugin.inject).toEqual(["slots", "locale", "workbench"]);
+  });
+
+  it("registers an architecture conversation view beside files and git", () => {
+    const { ctx, slots } = createContext();
+    apply(ctx);
+
+    expect(slots).toHaveLength(1);
+    const options = slots[0]?.options;
+    expect(options?.name).toBe("conversation.view");
+    expect(options?.id).toBe("arch");
+    expect(options?.order).toBe(120);
+    expect(typeof options?.label).toBe("function");
+    expect((options?.label as () => string)()).toBe("\u67b6\u6784");
+    expect(typeof slots[0]?.component).toBe("function");
   });
 
   it("registers the arch kind whose mount lands in the chrome", () => {
@@ -75,8 +109,11 @@ describe("arch entry wiring", () => {
     expect(registrations[0]?.disposed).toBe(true);
   });
 
-  it("does nothing without the workbench registration face", () => {
-    const dispose = apply({ locale: createContext().ctx.locale });
+  it("keeps the conversation tab when the dock kind face is absent", () => {
+    const { ctx, registrations, slots } = createContext({ workbench: false });
+    const dispose = apply(ctx);
+    expect(slots).toHaveLength(1);
+    expect(registrations).toHaveLength(0);
     expect(typeof dispose).toBe("function");
   });
 

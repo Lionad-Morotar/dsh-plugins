@@ -29,7 +29,7 @@ describe("modelFor", () => {
 });
 
 describe("drillArchived", () => {
-  it("enters the global archive view with a cleared query", () => {
+  it("falls back to the global archive view when no scope is passed", () => {
     const model = { ...modelFor("switch"), query: "leftover", highlight: 3 };
     expect(drillArchived(model)).toEqual({
       mode: "switch",
@@ -39,6 +39,26 @@ describe("drillArchived", () => {
       highlight: 0,
       archivedOnly: true,
       confirmQuit: false,
+    });
+  });
+
+  it("keeps the workspace scope drilled from that workspace's session list", () => {
+    const scope = { kind: "workspace", workspaceId: "ws-one" } as const;
+    const model = drill(modelFor("switch"), scope);
+    const archived = drillArchived(model, scope);
+    expect(archived).toEqual({
+      mode: "switch",
+      level: "sessions",
+      scope,
+      query: "",
+      highlight: 0,
+      archivedOnly: true,
+      confirmQuit: false,
+    });
+    // esc 从工作区归档先回该工作区的普通列表，scope 不丢
+    expect(back(archived)).toEqual({
+      kind: "model",
+      model: { ...archived, archivedOnly: false, query: "", highlight: 0, confirmQuit: false },
     });
   });
 });
