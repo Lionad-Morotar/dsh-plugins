@@ -450,6 +450,24 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
   line-height: 1.45;
 }
 .gx-branch-list { display: flex; flex-direction: column; gap: 0; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+/* The scope line names the worktree the switch lands in. The parent chain is
+   the part that clips, so the repository or worktree name survives any width;
+   the full path stays on the row's title. */
+.gx-branch-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-width: 0;
+  padding: 4px 8px 5px;
+  color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit));
+  font-size: 11px;
+  line-height: 16px;
+}
+.gx-branch-scope-label { flex: none; }
+.gx-branch-scope-path { display: flex; flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+.gx-branch-scope-parent { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gx-branch-scope-name { flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary, inherit); }
 /* The search seat keeps the row's horizontal padding so the caret lines up with
    the names below; a single hairline separates it without adding a second
    surface inside the popover. */

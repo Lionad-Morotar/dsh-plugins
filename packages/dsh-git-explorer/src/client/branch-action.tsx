@@ -183,6 +183,22 @@ function highlightName(name: string, ranges: readonly (readonly [number, number]
 }
 
 /**
+ * Split a worktree root into the parent chain and the last path segment.
+ *
+ * The popover names the scope of the switch: the root can be a linked worktree
+ * (`.claude/worktrees/<name>`), so the trailing segment is the part that tells
+ * two checkouts of the same repository apart. Splitting on the string lets the
+ * parent clip with CSS while that segment stays whole, and needs no width math.
+ * @param root - absolute worktree root as the host reported it.
+ * @returns the parent chain including its trailing separator, and the name.
+ */
+function splitRoot(root: string): { readonly parent: string; readonly name: string } {
+  const index = Math.max(root.lastIndexOf("/"), root.lastIndexOf("\\"));
+  if (index < 0) return { parent: "", name: root };
+  return { parent: root.slice(0, index + 1), name: root.slice(index + 1) };
+}
+
+/**
  * Build the header action for one client mount.
  * @param wiring - the shared branch store and the locale-bound translator.
  * @returns the component registered into the header action row.
@@ -207,6 +223,7 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
     const IconBranch: IconLike = kit.IconBranch ?? FallbackBranchIcon;
     const IconChevron: IconLike = kit.IconChevron ?? FallbackChevronIcon;
     const list = state.list;
+    const scope = list === undefined ? undefined : splitRoot(list.root);
     const matches = useMemo(() => filterBranches(list?.branches ?? [], query), [list, query]);
 
     const close = useCallback((): void => {
@@ -370,6 +387,15 @@ export function createBranchAction({ store, t }: BranchActionWiring): (props: Br
         aria-label={t("branch.title")}
         style={{ width: PANEL_WIDTH, maxWidth: PANEL_MAX_WIDTH, ...position }}
       >
+        {list === undefined || scope === undefined ? null : (
+          <div className="gx-branch-scope" data-testid="gx-branch-scope" title={list.root}>
+            <span className="gx-branch-scope-label">{t("branch.scope")}</span>
+            <span className="gx-branch-scope-path">
+              <span className="gx-branch-scope-parent">{scope.parent}</span>
+              <span className="gx-branch-scope-name">{scope.name}</span>
+            </span>
+          </div>
+        )}
         <input
           ref={inputRef}
           type="text"

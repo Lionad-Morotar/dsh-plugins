@@ -1,11 +1,12 @@
 /**
- * The branch inventory shared by the header trigger and, later, the view.
+ * The branch inventory shared by the header trigger and the Git view.
  *
- * One store per client apply: the header action and any other subscriber see
- * the same snapshot, which is what lets a successful switch be noticed outside
- * the popover. `useSyncExternalStore` compares snapshots by identity, so a
- * state object is replaced only when something changed; a read that changes
- * nothing returns the previous object.
+ * The browser half has exactly one active store: the entry point builds it once
+ * per apply, the header action writes to it and the conversation view watches
+ * its revision, which is what lets a successful switch refresh the panel
+ * without a second channel between the two surfaces. `useSyncExternalStore`
+ * compares snapshots by identity, so a state object is replaced only when
+ * something changed; a read that changes nothing returns the previous object.
  */
 import type { GitBranchList, GitBranchListResult, GitSwitchResult } from "../host/types.ts";
 import { describeFailure, unwrapTransport, type RemoteResolver } from "./wire.ts";
@@ -45,13 +46,16 @@ export interface BranchStoreFace {
 
 const IDLE: BranchListState = Object.freeze({ status: "idle", revision: 0, sessionId: null });
 
+/** The store the current apply installed; absent before the browser half mounts. */
+let installed: BranchStoreFace | undefined;
+
 /**
  * Build one store over the host's Remote face.
  * @param remote - resolver read on every call, because the host half may load
  * after this bundle mounts.
- * @returns the store the header action binds to.
+ * @returns a store the header action binds to.
  */
-export function createBranchStore(remote: RemoteResolver): BranchStoreFace {
+function buildBranchStore(remote: RemoteResolver): BranchStoreFace {
   let state = IDLE;
   let loadedRevision = -1;
   let requestTicket = 0;
@@ -162,4 +166,31 @@ export function createBranchStore(remote: RemoteResolver): BranchStoreFace {
       publish({ ...state, revision: state.revision + 1 });
     },
   };
+}
+
+/**
+ * Build the store for one client apply and install it as the shared one.
+ *
+ * A repeat apply replaces it whole rather than carrying the previous state:
+ * the Remote face it resolves through belongs to that apply, and an inventory
+ * read from the previous mount would be stale anyway. Creating it here, rather
+ * than lazily on first read, keeps the entry's one call the initialization
+ * point for both surfaces.
+ * @param remote - resolver the store reads on every call.
+ * @returns the installed store the header action and the view both consume.
+ */
+export function initBranchStore(remote: RemoteResolver): BranchStoreFace {
+  installed = buildBranchStore(remote);
+  return installed;
+}
+
+/** Historical name the browser entry calls; it performs the same installation. */
+export const createBranchStore = initBranchStore;
+
+/**
+ * The store installed by the current apply.
+ * @returns the shared store, or undefined before the browser half mounts.
+ */
+export function getBranchStore(): BranchStoreFace | undefined {
+  return installed;
 }

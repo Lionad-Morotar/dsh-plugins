@@ -1,6 +1,6 @@
 # dsh-git-explorer
 
-会话工作目录的 Git 面板：左边是工作区变更，右边是提交图和选中提交的详情。宿主半承担取数与解析，浏览器半边只做两栏视图；它以 `conversation.view` 的「Git」标签出现，排在「文件」之后。
+会话工作目录的 Git 面板：左边是工作区变更，右边是提交图和选中提交的详情。宿主半承担取数与解析，浏览器半边只做两栏视图；它以 `conversation.view` 的「Git」标签出现，排在「文件」之后，会话顶栏另有一个分支切换器，切换作用在会话工作树上。
 
 ## 安装
 
@@ -28,7 +28,7 @@
 
 ## 核心能力
 
-- 宿主服务 `GitExplorerService`：Typert Remote 服务，服务名与线命名空间都是 `gitExplorer`，向客户端暴露 `snapshot` / `query` / `commit` / `run` 四个端点。`run` 是类型化占位，当前一律回 `not-implemented`——数据层是只读的。
+- 宿主服务 `GitExplorerService`：Typert Remote 服务，服务名与线命名空间都是 `gitExplorer`，向客户端暴露 `snapshot` / `query` / `commit` / `branches` / `switchBranch` / `run` 六个端点。`branches` 是只读的分支清单，`switchBranch` 是唯一的写端点；`run` 仍是类型化占位，当前一律回 `not-implemented`。
 - 客户端传输走连接服务的原生 RPC：`ctx.get("connection").rpc.call(rpc, "/api", "gitExplorer/<method>", { args: { request } }, signal)`，返回值是 `{ ok, value }` 传输封套。之所以不用 `ctx.remote.gitExplorer`：那个类型化命名空间只存在于「用 `ctx.remote.$mount()` 挂载了生成贡献物」的包里，第三方包没有生成物；宿主侧的 `typertRemote` 绑定会被网关的 source-mode 发现枚举，路由 `/api/gitExplorer/<method>` 因此开箱可用。
 - 只走 argv：所有 git 调用都是数组，从 `git` 开始，不拼 shell；每条命令 20s 超时、4MB 输出预算，超出走 spill 回读，stdout 有损时明确失败而不是交出半页数据。
 - 仓库快照：仓库根、当前分支与 HEAD（含游离 HEAD、领先 / 落后）、按 hash 分组的引用、工作区变更、逐文件增删行数、首页提交与泳道、原始 `git status --porcelain=v2 -z` 文本（供文件树着色复用）。
@@ -37,6 +37,12 @@
 - 两栏视图：左侧变更按目录分组，状态字母（A/M/D/R/C/T/U/!）加每文件 `+n −n`；点非目录文件会跳到文件面板并打开对应行。右侧提交图只渲染视口内的行，选中提交在下方展开父提交、说明与变更文件清单。
 - 进入视图时的焦点：从标签栏点进 Git 面板，键盘焦点落在左侧变更列表的第一个文件行（目录行只做分组，跳过）。这次认领只在视图挂载后的第一份快照渲染时兑现一次，快照刷新不会重来；焦点已经落在变更区内、或列表里没有文件行时不动，免得把读者从已选的行上拽走。显式的 `commit:<hash>` 跳转优先，此时不抢焦点。
 - 焦点跳转：接受 `openView("git-explorer", "commit:<hash>")`（hash 为 4-64 位十六进制，大小写归一为小写），命令面板输入提交前缀跳转即按此协议寻址。焦点有两个来源：宿主经 `openView` 交下来的 `viewRequest`，以及 `workbench.viewFocus` 队列（视图已挂载时命令面板走的通道，挂载时取走等待中的请求并持续订阅）。命中即选中该提交，详情面板按 hash 经 `commit` 端点独立加载，hash 不在已加载列表也能展示；历史列表不插行以保住拓扑泳道序。解析失败也回执完成，宿主才会清掉这条请求。
+- 顶栏分支切换器：会话顶栏 action 行的分支触发器显示当前分支（游离 HEAD 显示短 hash），点开是本地分支浮层。图标、面板与配色都自带（`--dsw-alias-*` 语义 token），不借宿主的 action 类名，那些类名带构建哈希，每次宿主构建都会变。
+- 浮层作用域：顶部一行 `gx-branch-scope` 说明切换作用在这个工作树上，显示仓库或工作树名，父路径先被截断，`title` 是完整绝对路径。linked worktree 的根路径本身就带 `.claude/worktrees/<name>` 或 `.agents/worktrees/<name>`，直接显示，不做额外探测。非仓库会话整个触发器不渲染；游离 HEAD 时作用域行照常显示。
+- 分支列举与占用：只列 `refs/heads` 下的本地分支，当前分支带标记；已被另一个工作树检出的分支禁用，`title` 给出占用它的工作树路径。分支名按完整 ref 读取，同名 tag 存在时不会被染成 `heads/<name>`。
+- 搜索与键盘：浮层打开即聚焦搜索框，输入按子序列匹配分支名（大小写不敏感），命中片段高亮。`↓` / `↑` 移动光标并跳过被占用的行，停在两端不循环；`Enter` 切换到光标行，输入法组合中的 `Enter` 不算；`Esc` 关闭并把焦点还给触发器，点击浮层外部关闭时只有焦点没有落在别的控件上才回收。切换被拒绝时浮层保持打开，错误行带重试。
+- 切换后的刷新闭环：切换成功让共享 store 的 `revision` 自增，Git 面板订阅这个值后复用自身的重新加载路径重取快照，于是历史首行的 refs、工作区变更与 HEAD 一起更新。浮层内立即显示新分支，不依赖面板重挂载。
+- 宿主两个分支端点：`branches` 只读，回 `refs/heads` 清单、当前标记、游离 HEAD 的短 hash 与每个分支的工作树占用；仓库外返回 `isRepository: false` 而不是错误。`switchBranch` 是唯一写端点，只执行 `git switch --no-guess <分支名>`，不 stash、不 fetch、不 push、不 reset，也不新建、改名或删除分支。名称先按形状过滤（NUL、空格、`..`、`~`、`^`、`@{`、前导 `-`、尾随 `/`），再拿完整 ref 清单核对，所以 `HEAD~1` 这类修订表达式进不来；`--no-guess` 让只存在于远程跟踪引用的名字不会被悄悄建成新分支。工作区有冲突改动时 git 拒绝切换，stderr 前三行原样回给浮层。
 - 分页：首屏默认 400 条（Loader 行 `config.maxCommits`），历史列表每点一次"加载更多"取 100 条，单次请求上限 5000。
 - 空态与错误态：未选会话、Git 服务不可用、不是 git 仓库、空仓库、读取失败各有文案与重试；头部有刷新按钮。
 
@@ -48,12 +54,19 @@
 | 刷新快照 | — | 头部 `↻` 按钮；刻意不占全局刷新键 |
 | 选择提交 / 跳转文件 | — | 指针操作（提交行、变更行、父提交 chip） |
 | 看完整引用名 | 悬浮 | 历史行上的分支 / 标签 chip 最多显示两个、超出 12ch 截断；悬浮弹出完整名字 |
+| 过滤本地分支 | 直接输入 | 浮层打开即聚焦搜索框；子序列匹配，命中片段高亮 |
+| 移动分支光标 | `↓` / `↑` | 跳过被其他工作树占用的行，两端不循环 |
+| 切换到光标行 | `Enter` | 输入法组合中的 `Enter` 不触发切换 |
+| 关闭分支浮层 | `Esc` | 焦点归还分支触发器；外部点击关闭只在焦点没落到别的控件上时回收 |
 
-面板内没有自己的 keydown 表：这里的交互都是点选，给它们编快捷键会和宿主的命令目录打架。
+Git 面板本身没有自己的 keydown 表：面板内的交互都是点选，给它们编快捷键会和宿主的命令目录打架。顶栏浮层的键盘处理只作用于浮层自己的搜索框和文档级 `Esc`，不向全局注册。
 
 ## 已知边界
 
-- 只读面板：`run` 端点没有实现，暂存、提交、切分支、reset 都不在这里做。用它看仓库，不用它改仓库。
+- 面板仍是只读视图：`run` 端点没有实现，暂存、提交、reset 都不在这里做。唯一的写操作是顶栏切换本地分支。
+- 分支清单只列本地分支：不列远程跟踪分支，也不自动建跟踪分支。`--no-guess` 之后，只在 `origin` 上存在的名字不会被悄悄建成同名本地分支，需要先在终端里 checkout 或 `git branch --track`。
+- 切换不做工作区清理：不 stash、不自动合并，脏工作区与新分支冲突时 git 原样拒绝并回显 stderr；浮层保持打开，读者可以处理完再点。
+- 被另一个工作树检出的分支在浮层里禁用，键盘也会跳过：判定来自 `git worktree list --porcelain` 与当前工作树根的字符串比较。
 - 单条命令 20s 超时、4MB 单流预算。超大仓库的第一次 `git log` 可能先撞超时；stdout 被截断时查询整体失败，不会拿半页数据画一张缺边的图。
 - 首屏只取 400 条提交；更早的历史要点"加载更多"，按 100 条递增，单次请求硬上限 5000，`skip` 上限 1000000。
 - ref 过滤是白名单：分支、标签、提交名可用，`HEAD~3` 这类修订语法与 `..` 范围不进来。
@@ -70,8 +83,8 @@ node .nsl/chain/accept-s2-git-data.mjs  # 父边集合对 oracle、泳道不变�
 node .nsl/chain/accept-s3-git-view.mjs  # 变更对真实 status、提交详情对 git show、跳转参数、行窗口
 ```
 
-单包：`pnpm --filter dsh-git-explorer test`（88 用例）、`typecheck`、`build`。`test/real-repo.test.ts` 会直接读本仓库，把快照的父边与 `git log --parents` 对一遍。
+单包：`pnpm --filter dsh-git-explorer test`（168 用例）、`typecheck`、`build`。`test/real-repo.test.ts` 会直接读本仓库，把快照的父边与 `git log --parents` 对一遍。
 
 ## 结构
 
-宿主半在 `src/host/`：`parse.ts`（log / refs / porcelain v2）、`lanes.ts`（泳道）、`git.ts`（argv runner 与预算）、`snapshot.ts` / `query.ts` / `detail.ts`（三个端点）、`failure.ts`（错误码）。客户端 `model.ts` 负责分组、图布局与行窗口，`view.tsx` 只做装配与跳转。判据脚本从 `lib/index.js` 取 `__test`，在没有宿主上下文的情况下驱动解析与泳道。
+宿主半在 `src/host/`：`parse.ts`（log / refs / porcelain v2）、`lanes.ts`（泳道）、`git.ts`（argv runner 与预算）、`snapshot.ts` / `query.ts` / `detail.ts` / `branches.ts` / `switch.ts`（五个数据端点，`switch.ts` 是唯一的写路径）、`failure.ts`（错误码）。客户端 `model.ts` 负责分组、图布局与行窗口，`view.tsx` 只做装配与跳转；顶栏分支面在 `branch-action.tsx`（触发器与浮层）、`branch-search.ts`（子序列匹配与光标移动）、`branch-store.ts`（客户端半共享的分支清单与 revision）。判据脚本从 `lib/index.js` 取 `__test`，在没有宿主上下文的情况下驱动解析与泳道。

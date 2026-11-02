@@ -14,9 +14,16 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createBranchAction } from "../src/client/branch-action.tsx";
-import { createBranchStore, type BranchListState, type BranchStoreFace } from "../src/client/branch-store.ts";
+import {
+  createBranchStore,
+  getBranchStore,
+  initBranchStore,
+  type BranchListState,
+  type BranchStoreFace,
+} from "../src/client/branch-store.ts";
 import { setBranchKitForTest, type BranchKit, type DismissHook } from "../src/client/platform.ts";
 import { GIT_STYLES } from "../src/client/styles.ts";
+import { watchBranchRevision } from "../src/client/view.tsx";
 import type { GitBranchList } from "../src/host/types.ts";
 import type { GitRemoteFace } from "../src/client/wire.ts";
 
@@ -594,5 +601,140 @@ describe("branch store", () => {
     expect(await store.switchTo("s1", "feature")).toBe(false);
     expect(store.getSnapshot().error).toBe("offline");
     expect(store.getSnapshot().list).toBe(listed);
+  });
+});
+
+describe("branch popover scope row", () => {
+  it("names the worktree the switch applies to and keeps the full path in the title", async () => {
+    const root = "/tmp/example-repo";
+    await renderReady(undefined, { ...LIST, root });
+
+    await click(trigger());
+
+    const scope = document.querySelector<HTMLElement>('[data-testid="gx-branch-scope"]');
+    expect(scope).not.toBeNull();
+    expect(scope?.textContent).toContain("example-repo");
+    expect(scope?.getAttribute("title")).toBe(root);
+  });
+
+  it("keeps the scope row on a detached HEAD", async () => {
+    const root = "/tmp/example-repo";
+    const detached: GitBranchList = {
+      ...LIST,
+      root,
+      detached: true,
+      headHash: "abc1234",
+      branches: LIST.branches.map(branch => ({ ...branch, current: false })),
+    };
+    const fake = createFakeStore({ status: "ready", list: detached, revision: 0, sessionId: "s1" });
+    const Action = createBranchAction({ store: fake.store, t });
+    await mount(<Action sessionId="s1" />);
+
+    await click(trigger());
+
+    expect(document.querySelector('[data-testid="gx-branch-scope"]')?.textContent).toContain("example-repo");
+  });
+
+  it("clips the parent chain first so the repository name stays readable", async () => {
+    await renderReady(undefined, { ...LIST, root: "/tmp/example-repo" });
+
+    await click(trigger());
+
+    const parent = document.querySelector(".gx-branch-scope-parent");
+    const name = document.querySelector(".gx-branch-scope-name");
+    expect(parent?.textContent).toBe("/tmp/");
+    expect(name?.textContent).toBe("example-repo");
+    expect(GIT_STYLES).toMatch(/\.gx-branch-scope-parent \{[^}]*text-overflow: ellipsis/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-scope-name \{[^}]*flex: none/u);
+  });
+});
+
+describe("shared branch store", () => {
+  it("installs the store it creates so the header and the view read the same one", () => {
+    const first = createBranchStore(() => undefined);
+    expect(getBranchStore()).toBe(first);
+
+    const second = initBranchStore(() => undefined);
+    expect(getBranchStore()).toBe(second);
+    expect(getBranchStore()).not.toBe(first);
+  });
+
+  it("builds a fresh store per apply instead of reusing the previous state", () => {
+    const first = initBranchStore(() => undefined);
+    const second = createBranchStore(() => undefined);
+
+    expect(first).not.toBe(second);
+    expect(getBranchStore()).toBe(second);
+  });
+});
+
+describe("branch revision watch", () => {
+  function fakeRevision(start: number) {
+    let revision = start;
+    const listeners = new Set<() => void>();
+    return {
+      source: {
+        subscribe(listener: () => void) {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+        getSnapshot: () => ({ revision }),
+      },
+      bumpRevision() {
+        revision += 1;
+        for (const listener of [...listeners]) listener();
+      },
+      notifyOnly() {
+        for (const listener of [...listeners]) listener();
+      },
+      size: () => listeners.size,
+    };
+  }
+
+  it("reloads once per revision change and ignores plain notifications", () => {
+    const fake = fakeRevision(2);
+    let calls = 0;
+
+    const stop = watchBranchRevision(fake.source, () => {
+      calls += 1;
+    });
+
+    // What the view already fetched at mount is not a change.
+    expect(calls).toBe(0);
+
+    fake.notifyOnly();
+    expect(calls).toBe(0);
+
+    fake.bumpRevision();
+    expect(calls).toBe(1);
+
+    stop();
+  });
+
+  it("subscribes on mount and unsubscribes on dispose", () => {
+    const fake = fakeRevision(0);
+    let calls = 0;
+
+    const stop = watchBranchRevision(fake.source, () => {
+      calls += 1;
+    });
+    expect(fake.size()).toBe(1);
+
+    stop();
+    expect(fake.size()).toBe(0);
+
+    fake.bumpRevision();
+    expect(calls).toBe(0);
+  });
+
+  it("stays inert without a store installed", () => {
+    const stop = watchBranchRevision(undefined, () => {
+      throw new Error("an absent store must not reload the view");
+    });
+
+    expect(typeof stop).toBe("function");
+    expect(() => stop()).not.toThrow();
   });
 });
