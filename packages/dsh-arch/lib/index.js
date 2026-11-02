@@ -329,20 +329,29 @@ async function resolveSessionRoot(sessionId, sessions, sessionPersistence) {
 // src/index.ts
 var name = PACKAGE_NAME;
 var inject = [];
+var WEB_SERVER_POLL_MS = 250;
+var WEB_SERVER_WAIT_MS = 15e3;
 function readService(ctx, name2) {
   const value = ctx.get?.(name2);
   return value === null ? void 0 : value;
 }
 function whenWebServer(host, register) {
-  const present = readService(host, "webServer");
+  const found = () => readService(host, "webServer");
+  const present = found();
   if (present !== void 0) {
     register(host, present);
     return;
   }
-  host.inject?.(["webServer"], (ctx) => {
-    const webServer = readService(ctx, "webServer");
-    if (webServer !== void 0) register(ctx, webServer);
-  });
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    const webServer = found();
+    if (webServer === void 0) {
+      if (Date.now() - startedAt > WEB_SERVER_WAIT_MS) clearInterval(timer);
+      return;
+    }
+    clearInterval(timer);
+    register(host, webServer);
+  }, WEB_SERVER_POLL_MS);
 }
 function apply(ctx) {
   const host = ctx;

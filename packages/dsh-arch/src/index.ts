@@ -53,8 +53,15 @@ export const inject: string[] = [];
 interface HostContext {
   get?(name: string): unknown;
   effect?(onCleanup: () => void | Promise<void>): void;
-  inject?(names: readonly string[], callback: (ctx: HostContext) => void): unknown;
 }
+
+/**
+ * How often to re-read `webServer` while it is still absent, and how long to
+ * keep trying. The desktop web app provides it well inside the first second;
+ * the cap exists so a host without one does not poll forever.
+ */
+const WEB_SERVER_POLL_MS = 250;
+const WEB_SERVER_WAIT_MS = 15000;
 
 function readService(ctx: HostContext, name: string): unknown {
   const value = ctx.get?.(name);
@@ -65,25 +72,39 @@ function readService(ctx: HostContext, name: string): unknown {
  * Register the routes once `webServer` exists.
  *
  * A one-shot `ctx.get("webServer")` during `apply` misses the desktop
- * composition: this row activates before the web app provides the server, the
- * probe reads undefined, and the routes are never registered. `inject` waits
- * for that service and runs the callback when it appears; a host that never
- * grows one (headless) simply never calls back, which is the same degraded
- * outcome as before, without blocking boot.
+ * composition: this row activates before the web app provides the server, so
+ * the probe reads undefined and the routes would never be registered.
+ *
+ * `ctx.inject` and the `internal/service` event only re-check the scope that
+ * provided the service, and a loader row's scope does not inherit the root's
+ * isolation table, so its own `ctx.get` never observes a service the root
+ * provides (verified against cordis 4). The row therefore polls `ctx.get`
+ * until the server is visible from its own scope, which is what happens once
+ * the desktop host finishes composing.
+ *
+ * The interval is bounded. A host that never grows a web server (headless)
+ * stops looking and stays alive, the same degraded outcome as a one-shot miss.
  *
  * @param host - the context `apply` received.
  * @param register - mounts the prefix; receives the context that owns the server.
  */
 function whenWebServer(host: HostContext, register: (ctx: HostContext, webServer: WebServerFace) => void): void {
-  const present = readService(host, "webServer") as WebServerFace | undefined;
+  const found = (): WebServerFace | undefined => readService(host, "webServer") as WebServerFace | undefined;
+  const present = found();
   if (present !== undefined) {
     register(host, present);
     return;
   }
-  host.inject?.(["webServer"], ctx => {
-    const webServer = readService(ctx, "webServer") as WebServerFace | undefined;
-    if (webServer !== undefined) register(ctx, webServer);
-  });
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    const webServer = found();
+    if (webServer === undefined) {
+      if (Date.now() - startedAt > WEB_SERVER_WAIT_MS) clearInterval(timer);
+      return;
+    }
+    clearInterval(timer);
+    register(host, webServer);
+  }, WEB_SERVER_POLL_MS);
 }
 
 export function apply(ctx: Context): void {
