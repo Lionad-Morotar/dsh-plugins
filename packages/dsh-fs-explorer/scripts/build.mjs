@@ -92,6 +92,16 @@ const ENGINE_MARKERS = {
  */
 const CLIENT_EXTERNALS = ["react", "react/jsx-runtime", "react-dom", "@deepseek-ai/dsh-client-ui-primitives"];
 
+/**
+ * Platform modules the Harness install provides to the host half.
+ *
+ * Bundling one would ship a second `cordis` `Service` class and a second Typert
+ * protocol next to the installed copies; service discovery and the Remote
+ * markers both key on the modules the host already loaded, so the host half
+ * resolves them at runtime like every other host-side row in this repo.
+ */
+const HOST_EXTERNALS = ["@deepseek-ai/*"];
+
 /** Symbols that must never reach the startup bundle; checked after every build. */
 const STARTUP_BANNED = ["@codemirror", "codemirror", "react-markdown", "remark-gfm", "marked"];
 
@@ -302,7 +312,10 @@ async function main(checkOnly) {
     await writeFile(join(libRoot, file), text, "utf8");
   };
 
-  await emit("index.js", await bundle(join(packageRoot, "src", "index.ts"), { format: "esm" }));
+  await emit(
+    "index.js",
+    await bundle(join(packageRoot, "src", "index.ts"), { format: "esm", external: HOST_EXTERNALS }),
+  );
 
   const client = await bundle(join(packageRoot, "src", "client", "entry.ts"), {
     external: CLIENT_EXTERNALS,
