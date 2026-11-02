@@ -204,9 +204,10 @@ window.__ModuleLoader__.load({
 }
 
 /*
- * A commit hash written as inline code. Dotted rather than solid so it stays
- * distinguishable from a link, and unbacked so the prose colour is untouched
- * until the pointer is actually over it.
+ * A commit hash written as inline code. Left unscoped on purpose: see the
+ * file-header exception, scoping it under the panel root would miss the
+ * prose. Dotted rather than solid so it stays distinguishable from a link,
+ * and unbacked so the prose colour is untouched until the pointer is over it.
  */
 code[data-dcp-commit] {
   text-decoration-line: underline;

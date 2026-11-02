@@ -9,7 +9,10 @@
  *     tokens are declared on body (dark mode is `body[data-ds-dark-theme]`), so a
  *     surface mounted on `documentElement` silently loses every alias colour.
  *   - Nothing global may be styled. The sheet is scoped to `[data-dcp-root]` and
- *     is tagged so uninstall can find and remove exactly this node.
+ *     is tagged so uninstall can find and remove exactly this node. One exception:
+ *     `code[data-dcp-commit]` stays unscoped. The hash it decorates is inline code
+ *     in the conversation prose, which is never inside `[data-dcp-root]`, so a
+ *     scoped selector would match nothing.
  */
 
 export const STYLE_TAG = "dsh-command-panel";
@@ -219,9 +222,10 @@ const CSS = `
 }
 
 /*
- * A commit hash written as inline code. Dotted rather than solid so it stays
- * distinguishable from a link, and unbacked so the prose colour is untouched
- * until the pointer is actually over it.
+ * A commit hash written as inline code. Left unscoped on purpose: see the
+ * file-header exception, scoping it under the panel root would miss the
+ * prose. Dotted rather than solid so it stays distinguishable from a link,
+ * and unbacked so the prose colour is untouched until the pointer is over it.
  */
 code[data-dcp-commit] {
   text-decoration-line: underline;
