@@ -102,15 +102,6 @@ export class FsExplorerDocumentsService extends TypertRemoteService {
       return value === null ? undefined : value;
     };
     const fs = read("fs");
-    // Activation observability: a silent pending fiber is indistinguishable
-    // from a missing module from the outside, and both have bitten before.
-    console.info(
-      `[dsh-fs-explorer] documents activating; services=${JSON.stringify({
-        fs: fs !== undefined,
-        sessions: read("sessions") !== undefined,
-        sessionPersistence: read("sessionPersistence") !== undefined,
-      })}`,
-    );
     if (fs === undefined) throw new Error("dsh-fs-explorer: fs service is unavailable");
     this.fs = fs as FileSystemFace;
     this.sessions = read("sessions") as SessionsFace | undefined;

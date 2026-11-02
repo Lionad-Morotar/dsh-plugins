@@ -20,6 +20,7 @@
 import type { ComponentType } from "react";
 
 import type { Translate } from "./copy.ts";
+import type { DocumentStore } from "./document-session.ts";
 import { familyOf } from "./preview.ts";
 import type { WorkspaceFilesFace } from "./wire.ts";
 
@@ -135,6 +136,13 @@ export interface FsExplorerService {
   readonly renderers: RendererRegistry;
   /** Register a renderer on the shared registry; the disposer removes it. */
   registerRenderer(contribution: RendererContribution): () => void;
+  /**
+   * Draft sessions shared by every renderer plugin in this host.
+   *
+   * This is the one declaration of the member; a renderer package that cannot
+   * import this module mirrors it structurally.
+   */
+  readonly documents: DocumentStore;
 }
 
 /** Version of the service contract in {@link FsExplorerService}. */

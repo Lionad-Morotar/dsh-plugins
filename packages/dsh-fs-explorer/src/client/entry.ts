@@ -180,7 +180,7 @@ export function apply(ctx: ClientContextLike): () => void {
 
   reportWarning = message => ctx.logger?.warn?.(message);
   const registry = rendererRegistry();
-  const service: FsExplorerService & { readonly documents: DocumentStore } = {
+  const service: FsExplorerService = {
     version: FS_EXPLORER_SERVICE_VERSION,
     renderers: registry,
     registerRenderer: contribution => registry.register(contribution),

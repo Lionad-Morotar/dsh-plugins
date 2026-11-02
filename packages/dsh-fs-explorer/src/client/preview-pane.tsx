@@ -536,9 +536,7 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
   // reported by its own chunk rather than by the pane's fallback vocabulary.
   const engine =
     rendererState.status === "ready"
-      ? reading
-        ? "gfm"
-        : (rendererState.module.renderer ?? rendererState.contribution.id)
+      ? (rendererState.module.renderer ?? rendererState.contribution.id)
       : binary
         ? "pending"
         : reading

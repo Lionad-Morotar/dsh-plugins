@@ -174,13 +174,6 @@ var FsExplorerDocumentsService = class extends (_a = TypertRemoteService, _open_
       return value === null ? void 0 : value;
     };
     const fs = read("fs");
-    console.info(
-      `[dsh-fs-explorer] documents activating; services=${JSON.stringify({
-        fs: fs !== void 0,
-        sessions: read("sessions") !== void 0,
-        sessionPersistence: read("sessionPersistence") !== void 0
-      })}`
-    );
     if (fs === void 0) throw new Error("dsh-fs-explorer: fs service is unavailable");
     this.fs = fs;
     this.sessions = read("sessions");
