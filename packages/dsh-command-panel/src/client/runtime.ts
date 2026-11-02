@@ -475,11 +475,22 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     };
   }
 
+  /**
+   * Rank the rows in hand for the current query, then project the armed wording.
+   *
+   * The order matters: ranking must read the canonical labels, because the
+   * confirmation text does not answer the query — ranking on it would drop or
+   * move the armed row mid-confirmation and strand the highlight index that the
+   * second Enter trusts.
+   */
+  function projectRows(rows: readonly PanelRow[], confirmQuit: boolean, query: string): readonly PanelRow[] {
+    return withConfirmLabel(rankRows(rows, query).slice(0, MAX_ROWS), confirmQuit, copy());
+  }
+
   /** Re-project the rows already in hand for the current query, without a round trip. */
   function rankLocal(): void {
     const snapshot = store.getSnapshot();
-    const ranked = rankRows(withConfirmLabel(rawRows, snapshot.model.confirmQuit, copy()), snapshot.model.query).slice(0, MAX_ROWS);
-    store.set({ rows: ranked });
+    store.set({ rows: projectRows(rawRows, snapshot.model.confirmQuit, snapshot.model.query) });
   }
 
   async function runLoad(): Promise<void> {
@@ -513,7 +524,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       rawRows = composed;
       cache.set(keyOf(latest), composed);
       store.set({
-        rows: rankRows(withConfirmLabel(composed, latest.model.confirmQuit, copy()), latest.model.query).slice(0, MAX_ROWS),
+        rows: projectRows(composed, latest.model.confirmQuit, latest.model.query),
         status: result.status,
         message: result.message ?? null,
         // A degraded catalogue still leaves usable rows, so its reason rides the
@@ -600,7 +611,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     store.set({
       open: true,
       model,
-      rows: rankRows(withConfirmLabel(seeded, model.confirmQuit, copy()), initialQuery).slice(0, MAX_ROWS),
+      rows: projectRows(seeded, model.confirmQuit, initialQuery),
       status: "loading",
       message: null,
       notice: null,

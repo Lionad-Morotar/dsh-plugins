@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PANEL_MODAL, type PanelVerbs } from "../src/client/panel.ts";
 import type { ReactSlice } from "../src/client/react.ts";
 import { createRuntime, type PanelPlatform } from "../src/client/runtime.ts";
+import { copyFor } from "../src/client/copy.ts";
 import type {
   ClientContext,
   CommandDescriptor,
@@ -423,6 +424,33 @@ describe("quit row availability", () => {
     h.verbs.accept(h.store.getSnapshot().rows.find(row => row.action.kind === "request-shutdown")!);
     await vi.waitFor(() => expect(h.shutdownRequest).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(h.store.getSnapshot().open).toBe(false));
+  });
+
+  it("keeps the armed row reachable under a query: it stays, the highlight stays, the second enter fires", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.commands");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    // A query that matches the quit row's own label but not its confirmation
+    // wording: arming must not let the relabel take the row out of the list.
+    h.verbs.setQuery("面板");
+    const filtered = h.store.getSnapshot().rows;
+    const seat = filtered.findIndex(row => row.action.kind === "request-shutdown");
+    expect(seat).toBeGreaterThan(-1);
+
+    // First enter through the real path: accept whatever sits at the highlight.
+    h.verbs.highlight(seat);
+    h.verbs.acceptActive();
+    const armed = h.store.getSnapshot();
+    expect(armed.model.confirmQuit).toBe(true);
+    expect(armed.rows.length).toBe(filtered.length);
+    expect(armed.model.highlight).toBe(seat);
+    expect(armed.rows[armed.model.highlight]?.action.kind).toBe("request-shutdown");
+    expect(armed.rows[armed.model.highlight]?.label).toBe(copyFor("zh").confirmQuit);
+
+    // The second enter reaches the same seat and asks the host to exit.
+    h.verbs.acceptActive();
+    await vi.waitFor(() => expect(h.shutdownRequest).toHaveBeenCalledTimes(1));
   });
 });
 

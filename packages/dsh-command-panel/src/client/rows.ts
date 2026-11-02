@@ -252,9 +252,10 @@ export function catalogRows(
 /**
  * The armed quit row speaks the confirmation instead of its label.
  *
- * This is a projection applied where rows are rendered, never where they are
- * stored: the rows in hand stay canonical, so disarming (a retyped query,
- * going back, reopening) drops the wording without recomposition.
+ * This is a display projection, applied after ranking and never on the stored
+ * rows: ranking scores the canonical labels, so the query keeps matching the
+ * armed row at the seat it already held, and disarming (a retyped query, going
+ * back, reopening) drops the wording without recomposition.
  */
 export function withConfirmLabel(
   rows: readonly PanelRow[],
