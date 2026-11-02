@@ -58,6 +58,7 @@ Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo。十九个包：DSH �
 | --- | --- |
 | [refs/deepseek-harness-for-vs-code](./refs/deepseek-harness-for-vs-code) | VS Code 扩展 fork 的只读参考仓库。指针记录本地领先 origin/main 20 个提交的 main，push 上游后新克隆才取得到。 |
 | [refs/vscode-wakatime](./refs/vscode-wakatime) | 官方 WakaTime VS Code 扩展只读参考仓库，钉在 v25.4.0（本机实际安装版本）。参考其心跳防重三板斧：50ms 事件防抖、2 分钟最小间隔叠加文件与调试状态变化门（`TIME_BETWEEN_HEARTBEATS_MS`）、写操作 30 分钟同光标判重（`isDuplicateHeartbeat`，源自上游 issue #163），为 dsh 侧 wakatime 插件的同毫秒重复心跳问题提供修复范式。 |
+| [refs/deepseek-harness](./refs/deepseek-harness) | DSH 上游主仓只读参考（`deepseek-ai/deepseek-harness`），浅克隆叠加 blobless 过滤，sparse 只取 `packages/context/time-context`。用来读内置插件源码：time-context 的 pre-step 注入、`timeContext` 投影与浏览器时区派生都在这个包内；要看别的包用 `git -C refs/deepseek-harness sparse-checkout add <path>` 按需加目录。 |
 
 你可以自行读取项目上下文文档，更新时也优先更新相关文档。
 另有自维护 fork 以 submodule 挂在 `forks/` 下（同样 `ignore = all`）：`forks/dsh-wakatime-plugin` 跟踪同毫秒重复心跳修复分支并作为本机 profile 的安装源，上游合入后切回 upstream 收敛。
