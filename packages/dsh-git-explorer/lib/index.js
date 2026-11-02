@@ -670,6 +670,163 @@ async function collectQuery(options, request = {}, signal) {
   return { ok: true, page: { commits, lanes: assignLanes(commits), hasMore } };
 }
 
+// src/host/show.ts
+var SAFE_HASH2 = /^[0-9a-fA-F]{4,64}$/u;
+var DEFAULT_LIMIT = 200;
+var MAX_LIMIT2 = 5e3;
+function clampInt2(value, fallback, min, max) {
+  if (value === void 0 || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+function normalizeRepoPath(path) {
+  if (typeof path !== "string") return { ok: false, message: "path must be a repository-relative string" };
+  const trimmed = path.trim();
+  if (trimmed === "" || trimmed.includes("\0")) return { ok: false, message: "path must be a non-empty repository-relative string" };
+  const slashed = trimmed.replace(/\\/gu, "/");
+  if (slashed.startsWith("/") || /^[A-Za-z]:\//u.test(slashed)) {
+    return { ok: false, message: "path must be relative to the repository root" };
+  }
+  if (slashed.startsWith("./")) return { ok: false, message: "path must not start with ./" };
+  const segments = slashed.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    return { ok: false, message: "path must be a normalized repository-relative path" };
+  }
+  return { ok: true, path: slashed };
+}
+function transportFailure(result) {
+  if (result.timedOut) return { code: "timeout", message: "the command exceeded its deadline" };
+  if (result.cancelled) return { code: "internal", message: "the command was cancelled" };
+  return null;
+}
+async function objectKind(options, cwd, spec, signal) {
+  const result = await options.runner.run(["cat-file", "-t", "--end-of-options", spec], { cwd, signal });
+  const failure = transportFailure(result);
+  if (failure !== null) return { failure };
+  if (result.exitCode !== 0) return { kind: "other" };
+  const type = result.stdout.trim();
+  if (type === "blob") return { kind: "blob" };
+  if (type === "commit") return { kind: "commit" };
+  return { kind: "other" };
+}
+async function resolveRevision(options, cwd, spec, signal) {
+  const result = await options.runner.run(["rev-parse", "--verify", "--end-of-options", spec], { cwd, signal });
+  const failure = transportFailure(result);
+  if (failure !== null) return { failure };
+  const revision = result.stdout.trim();
+  if (result.exitCode !== 0 || revision === "") {
+    return { failure: { code: "git-failed", message: result.stderr.trim() === "" ? "could not resolve the object id" : result.stderr.trim() } };
+  }
+  return { revision };
+}
+function splitLines(text) {
+  if (text === "") return [];
+  const lines = text.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+}
+function pageOf(path, revision, source, bytes, binary, lines, offset, limit) {
+  const total = lines.length;
+  const start = offset > total ? total : offset - 1;
+  const pageLines = lines.slice(start, start + limit);
+  return {
+    path,
+    revision,
+    source,
+    offset,
+    lines: pageLines.length,
+    text: pageLines.join("\n"),
+    eof: start + pageLines.length >= total,
+    bytes,
+    binary,
+    kind: binary ? "binary" : "text"
+  };
+}
+async function collectShow(options, request, signal) {
+  const hashInput = typeof request.hash === "string" ? request.hash.trim() : "";
+  if (!SAFE_HASH2.test(hashInput)) return fail("invalid-request", "hash must be a hexadecimal object id");
+  const normalized = normalizeRepoPath(request.path);
+  if (!normalized.ok) return fail("invalid-request", normalized.message);
+  const hash = hashInput.toLowerCase();
+  const path = normalized.path;
+  const cwd = request.cwd ?? options.cwd;
+  const offset = clampInt2(request.offset, 1, 1, Number.MAX_SAFE_INTEGER);
+  const limit = clampInt2(request.limit, DEFAULT_LIMIT, 1, MAX_LIMIT2);
+  let source = "commit";
+  let spec = `${hash}:${path}`;
+  let probe = await objectKind(options, cwd, spec, signal);
+  if ("failure" in probe) return { ok: false, error: probe.failure };
+  if (probe.kind === "other") {
+    source = "first-parent";
+    spec = `${hash}^1:${path}`;
+    probe = await objectKind(options, cwd, spec, signal);
+    if ("failure" in probe) return { ok: false, error: probe.failure };
+    if (probe.kind === "other") {
+      return fail("not-found", `the path does not exist in ${hash} or its first parent`);
+    }
+  }
+  if (probe.kind === "commit") {
+    const resolved = await resolveRevision(options, cwd, spec, signal);
+    if ("failure" in resolved) return { ok: false, error: resolved.failure };
+    return {
+      ok: true,
+      page: {
+        path,
+        revision: resolved.revision,
+        source,
+        offset: 1,
+        lines: 0,
+        text: "",
+        eof: true,
+        bytes: 0,
+        binary: false,
+        kind: "submodule"
+      }
+    };
+  }
+  const [sizeResult, revisionResult] = await Promise.all([
+    options.runner.run(["cat-file", "-s", "--end-of-options", spec], { cwd, signal }),
+    resolveRevision(options, cwd, spec, signal)
+  ]);
+  const sizeFailure = transportFailure(sizeResult);
+  if (sizeFailure !== null) return { ok: false, error: sizeFailure };
+  if ("failure" in revisionResult) return { ok: false, error: revisionResult.failure };
+  const bytes = Number.parseInt(sizeResult.stdout.trim(), 10);
+  if (sizeResult.exitCode !== 0 || !Number.isFinite(bytes) || bytes < 0) {
+    return fail("git-failed", "git did not report the blob size");
+  }
+  if (bytes > options.maxBytes) {
+    return fail("too-large", `the blob is ${String(bytes)} bytes, above the ${String(options.maxBytes)}-byte preview budget`);
+  }
+  const contentResult = await options.runner.run(["cat-file", "-p", "--end-of-options", spec], { cwd, signal });
+  const contentFailure = transportFailure(contentResult);
+  if (contentFailure !== null) return { ok: false, error: contentFailure };
+  if (contentResult.exitCode !== 0) {
+    return fail("git-failed", contentResult.stderr.trim() === "" ? "git could not read the blob" : contentResult.stderr.trim());
+  }
+  const text = contentResult.stdout;
+  if (contentResult.stdoutLossy || text.includes("\0")) {
+    return {
+      ok: true,
+      page: {
+        path,
+        revision: revisionResult.revision,
+        source,
+        offset: 1,
+        lines: 0,
+        text: "",
+        eof: true,
+        bytes,
+        binary: true,
+        kind: "binary"
+      }
+    };
+  }
+  return {
+    ok: true,
+    page: pageOf(path, revisionResult.revision, source, bytes, false, splitLines(text), offset, limit)
+  };
+}
+
 // src/host/snapshot.ts
 var MAX_SNAPSHOT_COMMITS = 5e3;
 var REF_FORMAT = "--format=%(refname)%00%(objectname)%00%(HEAD)";
@@ -810,22 +967,22 @@ var DEFAULT_CONFIG = {
   maxBytes: 4 * 1024 * 1024,
   maxCommits: 400
 };
-function clampInt2(value, fallback, min, max) {
+function clampInt3(value, fallback, min, max) {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, Math.trunc(value)));
 }
 function normalizeConfig(config) {
   return {
-    timeoutMs: clampInt2(config?.timeoutMs, DEFAULT_CONFIG.timeoutMs, 1e3, 12e4),
-    maxBytes: clampInt2(config?.maxBytes, DEFAULT_CONFIG.maxBytes, 64 * 1024, 64 * 1024 * 1024),
-    maxCommits: clampInt2(config?.maxCommits, DEFAULT_CONFIG.maxCommits, 1, 5e3)
+    timeoutMs: clampInt3(config?.timeoutMs, DEFAULT_CONFIG.timeoutMs, 1e3, 12e4),
+    maxBytes: clampInt3(config?.maxBytes, DEFAULT_CONFIG.maxBytes, 64 * 1024, 64 * 1024 * 1024),
+    maxCommits: clampInt3(config?.maxCommits, DEFAULT_CONFIG.maxCommits, 1, 5e3)
   };
 }
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
-var _run_dec, _commit_dec, _query_dec, _snapshot_dec, _a, _init;
-var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec = [Remote("snapshot")], _query_dec = [Remote("query")], _commit_dec = [Remote("commit")], _run_dec = [Remote("run")], _a) {
+var _run_dec, _show_dec, _commit_dec, _query_dec, _snapshot_dec, _a, _init;
+var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec = [Remote("snapshot")], _query_dec = [Remote("query")], _commit_dec = [Remote("commit")], _show_dec = [Remote("show")], _run_dec = [Remote("run")], _a) {
   constructor(ctx, config) {
     super(ctx, GIT_SERVICE);
     __runInitializers(_init, 5, this);
@@ -904,6 +1061,18 @@ var GitExplorerService = class extends (_a = TypertRemoteService, _snapshot_dec 
       return fail("internal", messageOf(error));
     }
   }
+  async show(request, signal) {
+    const cwd = await this.baseDirectory(request.sessionId, request.cwd);
+    try {
+      return await collectShow(
+        { runner: this.runnerFor(cwd), cwd, maxBytes: this.config.maxBytes },
+        request,
+        signal
+      );
+    } catch (error) {
+      return fail("internal", messageOf(error));
+    }
+  }
   async run(request = {}) {
     void request;
     return {
@@ -916,6 +1085,7 @@ _init = __decoratorStart(_a);
 __decorateElement(_init, 1, "snapshot", _snapshot_dec, GitExplorerService);
 __decorateElement(_init, 1, "query", _query_dec, GitExplorerService);
 __decorateElement(_init, 1, "commit", _commit_dec, GitExplorerService);
+__decorateElement(_init, 1, "show", _show_dec, GitExplorerService);
 __decorateElement(_init, 1, "run", _run_dec, GitExplorerService);
 __decoratorMetadata(_init, GitExplorerService);
 __publicField(GitExplorerService, "inject", inject);

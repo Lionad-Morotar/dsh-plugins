@@ -1,5 +1,5 @@
 /**
- * The three Remote endpoints this panel consumes, narrowed to the payloads the
+ * The Remote endpoints this panel consumes, narrowed to the payloads the
  * view actually reads.
  *
  * Typert wraps every unary call in `RemoteResult<T>`. These Host endpoints
@@ -14,6 +14,8 @@ import type {
   GitCommitResult,
   GitQueryRequest,
   GitQueryResult,
+  GitShowRequest,
+  GitShowResult,
   GitSnapshotRequest,
   GitSnapshotResult,
 } from "../host/types.ts";
@@ -28,6 +30,7 @@ export interface GitRemoteFace {
   snapshot(request: GitSnapshotRequest, signal?: AbortSignal): Promise<RemoteResult<GitSnapshotResult>>;
   query(request: GitQueryRequest, signal?: AbortSignal): Promise<RemoteResult<GitQueryResult>>;
   commit(request: GitCommitRequest, signal?: AbortSignal): Promise<RemoteResult<GitCommitResult>>;
+  show(request: GitShowRequest, signal?: AbortSignal): Promise<RemoteResult<GitShowResult>>;
 }
 
 /** Read the optional service on each call so a late mount starts working. */
@@ -47,7 +50,7 @@ export interface RpcCall {
 }
 
 /** Methods this panel calls, in the order the RPC face exposes them. */
-const RPC_METHODS = ["snapshot", "query", "commit"] as const;
+const RPC_METHODS = ["snapshot", "query", "commit", "show"] as const;
 
 /**
  * Build the Git face over the raw gateway channel.
@@ -64,6 +67,7 @@ export function createRpcRemoteFace(call: RpcCall): GitRemoteFace {
     snapshot: invoke("snapshot") as GitRemoteFace["snapshot"],
     query: invoke("query") as GitRemoteFace["query"],
     commit: invoke("commit") as GitRemoteFace["commit"],
+    show: invoke("show") as GitRemoteFace["show"],
   };
 }
 

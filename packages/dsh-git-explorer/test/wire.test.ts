@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { unwrapTransport } from "../src/client/wire.ts";
+import { createRpcRemoteFace, GIT_RPC_METHODS, unwrapTransport } from "../src/client/wire.ts";
 
 describe("unwrapTransport", () => {
   it("unwraps the transport envelope when the business result is nested", () => {
@@ -24,5 +24,20 @@ describe("unwrapTransport", () => {
     });
     expect(unwrapTransport({ ok: false, error: { code: "gateway/cancelled" } })).toEqual({ ok: false, message: "gateway/cancelled" });
     expect(unwrapTransport(undefined)).toEqual({ ok: false, message: "malformed remote response" });
+  });
+});
+
+describe("rpc face", () => {
+  it("covers show alongside the data endpoints", async () => {
+    expect(GIT_RPC_METHODS).toEqual(["snapshot", "query", "commit", "show"]);
+    const calls: Array<[string, unknown]> = [];
+    const face = createRpcRemoteFace((endpoint, payload) => {
+      calls.push([endpoint, payload]);
+      return Promise.resolve({ ok: true, value: { ok: true, page: {} } });
+    });
+    await face.show({ sessionId: "s1", hash: "abcd1234", path: "src/a.ts", offset: 1, limit: 40 });
+    expect(calls).toEqual([
+      ["show", { args: { request: { sessionId: "s1", hash: "abcd1234", path: "src/a.ts", offset: 1, limit: 40 } } }],
+    ]);
   });
 });

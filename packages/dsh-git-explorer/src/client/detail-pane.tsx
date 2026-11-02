@@ -1,9 +1,18 @@
 /** The right column's lower half: parents, message and changed files of one commit. */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
-import { basename, formatCommitDetail, groupByDirectory, statusLetter } from "./model.ts";
+import {
+  basename,
+  createPreviewCache,
+  formatCommitDetail,
+  groupByDirectory,
+  placePreviewCard,
+  previewCacheKey,
+  statusLetter,
+} from "./model.ts";
 import type { Translate } from "./copy.ts";
-import type { GitCommitDetail, GitCommitResult } from "../host/types.ts";
+import type { GitBlobPage, GitCommitDetail, GitCommitFile, GitCommitResult, GitShowResult } from "../host/types.ts";
 import { describeFailure, unwrapTransport, type GitRemoteFace } from "./wire.ts";
 
 type DetailState =
@@ -12,6 +21,27 @@ type DetailState =
   | { readonly kind: "failed"; readonly message: string }
   | { readonly kind: "ready"; readonly detail: GitCommitDetail };
 
+/** How long the pointer must rest on a row before the preview is wanted. */
+const PREVIEW_DELAY_MS = 200;
+/** The card shows a single screenful; the full file opens through the row click. */
+const PREVIEW_LINE_LIMIT = 40;
+const PREVIEW_CACHE_SIZE = 24;
+const SHORT_HASH_LENGTH = 7;
+
+/** The viewport rectangle of the row a preview belongs to. */
+interface PreviewAnchor {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
+type PreviewState =
+  | { readonly kind: "idle" }
+  | { readonly kind: "loading"; readonly file: GitCommitFile; readonly anchor: PreviewAnchor }
+  | { readonly kind: "ready"; readonly file: GitCommitFile; readonly anchor: PreviewAnchor; readonly page: GitBlobPage }
+  | { readonly kind: "unavailable"; readonly file: GitCommitFile; readonly anchor: PreviewAnchor; readonly message: string };
+
 /** Props one detail pane mount reads. */
 export interface DetailPaneProps {
   readonly sessionId: string | undefined;
@@ -19,6 +49,8 @@ export interface DetailPaneProps {
   readonly remote: GitRemoteFace | undefined;
   readonly t: Translate;
   readonly onSelect: (hash: string) => void;
+  /** Open one changed file of this commit in the file workbench. */
+  readonly onOpenFile?: (path: string, line?: number) => void;
 }
 
 function FileStat({ additions, deletions }: { readonly additions: number | null; readonly deletions: number | null }) {
@@ -31,15 +63,209 @@ function FileStat({ additions, deletions }: { readonly additions: number | null;
   );
 }
 
+/** Map a host failure code to the short phrase a card can afford. */
+function previewFailureText(code: string, message: string, t: Translate): string {
+  if (code === "too-large") return t("preview.tooLarge");
+  if (code === "not-found") return t("preview.notFound");
+  return message === "" ? t("preview.unavailable") : message;
+}
+
+function PreviewBody({
+  preview,
+  t,
+  textRef,
+}: {
+  readonly preview: Exclude<PreviewState, { kind: "idle" }>;
+  readonly t: Translate;
+  readonly textRef: { readonly current: HTMLPreElement | null };
+}) {
+  if (preview.kind === "loading") return <span className="gx-preview-note">{t("preview.loading")}</span>;
+  if (preview.kind === "unavailable") {
+    return (
+      <div className="gx-preview-unavailable">
+        <strong>{t("preview.unavailable")}</strong>
+        <span className="gx-preview-note">{preview.message}</span>
+      </div>
+    );
+  }
+  const { page } = preview;
+  if (page.kind === "binary" || page.kind === "submodule") {
+    return (
+      <div className="gx-preview-unavailable">
+        <strong>{t("preview.unavailable")}</strong>
+        <span className="gx-preview-note">
+          {page.kind === "binary" ? t("preview.binary") : `${t("preview.submodule")} · ${page.revision.slice(0, 12)}`}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <>
+      {page.text === "" ? (
+        <span className="gx-preview-note">{t("preview.empty")}</span>
+      ) : (
+        <pre ref={textRef} className="gx-preview-text">{page.text}</pre>
+      )}
+      {page.source === "first-parent" ? <span className="gx-preview-note">{t("preview.deleted")}</span> : null}
+      {page.eof ? null : <span className="gx-preview-note">{t("preview.truncated")}</span>}
+    </>
+  );
+}
+
+/**
+ * The floating card itself.
+ *
+ * It portals to the document body so neither `.gx-detail` nor
+ * `.gx-detail-body` can clip it; the measured box then decides where the fixed
+ * card sits. The card is deliberately unreachable by pointer events so it can
+ * never sit between the reader and the row that owns the click.
+ */
+function PreviewCard({
+  preview,
+  hash,
+  t,
+}: {
+  readonly preview: Exclude<PreviewState, { kind: "idle" }>;
+  readonly hash: string;
+  readonly t: Translate;
+}) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const textRef = useRef<HTMLPreElement | null>(null);
+  const [placement, setPlacement] = useState<{ readonly left: number; readonly top: number } | null>(null);
+  const [clipped, setClipped] = useState(false);
+
+  useLayoutEffect(() => {
+    const element = cardRef.current;
+    if (element === null) return;
+    const rect = element.getBoundingClientRect();
+    setPlacement(
+      placePreviewCard(
+        preview.anchor,
+        { width: rect.width, height: rect.height },
+        { width: window.innerWidth, height: window.innerHeight },
+      ),
+    );
+    const text = textRef.current;
+    setClipped(text !== null && text.scrollHeight > text.clientHeight + 1);
+  }, [preview]);
+
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      ref={cardRef}
+      className="gx-preview"
+      data-testid="gx-preview-card"
+      data-clipped={clipped ? "true" : "false"}
+      role="tooltip"
+      style={{
+        position: "fixed",
+        pointerEvents: "none",
+        left: placement?.left ?? 0,
+        top: placement?.top ?? 0,
+        visibility: placement === null ? "hidden" : "visible",
+      }}
+    >
+      <div className="gx-preview-head">
+        <span className="gx-badge" data-status={preview.file.status} title={t(`status.${preview.file.status}`)}>
+          {statusLetter(preview.file.status)}
+        </span>
+        <span className="gx-preview-name" title={preview.file.path}>
+          {basename(preview.file.path)}
+        </span>
+        <span className="gx-preview-rev">{`${hash.slice(0, SHORT_HASH_LENGTH)} · ${t("preview.revision")}`}</span>
+      </div>
+      <div className="gx-preview-body">
+        <PreviewBody preview={preview} t={t} textRef={textRef} />
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 /**
  * Render the commit detail pane.
  * @param props - session, selected hash, the Remote face and copy.
  * @returns the detail pane element.
  */
-export function DetailPane({ sessionId, hash, remote, t, onSelect }: DetailPaneProps) {
+export function DetailPane({ sessionId, hash, remote, t, onSelect, onOpenFile }: DetailPaneProps) {
   const [state, setState] = useState<DetailState>({ kind: "idle" });
   const [retryToken, setRetryToken] = useState(0);
   const cache = useRef(new Map<string, GitCommitDetail>());
+
+  const [preview, setPreview] = useState<PreviewState>({ kind: "idle" });
+  const previewCache = useRef(createPreviewCache<GitBlobPage>(PREVIEW_CACHE_SIZE));
+  const hoverKey = useRef<string | undefined>(undefined);
+  const hoverTimer = useRef<number | undefined>(undefined);
+  const hoverController = useRef<AbortController | undefined>(undefined);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
+  const closePreview = useCallback((): void => {
+    hoverKey.current = undefined;
+    if (hoverTimer.current !== undefined) {
+      window.clearTimeout(hoverTimer.current);
+      hoverTimer.current = undefined;
+    }
+    hoverController.current?.abort();
+    hoverController.current = undefined;
+    setPreview(current => (current.kind === "idle" ? current : { kind: "idle" }));
+  }, []);
+
+  const beginPreview = useCallback(
+    (file: GitCommitFile, element: HTMLElement): void => {
+      closePreview();
+      if (hash === undefined) return;
+      const rect = element.getBoundingClientRect();
+      const anchor: PreviewAnchor = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+      const key = previewCacheKey(hash, file.path);
+      hoverKey.current = key;
+      hoverTimer.current = window.setTimeout(() => {
+        hoverTimer.current = undefined;
+        if (hoverKey.current !== key) return;
+        const cached = previewCache.current.get(key);
+        if (cached !== undefined) {
+          setPreview({ kind: "ready", file, anchor, page: cached });
+          return;
+        }
+        if (sessionId === undefined || remote === undefined || typeof remote.show !== "function") {
+          setPreview({ kind: "unavailable", file, anchor, message: t("preview.noService") });
+          return;
+        }
+        const controller = new AbortController();
+        hoverController.current = controller;
+        setPreview({ kind: "loading", file, anchor });
+        Promise.resolve()
+          .then(() => remote.show({ sessionId, hash, path: file.path, offset: 1, limit: PREVIEW_LINE_LIMIT }, controller.signal))
+          .then(transport => {
+            if (controller.signal.aborted || hoverKey.current !== key) return;
+            const unwrapped = unwrapTransport<GitShowResult>(transport);
+            if (!unwrapped.ok) {
+              setPreview({ kind: "unavailable", file, anchor, message: unwrapped.message });
+              return;
+            }
+            const result = unwrapped.result;
+            if (!result.ok) {
+              setPreview({
+                kind: "unavailable",
+                file,
+                anchor,
+                message: previewFailureText(result.error.code, result.error.message, t),
+              });
+              return;
+            }
+            previewCache.current.set(key, result.page);
+            setPreview({ kind: "ready", file, anchor, page: result.page });
+          })
+          .catch((error: unknown) => {
+            if (controller.signal.aborted || hoverKey.current !== key) return;
+            setPreview({ kind: "unavailable", file, anchor, message: describeFailure(error) });
+          })
+          .finally(() => {
+            if (hoverController.current === controller) hoverController.current = undefined;
+          });
+      }, PREVIEW_DELAY_MS);
+    },
+    [closePreview, hash, remote, sessionId, t],
+  );
 
   useEffect(() => {
     if (hash === undefined) {
@@ -82,6 +308,38 @@ export function DetailPane({ sessionId, hash, remote, t, onSelect }: DetailPaneP
     };
   }, [hash, remote, sessionId, retryToken, t]);
 
+  // Every path that invalidates the pointed-at row closes the card: Escape, a
+  // scroll of the detail list, a different selected commit, or a reload.
+  useEffect(() => {
+    if (preview.kind === "idle") return undefined;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") closePreview();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [preview.kind, closePreview]);
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (body === null) return undefined;
+    const onScroll = (): void => closePreview();
+    body.addEventListener("scroll", onScroll, { passive: true });
+    return () => body.removeEventListener("scroll", onScroll);
+  }, [closePreview]);
+
+  useEffect(() => {
+    closePreview();
+  }, [hash, retryToken, sessionId, remote, closePreview]);
+
+  useEffect(
+    () => () => {
+      hoverKey.current = undefined;
+      if (hoverTimer.current !== undefined) window.clearTimeout(hoverTimer.current);
+      hoverController.current?.abort();
+    },
+    [],
+  );
+
   const head = formatCommitDetail(
     state.kind === "ready"
       ? state.detail
@@ -95,7 +353,7 @@ export function DetailPane({ sessionId, hash, remote, t, onSelect }: DetailPaneP
         {hash === undefined ? null : <span className="gx-hash">{head.shortHash}</span>}
         <span className="gx-spacer" style={{ flex: 1 }} />
       </header>
-      <div className="gx-detail-body">
+      <div className="gx-detail-body" ref={bodyRef}>
         {state.kind === "idle" ? (
           <div className="gx-skeleton">{t("detail.empty")}</div>
         ) : state.kind === "loading" ? (
@@ -140,7 +398,16 @@ export function DetailPane({ sessionId, hash, remote, t, onSelect }: DetailPaneP
                   <div key={group.dir === "" ? "." : group.dir} className="gx-detail-group">
                     <div className="gx-detail-dir">{group.dir === "" ? t("changes.root") : group.dir}</div>
                     {group.files.map(file => (
-                      <div key={file.path} className="gx-detail-file">
+                      <button
+                        key={file.path}
+                        type="button"
+                        className="gx-detail-file"
+                        data-testid="gx-detail-file"
+                        title={file.path}
+                        onClick={() => onOpenFile?.(file.path)}
+                        onMouseEnter={event => beginPreview(file, event.currentTarget)}
+                        onMouseLeave={closePreview}
+                      >
                         <span className="gx-badge" data-status={file.status}>
                           {statusLetter(file.status)}
                         </span>
@@ -151,7 +418,7 @@ export function DetailPane({ sessionId, hash, remote, t, onSelect }: DetailPaneP
                         <span className="gx-file-stats">
                           <FileStat additions={file.additions} deletions={file.deletions} />
                         </span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 ))
@@ -160,6 +427,7 @@ export function DetailPane({ sessionId, hash, remote, t, onSelect }: DetailPaneP
           </>
         )}
       </div>
+      {preview.kind === "idle" ? null : <PreviewCard preview={preview} hash={hash ?? ""} t={t} />}
     </section>
   );
 }

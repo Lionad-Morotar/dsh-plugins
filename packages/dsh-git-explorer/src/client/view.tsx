@@ -22,7 +22,7 @@ import { ChangesPane } from "./changes-pane.tsx";
 import { DetailPane } from "./detail-pane.tsx";
 import { HistoryPane, HISTORY_PAGE_SIZE } from "./history-pane.tsx";
 import type { Translate } from "./copy.ts";
-import { createJump, groupChanges, layoutGraph, parseCommitFocus, type GraphRow } from "./model.ts";
+import { createCommitJump, createJump, groupChanges, layoutGraph, parseCommitFocus, type CommitJumpSeam, type GraphRow } from "./model.ts";
 import {
   LEFT_COLUMN_MAX_WIDTH,
   LEFT_COLUMN_MIN_WIDTH,
@@ -58,6 +58,8 @@ export interface WorkbenchFace {
   currentSessionId(): string | undefined;
   readonly views?: ViewSeamFace;
   openView?(id: string, focus?: string): boolean;
+  /** Switch and deliver in one gesture where the core supports it. */
+  openViewOrSwitch?(id: string, focus?: string): { readonly opened: boolean; readonly focused: boolean };
   /** Absent on cores older than the focus hand-off. */
   readonly viewFocus?: ViewFocusFace;
 }
@@ -495,6 +497,25 @@ export function createGitExplorerView(wiring: ViewWiring) {
       if (sessionId !== undefined) jump(path, line);
     };
 
+    const commitJump = useMemo(() => {
+      const seam: CommitJumpSeam = {
+        ...(workbench.views === undefined ? {} : { views: workbench.views }),
+        ...(workbench.openView === undefined ? {} : { openView: workbench.openView }),
+        ...(workbench.viewFocus === undefined ? {} : { viewFocus: workbench.viewFocus }),
+        ...(workbench.openViewOrSwitch === undefined
+          ? {}
+          : {
+              openViewOrSwitch: (id: string, focus?: string) =>
+                workbench.openViewOrSwitch?.(id, focus) ?? { opened: false, focused: false },
+            }),
+      };
+      return createCommitJump({ seam, sessionId: sessionId ?? "" });
+    }, [workbench, sessionId]);
+
+    const onOpenCommitFile = (path: string, line = 1): void => {
+      if (sessionId !== undefined && selected !== undefined) commitJump(selected, path, line);
+    };
+
     const refresh = (): void => setReloadToken(token => token + 1);
     const retry = (): void => setReloadToken(token => token + 1);
 
@@ -628,7 +649,14 @@ export function createGitExplorerView(wiring: ViewWiring) {
                     }
                   : {})}
               />
-              <DetailPane sessionId={sessionId} hash={selected} remote={remote} t={t} onSelect={setSelected} />
+              <DetailPane
+                sessionId={sessionId}
+                hash={selected}
+                remote={remote}
+                t={t}
+                onSelect={setSelected}
+                onOpenFile={onOpenCommitFile}
+              />
             </div>
           </div>
         ) : null}

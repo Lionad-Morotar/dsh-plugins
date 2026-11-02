@@ -189,6 +189,13 @@ describe("normalizePreviewPage", () => {
     expect(normalizePreviewPage({ text: "", lines: 0, eof: true }, 5)).toMatchObject({ lines: 0, eof: true });
   });
 
+  it("keeps the first-parent marker a deleted-file page carries", () => {
+    expect(normalizePreviewPage({ text: "kept", lines: 1, offset: 1, eof: true, source: "first-parent" }, 1)).toMatchObject({
+      source: "first-parent",
+    });
+    expect(normalizePreviewPage({ text: "kept", lines: 1, offset: 1, eof: true }, 1)).not.toHaveProperty("source");
+  });
+
   it("throws the host's error code and detail", () => {
     expect(() =>
       normalizePreviewPage({ ok: false, error: { code: "workspace-file/not-regular-file", message: "symlink" } }, 1),
@@ -211,6 +218,13 @@ describe("classifyPreviewFailure", () => {
     expect(classifyPreviewFailure({ code: "workspace-file/not-regular-file", detail: "symlink" }).kind).toBe("symlink");
     expect(classifyPreviewFailure(new Error("workspace-file/not-text")).kind).toBe("binary");
     expect(classifyPreviewFailure(new Error("something odd")).kind).toBe("unknown");
+  });
+
+  it("separates the commit-only refusals from working-tree failures", () => {
+    expect(classifyPreviewFailure({ code: "git/submodule", message: "这是一个子模块，没有可预览的文本内容" }).kind).toBe("submodule");
+    expect(classifyPreviewFailure({ code: "git/binary", message: "该提交版本中的文件是二进制，无法预览" }).kind).toBe("commit-binary");
+    // A working-tree binary keeps the plain binary copy, not the commit one.
+    expect(classifyPreviewFailure({ code: "workspace-file/not-text", message: "not UTF-8" }).kind).toBe("binary");
   });
 });
 

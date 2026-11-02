@@ -12,11 +12,15 @@ import { parseFocus } from "./model.ts";
 
 /** One open file panel. */
 export interface PanelEntry {
+  /** Stable identity: the workspace path, or `git` + NUL + revision + NUL + path. */
+  readonly key: string;
   readonly path: string;
   /** The 1-based line the opener asked for; the tab keeps it for later jumps. */
   readonly line: number;
   /** Whether {@link path} is a filesystem path outside the workspace root. */
   readonly absolute: boolean;
+  /** Commit object id when this panel shows a commit version. */
+  readonly revision?: string;
 }
 
 /** One immutable view of the stack. */
@@ -32,11 +36,12 @@ export interface PanelStack {
    * @param path - workspace-relative path, or a filesystem path when `absolute`.
    * @param line - the 1-based line to show.
    * @param absolute - keep the leading `/` and hand the path to the file service unchanged.
+   * @param revision - commit object id when the panel shows that commit's version.
    */
-  open(path: string, line?: number, absolute?: boolean): void;
-  /** Close one panel, or the active one; the neighbour takes over. */
+  open(path: string, line?: number, absolute?: boolean, revision?: string): void;
+  /** Close one panel by its key or path; the neighbour takes over. */
   close(path?: string): void;
-  /** Make an open panel active; unknown paths are ignored. */
+  /** Make an open panel active by its key or path; unknown targets are ignored. */
   activate(path: string): void;
   /** Activate the next panel, wrapping at the end. */
   next(): void;
@@ -78,6 +83,21 @@ function normalizePath(path: string, absolute: boolean): string | undefined {
 const EMPTY: PanelSnapshot = Object.freeze({ panels: Object.freeze([] as PanelEntry[]), active: null });
 
 /**
+ * The stable identity of one panel.
+ *
+ * A commit version is not keyed by `git:<revision>:<path>`: that string is a
+ * legal workspace path, so the two panels would dedupe into each other. NUL
+ * cannot occur in a path, so the stored key is `git` + NUL + revision + NUL +
+ * path. Callers may still spell a commit panel as `git:<revision>:<path>`.
+ */
+export function panelKey(path: string, revision?: string): string {
+  return revision === undefined ? path : `git\u0000${revision}\u0000${path}`;
+}
+
+/** Caller spelling `git:<revision>:<path>` for a commit version. The stored key uses NULs. */
+const GIT_KEY = /^git:([0-9a-f]{4,64}):(.+)$/iu;
+
+/**
  * Build one panel stack.
  * @returns the stack; its snapshot is stable between changes.
  */
@@ -92,68 +112,84 @@ export function createPanelStack(): PanelStack {
     for (const listener of [...listeners]) listener();
   };
 
-  const indexOf = (path: string): number => rows.findIndex(row => row.path === path);
+  const indexOf = (key: string): number => rows.findIndex(row => row.key === key);
+
+  /** A path spelling reaches the working-tree row only, never a commit version. */
+  const indexOfWorkspace = (path: string): number => rows.findIndex(row => row.revision === undefined && row.key === path);
 
   /**
-   * Resolve one caller-supplied path to the key the ledger stores.
+   * Resolve one caller-supplied key or path to the key the ledger stores.
    *
-   * A stored key is already normalized, and an absolute one keeps its leading
-   * slash, so the exact form is tried first. The workspace-relative reading is a
-   * second lookup, not a second normalization: it only answers when that key is
-   * actually open, which is what makes it reachable at all — a caller spelling a
-   * relative path as `/src/a.ts` has to find the `src/a.ts` row.
-   *
-   * The two readings are genuinely ambiguous (a path starting with `/` may be a
-   * filesystem path, or a workspace path written with a leading slash), so the
-   * order is the rule: an absolute panel of that name wins, and only its absence
-   * lets the relative row answer. A caller that knows which one it means opens
-   * with `absolute` and gets the exact key back.
-   * @param path - path as the caller spells it.
-   * @returns the key of an open row, or undefined when neither reading is open.
+   * The exact stored key is tried first because the tab strip hands that back.
+   * A `git:<revision>:<path>` spelling names a commit version and is mapped
+   * onto the stored key. Anything else is a workspace path: an absolute panel
+   * of that name wins, and only its absence lets the relative row answer. A
+   * commit version never answers a plain path spelling.
+   * @param spelling - key or path as the caller spells it.
+   * @returns the key of an open row, or undefined when nothing matches.
    */
-  const keyOf = (path: string): string | undefined => {
-    const exact = normalizePath(path, true);
+  const keyOf = (spelling: string): string | undefined => {
+    if (typeof spelling !== "string") return undefined;
+    if (indexOf(spelling) >= 0) return spelling;
+    const gitMatch = GIT_KEY.exec(spelling);
+    if (gitMatch !== null) {
+      const revision = (gitMatch[1] ?? "").toLowerCase();
+      const path = normalizePath(gitMatch[2] ?? "", false);
+      if (path === undefined) return undefined;
+      const key = panelKey(path, revision);
+      return indexOf(key) >= 0 ? key : undefined;
+    }
+    const exact = normalizePath(spelling, true);
     if (exact === undefined) return undefined;
-    if (indexOf(exact) >= 0) return exact;
-    const relative = normalizePath(path, false);
+    if (indexOfWorkspace(exact) >= 0) return exact;
+    const relative = normalizePath(spelling, false);
     if (relative === undefined || relative === exact) return undefined;
-    return indexOf(relative) >= 0 ? relative : undefined;
+    return indexOfWorkspace(relative) >= 0 ? relative : undefined;
   };
 
   const step = (delta: 1 | -1): void => {
     if (rows.length === 0) return;
     const current = active === null ? -1 : indexOf(active);
     const target = rows[(current + delta + rows.length) % rows.length];
-    if (target === undefined || target.path === active) return;
-    active = target.path;
+    if (target === undefined || target.key === active) return;
+    active = target.key;
     publish();
   };
 
   return {
-    open(path, line = 1, absolute = false) {
+    open(path, line = 1, absolute = false, revision) {
       const clean = normalizePath(path, absolute);
       if (clean === undefined) return;
+      const cleanRevision = typeof revision === "string" && revision.trim() !== "" ? revision.trim().toLowerCase() : undefined;
+      const key = panelKey(clean, cleanRevision);
       const nextLine = Number.isFinite(line) && line > 0 ? Math.trunc(line) : 1;
-      const index = indexOf(clean);
+      const index = indexOf(key);
       if (index >= 0) {
         const current = rows[index];
         const changed = current !== undefined && (current.line !== nextLine || current.absolute !== absolute);
         if (changed) {
-          rows = rows.map((row, at) => (at === index ? { path: clean, line: nextLine, absolute } : row));
+          rows = rows.map((row, at) => (at === index ? { ...row, line: nextLine, absolute } : row));
         }
-        if (active === clean) {
+        if (active === key) {
           if (changed) publish();
           return;
         }
-        active = clean;
+        active = key;
         publish();
         return;
       }
       // A fresh tab joins the active one, the way an editor inserts beside the
       // file the reader is looking at instead of at the far end of the strip.
       const insertAt = active === null ? rows.length : indexOf(active) + 1;
-      rows = [...rows.slice(0, insertAt), { path: clean, line: nextLine, absolute }, ...rows.slice(insertAt)];
-      active = clean;
+      const entry: PanelEntry = {
+        key,
+        path: clean,
+        line: nextLine,
+        absolute,
+        ...(cleanRevision === undefined ? {} : { revision: cleanRevision }),
+      };
+      rows = [...rows.slice(0, insertAt), entry, ...rows.slice(insertAt)];
+      active = key;
       publish();
     },
     close(path) {
@@ -161,17 +197,17 @@ export function createPanelStack(): PanelStack {
       if (target === null) return;
       const index = indexOf(target);
       if (index < 0) return;
-      rows = rows.filter(row => row.path !== target);
+      rows = rows.filter(row => row.key !== target);
       if (active === target) {
         const neighbour = rows[index] ?? rows[index - 1];
-        active = neighbour?.path ?? null;
+        active = neighbour?.key ?? null;
       }
       publish();
     },
     activate(path) {
-      const clean = keyOf(path);
-      if (clean === undefined || indexOf(clean) < 0 || active === clean) return;
-      active = clean;
+      const key = keyOf(path);
+      if (key === undefined || indexOf(key) < 0 || active === key) return;
+      active = key;
       publish();
     },
     next() {
@@ -187,11 +223,11 @@ export function createPanelStack(): PanelStack {
       publish();
     },
     isOpen(path) {
-      const clean = keyOf(path);
-      return clean !== undefined && indexOf(clean) >= 0;
+      const key = keyOf(path);
+      return key !== undefined && indexOf(key) >= 0;
     },
     activeEntry() {
-      return rows.find(row => row.path === active);
+      return rows.find(row => row.key === active);
     },
     snapshot: () => snapshot,
     subscribe(listener) {
@@ -210,8 +246,9 @@ export interface ViewRequestSink {
    * @param path - normalized target path.
    * @param line - the 1-based line to show.
    * @param absolute - whether the path is a filesystem path outside the workspace.
+   * @param revision - commit object id when the request names a commit version.
    */
-  open(path: string, line: number, absolute: boolean): void;
+  open(path: string, line: number, absolute: boolean, revision?: string): void;
 }
 
 /** One stack per conversation, owned by the view factory that mounts them. */
@@ -246,10 +283,11 @@ export function createPanelStackRegistry(): PanelStackRegistry {
 /**
  * Parse and consume one `openView("fs-explorer", focus)` request.
  *
- * Callers hand over `path:<workspace path>:<line>` (the Git panel, the command
- * palette) or `abs:<filesystem path>:<line>` (the address bridge); anything
- * else is left alone. The caller owns `completeViewRequest()` because only the
- * host knows when the request has been painted.
+ * Callers hand over `path:<workspace path>:<line>` (the Git changes pane, the
+ * command palette), `abs:<filesystem path>:<line>` (the address bridge) or
+ * `git:<hash>:<line>:<path>` (commit details); anything else is left alone. The
+ * caller owns `completeViewRequest()` because only the host knows when the
+ * request has been painted.
  * @param focus - the request payload, or undefined when the tab was opened directly.
  * @param sink - opens the parsed path at the parsed line.
  * @returns whether the focus was a path request.
@@ -257,6 +295,6 @@ export function createPanelStackRegistry(): PanelStackRegistry {
 export function consumeViewRequest(focus: string | undefined, sink: ViewRequestSink): boolean {
   const target = parseFocus(focus);
   if (target === undefined) return false;
-  sink.open(target.path, target.line, target.absolute);
+  sink.open(target.path, target.line, target.absolute, target.revision);
   return true;
 }
