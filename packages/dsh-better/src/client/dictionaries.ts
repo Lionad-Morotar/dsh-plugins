@@ -43,6 +43,13 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "compaction.readingOne": "压缩 1 次",
     "compaction.tooltip": "本会话上下文已压缩 {count} 次",
     "compaction.tooltipWithFailures": "本会话上下文已压缩 {count} 次，另有 {failures} 次压缩失败",
+    // The settings nav entry and the page it opens. The nav reads `tabs.nav`
+    // as a thunk, so a locale change re-labels the entry without re-registering.
+    "tabs.nav": "Tab 管理",
+    "tabs.heading": "Tab 管理",
+    "tabs.empty": "还没有插件注册会话标签。",
+    "tabs.show": "在标签栏显示{label}",
+    "tabs.hide": "从标签栏隐藏{label}",
   },
   en: {
     "overlay.aria": "Select a model",
@@ -66,5 +73,10 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "compaction.readingOne": "1 compaction",
     "compaction.tooltip": "This session's context was compressed {count} time(s)",
     "compaction.tooltipWithFailures": "This session's context was compressed {count} time(s), with {failures} failed attempt(s)",
+    "tabs.nav": "Tabs",
+    "tabs.heading": "Tabs",
+    "tabs.empty": "No plugin has registered a conversation tab yet.",
+    "tabs.show": "Show {label} in the tab bar",
+    "tabs.hide": "Hide {label} from the tab bar",
   },
 });
