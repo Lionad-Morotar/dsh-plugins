@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 
 import type { Translate } from "./copy.ts";
 import {
+  adoptsOpenFile,
   badgeFor,
   computeTreeWindow,
   formatSize,
@@ -306,18 +307,36 @@ export function TreeBody({
   // The view clears `entryFocus` once it is served; the guard keeps a listing
   // refresh landing in the same tick from serving the same arrival twice.
   const servedEntry = useRef<TreeEntryFocus | undefined>(undefined);
+  // The panel path the adoption effect last saw. A rebuilt row list (a folder
+  // collapsing, a listing landing) must not be mistaken for the reader opening
+  // a file: only a path that actually changed earns the cursor back.
+  const seenSelection = useRef<string | undefined>(undefined);
+  // The row the cursor names. The effect below reads it without subscribing,
+  // so deciding whether to follow the open file never feeds back into itself.
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
   const entryIndexes = useMemo(
     () => rows.flatMap((row, index) => (row.type === "entry" ? [index] : [])),
     [rows],
   );
 
   // A click or an outside jump keeps the cursor honest so the very first arrow
-  // key press continues from where the user is looking.
+  // key press continues from where the user is looking. A rebuilt row list is
+  // not such a jump: left arrow collapses a folder while the panel still shows
+  // the file opened on arrival, and copying that file back would undo the key.
   useEffect(() => {
+    const selectionMoved = seenSelection.current !== selectedPath;
+    seenSelection.current = selectedPath;
     if (selectedPath === undefined) return;
+    const resting = cursorRef.current === undefined ? undefined : rows[cursorRef.current];
+    if (!adoptsOpenFile({
+      cursorPath: resting?.type === "entry" ? resting.path : undefined,
+      selectionMoved,
+    })) return;
     const index = rows.findIndex(row => row.type === "entry" && row.path === selectedPath);
     if (index >= 0) setCursor(index);
   }, [selectedPath, rows]);
+
 
   // Discard a cursor that pointed into a row the outside world removed (a
   // directory collapse from a cross-panel jump, a refreshed listing).
