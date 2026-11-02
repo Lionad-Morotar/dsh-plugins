@@ -78,6 +78,11 @@ export interface CatalogEntry {
    * nothing else.
    */
   readonly hostShutdown?: boolean;
+  /**
+   * Extra words the row answers to, matched behind the label. The quit row's
+   * label is Chinese, so the English verb a reader types would otherwise miss.
+   */
+  readonly aliases?: readonly string[];
 }
 
 /**
@@ -112,6 +117,7 @@ export const CATALOG: readonly CatalogEntry[] = [
     category: "panel",
     action: { kind: "request-shutdown" },
     hostShutdown: true,
+    aliases: ["close", "quit", "exit"],
   },
 
   // 会话：生命周期

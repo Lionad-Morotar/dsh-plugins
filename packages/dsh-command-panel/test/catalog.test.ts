@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { rankRows } from "../src/client/ranking.ts";
+
 import { CATALOG, availableCatalog, type ActionContext, type AvailabilityOptions } from "../src/client/catalog.ts";
 import { copyFor } from "../src/client/copy.ts";
 import { catalogRows, withConfirmLabel } from "../src/client/rows.ts";
@@ -105,6 +107,11 @@ describe("app.quit", () => {
     const rows = catalogRows(zh, entries, new Map());
     const plain = rows.find(row => row.action.kind === "request-shutdown");
     expect(plain?.label).toBe("面板：关闭 DSH");
+    // The label is Chinese, so the English verbs a reader types ride as aliases.
+    for (const query of ["close", "quit", "exit"]) {
+      const matched = rankRows(rows, query).filter(row => row.action.kind === "request-shutdown");
+      expect(matched, query).toHaveLength(1);
+    }
     const armed = withConfirmLabel(rows, true, zh).find(row => row.action.kind === "request-shutdown");
     expect(armed?.label).toBe(zh.confirmQuit);
     // Disarming drops the wording; untouched rows come back as the same array.

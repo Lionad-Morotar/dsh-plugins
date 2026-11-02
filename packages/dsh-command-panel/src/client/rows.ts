@@ -244,6 +244,7 @@ export function catalogRows(
   return entries.map(entry => ({
     key: `catalog:${entry.id}`,
     label: `${copy.categoryNames[entry.category]}：${copy.actionLabels[entry.id] ?? entry.id}`,
+    alias: entry.aliases === undefined || entry.aliases.length === 0 ? undefined : entry.aliases.join(" "),
     hint: entry.shortcutId === undefined ? undefined : hints.get(entry.shortcutId),
     action: entry.action,
   }));
