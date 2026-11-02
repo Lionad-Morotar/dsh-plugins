@@ -19,7 +19,3 @@
 	url = https://github.com/deepseek-ai/deepseek-harness
 	ignore = all
 	shallow = true
-[submodule "forks/dsh-wakatime-plugin"]
-	ignore = all
-	path = forks/dsh-wakatime-plugin
-	url = https://github.com/Lionad-Morotar/dsh-wakatime-plugin
