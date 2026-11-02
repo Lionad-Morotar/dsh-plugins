@@ -14,3 +14,7 @@
 	path = refs/vscode-wakatime
 	url = https://github.com/wakatime/vscode-wakatime
 	ignore = all
+[submodule "forks/dsh-wakatime-plugin"]
+	ignore = all
+	path = forks/dsh-wakatime-plugin
+	url = https://github.com/Lionad-Morotar/dsh-wakatime-plugin
