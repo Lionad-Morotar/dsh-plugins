@@ -580,8 +580,10 @@ export function PreviewPane({ sessionId, files, path, t, visible = true, rendere
   const conflict = draft?.conflict === true;
   const discarded = draft?.discarded ?? null;
   // After a confirmed reload the bar stays for the one action that still has
-  // something to offer: putting the discarded text back as a draft.
-  const offerRestore = !conflict && discarded !== null && draft?.dirty !== true;
+  // something to offer: putting the discarded text back as a draft. Once the
+  // draft already holds that text (restored and saved) the offer is empty.
+  const offerRestore =
+    !conflict && discarded !== null && draft?.dirty !== true && discarded !== draft?.text;
 
   let body: ReactElement;
   if (binary) {
