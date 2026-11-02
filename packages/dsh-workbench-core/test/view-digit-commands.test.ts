@@ -43,7 +43,7 @@ const label = (key: string, params?: Record<string, string | number>): string =>
   params === undefined ? key : `${key}:${String(params.index)}`;
 
 describe("view digit command registration", () => {
-  it("registers nine digits when the preference ships enabled", () => {
+  it("registers nine digits and the last-tab chord when the preference ships enabled", () => {
     const { store } = preference();
     const { registered, shortcuts } = harness();
     registerViewDigitCommands(shortcuts, serviceWithSession(), label, store, {
@@ -51,8 +51,9 @@ describe("view digit command registration", () => {
       switchTo: () => true,
     });
 
-    expect(registered).toHaveLength(9);
-    expect(registered.map(command => command.id)).toEqual([
+    expect(registered).toHaveLength(10);
+    const digits = registered.slice(0, 9);
+    expect(digits.map(command => command.id)).toEqual([
       "workbench.view.digit1",
       "workbench.view.digit2",
       "workbench.view.digit3",
@@ -63,13 +64,18 @@ describe("view digit command registration", () => {
       "workbench.view.digit8",
       "workbench.view.digit9",
     ]);
-    for (const command of registered) {
+    for (const command of digits) {
       // Desktop profiles only: web delivers the chord through the local router,
       // so declaring a web default would be a promise the host cannot keep.
       expect(Object.keys(command.defaults)).toEqual(["desktop:macos", "desktop:windows", "desktop:linux"]);
       expect(command.defaults["desktop:macos"]).toEqual({ code: expect.stringMatching(/^Digit[1-9]$/u), modifiers: ["primary"] });
       expect(command.label()).toMatch(/^keymap\.viewDigit:[1-9]$/u);
     }
+    const last = registered[9];
+    expect(last?.id).toBe("workbench.view.last");
+    expect(Object.keys(last?.defaults ?? {})).toEqual(["desktop:macos", "desktop:windows", "desktop:linux"]);
+    expect(last?.defaults["desktop:macos"]).toEqual({ code: "Digit0", modifiers: ["primary"] });
+    expect(last?.label()).toBe("keymap.viewLast");
   });
 
   it("registers nothing while the toggle is off and follows later flips", () => {
@@ -82,10 +88,10 @@ describe("view digit command registration", () => {
     expect(registered).toHaveLength(0);
 
     store.set(true);
-    expect(registered).toHaveLength(9);
+    expect(registered).toHaveLength(10);
 
     store.set(false);
-    expect(disposed).toHaveLength(9);
+    expect(disposed).toHaveLength(10);
   });
 
   it("disposes every registration when the caller tears the mount down", () => {
@@ -95,15 +101,15 @@ describe("view digit command registration", () => {
       available: () => true,
       switchTo: () => true,
     });
-    expect(registered).toHaveLength(9);
+    expect(registered).toHaveLength(10);
 
     off();
-    expect(disposed).toHaveLength(9);
+    expect(disposed).toHaveLength(10);
 
     // The store subscription is gone too: a later flip cannot resurrect rows.
     store.set(false);
     store.set(true);
-    expect(registered).toHaveLength(9);
+    expect(registered).toHaveLength(10);
   });
 
   it("switches to the addressed tab and reports nothing to do past the strip", () => {
@@ -123,6 +129,12 @@ describe("view digit command registration", () => {
     expect(resolution?.status).toBe("handled");
     if (resolution?.status === "handled") resolution.run();
     expect(switched).toEqual([1]);
+
+    const last = registered.find(command => command.id === "workbench.view.last");
+    const lastResolution = last?.resolve({ region: "page", modal: null, target: null });
+    expect(lastResolution?.status).toBe("handled");
+    if (lastResolution?.status === "handled") lastResolution.run();
+    expect(switched).toEqual([1, 0]);
   });
 
   it("blocks every digit while no session is selected", () => {
@@ -135,6 +147,14 @@ describe("view digit command registration", () => {
     });
 
     expect(registered[0]?.resolve({ region: "page", modal: null, target: null })).toEqual({
+      status: "blocked",
+      reason: "command.noSession",
+    });
+    expect(registered.find(command => command.id === "workbench.view.last")?.resolve({
+      region: "page",
+      modal: null,
+      target: null,
+    })).toEqual({
       status: "blocked",
       reason: "command.noSession",
     });

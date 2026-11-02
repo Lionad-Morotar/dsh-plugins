@@ -36,8 +36,8 @@ import { createSessionSelection, readCurrentSessionId } from "./session.ts";
 import { createWorkbenchService, type WorkbenchService } from "./service.ts";
 import { createGlobalKeyRouter, installGlobalKeyRouter } from "./shortcut-router.ts";
 import { createReturnToChatRow, resolveMenuItemButton, type LoaderRequire } from "./view-actions.tsx";
-import { createViewDigitPreference, installViewDigitKeyRouter } from "./view-digits.ts";
-import { createViewSwitcher, listViewTabs, switchToViewTab } from "./view-switcher.ts";
+import { createViewDigitPreference, installViewDigitKeyRouter, VIEW_LAST_INDEX } from "./view-digits.ts";
+import { createViewSwitcher, listViewTabs, switchToLastViewTab, switchToViewTab } from "./view-switcher.ts";
 import { createDockVisibility } from "./dock-visibility.ts";
 import { createViewSeam } from "./views.ts";
 import { WORKBENCH_SERVICE } from "../shared.ts";
@@ -139,8 +139,16 @@ function currentDocument(): Document | undefined {
  */
 function createTabStripRuntime(): ViewDigitRuntime {
   return {
-    available: index => listViewTabs(currentDocument()).length >= index,
-    switchTo: index => switchToViewTab(currentDocument(), index),
+    available(index) {
+      const count = listViewTabs(currentDocument()).length;
+      // `length >= 0` is true for an empty strip, which would consume ⌘0 as a no-op.
+      if (index === VIEW_LAST_INDEX) return count > 0;
+      return index >= 1 && count >= index;
+    },
+    switchTo(index) {
+      const doc = currentDocument();
+      return index === VIEW_LAST_INDEX ? switchToLastViewTab(doc) : switchToViewTab(doc, index);
+    },
   };
 }
 
