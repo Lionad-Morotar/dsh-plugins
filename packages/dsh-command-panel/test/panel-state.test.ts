@@ -9,6 +9,7 @@ import {
   modelFor,
   moveHighlight,
   readPrefix,
+  readQuitAccept,
   reconciled,
   withQuery,
 } from "../src/client/panel-state.ts";
@@ -22,6 +23,7 @@ describe("modelFor", () => {
       query: "",
       highlight: 0,
       archivedOnly: false,
+      confirmQuit: false,
     });
   });
 });
@@ -36,6 +38,7 @@ describe("drillArchived", () => {
       query: "",
       highlight: 0,
       archivedOnly: true,
+      confirmQuit: false,
     });
   });
 });
@@ -52,6 +55,7 @@ describe("back", () => {
         query: "",
         highlight: 0,
         archivedOnly: false,
+        confirmQuit: false,
       },
     });
   });
@@ -149,5 +153,33 @@ describe("readPrefix", () => {
 
   it("does not leave the command mode by itself", () => {
     expect(readPrefix("", "command")).toEqual({ query: "", enterCommand: false });
+  });
+});
+
+describe("quit confirmation", () => {
+  it("arms on the first accept and only fires on the second", () => {
+    const first = readQuitAccept(modelFor("command"));
+    expect(first.kind).toBe("arm");
+    if (first.kind !== "arm") return;
+    expect(first.model.confirmQuit).toBe(true);
+    expect(readQuitAccept(first.model)).toEqual({ kind: "fire" });
+  });
+
+  it("keeps the mark while the highlight moves", () => {
+    const armed = { ...modelFor("command"), confirmQuit: true };
+    expect(moveHighlight(armed, 1, 3).confirmQuit).toBe(true);
+    expect(highlightAt(armed, 0, 3).confirmQuit).toBe(true);
+    expect(reconciled(armed, 3).confirmQuit).toBe(true);
+  });
+
+  it("disarms when the query changes, on back, and on a fresh open", () => {
+    const armed = { ...modelFor("command"), confirmQuit: true };
+    expect(withQuery(armed, "q").confirmQuit).toBe(false);
+    const drilled = drill({ ...modelFor("switch"), confirmQuit: true }, { kind: "all" });
+    const result = back(drilled);
+    expect(result.kind).toBe("model");
+    if (result.kind !== "model") return;
+    expect(result.model.confirmQuit).toBe(false);
+    expect(modelFor("command").confirmQuit).toBe(false);
   });
 });
