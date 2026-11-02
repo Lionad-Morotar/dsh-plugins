@@ -538,3 +538,112 @@ export function basename(path: string): string {
   const separator = path.lastIndexOf("/");
   return separator < 0 ? path : path.slice(separator + 1);
 }
+
+/** The viewport rectangle of the file row a hover card points at. */
+export interface PreviewAnchor {
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
+/** A measured box on screen. */
+export interface PreviewSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** A top-left offset inside the viewport. */
+export interface PreviewPoint {
+  readonly left: number;
+  readonly top: number;
+}
+
+/**
+ * Key a first-page cache entry. The hash is case-insensitive because Git is;
+ * the path is kept verbatim so two files differing only in case never collide.
+ * @param hash - commit object id as the detail pane knows it.
+ * @param path - repository-relative path.
+ * @returns an opaque cache key.
+ */
+export function previewCacheKey(hash: string, path: string): string {
+  return `${hash.trim().toLowerCase()}\u0000${path}`;
+}
+
+/** A fixed-capacity least-recently-used cache. */
+export interface PreviewCache<T> {
+  get(key: string): T | undefined;
+  set(key: string, value: T): void;
+  readonly size: number;
+}
+
+/**
+ * Build a small LRU for the hover card's first pages.
+ *
+ * A `Map` already iterates in insertion order, so a read that re-inserts the
+ * entry and an insert that drops the first key are all the bookkeeping a
+ * 24-entry cache needs; the cap keeps a long review session bounded.
+ * @param capacity - maximum live entries; values below one are raised to one.
+ * @returns the cache.
+ */
+export function createPreviewCache<T>(capacity: number): PreviewCache<T> {
+  const limit = Math.max(1, Math.trunc(capacity));
+  const entries = new Map<string, T>();
+  return {
+    get(key) {
+      const value = entries.get(key);
+      if (value === undefined) return undefined;
+      entries.delete(key);
+      entries.set(key, value);
+      return value;
+    },
+    set(key, value) {
+      entries.delete(key);
+      entries.set(key, value);
+      if (entries.size > limit) {
+        const oldest = entries.keys().next();
+        if (!oldest.done) entries.delete(oldest.value);
+      }
+    },
+    get size() {
+      return entries.size;
+    },
+  };
+}
+
+/**
+ * Place the hover card beside a file row without letting it leave the viewport.
+ *
+ * The card prefers the right of the row; if the right edge would clip it, it
+ * flips to the left, and when neither side has full room it is pulled inward
+ * from the nearest margin. Vertically it opens below the row so the row itself
+ * stays visible, and flips above when the bottom edge is too close.
+ * @param anchor - the row's viewport rectangle.
+ * @param card - the card's measured size.
+ * @param viewport - the window's inner size.
+ * @param gap - space between row and card.
+ * @param margin - minimum distance from every viewport edge.
+ * @returns the card's fixed-position offset.
+ */
+export function placePreviewCard(
+  anchor: PreviewAnchor,
+  card: PreviewSize,
+  viewport: PreviewSize,
+  gap = 10,
+  margin = 8,
+): PreviewPoint {
+  const maxLeft = Math.max(margin, viewport.width - card.width - margin);
+  let left = anchor.right + gap;
+  if (left > maxLeft) {
+    left = anchor.left - card.width - gap;
+    if (left < margin) left = Math.min(maxLeft, Math.max(margin, anchor.left));
+  }
+  const maxTop = Math.max(margin, viewport.height - card.height - margin);
+  const below = anchor.bottom + gap;
+  const above = anchor.top - card.height - gap;
+  let top: number;
+  if (below <= maxTop) top = Math.max(margin, below);
+  else if (above >= margin) top = above;
+  else top = Math.min(maxTop, Math.max(margin, anchor.top));
+  return { left, top };
+}

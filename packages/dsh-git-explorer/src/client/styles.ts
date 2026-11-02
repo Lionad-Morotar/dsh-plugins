@@ -12,7 +12,9 @@
 const STYLE_ID = "dsh-git-explorer-styles";
 
 export const GIT_STYLES = `
-.gx-root {
+/* The token block is shared with the hover card because the card portals out of
+   .gx-root and would otherwise lose the theme variables with it. */
+.gx-root, .gx-preview {
   --gx-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --gx-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --gx-row-h: 24px;
@@ -41,6 +43,8 @@ export const GIT_STYLES = `
   --gx-lane-5: color-mix(in oklab, var(--dsw-alias-state-warn-primary, currentColor) 60%, var(--dsw-alias-brand-primary, currentColor));
   --gx-lane-6: color-mix(in oklab, var(--dsw-alias-state-error-primary, currentColor) 55%, var(--dsw-alias-state-business-primary, currentColor));
   --gx-lane-7: var(--dsw-alias-label-tertiary, currentColor);
+}
+.gx-root {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -396,6 +400,59 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 .gx-detail-file:hover { background: var(--gx-hover); }
 .gx-detail-file:focus-visible { outline: 2px solid var(--gx-accent); outline-offset: -2px; }
 .gx-detail-file .gx-file-name { font-size: 11px; }
+
+/* The hover card portals out of .gx-root, so it declares the shared token block
+   above and carries its own fixed frame; pointer-events none keeps it from ever
+   sitting between the reader and the row that owns the click. */
+.gx-preview {
+  display: flex;
+  flex-direction: column;
+  width: min(420px, calc(100vw - 16px));
+  max-height: min(420px, calc(100vh - 16px));
+  z-index: 40;
+  border: 1px solid var(--gx-border);
+  border-radius: 8px;
+  background: var(--gx-panel-2);
+  color: var(--gx-text);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--gx-text) 22%, transparent);
+  overflow: hidden;
+  font-family: var(--gx-font);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.gx-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--gx-border-soft);
+  background: var(--gx-panel);
+}
+.gx-preview-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.gx-preview-rev { margin-left: auto; flex: none; color: var(--gx-caption); font-family: var(--gx-mono); font-size: 10px; }
+.gx-preview-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; padding: 8px 10px; overflow: hidden; }
+.gx-preview-text {
+  margin: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  color: var(--gx-text-2);
+  font-family: var(--gx-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: hidden;
+}
+.gx-preview-note { flex: none; margin-top: 6px; color: var(--gx-caption); font-size: 10px; }
+/* A capped card can clip the fortieth line; fading the last rows tells the
+   reader the text continues without pretending the card is the full file. */
+.gx-preview[data-clipped="true"] .gx-preview-text {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+}
+.gx-preview-unavailable { display: flex; flex-direction: column; gap: 3px; color: var(--gx-text-2); }
+.gx-preview-unavailable strong { color: var(--gx-text); font-size: 11.5px; }
 
 .gx-empty {
   display: flex;
