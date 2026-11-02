@@ -138,6 +138,36 @@ describe("mountArchChrome", () => {
     dispose();
   });
 
+  it("walks the view tabs with arrow keys while the diagram holds focus, and ignores them elsewhere", async () => {
+    const { fetch } = fakeFetch({
+      "/arch/api/views": () => jsonResponse(viewsResponse()),
+      "/arch/api/state": () => jsonResponse({ state: null, degraded: false }),
+    });
+    const { host } = mountHost();
+    const dispose = mountArchChrome(host, { sessionId: "s1", fetchImpl: fetch, load: loadRealChunk, mountView });
+    await until(() => host.querySelector("[data-arch-body] svg") !== null);
+
+    const diagram = host.querySelector<HTMLElement>("[data-arch-diagram]");
+    expect(diagram?.tabIndex).toBe(0);
+    const pressed = (): string | null =>
+      host.querySelector('button[aria-pressed="true"]')?.getAttribute("data-view-id") ?? null;
+
+    diagram?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    await until(() => pressed() === "skin");
+
+    diagram?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }));
+    await until(() => pressed() === "index");
+
+    // Past the last tab is a no-op, and a key typed into a field keeps its meaning.
+    diagram?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }));
+    const field = document.createElement("input");
+    host.append(field);
+    const leaked = field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    expect(leaked).toBe(true);
+    expect(pressed()).toBe("index");
+    dispose();
+  });
+
   it("restores the persisted view selection and viewport from the state route", async () => {
     const { fetch } = fakeFetch({
       "/arch/api/views": () => jsonResponse(viewsResponse()),

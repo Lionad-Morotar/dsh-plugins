@@ -424,7 +424,9 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
     body = div("archBody");
     body.style.cssText = "flex:1;min-height:0;overflow:hidden;display:flex";
     diagramHost = div("archDiagram");
-    diagramHost.style.cssText = "flex:1;min-width:0;min-height:0";
+    diagramHost.style.cssText = "flex:1;min-width:0;min-height:0;outline:none";
+    // A plain div cannot take focus, so arrow keys would never land here.
+    diagramHost.tabIndex = 0;
     body.append(diagramHost, detailsHost);
     content.append(body);
 
@@ -438,6 +440,20 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
       if (first !== undefined) viewState.setViewport(defaultViewport(first.bounds, { width: 0, height: 0 }));
     }
     if (initial !== "") select(initial);
+
+    // Arrow keys walk the view tabs, but only while the diagram itself holds
+    // focus. A key typed into the chat box, or into any field inside the
+    // panel, keeps its own meaning.
+    diagramHost.addEventListener("keydown", event => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const current = views?.findIndex(candidate => candidate.id === view?.id) ?? -1;
+      if (current < 0 || views === undefined) return;
+      const next = current + (event.key === "ArrowRight" ? 1 : -1);
+      const target = views[next];
+      if (target === undefined) return;
+      event.preventDefault();
+      select(target.id);
+    });
 
     const section = host.closest("[data-workbench-dock]");
     if (section !== null && observer === undefined && typeof MutationObserver === "function") {
