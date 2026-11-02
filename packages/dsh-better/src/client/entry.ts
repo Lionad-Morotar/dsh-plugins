@@ -41,12 +41,33 @@ import { COMPACTION_ID, COMPACTION_ORDER, COMPACTION_SLOT } from "./compaction-r
 import { installCompactionStyles } from "./compaction-styles.ts";
 import { createSeat, type SeatDeps, type SeatProps } from "./seat.tsx";
 import { modelPopupSpec, openContext, openSegment, type PopupOpenerLike } from "./trigger.ts";
+import { TabSettingsPage, insertTabPageStyles, type PageReact } from "./tabs-page.tsx";
+import {
+  createTabController,
+  TABS_SECTION_ID,
+  TABS_SECTION_ORDER,
+  TABS_SECTION_SLOT,
+  type ViewLedger,
+  type ViewPins,
+} from "./tabs.ts";
 
 /** Statically seeded primitives, resolved through the factory `require`. */
 import type { Primitives } from "./primitives.ts";
 
 /** The overlay slot the picker lives in. */
 const OVERLAY_SLOT = "conversation.input.overlay";
+
+/**
+ * The session header, which is where the host injects its view-pin seam.
+ *
+ * The seam is not a service: the header slot's `inject` callback is the only
+ * place it exists. An entry here receives it, and rendering nothing is the
+ * point, because the header itself is the host's.
+ */
+const HEADER_SLOT = "conversation.session.header";
+
+/** Cell id of the entry that only exists to receive the pin seam. */
+const HEADER_ENTRY_ID = "better-tabs";
 
 /** The composer seat whose trigger opens the picker instead of its own menu. */
 const SEAT_SLOT = "conversation.input.model";
@@ -123,8 +144,25 @@ export interface CommandUiLike {
 /** What this entry needs from `ctx.slots`. */
 export interface SlotsLike {
   entries(key: string): readonly SlotEntryLike[];
+  /**
+   * Shadowing winners for a slot: one entry per cell.
+   *
+   * Optional on the type because the surfaces above were written against hosts
+   * that only expose `entries`. The tab page requires it and checks at runtime.
+   */
+  entriesOfSlot?(key: string): readonly SlotEntryLike[];
   register(options: SlotRegistration, component: (props: OverlayProps) => ReactNode): () => void;
+  /**
+   * Register into a slot whose component is not the overlay.
+   *
+   * The settings page and the header seam render nothing the overlay knows
+   * about, and the registry accepts any function. Keeping that path off the
+   * overlay's signature is what stops the page from having to pretend it
+   * receives overlay props.
+   */
+  registerUntyped?(options: SlotRegistration, component: () => unknown): () => void;
   inject(key: string, callback: () => () => void): () => void;
+  subscribe?(key: string, listener: () => void): () => void;
 }
 
 /** One registered slot entry, narrowed to what the delegation reads. */
@@ -141,7 +179,9 @@ export interface SlotRegistration {
   readonly order?: number;
   readonly priority?: number;
   readonly locale?: string;
-  readonly inject?: (sessionId: string) => Record<string, unknown>;
+  /** Nav label. A thunk is re-read on every projection, so it follows the locale. */
+  readonly label?: string | (() => string);
+  readonly inject?: (sessionId: string, ...rest: unknown[]) => Record<string, unknown>;
 }
 
 /** The slice of `modelDirectories` this package reads. */
@@ -450,6 +490,69 @@ export const clientPlugin = {
       "dsh-better: composer attachment selection",
     );
 
+    // The tab page. It occupies a settings section of its own because the thing
+    // it configures is the header strip, which no existing section owns. The
+    // controller is built once and shared with the header: the page renders the
+    // choice, and the header is where the host's pin seam actually lives.
+    const tabs = createTabController({
+      ledger: viewLedger(ctx.slots),
+      storage: tabStorage(),
+    });
+    ctx.effect(
+      () =>
+        ctx.slots.inject(TABS_SECTION_SLOT, () => {
+          const doc = globalThis.document;
+          const removeStyles = doc === undefined ? undefined : insertTabPageStyles(doc);
+          const removeSection = registerPlain(ctx.slots, {
+            name: TABS_SECTION_SLOT,
+            id: TABS_SECTION_ID,
+            order: TABS_SECTION_ORDER,
+            label: () => ctx.locale.bind?.(NS)?.("tabs.nav") ?? "Tabs",
+          }, () => {
+            const React = reactOf(loaderRequire);
+            if (React === null) return null;
+            return TabSettingsPage({
+              React,
+              controller: tabs,
+              copy: tabCopy(ctx),
+            });
+          });
+          return () => {
+            removeSection();
+            removeStyles?.();
+          };
+        }),
+      "dsh-better: tab management",
+    );
+
+    // The pin seam is injected into the header slot, and the renderer runs an
+    // entry's inject exactly once per session binding, caching the result. So
+    // the seam is captured there and the controller is started once; stopping
+    // it is the registration disposer's job, because the callback's return
+    // value is business props and is not a lifecycle.
+    ctx.effect(
+      () =>
+        ctx.slots.inject(HEADER_SLOT, () => {
+          let stop: (() => void) | undefined;
+          const remove = registerPlain(ctx.slots, {
+            name: HEADER_SLOT,
+            id: HEADER_ENTRY_ID,
+            inject: (_sessionId, actions) => {
+              if (stop !== undefined) return {};
+              const seam = pinsOf(actions);
+              if (seam !== undefined) stop = tabs.start(seam);
+              return {};
+            },
+          }, () => null);
+          return () => {
+            remove();
+            stop?.();
+            stop = undefined;
+          };
+        }),
+      "dsh-better: tab visibility",
+    );
+
     // The focus chord: one host-registered command, so it appears in 设置 →
     // 快捷键 next to the built-in bindings and is rebound there. `inject` is the
     // soft probe, not a plugin-level dependency — see ClientContextLike.inject.
@@ -600,6 +703,113 @@ function pathOfFile(file: File): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * Register a component the overlay's signature does not describe.
+ *
+ * The slot registry takes any function. The typed `register` on this context is
+ * narrowed to the overlay because that is what the rest of this file renders, so
+ * the two surfaces that are not the overlay go through the widened view.
+ */
+function registerPlain(
+  slots: SlotsLike,
+  options: SlotRegistration,
+  component: () => unknown,
+): () => void {
+  const register = slots.registerUntyped ?? (slots.register as (options: SlotRegistration, component: () => unknown) => () => void);
+  return register.call(slots, options, component);
+}
+
+/**
+ * The ledger the tab controller reads.
+ *
+ * `entriesOfSlot` is the shadowing projection, so a cell another plugin has
+ * shadowed contributes one row. A host that predates the method degrades to the
+ * raw ledger, which is the same list when no cell is shadowed.
+ */
+function viewLedger(slots: SlotsLike): ViewLedger {
+  return {
+    entriesOfSlot: key => (slots.entriesOfSlot ?? slots.entries).call(slots, key),
+    subscribe: (key, listener) => slots.subscribe?.(key, listener) ?? (() => {}),
+  };
+}
+
+/** Page storage. Absent under a runtime without `localStorage`, which the controller treats as memory only. */
+function tabStorage(): Storage | undefined {
+  try {
+    return globalThis.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The React the loader seeded.
+ *
+ * Read per render rather than captured: the settings page can open before the
+ * shell has finished seeding static modules, and a captured null would make the
+ * section permanently blank.
+ */
+function reactOf(require: LoaderRequire | null): PageReact | null {
+  if (require === null) return null;
+  try {
+    const loaded = require("react");
+    if (typeof loaded !== "object" || loaded === null) return null;
+    const candidate = loaded as Partial<PageReact>;
+    return typeof candidate.createElement === "function" && typeof candidate.useSyncExternalStore === "function"
+      ? (candidate as PageReact)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The page's strings for the locale that is active right now. */
+function tabCopy(ctx: ClientContextLike): {
+  heading: string;
+  empty: string;
+  checkboxLabel(label: string, enabled: boolean): string;
+} {
+  const translate = ctx.locale.bind?.(NS);
+  const text = (key: string, fallback: string): string => translate?.(key) ?? fallback;
+  return {
+    heading: text("tabs.heading", "Tabs"),
+    empty: text("tabs.empty", "No plugin has registered a conversation tab yet."),
+    checkboxLabel: (label, enabled) => {
+      const pattern = text(enabled ? "tabs.hide" : "tabs.show", "{label}");
+      return pattern.replace("{label}", label);
+    },
+  };
+}
+
+/**
+ * The pin seam, read off the header slot's injected actions.
+ *
+ * Structural on purpose. The host passes `setPinned` and `hooks.entryPins`; a
+ * host that renames either one yields nothing, and the page still renders — it
+ * just cannot move the strip until the seam is recognisable again.
+ */
+function pinsOf(actions: unknown): ViewPins | undefined {
+  if (typeof actions !== "object" || actions === null) return undefined;
+  const candidate = actions as {
+    setPinned?: unknown;
+    hooks?: { entryPins?: { getSnapshot?: unknown; subscribe?: unknown } };
+  };
+  const pins = candidate.hooks?.entryPins;
+  if (typeof candidate.setPinned !== "function") return undefined;
+  if (typeof pins?.getSnapshot !== "function" || typeof pins.subscribe !== "function") return undefined;
+  const setPinned = candidate.setPinned as (id: string, pinned: boolean) => void;
+  return {
+    unpinned: {
+      getSnapshot: () => {
+        const snapshot = (pins.getSnapshot as () => unknown)();
+        return Array.isArray(snapshot) ? snapshot.filter((item): item is string => typeof item === "string") : [];
+      },
+      subscribe: listener => (pins.subscribe as (listener: () => void) => () => void)(listener),
+    },
+    setPinned,
+  };
 }
 
 /**
