@@ -1,0 +1,545 @@
+/**
+ * The skill enhancer: the argument ghost after a skill token, and the hover panel
+ * that shows what a skill is and what may follow it.
+ *
+ * Two surfaces, one module, because they share the same resolution work: which
+ * skill is the draft addressing, what does its profile say, and where on screen
+ * does the token sit. Both also share a constraint that shapes every decision
+ * here: the composer is a contenteditable, and anything that steals focus from it
+ * breaks the very interaction it is offering. So the panel is a `position: fixed`
+ * body-level node (never clipped by the editor's overflow), every control in it
+ * cancels `pointerdown` (the composer keeps focus, exactly as the host's own menu
+ * does), and insertion goes through the host's `captureInsertion`/`insertText`
+ * pair rather than rewriting the draft.
+ *
+ * Why not `setDraft`: it replaces the whole draft, which rebuilds the chip
+ * structure after the caret and drops the user's undo step. `insertText` is a
+ * discrete, independently undoable insertion validated against a draft revision,
+ * so a stale click is refused instead of corrupting the draft.
+ *
+ * The caret is simplified to the end of the draft. The host's `InputState` does
+ * not publish a caret, and `shouldShowHint` only needs to know whether anything
+ * other than whitespace follows the token. The cost: a user who moves the caret
+ * back into the token without changing the text keeps seeing the ghost until the
+ * next keystroke. That is a cosmetic staleness, not a wrong insertion, because
+ * insertion always re-captures the real selection.
+ *
+ * @module dsh-better/skill-enhancer
+ */
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+
+import { matchLeadingSkillToken, shouldShowHint } from "./skill-hint.ts";
+import type { SkillProfileWire } from "../skill-profile.ts";
+
+/** One session's published composer state, narrowed to what this module reads. */
+export interface SkillInputStateLike {
+  readonly draft: string;
+  readonly draftRev: number;
+  readonly phase: string;
+  readonly occurrences?: readonly unknown[];
+}
+
+/** One session's published composer state; a snapshot store. */
+export interface SkillInputStoreLike {
+  getSnapshot(): SkillInputStateLike;
+  subscribe(listener: () => void): () => void;
+}
+
+/** A selection span captured from the editor, as the host reports it. */
+export interface InsertionSpanLike {
+  readonly start: number;
+  readonly end: number;
+  readonly draftRev: number;
+}
+
+/** The insertion surface the composer exposes for one session. */
+export interface InputActionsLike {
+  captureInsertion?(): InsertionSpanLike;
+  insertText?(text: string, span: InsertionSpanLike): boolean;
+}
+
+/** Props the overlay slot hands this entry. */
+export interface SkillEnhancerProps {
+  /** Id of the session whose composer is mounted, supplied by the registration inject. */
+  readonly sessionId?: string;
+  /**
+   * The composer's draft selector, supplied by the session-scope slot.
+   *
+   * Preferred over this module's own subscription: it is the host's own hook, so
+   * the ghost repaints on exactly the updates the composer itself renders on.
+   */
+  readonly useInput?: <T>(selector: (state: SkillInputStateLike) => T) => T;
+  /** The composer's action surface, supplied by the session-scope slot. */
+  readonly inputActions?: InputActionsLike;
+}
+
+/** Everything the enhancer needs from the plugin. */
+export interface SkillEnhancerDeps {
+  /** sessionId → the session scope, or undefined while it is gone. */
+  readonly scopeFor: (sessionId: string) => unknown;
+  /** sessionId → the published input store, used when the slot supplies no `useInput`. */
+  readonly inputStoreFor: (sessionId: string) => SkillInputStoreLike | undefined;
+  /** sessionId → the insertion surface, used when the slot supplies no `inputActions`. */
+  readonly actionsFor: (sessionId: string) => InputActionsLike | undefined;
+  /** sessionId → the names the host's skill catalogue knows (cached by the caller). */
+  readonly skillNamesFor: (sessionId: string) => Promise<ReadonlySet<string>>;
+  /** Fetch one skill's profile; undefined when the route is unavailable or the skill is unknown. */
+  readonly loadProfile: (sessionId: string, name: string) => Promise<SkillProfileWire | undefined>;
+  /** Invocation counts for one skill. `workspace` is absent when it cannot be aggregated. */
+  readonly loadUsage: (sessionId: string, name: string) => { session: number; workspace?: number };
+  readonly translate: (key: string, params?: Record<string, string | number>) => string;
+  readonly document?: Document | undefined;
+}
+
+/** The skill name a text span addresses, or undefined when it is not a bare token. */
+const BARE_SKILL_TOKEN = /^\/([a-z0-9]+(?:-[a-z0-9]+)*)[ \t]*$/u;
+
+/** How long the pointer must rest on a token before the panel opens. */
+const HOVER_OPEN_MS = 400;
+
+/** How long the panel survives the pointer leaving, so it can be entered. */
+const HOVER_CLOSE_MS = 200;
+
+/** Where the ghost is placed relative to the token. */
+const HINT_GAP_PX = 6;
+
+/** Below this much room to the right, the ghost wraps under the token instead. */
+const HINT_MIN_ROOM_PX = 240;
+
+/** Stable empty state used before a session store resolves. */
+const EMPTY_INPUT_STATE: SkillInputStateLike = { draft: "", draftRev: -1, phase: "plain" };
+
+/**
+ * The text one parameter click inserts.
+ *
+ * The separating space is the whole point: `insertText` lands at the caret, and
+ * without a leading space a click on `--create` after `/flow-workflow` produces
+ * `/flow-workflow--create`, which the host reads as a different skill name. The
+ * trailing space is what lets a second click land as another argument instead of
+ * gluing onto this one.
+ * @param draft - the draft the insertion lands in.
+ * @param flag - the parameter's insertable text.
+ * @returns the exact string to insert.
+ */
+export function paramInsertionText(draft: string, flag: string): string {
+  const needsSpace = draft !== "" && !/\s$/u.test(draft);
+  return `${needsSpace ? " " : ""}${flag} `;
+}
+
+/**
+ * The draft after one parameter is appended at the end.
+ *
+ * The component inserts through the host's action surface, not through this
+ * function. It exists because "where does the caret land" is the one part of the
+ * interaction that can be checked without a composer, and it is the part that
+ * silently corrupts a draft when it is wrong.
+ * @param draft - the draft before the click.
+ * @param flag - the parameter's insertable text.
+ * @returns the draft after the insertion.
+ */
+export function appendParam(draft: string, flag: string): string {
+  return `${draft}${paramInsertionText(draft, flag)}`;
+}
+
+/**
+ * The skill name a hovered text span addresses.
+ *
+ * The span holds the whole text node, so a token followed by a space or by
+ * arguments is the normal case and both must be told apart: whitespace alone still
+ * addresses the skill, anything else means the user has moved on and the panel
+ * would be stale. Name format is checked but catalogue membership is not, because
+ * that is the caller's async lookup and this decision is synchronous.
+ * @param tokenText - the span's text content.
+ * @returns the skill name, or undefined when the span is not a bare token.
+ */
+export function panelVisibleFor(tokenText: string | undefined): string | undefined {
+  if (tokenText === undefined) return undefined;
+  const found = BARE_SKILL_TOKEN.exec(tokenText);
+  return found?.[1];
+}
+
+/**
+ * The ghost's lines for one hint.
+ *
+ * A hint is authored as one long line by most skills, so it is not re-wrapped
+ * here: the CSS keeps it on one line and lets the composer's own width decide.
+ * Only authored line breaks split it, because those are the author's grouping.
+ * @param argumentHint - the skill's raw hint.
+ * @returns one entry per non-blank line; empty when there is no hint.
+ */
+export function hintLinesFor(argumentHint: string | undefined): readonly string[] {
+  if (argumentHint === undefined) return [];
+  return argumentHint
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line !== "");
+}
+
+/** The token element's box, in viewport coordinates. */
+export interface TokenBox {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/** Read the box of the first composer text node that opens with `name`. */
+function tokenBox(doc: Document, name: string): TokenBox | undefined {
+  const nodes = doc.querySelectorAll("[data-composer-text-ref]");
+  for (const node of nodes) {
+    if (panelVisibleFor(node.textContent ?? "") !== name) continue;
+    const rect = node.getBoundingClientRect();
+    return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+  }
+  return undefined;
+}
+
+/** The viewport width, tolerating a document without a window. */
+function viewportWidth(doc: Document): number {
+  return doc.defaultView?.innerWidth ?? 0;
+}
+
+/**
+ * Build the enhancer component.
+ * @param deps - catalogue, profile, usage and insertion resolvers.
+ * @returns the slot component; it renders a body-level ghost and panel.
+ */
+export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhancerProps) => ReactNode {
+  return function SkillEnhancer(props: SkillEnhancerProps): ReactNode {
+    const doc = deps.document ?? globalThis.document;
+    const sessionId = props.sessionId;
+    const store = sessionId === undefined ? undefined : deps.inputStoreFor(sessionId);
+
+    // The slot's own selector hook when it is there, this module's subscription
+    // otherwise: a host that changes the slot props must degrade, not blank.
+    const fromSlot = props.useInput;
+    const draftFromSlot = fromSlot === undefined ? undefined : fromSlot(state => state.draft);
+    const draftFromStore = useSyncExternalStore(
+      listener => (store === undefined ? () => undefined : store.subscribe(listener)),
+      () => (store === undefined ? EMPTY_INPUT_STATE.draft : store.getSnapshot().draft),
+      () => (store === undefined ? EMPTY_INPUT_STATE.draft : store.getSnapshot().draft),
+    );
+    const draft = draftFromSlot ?? draftFromStore;
+
+    const [names, setNames] = useState<ReadonlySet<string>>(() => new Set<string>());
+    const [profile, setProfile] = useState<SkillProfileWire | undefined>(undefined);
+    const [hovered, setHovered] = useState<string | undefined>(undefined);
+    const [box, setBox] = useState<TokenBox | undefined>(undefined);
+    const [usage, setUsage] = useState<{ session: number; workspace?: number } | undefined>(undefined);
+
+    // The catalogue is fetched once per session and kept: it changes only when the
+    // workspace does, and a refetch per keystroke would hammer the host.
+    useEffect(() => {
+      if (sessionId === undefined) return;
+      let live = true;
+      void deps.skillNamesFor(sessionId).then(
+        found => {
+          if (live) setNames(found);
+        },
+        () => {
+          if (live) setNames(new Set<string>());
+        },
+      );
+      return () => {
+        live = false;
+      };
+    }, [sessionId]);
+
+    const match = matchLeadingSkillToken(draft, name => names.has(name));
+    // The caret is assumed to be at the end; see the module note on staleness.
+    const hintName = shouldShowHint(match, draft, draft.length) ? match?.name : undefined;
+
+    // The ghost's text follows whichever skill the draft addresses, whether it was
+    // reached by typing or by hovering.
+    const profileName = hintName ?? hovered;
+    useEffect(() => {
+      if (sessionId === undefined || profileName === undefined) {
+        setProfile(undefined);
+        return;
+      }
+      let live = true;
+      void deps.loadProfile(sessionId, profileName).then(
+        found => {
+          if (live) setProfile(found);
+        },
+        () => {
+          if (live) setProfile(undefined);
+        },
+      );
+      return () => {
+        live = false;
+      };
+    }, [sessionId, profileName]);
+
+    // Anchor the ghost to the token's box. Re-measured when the draft changes
+    // (the token may have moved) and on resize (the composer may have reflowed).
+    useEffect(() => {
+      if (doc === undefined || hintName === undefined) {
+        setBox(undefined);
+        return;
+      }
+      const measure = (): void => setBox(tokenBox(doc, hintName));
+      measure();
+      const view = doc.defaultView;
+      view?.addEventListener("resize", measure);
+      return () => view?.removeEventListener("resize", measure);
+    }, [doc, hintName, draft]);
+
+    // The hover timer. One entry/exit pair per token, cancelled on the way out so a
+    // pointer sweeping across a line of text never opens anything.
+    const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const clearOpen = (): void => {
+      if (openTimer.current !== null) clearTimeout(openTimer.current);
+      openTimer.current = null;
+    };
+    const clearClose = (): void => {
+      if (closeTimer.current !== null) clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    };
+
+    useEffect(() => {
+      if (doc === undefined || sessionId === undefined) return;
+      const onOver = (event: Event): void => {
+        const target = event.target;
+        if (!(target instanceof doc.defaultView!.Element)) return;
+        const node = target.closest("[data-composer-text-ref]");
+        if (node === null) return;
+        const name = panelVisibleFor(node.textContent ?? "");
+        if (name === undefined) return;
+        clearClose();
+        clearOpen();
+        openTimer.current = setTimeout(() => {
+          openTimer.current = null;
+          setHovered(name);
+          setBox(tokenBox(doc, name));
+          setUsage(deps.loadUsage(sessionId, name));
+        }, HOVER_OPEN_MS);
+      };
+      const onOut = (event: Event): void => {
+        const target = event.target;
+        if (!(target instanceof doc.defaultView!.Element)) return;
+        if (target.closest("[data-composer-text-ref]") === null) return;
+        clearOpen();
+        clearClose();
+        closeTimer.current = setTimeout(() => {
+          closeTimer.current = null;
+          setHovered(undefined);
+        }, HOVER_CLOSE_MS);
+      };
+      doc.addEventListener("pointerover", onOver, true);
+      doc.addEventListener("pointerout", onOut, true);
+      return () => {
+        clearOpen();
+        clearClose();
+        doc.removeEventListener("pointerover", onOver, true);
+        doc.removeEventListener("pointerout", onOut, true);
+      };
+    }, [doc, sessionId]);
+
+    // Escape closes the panel. The panel never takes focus, so this listens on the
+    // document rather than on a panel node.
+    useEffect(() => {
+      if (doc === undefined || hovered === undefined) return;
+      const onKey = (event: KeyboardEvent): void => {
+        if (event.key === "Escape") setHovered(undefined);
+      };
+      doc.addEventListener("keydown", onKey);
+      return () => doc.removeEventListener("keydown", onKey);
+    }, [doc, hovered]);
+
+    // The latest draft and action surface, read by the panel's click handler. The
+    // panel node outlives a keystroke on purpose: rebuilding it on every draft
+    // change would drop the pointer-enter grace period while the user is trying to
+    // reach the very button they are hovering.
+    const draftRef = useRef(draft);
+    draftRef.current = draft;
+    const actionsRef = useRef<InputActionsLike | undefined>(undefined);
+    actionsRef.current = props.inputActions ?? (sessionId === undefined ? undefined : deps.actionsFor(sessionId));
+
+    // The ghost. Mounted into `body` rather than rendered in the slot cell: the
+    // composer clips its own children, and an absolutely positioned ghost inside
+    // it would be cut off at the editor's edge.
+    useEffect(() => {
+      if (doc === undefined || hintName === undefined || box === undefined) return undefined;
+      const lines = hintLinesFor(profile?.argumentHint);
+      if (lines.length === 0) return undefined;
+      const node = renderGhost(doc, box, lines);
+      doc.body.append(node);
+      return () => node.remove();
+    }, [doc, hintName, box, profile]);
+
+    // The panel, also body-level and fixed so it clears host popovers.
+    useEffect(() => {
+      if (doc === undefined || hovered === undefined) return undefined;
+      const node = renderPanel(doc, deps, {
+        name: hovered,
+        profile,
+        usage,
+        box,
+        sessionId,
+        getActions: () => actionsRef.current,
+        getDraft: () => draftRef.current,
+        onEnter: clearClose,
+        onLeave: () => {
+          clearOpen();
+          clearClose();
+          closeTimer.current = setTimeout(() => {
+            closeTimer.current = null;
+            setHovered(undefined);
+          }, HOVER_CLOSE_MS);
+        },
+      });
+      doc.body.append(node);
+      return () => node.remove();
+    }, [doc, hovered, profile, usage, box, sessionId]);
+
+    return null;
+  };
+}
+
+/**
+ * Build the ghost node.
+ *
+ * Created imperatively rather than as JSX so it can be appended to `body` beside
+ * the panel: the composer's own box clips its children, and a ghost positioned
+ * inside it would be cut off at the editor's edge.
+ */
+export function renderGhost(doc: Document, box: TokenBox, lines: readonly string[]): HTMLElement {
+  const node = doc.createElement("div");
+  node.className = "dsh-better-skill-hint";
+  node.textContent = lines.join("\n");
+  const wraps = box.right + HINT_GAP_PX > viewportWidth(doc) - HINT_MIN_ROOM_PX;
+  node.style.left = `${wraps ? box.left : box.right + HINT_GAP_PX}px`;
+  node.style.top = `${wraps ? box.bottom + 2 : box.top}px`;
+  return node;
+}
+
+/** What the panel renders for one hovered skill. */
+export interface PanelInput {
+  readonly name: string;
+  readonly profile: SkillProfileWire | undefined;
+  readonly usage: { session: number; workspace?: number } | undefined;
+  readonly box: TokenBox | undefined;
+  readonly sessionId: string | undefined;
+  /** Read at click time, so the panel never holds a stale action surface. */
+  readonly getActions: () => InputActionsLike | undefined;
+  /** Read at click time, for the same reason. */
+  readonly getDraft: () => string;
+  readonly onEnter: () => void;
+  readonly onLeave: () => void;
+}
+
+/**
+ * Build the panel node.
+ *
+ * Every control cancels `pointerdown`: the composer keeps focus, so a click on a
+ * parameter inserts at the caret the user left behind instead of at a caret the
+ * panel just created by stealing focus.
+ */
+export function renderPanel(doc: Document, deps: SkillEnhancerDeps, input: PanelInput): HTMLElement {
+  const panel = doc.createElement("div");
+  panel.className = "dsh-better-skill-panel";
+  panel.addEventListener("pointerenter", input.onEnter);
+  panel.addEventListener("pointerleave", input.onLeave);
+
+  const title = doc.createElement("div");
+  title.className = "dsh-better-skill-panel-title";
+  title.textContent = `/${input.name}`;
+  panel.append(title);
+
+  const metadata = input.profile?.metadata ?? {};
+  const metadataKeys = Object.keys(metadata);
+  if (metadataKeys.length > 0) {
+    const section = doc.createElement("div");
+    section.className = "dsh-better-skill-panel-section";
+    section.append(labelNode(doc, deps.translate("skill.metadata")));
+    for (const key of metadataKeys) {
+      const row = doc.createElement("div");
+      row.textContent = `${key}: ${metadata[key] ?? ""}`;
+      section.append(row);
+    }
+    panel.append(section);
+  }
+
+  const path = input.profile?.path;
+  if (path !== undefined && path !== "") {
+    panel.append(labelNode(doc, deps.translate("skill.path")));
+    const pathNode = doc.createElement("div");
+    pathNode.className = "dsh-better-skill-panel-path";
+    pathNode.textContent = path;
+    panel.append(pathNode);
+  }
+
+  if (input.usage !== undefined) {
+    const counts = doc.createElement("div");
+    counts.className = "dsh-better-skill-panel-counts";
+    counts.textContent = `${deps.translate("skill.usage.session")} ${input.usage.session}`;
+    if (input.usage.workspace !== undefined) {
+      counts.textContent += ` · ${deps.translate("skill.usage.workspace")} ${input.usage.workspace}`;
+    }
+    panel.append(counts);
+  }
+
+  const params = input.profile?.params ?? [];
+  // No action surface means no insertion path, and a button that cannot insert is
+  // worse than no button: it teaches the user a gesture that does nothing.
+  if (params.length > 0 && input.getActions()?.insertText !== undefined) {
+    panel.append(labelNode(doc, deps.translate("skill.params")));
+    for (const param of params) {
+      panel.append(paramButton(doc, deps, input, param.flag, param.detail));
+    }
+  }
+
+  if (input.box !== undefined) {
+    panel.style.left = `${input.box.left}px`;
+    panel.style.top = `${input.box.bottom + 4}px`;
+  }
+  return panel;
+}
+
+/** One label row. */
+function labelNode(doc: Document, text: string): HTMLElement {
+  const node = doc.createElement("div");
+  node.className = "dsh-better-skill-panel-label";
+  node.textContent = text;
+  return node;
+}
+
+/** One insertable parameter row. */
+function paramButton(
+  doc: Document,
+  deps: SkillEnhancerDeps,
+  input: PanelInput,
+  flag: string,
+  detail: string,
+): HTMLElement {
+  const button = doc.createElement("button");
+  button.type = "button";
+  button.className = "dsh-better-skill-panel-param";
+  button.title = deps.translate("skill.hint.insert");
+  // The composer must keep focus; see the module note.
+  button.addEventListener("pointerdown", event => event.preventDefault());
+
+  const flagNode = doc.createElement("span");
+  flagNode.className = "dsh-better-skill-panel-param-flag";
+  flagNode.textContent = flag;
+  button.append(flagNode);
+
+  if (detail !== "") {
+    const detailNode = doc.createElement("span");
+    detailNode.className = "dsh-better-skill-panel-param-detail";
+    detailNode.textContent = detail;
+    button.append(detailNode);
+  }
+
+  button.addEventListener("click", () => {
+    const actions = input.getActions();
+    if (actions?.insertText === undefined || actions.captureInsertion === undefined) return;
+    const span = actions.captureInsertion();
+    // A refused insertion (stale revision) leaves the draft untouched; the next
+    // click captures a fresh span, so there is nothing to recover here.
+    actions.insertText(paramInsertionText(input.getDraft(), flag), span);
+  });
+  return button;
+}

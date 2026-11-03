@@ -69,6 +69,14 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "alias.footnote": "输入关键词后从面板选择即可插入完整调用；改完立即生效。",
     "alias.menu.section": "技能别名",
     "alias.menu.params": "参数：{value}",
+    // The skill hover panel. Every label names a block the panel may omit, so a
+    // skill without metadata or without a path shows no empty heading.
+    "skill.metadata": "元数据",
+    "skill.path": "地址",
+    "skill.usage.session": "本会话调用",
+    "skill.usage.workspace": "本工作区调用",
+    "skill.params": "参数",
+    "skill.hint.insert": "点击插入",
   },
   en: {
     "overlay.aria": "Select a model",
@@ -114,5 +122,11 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "alias.footnote": "Type a keyword and pick from the panel to insert the full invocation; changes apply immediately.",
     "alias.menu.section": "Skill aliases",
     "alias.menu.params": "args: {value}",
+    "skill.metadata": "Metadata",
+    "skill.path": "Path",
+    "skill.usage.session": "This session",
+    "skill.usage.workspace": "This workspace",
+    "skill.params": "Arguments",
+    "skill.hint.insert": "Click to insert",
   },
 });
