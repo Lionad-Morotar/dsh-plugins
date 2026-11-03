@@ -133,4 +133,23 @@ describe("arch entry wiring", () => {
     disposeTwo();
     expect(second.registrations[0]?.disposed).toBe(true);
   });
+
+  it("hides the conversation width handle while the architecture view is mounted, and restores it on exit", () => {
+    apply(createContext().ctx);
+    const content = document.createElement("div");
+    content.setAttribute("data-conversation-content", "");
+    const scroll = document.createElement("div");
+    const arch = document.createElement("div");
+    arch.setAttribute("data-arch-view", "");
+    scroll.append(arch);
+    const handle = document.createElement("div");
+    handle.setAttribute("data-width-handle", "left");
+    content.append(scroll, handle);
+    document.body.append(content);
+
+    expect(getComputedStyle(handle).display).toBe("none");
+
+    arch.remove();
+    expect(getComputedStyle(handle).display).not.toBe("none");
+  });
 });

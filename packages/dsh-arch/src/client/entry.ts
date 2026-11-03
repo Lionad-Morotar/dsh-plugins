@@ -117,6 +117,30 @@ function activeLocale(ctx: ArchClientContext): string {
   return typeof snapshot?.active === "string" ? snapshot.active : "zh";
 }
 
+/**
+ * Hide the conversation column's width handle while the architecture view is
+ * on screen.
+ *
+ * The host renders the two `[data-width-handle]` nodes as direct children of
+ * `[data-conversation-content]`, beside the scrollport, whenever the session
+ * is active. It does not know which view tab is open. The architecture view
+ * fills that column, so dragging the chat width does nothing there. The host
+ * mounts exactly one conversation view, so `[data-arch-view]` inside the
+ * content is the "Arch tab is open" signal, and leaving the tab removes it.
+ */
+const ARCH_VIEW_CSS =
+  "[data-conversation-content]:has([data-arch-view]) > [data-width-handle] { display: none; }";
+
+/** Install the view stylesheet once per document; a repeat apply meets the same page. */
+function ensureViewStyles(): void {
+  if (typeof document === "undefined") return;
+  if (document.querySelector("style[data-arch-view-style]") !== null) return;
+  const style = document.createElement("style");
+  style.dataset.archViewStyle = "";
+  style.textContent = ARCH_VIEW_CSS;
+  document.head.append(style);
+}
+
 /** Chrome seams shared by the conversation view and the dock kind. */
 function chromeSeams(t: (key: string) => string) {
   return {
@@ -133,6 +157,7 @@ function chromeSeams(t: (key: string) => string) {
  * @returns a disposer that unregisters the kind and the dictionary.
  */
 export function apply(ctx: ArchClientContext): () => void {
+  ensureViewStyles();
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
   registeredDictionaries?.();
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
