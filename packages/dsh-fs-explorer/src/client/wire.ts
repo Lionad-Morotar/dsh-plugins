@@ -20,7 +20,13 @@
 import type { ReadFile } from "dsh-preview-viewers/contracts.ts";
 
 import type { FsEntryLike } from "./model.ts";
-import { PreviewReadError, type PreviewFiles } from "./preview.ts";
+import {
+  classifyPreviewFailure,
+  normalizePreviewPage,
+  PreviewReadError,
+  type PreviewFiles,
+  type SymlinkLocator,
+} from "./preview.ts";
 import type { FsChangeStat, FsGitHead } from "./status.ts";
 
 /** One directory listing as the host wire carries it. */
@@ -99,6 +105,10 @@ function safeRead(source: () => unknown): unknown {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
 /**
  * Resolve the file face from the context, trying the documented direct service
  * first and the Remote carrier second.
@@ -150,6 +160,36 @@ export function createPreviewReader(
 }
 
 /**
+ * A page reader that follows a symbolic link the workspace service refuses.
+ *
+ * `workspaceFiles.read` refuses a path whose final component is a link, even
+ * when the link points at a regular file. The locator answers with that file's
+ * canonical path; this reader asks the workspace service for the page again by
+ * that path, and reports the link's target so the toolbar can show it. A link
+ * the locator cannot follow keeps the original refusal, so a dangling link or a
+ * link to a directory still reads as a symlink failure.
+ */
+export function followSymlinkReader(reader: PreviewFiles, locate: SymlinkLocator): PreviewFiles {
+  return {
+    async read(path, range, signal) {
+      const response = await reader.read(path, range, signal);
+      let refusal: PreviewReadError;
+      try {
+        normalizePreviewPage(response, range.offset ?? 1);
+        return response;
+      } catch (error) {
+        if (!(error instanceof PreviewReadError) || classifyPreviewFailure(error).kind !== "symlink") throw error;
+        refusal = error;
+      }
+      const located = await locate(path, signal);
+      if (located === undefined) throw refusal;
+      const page = normalizePreviewPage(await reader.read(located.absolutePath, range, signal), range.offset ?? 1);
+      return { ...page, linkTarget: located.absolutePath };
+    },
+  };
+}
+
+/**
  * The slice of the Git panel's Remote namespace that reads a commit version.
  *
  * `show` is the only method needed here; keeping the face structural means the
@@ -182,22 +222,59 @@ export function isGitShowFace(value: unknown): value is GitShowFace {
   return typeof (value as { show?: unknown }).show === "function";
 }
 
+/** The gateway's unary caller, as the connection service exposes it. */
+interface GitConnectionFace {
+  readonly rpc?: {
+    call(scope: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<unknown>;
+  };
+}
+
 /**
- * Resolve `remote.gitExplorer` by its `show` method alone.
+ * Reach the hand-published Git namespace through the raw connection RPC.
  *
- * The file tree only needs `snapshot`, and a host half that predates `show`
- * still serves that; probing `show` separately is what lets a commit-version
- * panel degrade to "preview unavailable" without taking the workspace tree or
- * the current-file preview down with it.
+ * A third-party package ships no generated client contribution, so
+ * `ctx.remote.gitExplorer` is a Cordis stub whose methods throw. The Git panel
+ * itself reads through this same `/api/gitExplorer/<method>` route; a commit
+ * panel that only probed the typed namespace would report the file service as
+ * missing while the endpoint was sitting on the gateway.
+ * @param ctx - client context carrying the connection service.
+ * @returns the `show` face, or undefined when this host exposes no connection.
+ */
+function createGitShowRpc(ctx: GitShowContextLike): GitShowFace | undefined {
+  const connection = safeRead(() =>
+    typeof ctx.get === "function" ? (ctx.get("connection") as GitConnectionFace | undefined) : undefined,
+  );
+  const candidate = isRecord(connection) ? connection.rpc : undefined;
+  if (!isRecord(candidate) || typeof candidate.call !== "function") return undefined;
+  const call = candidate.call as (
+    scope: string,
+    endpoint: string,
+    payload: unknown,
+    signal?: AbortSignal,
+  ) => Promise<unknown>;
+  return {
+    show: (request, signal) => call.call(candidate, "/api", "gitExplorer/show", { args: { request } }, signal),
+  };
+}
+
+/**
+ * Resolve the Git `show` reader.
+ *
+ * The typed namespace is tried first for hosts that mount a generated client
+ * contribution. Everything else falls through to the connection RPC, which is
+ * the route a hand-published host half actually answers on. A host half that
+ * predates `show` still degrades the commit panel without taking the workspace
+ * tree down.
  * @param ctx - the client context this row was applied to.
- * @returns a resolver that answers undefined while `show` is absent.
+ * @returns a resolver that answers undefined while no transport exists.
  */
 export function createGitShowResolver(ctx: GitShowContextLike): GitShowResolver {
   return () => {
     const direct = safeRead(() => (ctx.remote as { readonly gitExplorer?: unknown } | undefined)?.gitExplorer);
     if (isGitShowFace(direct)) return direct;
     const viaGet = safeRead(() => (typeof ctx.get === "function" ? ctx.get("remote.gitExplorer") : undefined));
-    return isGitShowFace(viaGet) ? viaGet : undefined;
+    if (isGitShowFace(viaGet)) return viaGet;
+    return createGitShowRpc(ctx);
   };
 }
 
@@ -269,10 +346,6 @@ export function createGitPreviewReader(face: GitShowFace, sessionId: string, rev
 export type NormalizedBytes =
   | { readonly ok: true; readonly value: { readonly data: Uint8Array } }
   | { readonly ok: false; readonly error: unknown };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object";
-}
 
 /**
  * Fold one `readBytes` answer down to its bytes.

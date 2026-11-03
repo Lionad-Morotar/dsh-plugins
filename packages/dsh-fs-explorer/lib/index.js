@@ -144,6 +144,22 @@ async function saveDocument(deps, request, signal) {
     return failureOf(error);
   }
 }
+async function locatePath(deps, request, signal) {
+  if (blankPath(request)) return fail("io-error", "path must be a non-empty string");
+  try {
+    const target = await deps.fs.resolve(request.path, { cwd: deps.cwd, signal });
+    const info = await deps.fs.stat(target, signal);
+    if (info === void 0) return fail("io-error", `${target.displayPath} does not exist`);
+    if (info.type !== "file") return fail("not-regular-file", `${target.displayPath} is not a regular file`);
+    const entry = await deps.fs.lstat?.(request.path, { cwd: deps.cwd }, signal);
+    return {
+      ok: true,
+      located: { absolutePath: absolutePathOf(deps.fs, target), symlink: entry?.type === "symlink" }
+    };
+  } catch (error) {
+    return failureOf(error);
+  }
+}
 
 // src/shared.ts
 var PACKAGE_NAME = "dsh-fs-explorer";
@@ -158,8 +174,8 @@ var inject = ["fs", "sessions", "sessionPersistence"];
 function describe() {
   return { name: PACKAGE_NAME, slot: VIEW_SLOT, id: VIEW_ID, order: VIEW_ORDER };
 }
-var _save_dec, _open_dec, _a, _init;
-var FsExplorerDocumentsService = class extends (_a = TypertRemoteService, _open_dec = [Remote("open")], _save_dec = [Remote("save")], _a) {
+var _locate_dec, _save_dec, _open_dec, _a, _init;
+var FsExplorerDocumentsService = class extends (_a = TypertRemoteService, _open_dec = [Remote("open")], _save_dec = [Remote("save")], _locate_dec = [Remote("locate")], _a) {
   constructor(ctx, config) {
     super(ctx, DOCUMENTS_SERVICE);
     __runInitializers(_init, 5, this);
@@ -206,10 +222,16 @@ var FsExplorerDocumentsService = class extends (_a = TypertRemoteService, _open_
     if (cwd === void 0) return fail("no-workspace", `session ${request.sessionId} has no workspace directory`);
     return saveDocument({ fs: this.fs, cwd, maxBytes: this.config.maxBytes }, request, signal);
   }
+  async locate(request, signal) {
+    const cwd = await this.baseDirectory(request.sessionId);
+    if (cwd === void 0) return fail("no-workspace", `session ${request.sessionId} has no workspace directory`);
+    return locatePath({ fs: this.fs, cwd, maxBytes: this.config.maxBytes }, request, signal);
+  }
 };
 _init = __decoratorStart(_a);
 __decorateElement(_init, 1, "open", _open_dec, FsExplorerDocumentsService);
 __decorateElement(_init, 1, "save", _save_dec, FsExplorerDocumentsService);
+__decorateElement(_init, 1, "locate", _locate_dec, FsExplorerDocumentsService);
 __decoratorMetadata(_init, FsExplorerDocumentsService);
 __publicField(FsExplorerDocumentsService, "inject", inject);
 __publicField(FsExplorerDocumentsService, "Config", Schema.object({

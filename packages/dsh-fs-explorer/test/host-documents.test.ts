@@ -13,12 +13,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DEFAULT_DOCUMENTS_CONFIG,
+  locatePath,
   normalizeConfig,
   openDocument,
   saveDocument,
   type DocumentDeps,
 } from "../src/host/documents.ts";
-import type { FsFileInfo, FsTargetFace, FsWriteOutcome } from "../src/host/types.ts";
+import type { FsFileInfo, FsPathInfo, FsTargetFace, FsWriteOutcome } from "../src/host/types.ts";
 import FsExplorerDocumentsService from "../src/index.ts";
 
 /** A target as `resolve` hands it back: the display path is not necessarily absolute. */
@@ -41,6 +42,7 @@ interface FakeFs {
   readonly readText: ReturnType<typeof vi.fn>;
   readonly writeText: ReturnType<typeof vi.fn>;
   readonly processPath: ReturnType<typeof vi.fn>;
+  readonly lstat: ReturnType<typeof vi.fn>;
 }
 
 /** A fake filesystem: every call is a spy, defaults describe one stable text file. */
@@ -51,6 +53,7 @@ function fakeFs(overrides: Partial<FakeFs> = {}): FakeFs {
     readText: vi.fn(async () => "abc"),
     writeText: vi.fn(async (): Promise<FsWriteOutcome> => ({ version: "v2" })),
     processPath: vi.fn((target: FsTargetFace) => `/workspace/${target.displayPath}`),
+    lstat: vi.fn(async (): Promise<FsPathInfo | undefined> => ({ type: "file" })),
     ...overrides,
   };
   return fs;
@@ -191,16 +194,58 @@ describe("saveDocument", () => {
   });
 });
 
+describe("locatePath", () => {
+  it("names the real file a symbolic link resolves to", async () => {
+    const target: FsTargetFace = { targetKey: "tk-real", displayPath: "/Users/lionad/.claude/CLAUDE.md" };
+    const fs = fakeFs({
+      resolve: vi.fn(async () => target),
+      processPath: vi.fn(() => "/Users/lionad/.claude/CLAUDE.md"),
+      lstat: vi.fn(async () => ({ type: "symlink" })),
+    });
+
+    await expect(locatePath(deps(fs), { sessionId: "s1", path: "CLAUDE.md" })).resolves.toEqual({
+      ok: true,
+      located: { absolutePath: "/Users/lionad/.claude/CLAUDE.md", symlink: true },
+    });
+    expect(fs.resolve).toHaveBeenCalledWith("CLAUDE.md", { cwd: "/workspace", signal: undefined });
+    expect(fs.readText).not.toHaveBeenCalled();
+  });
+
+  it("reports a regular file as not a link", async () => {
+    const fs = fakeFs();
+    await expect(locatePath(deps(fs), { sessionId: "s1", path: "notes/a.md" })).resolves.toMatchObject({
+      ok: true,
+      located: { symlink: false },
+    });
+  });
+
+  it("refuses a link whose target is not a regular file", async () => {
+    const fs = fakeFs({ stat: vi.fn(async () => ({ version: "v1", type: "directory" })) });
+    await expect(locatePath(deps(fs), { sessionId: "s1", path: "linked-dir" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "not-regular-file" },
+    });
+  });
+
+  it("treats a dangling link as a missing file", async () => {
+    const fs = fakeFs({ stat: vi.fn(async () => undefined) });
+    await expect(locatePath(deps(fs), { sessionId: "s1", path: "broken" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "io-error" },
+    });
+  });
+});
+
 describe("FsExplorerDocumentsService", () => {
   it("declares the services the app host guarantees", () => {
     expect(FsExplorerDocumentsService.inject).toEqual(["fs", "sessions", "sessionPersistence"]);
   });
 
-  it("exposes exactly the open and save endpoints", () => {
+  it("exposes exactly the open, save and locate endpoints", () => {
     const ctx = new Context();
     ctx.provide("fs", fakeFs());
     const service = new FsExplorerDocumentsService(ctx, {});
-    expect(remoteMethods(service).map(marker => marker.exportName ?? marker.method)).toEqual(["open", "save"]);
+    expect(remoteMethods(service).map(marker => marker.exportName ?? marker.method)).toEqual(["open", "save", "locate"]);
   });
 
   it("refuses to activate without the filesystem service", () => {

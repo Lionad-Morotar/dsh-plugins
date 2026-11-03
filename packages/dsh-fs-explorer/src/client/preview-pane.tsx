@@ -37,6 +37,7 @@ import {
   type PreviewFamily,
   type PreviewLoader,
   type PreviewSnapshot,
+  type SymlinkLocator,
 } from "./preview.ts";
 import {
   loadFamilyChunk,
@@ -54,7 +55,14 @@ import {
   type RendererModule,
   type RendererRegistry,
 } from "./renderer-registry.ts";
-import { createByteReader, createGitPreviewReader, createPreviewReader, type GitShowFace, type WorkspaceFilesFace } from "./wire.ts";
+import {
+  createByteReader,
+  createGitPreviewReader,
+  createPreviewReader,
+  followSymlinkReader,
+  type GitShowFace,
+  type WorkspaceFilesFace,
+} from "./wire.ts";
 
 /** Props the view hands the preview pane. */
 export interface PreviewPaneProps {
@@ -89,6 +97,8 @@ export interface PreviewPaneProps {
    * just because a toolbar wanted to offer a button.
    */
   readonly documents?: DocumentStore;
+  /** Follows a symbolic link the workspace service refused; absent keeps the refusal. */
+  readonly locate?: SymlinkLocator;
 }
 
 /** Copy this pane owns; the entry merges it into the package namespace. */
@@ -179,12 +189,12 @@ const MARKDOWN_EXTENSIONS = [".md", ".mdx", ".markdown", ".mdown"] as const;
  */
 const SOURCE_RENDERER_PRIORITY = -1000;
 
-/** The block every path paints when the file face cannot read it. */
-function UnavailableBody({ t }: { readonly t: Translate }) {
+/** The block every path paints when the reader for that path cannot read it. */
+function UnavailableBody({ t, revision }: { readonly t: Translate; readonly revision?: string }) {
   return (
     <div className="fx-empty" data-testid="fs-preview-unavailable">
       <strong>{t("preview.unavailable.title")}</strong>
-      <span>{t("preview.unavailable.description")}</span>
+      <span>{t(revision === undefined ? "preview.unavailable.description" : "preview.commitUnavailable.description")}</span>
     </div>
   );
 }
@@ -310,8 +320,19 @@ function FamilyBody({
   files,
   t,
   visible,
+  locate,
 }: RendererBodyProps & { readonly chunk: FamilyChunkModule }) {
-  const readFile = useMemo(() => createByteReader(files), [files]);
+  const readFile = useMemo(() => {
+    const reader = createByteReader(files);
+    if (reader === undefined || sessionId === undefined || locate === undefined) return reader;
+    // The family surface names its own buffers by relative path, so only the
+    // file the pane opened is rewritten; a link inside a document stays a link.
+    return async (scope: string, target: string, signal: AbortSignal) => {
+      if (scope !== sessionId || target !== path) return reader(scope, target, signal);
+      const located = await locate(target, signal);
+      return reader(scope, located?.absolutePath ?? target, signal);
+    };
+  }, [files, sessionId, path, locate]);
   if (sessionId === undefined || readFile === undefined) return <UnavailableBody t={t} />;
   return <chunk.FamilyView path={path} sessionId={sessionId} readFile={readFile} t={t} visible={visible} />;
 }
@@ -378,16 +399,17 @@ function fallbackRegistry(): RendererRegistry {
  * @param props - session, file face, selected path, translator and registry.
  * @returns the preview column.
  */
-export function PreviewPane({ sessionId, files, path, revision, git, t, visible = true, renderers, documents }: PreviewPaneProps) {
-  const reader = useMemo(
-    () =>
+export function PreviewPane({ sessionId, files, path, revision, git, t, visible = true, renderers, documents, locate }: PreviewPaneProps) {
+  const reader = useMemo(() => {
+    const base =
       revision === undefined
         ? createPreviewReader(files, sessionId)
         : git === undefined || sessionId === undefined
           ? undefined
-          : createGitPreviewReader(git, sessionId, revision),
-    [files, sessionId, revision, git],
-  );
+          : createGitPreviewReader(git, sessionId, revision);
+    // A commit version is read from the object store, which has no link to follow.
+    return base === undefined || revision !== undefined || locate === undefined ? base : followSymlinkReader(base, locate);
+  }, [files, sessionId, revision, git, locate]);
   const byteReader = useMemo(() => (revision === undefined ? createByteReader(files) : undefined), [files, revision]);
   const registry = renderers ?? fallbackRegistry();
   // Resolved once per mount: the pane is created per open file, so the family
@@ -410,6 +432,8 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
   const [mode, setMode] = useState<PreviewMode>("reading");
   const [copied, setCopied] = useState(false);
   const [draftCopied, setDraftCopied] = useState(false);
+  // A binary file has no page, so the follow that names its target lives here.
+  const [binaryLink, setBinaryLink] = useState<string | undefined>(undefined);
   // The reload button becomes a confirmation before it drops a dirty draft.
   const [discardArmed, setDiscardArmed] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -455,6 +479,23 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
     if (loader === null || path === undefined || family !== null) return;
     void loader.open(path);
   }, [loader, path, family]);
+
+  useEffect(() => {
+    if (!binary || path === undefined || locate === undefined) {
+      setBinaryLink(undefined);
+      return;
+    }
+    const controller = new AbortController();
+    let alive = true;
+    void (async () => {
+      const located = await locate(path, controller.signal);
+      if (alive && !controller.signal.aborted) setBinaryLink(located?.absolutePath);
+    })();
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [binary, path, locate]);
 
   useEffect(() => {
     setMode("reading");
@@ -533,6 +574,8 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
 
   const commitBinary = binary && revision !== undefined;
   const page = describePage(snapshot);
+  const shownPath = snapshot.linkPath ?? path;
+  const linkTarget = binary ? binaryLink : snapshot.linkTarget;
   const markdown = !binary && isMarkdownFile(path);
   const busy = binary
     ? !commitBinary && byteSource !== null && rendererState.status !== "ready" && rendererState.status !== "failed"
@@ -562,17 +605,19 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
           : "plain";
 
   const bodyProps: RendererBodyProps = {
-    path,
+    path: linkTarget ?? path,
     sessionId,
     files,
     t,
     visible,
     mode,
     ...(binary ? {} : { page: { text: snapshot.text, offset: snapshot.offset } }),
+    ...(locate === undefined ? {} : { locate }),
   };
 
   const copyPath = (): void => {
-    void writeClipboard(path).then(ok => {
+    // A followed link copies the file it names: that is the path a terminal can open.
+    void writeClipboard(linkTarget ?? shownPath).then(ok => {
       if (!ok) return;
       setCopied(true);
       if (copyTimer.current !== undefined) clearTimeout(copyTimer.current);
@@ -613,7 +658,7 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
           <span>{t("preview.commitBinary.description")}</span>
         </div>
       ) : byteSource === null ? (
-        <UnavailableBody t={t} />
+        <UnavailableBody t={t} revision={revision} />
       ) : rendererState.status === "failed" ? (
         <PreviewFailureView failure={rendererState.failure} t={t} onRetry={() => setRendererAttempt(value => value + 1)} />
       ) : Body === undefined ? (
@@ -622,7 +667,7 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
         <Body {...bodyProps} />
       );
   } else if (reader === undefined) {
-    body = <UnavailableBody t={t} />;
+    body = <UnavailableBody t={t} revision={revision} />;
   } else if (snapshot.status === "failed") {
     body = (
       <PreviewFailureView
@@ -649,8 +694,19 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
       data-renderer={engine}
     >
       <header className="fx-preview-bar">
-        <span className="fx-preview-path" title={path} data-testid="fs-preview-path">
-          {path}
+        <span
+          className="fx-preview-path"
+          title={linkTarget === undefined ? shownPath : `${shownPath} \u2192 ${linkTarget}`}
+          data-testid="fs-preview-path"
+          {...(linkTarget === undefined ? {} : { "data-link": "followed" })}
+        >
+          {shownPath}
+          {linkTarget === undefined ? null : (
+            <span className="fx-preview-link" data-testid="fs-preview-link-target">
+              {" \u2192 "}
+              {linkTarget}
+            </span>
+          )}
         </span>
         {binary ? null : (
           <span className="fx-preview-range" data-testid="fs-preview-range" title={t("preview.range")}>

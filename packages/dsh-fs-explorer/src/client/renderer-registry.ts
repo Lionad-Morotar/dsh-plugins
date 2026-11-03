@@ -21,7 +21,7 @@ import type { ComponentType } from "react";
 
 import type { Translate } from "./copy.ts";
 import type { DocumentStore } from "./document-session.ts";
-import { familyOf } from "./preview.ts";
+import { familyOf, type SymlinkLocator } from "./preview.ts";
 import type { WorkspaceFilesFace } from "./wire.ts";
 
 /** The two body modes a renderer answers for. */
@@ -58,6 +58,8 @@ export interface RendererBodyProps {
   readonly mode: RendererMode;
   /** Present on the text path; absent when the pane reads bytes instead. */
   readonly page?: RendererPage;
+  /** Follows a symbolic link the workspace service refused; absent keeps the refusal. */
+  readonly locate?: SymlinkLocator;
 }
 
 /** What a contribution's `load()` resolves to. */

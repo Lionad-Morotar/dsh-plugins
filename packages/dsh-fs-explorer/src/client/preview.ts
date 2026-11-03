@@ -129,6 +129,18 @@ export interface PreviewFiles {
   read(path: string, range: PreviewRange, signal?: AbortSignal): Promise<unknown> | unknown;
 }
 
+/**
+ * Where a refused symbolic link actually points.
+ *
+ * Answers undefined when the link cannot be followed — dangling, a directory,
+ * or a host without the locator — so the caller keeps the refusal it already has.
+ */
+export interface SymlinkLocator {
+  (path: string, signal?: AbortSignal): Promise<{ readonly absolutePath: string } | undefined> | {
+    readonly absolutePath: string;
+  } | undefined;
+}
+
 /** A page after the wire shape has been folded away. */
 export interface PreviewPage {
   readonly text: string;
@@ -140,6 +152,13 @@ export interface PreviewPage {
   readonly eof: boolean;
   /** `first-parent` when a commit deleted the path and this page shows the parent. */
   readonly source?: "commit" | "first-parent";
+  /**
+   * Canonical path of the file a symbolic link resolved to.
+   *
+   * Present only when the page was read by following a link the workspace
+   * service refused. The toolbar shows it; the page text is the target's.
+   */
+  readonly linkTarget?: string;
 }
 
 /** A thrown page read, with the host's error code kept for triage. */
@@ -201,12 +220,14 @@ export function normalizePreviewPage(response: unknown, offset: number): Preview
   const eof =
     page.eof === true || (totalLines !== undefined && lines > 0 && start + lines - 1 >= totalLines);
   const source = page.source === "first-parent" ? "first-parent" : page.source === "commit" ? "commit" : undefined;
+  const linkTarget = typeof page.linkTarget === "string" && page.linkTarget !== "" ? page.linkTarget : undefined;
   const folded = {
     text: page.text,
     lines,
     offset: start,
     eof,
     ...(source === undefined ? {} : { source }),
+    ...(linkTarget === undefined ? {} : { linkTarget }),
   } satisfies PreviewPage;
   return totalLines === undefined ? folded : { ...folded, totalLines };
 }
@@ -301,6 +322,10 @@ export interface PreviewSnapshot {
   readonly eof: boolean;
   /** `first-parent` when a commit deleted the path and the page shows the parent. */
   readonly source?: "commit" | "first-parent";
+  /** Canonical path a symbolic link was followed to, when the page came from one. */
+  readonly linkTarget?: string;
+  /** The link's own path, kept so a binary panel can name it after the follow. */
+  readonly linkPath?: string;
   readonly failure?: PreviewFailure;
 }
 
@@ -388,6 +413,7 @@ export function createPreviewLoader({ files, maxLines = PREVIEW_MAX_LINES }: Pre
         lines: page.lines,
         eof: page.eof,
         ...(page.source === undefined ? {} : { source: page.source }),
+        ...(page.linkTarget === undefined ? {} : { linkTarget: page.linkTarget, linkPath: path }),
       };
       emit(page.totalLines === undefined ? ready : { ...ready, totalLines: page.totalLines });
     } catch (error) {

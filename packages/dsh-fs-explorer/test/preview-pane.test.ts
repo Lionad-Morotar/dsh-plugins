@@ -88,3 +88,56 @@ describe("preview pane renderer marker", () => {
     expect(marker()).toBe("plugin-engine");
   });
 });
+
+describe("preview pane symlink target", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("names the real file a refused symbolic link points at", async () => {
+    const real = "/Users/lionad/.claude/CLAUDE.md";
+    const files = {
+      list: async () => ({ entries: [] }),
+      read: async (session: string, target: string) =>
+        target === real
+          ? { ok: true, value: { text: "# real\n", offset: 1, lines: 1, eof: true } }
+          : {
+              ok: false,
+              error: { code: "workspace-file/not-regular-file", message: "is a symlink", details: { kind: "symlink" } },
+            },
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(PreviewPane, {
+          sessionId: "s1",
+          files,
+          path: "CLAUDE.md",
+          t,
+          locate: async () => ({ absolutePath: real }),
+        }),
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-testid="fs-preview"]')?.getAttribute("data-state")).toBe("ready");
+    expect(host.querySelector('[data-testid="fs-preview-link-target"]')?.textContent).toContain(real);
+    expect(host.querySelector('[data-testid="fs-preview-path"]')?.getAttribute("data-link")).toBe("followed");
+  });
+});

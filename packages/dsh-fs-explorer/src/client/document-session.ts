@@ -10,6 +10,7 @@
  * version the text was read at rather than by time.
  */
 import { DOCUMENTS_SERVICE } from "../shared.ts";
+import type { SymlinkLocator } from "./preview.ts";
 
 /** A failure the session can paint, after transport envelopes are gone. */
 export interface DocumentError {
@@ -139,6 +140,8 @@ export interface DocumentsFace {
   open(request: { readonly sessionId: string; readonly path: string }, signal?: AbortSignal): Promise<unknown> | unknown;
   /** Absent on hosts that predate the write channel. */
   save?(request: SaveRequest, signal?: AbortSignal): Promise<unknown> | unknown;
+  /** Absent on hosts that predate the symlink follow. */
+  locate?(request: { readonly sessionId: string; readonly path: string }, signal?: AbortSignal): Promise<unknown> | unknown;
 }
 
 /** The client context slice the resolver probes. */
@@ -301,7 +304,53 @@ export function createRpcDocumentsFace(call: DocumentsRpcCall): DocumentsFace {
     (method: string) =>
     (request: unknown, signal?: AbortSignal): Promise<unknown> =>
       call(method, { args: { request } }, signal);
-  return { open: invoke("open"), save: invoke("save") };
+  return { open: invoke("open"), save: invoke("save"), locate: invoke("locate") };
+}
+
+/**
+ * Fold one `locate` answer down to the canonical path it names.
+ *
+ * The generated Remote wraps the endpoint result in `{ok, value}`; a test double
+ * hands the result over directly. Anything that is not a followed path — a
+ * refusal, a dangling link, a host that predates the endpoint — reads as absent,
+ * because the caller already holds the refusal it will show instead.
+ * @param response - whatever `locate` resolved to.
+ * @returns the canonical path, or undefined when the answer carries none.
+ */
+export function normalizeLocateResult(response: unknown): { readonly absolutePath: string } | undefined {
+  const outer = isRecord(response) ? response : undefined;
+  if (outer === undefined || outer.ok === false) return undefined;
+  const inner = outer.ok === true && "value" in outer ? outer.value : response;
+  const result = isRecord(inner) ? inner : undefined;
+  if (result === undefined || result.ok === false) return undefined;
+  const located = isRecord(result.located) ? result.located : undefined;
+  if (located === undefined || located.symlink === false) return undefined;
+  return typeof located.absolutePath === "string" && located.absolutePath !== ""
+    ? { absolutePath: located.absolutePath }
+    : undefined;
+}
+
+/**
+ * Bind a symlink locator to the host document channel.
+ *
+ * A host without `locate` answers undefined, which leaves the preview on the
+ * refusal the workspace service already gave it.
+ * @param ctx - client context carrying the Remote carrier.
+ * @param sessionId - the session whose working directory the path is relative to.
+ * @returns the locator the preview reader follows a refused link through.
+ */
+export function createSymlinkLocator(ctx: DocumentsContextLike, sessionId: string): SymlinkLocator {
+  const resolve = createDocumentsResolver(ctx);
+  return async (path, signal) => {
+    const face = resolve();
+    const locate = face?.locate;
+    if (typeof locate !== "function") return undefined;
+    try {
+      return normalizeLocateResult(await locate.call(face, { sessionId, path }, signal));
+    } catch {
+      return undefined;
+    }
+  };
 }
 
 /**

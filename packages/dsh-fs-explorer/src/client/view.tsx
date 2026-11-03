@@ -23,6 +23,7 @@ import {
 import type { Translate } from "./copy.ts";
 import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap } from "./keyboard.ts";
 import type { DocumentStore } from "./document-session.ts";
+import type { SymlinkLocator } from "./preview.ts";
 import {
   ancestorChain,
   buildTree,
@@ -110,6 +111,13 @@ export interface ViewWiring {
   readonly renderers?: RendererRegistry;
   /** The shared drafts; absent hides the save affordance and the close confirmation. */
   readonly documents?: DocumentStore;
+  /**
+   * Follow a symbolic link the workspace service refused.
+   *
+   * Absent leaves the refusal visible, which is what a host without the locator
+   * can do and nothing more.
+   */
+  readonly locate?: (sessionId: string) => SymlinkLocator;
 }
 
 /** The first-paint state without waiting for an effect. */
@@ -235,6 +243,7 @@ export function createFsExplorerView({
   git: resolveGit = () => undefined,
   renderers,
   documents,
+  locate,
 }: ViewWiring) {
   // One registry per registered view: the host mounts and unmounts this
   // component on every view switch, while the factory itself lives on.
@@ -1018,6 +1027,7 @@ export function createFsExplorerView({
                             visible={isActive}
                             renderers={renderers}
                             documents={documents}
+                            locate={sessionId === undefined ? undefined : locate?.(sessionId)}
                           />
                         </div>
                       );

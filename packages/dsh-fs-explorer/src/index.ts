@@ -22,6 +22,7 @@ import Schema from "@deepseek-ai/schemastery";
 import {
   DEFAULT_DOCUMENTS_CONFIG,
   fail,
+  locatePath,
   normalizeConfig,
   openDocument,
   saveDocument,
@@ -29,6 +30,8 @@ import {
 } from "./host/documents.ts";
 import type {
   FileSystemFace,
+  LocateRequest,
+  LocateResult,
   OpenDocumentRequest,
   OpenDocumentResult,
   SaveDocumentRequest,
@@ -49,6 +52,9 @@ export type {
   FsTargetFace,
   FsWriteIntent,
   FsWriteOutcome,
+  LocateRequest,
+  LocateResult,
+  LocatedPath,
   OpenDocumentRequest,
   OpenDocumentResult,
   SavedDocument,
@@ -140,6 +146,20 @@ export class FsExplorerDocumentsService extends TypertRemoteService {
     const cwd = await this.baseDirectory(request.sessionId);
     if (cwd === undefined) return fail("no-workspace", `session ${request.sessionId} has no workspace directory`);
     return saveDocument({ fs: this.fs, cwd, maxBytes: this.config.maxBytes }, request, signal);
+  }
+
+  /**
+   * Follow one path to the file it names.
+   *
+   * The preview calls this only after the workspace file service refused the
+   * path as a symbolic link: `resolve` follows the link, so the answer is the
+   * real file the link points at, which the preview then reads by that path.
+   */
+  @Remote("locate")
+  async locate(request: LocateRequest, signal?: AbortSignal): Promise<LocateResult> {
+    const cwd = await this.baseDirectory(request.sessionId);
+    if (cwd === undefined) return fail("no-workspace", `session ${request.sessionId} has no workspace directory`);
+    return locatePath({ fs: this.fs, cwd, maxBytes: this.config.maxBytes }, request, signal);
   }
 }
 

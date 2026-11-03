@@ -69,6 +69,23 @@ export type SaveDocumentResult =
   | { readonly ok: true; readonly document: SavedDocument }
   | { readonly ok: false; readonly error: DocumentFailure };
 
+/** What `locate` returns: where a path lands once its final link is followed. */
+export interface LocatedPath {
+  /** Canonical absolute path of the resolved file, symlinks followed. */
+  readonly absolutePath: string;
+  /** Whether the path as named is a symbolic link rather than the file itself. */
+  readonly symlink: boolean;
+}
+
+export interface LocateRequest {
+  readonly sessionId: string;
+  readonly path: string;
+}
+
+export type LocateResult =
+  | { readonly ok: true; readonly located: LocatedPath }
+  | { readonly ok: false; readonly error: DocumentFailure };
+
 /**
  * Structural slice of one resolved target (`FsTarget` in `@deepseek-ai/dsh-fs`).
  *
@@ -120,6 +137,19 @@ export interface FileSystemFace {
     signal?: AbortSignal,
   ): Promise<FsWriteOutcome>;
   processPath?(target: FsTargetFace): string;
+  /**
+   * Path metadata that does not follow the final component.
+   *
+   * Optional because a test fake and a backend older than the probe can omit it;
+   * every installed local backend implements it. Absent means the caller cannot
+   * tell a link from the file it names, so it reports the path as not a link.
+   */
+  lstat?(path: string, opts?: { readonly cwd?: string }, signal?: AbortSignal): Promise<FsPathInfo | undefined>;
+}
+
+/** What `lstat` reports. `symlink` is the one fact `stat` cannot, because `stat` follows. */
+export interface FsPathInfo {
+  readonly type: "file" | "directory" | "symlink" | "other";
 }
 
 /** Structural slice of the live session store: only the header cwd is read. */

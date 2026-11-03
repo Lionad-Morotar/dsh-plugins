@@ -7,6 +7,7 @@ import {
   createGitPreviewReader,
   createGitShowResolver,
   createGitStatusResolver,
+  followSymlinkReader,
   normalizeBytes,
   normalizeListing,
   normalizeStatusSnapshot,
@@ -288,6 +289,60 @@ describe("createByteReader", () => {
 });
 
 
+describe("followSymlinkReader", () => {
+  const refused = {
+    ok: false,
+    error: { code: "workspace-file/not-regular-file", message: "is a symlink", details: { kind: "symlink" } },
+  };
+
+  it("re-reads a refused link by the canonical path and names the target", async () => {
+    const calls: string[] = [];
+    const reader = followSymlinkReader(
+      {
+        read: async path => {
+          calls.push(path);
+          if (path === "CLAUDE.md") return refused;
+          return { ok: true, value: { text: "# real\n", offset: 1, lines: 1, eof: true } };
+        },
+      },
+      async () => ({ absolutePath: "/Users/lionad/.claude/CLAUDE.md" }),
+    );
+
+    const page = await reader.read("CLAUDE.md", { limit: 200 });
+
+    expect(calls).toEqual(["CLAUDE.md", "/Users/lionad/.claude/CLAUDE.md"]);
+    expect(page).toMatchObject({ text: "# real\n", linkTarget: "/Users/lionad/.claude/CLAUDE.md" });
+  });
+
+  it("keeps the original refusal when the link cannot be followed", async () => {
+    const reader = followSymlinkReader(
+      { read: async () => refused },
+      async () => undefined,
+    );
+
+    await expect(reader.read("broken", { limit: 200 })).rejects.toMatchObject({ detail: "symlink" });
+  });
+
+  it("does not follow a refusal that is not a symbolic link", async () => {
+    let located = false;
+    const reader = followSymlinkReader(
+      {
+        read: async () => ({
+          ok: false,
+          error: { code: "workspace-file/not-found", message: "no entry", details: { kind: "file" } },
+        }),
+      },
+      async () => {
+        located = true;
+        return { absolutePath: "/somewhere" };
+      },
+    );
+
+    await expect(reader.read("gone.md", { limit: 200 })).rejects.toMatchObject({ code: "workspace-file/not-found" });
+    expect(located).toBe(false);
+  });
+});
+
 describe("createGitShowResolver", () => {
   it("resolves the Git namespace by its show method, from either probe path", () => {
     const face = { show: () => undefined, snapshot: () => undefined };
@@ -300,6 +355,22 @@ describe("createGitShowResolver", () => {
     // commit-version preview degrades instead of calling a missing method.
     expect(createGitShowResolver({ remote: { gitExplorer: { snapshot: () => undefined } } })()).toBeUndefined();
     expect(createGitShowResolver({})()).toBeUndefined();
+  });
+
+  it("reaches a hand-published host half through the connection RPC", async () => {
+    const calls: unknown[] = [];
+    const rpc = {
+      call(scope: string, endpoint: string, payload: unknown) {
+        calls.push({ scope, endpoint, payload });
+        return Promise.resolve({ ok: true, value: { ok: true, page: { text: "" } } });
+      },
+    };
+    const face = createGitShowResolver({ get: name => (name === "connection" ? { rpc } : undefined) })();
+    expect(face).toBeDefined();
+    await face?.show({ sessionId: "s1", hash: "abcd", path: "a.ts" });
+    expect(calls).toEqual([
+      { scope: "/api", endpoint: "gitExplorer/show", payload: { args: { request: { sessionId: "s1", hash: "abcd", path: "a.ts" } } } },
+    ]);
   });
 });
 

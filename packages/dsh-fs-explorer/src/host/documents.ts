@@ -12,6 +12,8 @@ import type {
   FileSystemFace,
   FsFileInfo,
   FsTargetFace,
+  LocateRequest,
+  LocateResult,
   OpenDocumentRequest,
   OpenDocumentResult,
   SaveDocumentRequest,
@@ -183,6 +185,37 @@ export async function saveDocument(
       signal,
     );
     return { ok: true, document: { absolutePath: absolutePathOf(deps.fs, target), version: outcome.version, bytes } };
+  } catch (error) {
+    return failureOf(error);
+  }
+}
+
+/**
+ * Where a path lands once its final component is followed.
+ *
+ * The workspace file service refuses to read a symbolic link even when the link
+ * points at a regular file inside the workspace. The preview still has to show
+ * that file, and it has to say where the link points, so this answers with the
+ * canonical path `resolve` lands on and whether the path as named is itself a
+ * link. A dangling link resolves to a target that does not exist, which is a
+ * missing file rather than a link the preview could follow.
+ */
+export async function locatePath(
+  deps: DocumentDeps,
+  request: LocateRequest,
+  signal?: AbortSignal,
+): Promise<LocateResult> {
+  if (blankPath(request)) return fail("io-error", "path must be a non-empty string");
+  try {
+    const target = await deps.fs.resolve(request.path, { cwd: deps.cwd, signal });
+    const info = await deps.fs.stat(target, signal);
+    if (info === undefined) return fail("io-error", `${target.displayPath} does not exist`);
+    if (info.type !== "file") return fail("not-regular-file", `${target.displayPath} is not a regular file`);
+    const entry = await deps.fs.lstat?.(request.path, { cwd: deps.cwd }, signal);
+    return {
+      ok: true,
+      located: { absolutePath: absolutePathOf(deps.fs, target), symlink: entry?.type === "symlink" },
+    };
   } catch (error) {
     return failureOf(error);
   }

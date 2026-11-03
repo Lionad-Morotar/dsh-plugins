@@ -619,6 +619,9 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   font-size: 11px;
   color: var(--fx-text-2);
 }
+.fx-preview-link {
+  color: var(--fx-caption);
+}
 .fx-preview-range {
   flex: none;
   font-family: var(--fx-mono);

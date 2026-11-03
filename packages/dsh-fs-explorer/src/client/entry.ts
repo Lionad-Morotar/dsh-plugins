@@ -15,7 +15,13 @@ import {
   type BridgeContextLike,
 } from "./bridge.ts";
 import { EN, ZH, tabLabel } from "./copy.ts";
-import { createDocumentOpener, createDocumentSaver, createDocumentStore, type DocumentStore } from "./document-session.ts";
+import {
+  createDocumentOpener,
+  createDocumentSaver,
+  createDocumentStore,
+  createSymlinkLocator,
+  type DocumentStore,
+} from "./document-session.ts";
 import { LOCALE_NAMESPACE, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
 import { KEYMAP, createEscapeHandler } from "./keyboard.ts";
 import {
@@ -221,6 +227,7 @@ export function apply(ctx: ClientContextLike): () => void {
     git: createGitShowResolver(ctx),
     renderers: registry,
     documents: documentsStore(ctx),
+    locate: sessionId => createSymlinkLocator(ctx, sessionId),
   });
 
   // The address bridge hangs off the optional right sidebar; it registers

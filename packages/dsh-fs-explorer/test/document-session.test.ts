@@ -15,6 +15,8 @@ import {
   createDocumentOpener,
   createDocumentSaver,
   createDocumentsResolver,
+  createSymlinkLocator,
+  normalizeLocateResult,
   normalizeOpenResult,
   normalizeSaveResult,
   type OpenDocument,
@@ -34,6 +36,58 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   });
   return { promise, resolve };
 }
+
+describe("normalizeLocateResult", () => {
+  it("unwraps the generated envelope down to the canonical path", () => {
+    expect(
+      normalizeLocateResult({
+        ok: true,
+        value: { ok: true, located: { absolutePath: "/Users/lionad/.claude/CLAUDE.md", symlink: true } },
+      }),
+    ).toEqual({ absolutePath: "/Users/lionad/.claude/CLAUDE.md" });
+  });
+
+  it("reads a bare endpoint result the same way", () => {
+    expect(normalizeLocateResult({ ok: true, located: { absolutePath: "/real", symlink: true } })).toEqual({
+      absolutePath: "/real",
+    });
+  });
+
+  it("ignores a path that is not itself a link", () => {
+    expect(normalizeLocateResult({ ok: true, located: { absolutePath: "/real", symlink: false } })).toBeUndefined();
+  });
+
+  it("reads a refusal as absent", () => {
+    expect(normalizeLocateResult({ ok: false, error: { code: "not-regular-file", message: "directory" } })).toBeUndefined();
+    expect(normalizeLocateResult(null)).toBeUndefined();
+  });
+});
+
+describe("createSymlinkLocator", () => {
+  it("asks the document face and returns the canonical path", async () => {
+    const calls: unknown[] = [];
+    const locate = createSymlinkLocator(
+      {
+        fsExplorerDocuments: {
+          open: async () => ({ ok: false }),
+          locate: async (request: unknown) => {
+            calls.push(request);
+            return { ok: true, located: { absolutePath: "/real/CLAUDE.md", symlink: true } };
+          },
+        },
+      },
+      "s1",
+    );
+
+    await expect(locate("CLAUDE.md")).resolves.toEqual({ absolutePath: "/real/CLAUDE.md" });
+    expect(calls).toEqual([{ sessionId: "s1", path: "CLAUDE.md" }]);
+  });
+
+  it("answers undefined on a host that predates locate", async () => {
+    const locate = createSymlinkLocator({ fsExplorerDocuments: { open: async () => ({ ok: false }) } }, "s1");
+    await expect(locate("CLAUDE.md")).resolves.toBeUndefined();
+  });
+});
 
 function storeWith(open: OpenDocument, save?: SaveDocument) {
   return createDocumentStore({ open, ...(save === undefined ? {} : { save }) });
