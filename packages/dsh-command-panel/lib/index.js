@@ -92,8 +92,8 @@ function commandFor(target, env) {
 async function openWithDefaultApp(target, env = REAL_ENV) {
   if (target === "") return "unavailable";
   const paths = pathOf(env.platform);
+  if (!paths.isAbsolute(target)) return "unavailable";
   const absolute = paths.resolve(target);
-  if (!paths.isAbsolute(absolute)) return "unavailable";
   try {
     await env.stat(absolute);
   } catch {

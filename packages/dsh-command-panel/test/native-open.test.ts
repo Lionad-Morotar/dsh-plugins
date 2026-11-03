@@ -152,6 +152,16 @@ describe("openWithDefaultApp", () => {
     expect(spawn.calls).toEqual([]);
   });
 
+  it("refuses a relative path instead of resolving it against the host cwd", async () => {
+    const { env, spawn } = envOf({ platform: "darwin" });
+    // The exit only settles a mistaken spawn. A correct refusal never subscribes,
+    // so the default stat succeeding must not be enough to open anything.
+    const pending = openWithDefaultApp("todo.md", env);
+    spawn.child.emit("exit", 0);
+    await expect(pending).resolves.toBe("unavailable");
+    expect(spawn.calls).toEqual([]);
+  });
+
   it("reports a spawn error as a failure", async () => {
     const { env, spawn } = envOf({ platform: "darwin" });
     const pending = openWithDefaultApp("/Users/lionad/notes/todo.md", env);

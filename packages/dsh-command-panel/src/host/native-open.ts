@@ -102,10 +102,14 @@ function commandFor(
 /**
  * Open one path with the default application, answering instead of throwing.
  *
- * A path that is empty, not absolute after resolution, or absent on disk is
- * `"unavailable"`: there is nothing a default application could open. A
- * platform without a display server answers the same way, and never spawns.
- * `"failed"` is reserved for a spawn that errored or exited non-zero.
+ * A path that is empty, not already absolute, or absent on disk is
+ * `"unavailable"`: there is nothing a default application could open.
+ * `path.resolve` always yields an absolute path, so absoluteness is judged on
+ * the input. A relative path is not anchored to this process's cwd, where a
+ * same-named file would be the wrong one. Resolution only folds `.` and `..`
+ * inside a path that was already absolute. A platform without a display
+ * server answers the same way, and never spawns. `"failed"` is reserved for
+ * a spawn that errored or exited non-zero.
  */
 export async function openWithDefaultApp(
   target: string,
@@ -113,8 +117,8 @@ export async function openWithDefaultApp(
 ): Promise<NativeOpenResult> {
   if (target === "") return "unavailable";
   const paths = pathOf(env.platform);
+  if (!paths.isAbsolute(target)) return "unavailable";
   const absolute = paths.resolve(target);
-  if (!paths.isAbsolute(absolute)) return "unavailable";
   try {
     await env.stat(absolute);
   } catch {
