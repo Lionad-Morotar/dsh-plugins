@@ -81,7 +81,7 @@ describe("parseArgumentHint", () => {
     expect(flags(params)).toContain("--push");
     expect(detailOf(params, "--rebase")).toBe("<base>");
     // A value-only group is the flag's detail, never a parameter of its own.
-    expect(detailOf(params, "--init")).toBe("all|hooks|push");
+    expect(detailOf(params, "--init")).toBe("<all|hooks|push>");
     expect(flags(params)).not.toContain("all");
     expect(flags(params)).not.toContain("hooks");
   });
@@ -92,6 +92,56 @@ describe("parseArgumentHint", () => {
     expect(params[0]).toEqual({ flag: "<command>", detail: "" });
     expect(flags(params)).toContain("<file>");
     expect(flags(params)).toContain("args");
+  });
+
+  it("keeps a placeholder that contains spaces as one flag", () => {
+    // Real hint from `flow-web`. Splitting on whitespace produced `<URL`,
+    // `browser`, `task>` — three entries that insert half a word each.
+    const params = parseArgumentHint("<URL or browser task> [--workspace <name>]");
+
+    expect(params).toHaveLength(2);
+    expect(params[0]).toEqual({ flag: "<URL or browser task>", detail: "" });
+    expect(params[1]).toEqual({ flag: "--workspace", detail: "<name>" });
+  });
+
+  it("keeps a placeholder that contains spaces as a flag's detail", () => {
+    // Real hint from `flow-workflow`: `<工作流 slug>` is one value shape.
+    const params = parseArgumentHint("[run <工作流 slug> | <任务描述>]");
+
+    expect(flags(params)).toEqual(["run", "<任务描述>"]);
+    expect(detailOf(params, "run")).toBe("<工作流 slug>");
+  });
+
+  it("never wraps a value shape in a second pair of brackets", () => {
+    // Real hint from `flow-agent`. A detail is already the text to show beside
+    // the flag, so wrapping a `<...>` value again renders `<<slug>>`.
+    const params = parseArgumentHint("--slug <slug> --review-dir <dir> [--effort normal|max] [--advisor]");
+
+    expect(detailOf(params, "--slug")).toBe("<slug>");
+    expect(detailOf(params, "--review-dir")).toBe("<dir>");
+    expect(detailOf(params, "--effort")).toBe("normal|max");
+    expect(detailOf(params, "--advisor")).toBe("");
+  });
+
+  it("holds the placeholder invariants on every real hint", () => {
+    const samples = [
+      "--slug <slug> --review-dir <dir> [--effort normal|max] [--advisor]",
+      "<URL or browser task> [--workspace <name>]",
+      "[--create [--scope <package|project|global>] [--project <目录>]] [--dynamic] [run <工作流 slug> | <任务描述>]",
+      "<files...> [--rebase <base>] [--init [all|hooks|push]]",
+      "[shape · audit|critique · animate|bolder]",
+    ];
+    for (const sample of samples) {
+      for (const param of parseArgumentHint(sample)) {
+        // A doubled bracket is a value that was wrapped twice.
+        expect(param.detail.startsWith("<<")).toBe(false);
+        expect(param.detail.endsWith(">>")).toBe(false);
+        // An unpaired bracket is half a placeholder, which inserts a fragment.
+        const opens = param.flag.split("<").length - 1;
+        const closes = param.flag.split(">").length - 1;
+        expect(opens).toBe(closes);
+      }
+    }
   });
 
   it("unwraps a bare word that sits in brackets", () => {

@@ -109,6 +109,19 @@ function tokenize(text: string): Token[] {
       index = cursor;
       continue;
     }
+    // A placeholder is one token even when it contains spaces: `<URL or browser
+    // task>` is a single insertable position, and splitting it on whitespace
+    // produced `<URL`, `browser`, `task>` — three entries that each insert half
+    // a word. Only a `<` at token start opens one, so the `--<flag>` template
+    // form stays a single word.
+    if (char === "<") {
+      const close = text.indexOf(">", index + 1);
+      if (close !== -1) {
+        tokens.push({ kind: "word", text: text.slice(index, close + 1) });
+        index = close + 1;
+        continue;
+      }
+    }
     let cursor = index;
     while (cursor < text.length) {
       const inner = text.charAt(cursor);
@@ -162,6 +175,20 @@ function hasFlag(items: readonly Node[]): boolean {
 /** Render a value group back to the text a user would insert. */
 function groupText(items: readonly Node[]): string {
   return items.map(item => (item.kind === "word" ? item.text : `[${groupText(item.items)}]`)).join(" ");
+}
+
+/**
+ * Render a value group as a detail.
+ *
+ * The source brackets are the value-shape marker, so `[all|hooks|push]` becomes
+ * `<all|hooks|push>`. A group that already holds one placeholder is used as is:
+ * wrapping `[--project <目录>]` again would render `<<目录>>`, which reads as a
+ * syntax error beside the flag.
+ */
+function valueDetail(items: readonly Node[]): string {
+  const text = groupText(items);
+  if (text.startsWith("<") && text.endsWith(">")) return text;
+  return `<${text}>`;
 }
 
 /**
@@ -238,7 +265,7 @@ function walk(items: readonly Node[], out: Emitted[]): void {
           continue;
         }
         if (takesValueGroup && next !== undefined && next.kind === "group") {
-          pushParam(out, text, groupText(next.items));
+          pushParam(out, text, valueDetail(next.items));
           index += 2;
           continue;
         }
@@ -261,7 +288,7 @@ function walk(items: readonly Node[], out: Emitted[]): void {
       }
 
       if (takesValueGroup && next !== undefined && next.kind === "group") {
-        pushParam(out, text, groupText(next.items));
+        pushParam(out, text, valueDetail(next.items));
         index += 2;
         continue;
       }
