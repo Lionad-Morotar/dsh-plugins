@@ -29,7 +29,7 @@
 ## 核心能力
 
 - 目录树：每层按需调用 `workspaceFiles.list(sessionId, path)`，根节点用 `"."`。目录优先、同类按名称自然排序（`file2` 在 `file10` 前），`node_modules` / `.git` / `dist` / `__pycache__` 在任何层级都不出现。
-- 右键菜单：文件行、目录行与树空白处都能右键（`Shift+F10` / ContextMenu 键在光标行上同效）。菜单顶部是「新建文件」「新建文件夹」，落在被右击的目录里（文件行落到它所在的目录，空白处落到工作区根）；名称卡片校验后提交，新建文件随即打开，新建文件夹随即展开并把光标放上去。行上还有「在 Finder / 资源管理器中显示」与「复制路径 → 绝对路径 / 相对路径（工作区）」。reveal 由本包 host 半按平台 spawn（darwin `open -R`、win32 `explorer.exe /select,`、linux `xdg-open <父目录>`、WSL 先 `wslpath -w`），路径先 `fs.resolve` + `fs.stat` + `fs.contains` 校验，工作区外与不存在的路径直接拒绝。宿主没装 UI 原语时菜单退化为本包自有的按钮卡片，不崩。动作结果用头部下的一条提示条反馈，4 秒自动消失。
+- 右键菜单：文件行、目录行与树空白处都能右键（`Shift+F10` / ContextMenu 键在光标行上同效）。菜单顶部是「新建文件」「新建文件夹」，落在被右击的目录里（文件行落到它所在的目录，空白处落到工作区根）；名称卡片校验后提交，新建文件随即打开，新建文件夹随即展开并把光标放上去。行上还有「在 Finder / 资源管理器中显示」、「复制路径 → 绝对路径 / 相对路径（工作区）」与「复制远端地址」。远端地址按 provider 生成 GitHub / GitLab / Gitee / Bitbucket / Codeberg 的文件与目录链接（GitLab 走 `/-/`，Bitbucket 与 Codeberg 走 `src`），未知 host 回退到 `/blob/`；remote URL 在这里归一化成 https 基址，ref 取当前分支、游离 HEAD 取提交哈希，路径段逐段编码但保留 `/`。仓库没有可用远端时该项禁用并说明原因。reveal 由本包 host 半按平台 spawn（darwin `open -R`、win32 `explorer.exe /select,`、linux `xdg-open <父目录>`、WSL 先 `wslpath -w`），路径先 `fs.resolve` + `fs.stat` + `fs.contains` 校验，工作区外与不存在的路径直接拒绝。宿主没装 UI 原语时菜单退化为本包自有的按钮卡片，不崩。动作结果用头部下的一条提示条反馈，4 秒自动消失。
 - 虚拟化：只挂视口内的行加少量 overscan，展开一个几千项的大目录不会把整棵树塞进 DOM。
 - 截断提示：宿主返回 `truncated` 时，目录下多一行"目录过大，仅显示前 N 项"。`workspaceFiles.list` 没有分页参数，所以这里只陈述事实，不画一个点了没用的"继续加载"。
 - 状态着色：从 Git 面板的 `remote.gitExplorer.snapshot` 里取原始 `git status --porcelain=v2 -z`，折叠成六类（修改 / 新增 / 删除 / 重命名 / 未跟踪 / 冲突），文件行给字母徽标，目录行给变更计数，头部给总数。Git 面板没装时降级为无色，不是错误态。
@@ -110,4 +110,4 @@ node .nsl/chain/accept-s7-fs-panels.mjs   # 面板状态机、键位表、Esc �
 
 ## 结构
 
-`model.ts`（树、排序、图标、行窗口）、`panels.ts`（标签栈与会话注册表）、`preview.ts`（分页、家族判定与失败归类）、`status.ts`（porcelain 解析）都是无 DOM 的纯逻辑，判据脚本直接在 Node 里驱动；`view.tsx` 只做装配与宿主 seam；`wire.ts` 把直接服务与 Remote 载体两种数据面收窄成同一张脸（分页的 `read` 与整份的 `readBytes`）；`context-menu.ts` 是右键菜单的纯函数（行、空白、能力、绝对路径、新建目标目录 → 菜单项），`context-menu-view.tsx` 只负责把它画成宿主 `Menu` 或自有卡片，`name-prompt.tsx` 是新建的名称卡片与它的纯校验，`platform.ts` 捕获 loader 的 `require` 并解析 UI 原语，`workspace-face.ts` 是 `fsExplorerWorkspace` 的客户端脸（裸 RPC + 结果折叠）；`preview-chunk.ts` 是两条懒路由的唯一名字表，`chunks/` 下的三个入口只做共享渲染器的 props 适配。
+`model.ts`（树、排序、图标、行窗口）、`panels.ts`（标签栈与会话注册表）、`preview.ts`（分页、家族判定与失败归类）、`status.ts`（porcelain 解析）都是无 DOM 的纯逻辑，判据脚本直接在 Node 里驱动；`view.tsx` 只做装配与宿主 seam；`wire.ts` 把直接服务与 Remote 载体两种数据面收窄成同一张脸（分页的 `read` 与整份的 `readBytes`）；`context-menu.ts` 是右键菜单的纯函数（行、空白、能力、绝对路径、新建目标目录、远端链接 → 菜单项），`remote-url.ts` 是远端地址的纯转换（remote URL 归一化、provider 表、ref 与路径编码），`context-menu-view.tsx` 只负责把它画成宿主 `Menu` 或自有卡片，`name-prompt.tsx` 是新建的名称卡片与它的纯校验，`platform.ts` 捕获 loader 的 `require` 并解析 UI 原语，`workspace-face.ts` 是 `fsExplorerWorkspace` 的客户端脸（裸 RPC + 结果折叠）；`preview-chunk.ts` 是两条懒路由的唯一名字表，`chunks/` 下的三个入口只做共享渲染器的 props 适配。

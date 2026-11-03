@@ -65,11 +65,13 @@ import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody, type TreeEntryFocus } 
 import { buildWorkspaceMap, MANIFEST_FILES, type WorkspaceTag } from "./workspace-map.ts";
 import { createWorkspaceClient, type WorkspaceClient, type WorkspaceError } from "./workspace-face.ts";
 import type { WorkspaceCapabilities } from "../host/types.ts";
+import { buildRemoteLinks, type RemoteLink } from "./remote-url.ts";
 import {
   describeFailure,
   normalizeListing,
   normalizeStatusSnapshot,
   type FilesResolver,
+  type FsGitRemote,
   type GitShowFace,
   type GitShowResolver,
   type StatusResolver,
@@ -338,6 +340,10 @@ export function createFsExplorerView({
     const [statuses, setStatuses] = useState<StatusMap | undefined>(undefined);
     const [head, setHead] = useState<FsGitHead | undefined>(undefined);
     const [gitRoot, setGitRoot] = useState<string | undefined>(undefined);
+    // Configured remotes, for the remote-address rows. Undefined means the host
+    // never reported the field, which is a different answer from a repository
+    // that simply has no remote.
+    const [remotes, setRemotes] = useState<readonly FsGitRemote[] | undefined>(undefined);
     const [workspaceTags, setWorkspaceTags] = useState<ReadonlyMap<string, WorkspaceTag>>(EMPTY_TAGS);
     const levelsRef = useRef(levels);
     levelsRef.current = levels;
@@ -549,6 +555,7 @@ export function createFsExplorerView({
         setStatuses(undefined);
         setHead(undefined);
         setGitRoot(undefined);
+        setRemotes(undefined);
         return;
       }
       let alive = true;
@@ -556,6 +563,7 @@ export function createFsExplorerView({
       setStatuses(undefined);
       setHead(undefined);
       setGitRoot(undefined);
+      setRemotes(undefined);
       Promise.resolve()
         .then(() => statusFace.snapshot({ sessionId, maxCommits: 1 }, controller.signal))
         .then(response => {
@@ -565,17 +573,20 @@ export function createFsExplorerView({
             setStatuses(undefined);
             setHead(undefined);
             setGitRoot(undefined);
+            setRemotes(undefined);
             return;
           }
           setStatuses(joinChangeStats(parseStatusZ(normalized.status), normalized.stats));
           setHead(normalized.head);
           setGitRoot(normalized.root);
+          setRemotes(normalized.remotes);
         })
         .catch(() => {
           if (alive) {
             setStatuses(undefined);
             setHead(undefined);
             setGitRoot(undefined);
+            setRemotes(undefined);
           }
         });
       return () => {
@@ -999,6 +1010,22 @@ export function createFsExplorerView({
     contextMenuOpen.current = contextMenu !== null;
 
     /** The sentence one reveal failure paints. */
+    // The remote rows, rebuilt whenever the snapshot, the row or the absolute
+    // path changes. `absolutePath` arrives asynchronously from `info`, so this
+    // is what turns the row from disabled to enabled a beat after the menu
+    // opens, without reopening it.
+    const remoteLinks: readonly RemoteLink[] = useMemo(
+      () =>
+        buildRemoteLinks({
+          remotes,
+          root: gitRoot,
+          absolutePath: contextMenu?.absolutePath,
+          kind: contextMenu?.row?.kind ?? "file",
+          head,
+        }),
+      [contextMenu?.absolutePath, contextMenu?.row?.kind, gitRoot, head, remotes],
+    );
+
     const revealFailureText = useCallback(
       (error: WorkspaceError): string =>
         t("notice.revealFailed").replace("{reason}", t(`notice.reveal.${error.code}`)),
@@ -1036,6 +1063,21 @@ export function createFsExplorerView({
         const row = menu.row;
         if (row === undefined) return;
 
+        // Every remote row shares one prefix; the URL is looked up in the list
+        // this menu was built from, so a remote renamed between the open and the
+        // click simply finds nothing and does nothing.
+        if (id.startsWith(`${MENU_ACTION.copyRemote}.`)) {
+          const link = remoteLinks.find(candidate => candidate.id === id);
+          if (link === undefined) return;
+          void writeClipboard(link.url).then(ok => {
+            announce(
+              ok ? t("notice.copiedRemote").replace("{remote}", link.label) : t("notice.copyFailed"),
+              ok ? "ok" : "error",
+            );
+          });
+          return;
+        }
+
         if (id === MENU_ACTION.copyRelative) {
           void writeClipboard(row.path).then(ok => {
             announce(ok ? t("notice.copiedRelative") : t("notice.copyFailed"), ok ? "ok" : "error");
@@ -1064,7 +1106,7 @@ export function createFsExplorerView({
           announce(t("notice.revealed").replace("{manager}", manager), "ok");
         });
       },
-      [announce, capabilities, contextMenu, revealFailureText, sessionId, t, workspace],
+      [announce, capabilities, contextMenu, remoteLinks, revealFailureText, sessionId, t, workspace],
     );
 
     /**
@@ -1132,10 +1174,13 @@ export function createFsExplorerView({
                 capabilities,
                 absolutePath: contextMenu.absolutePath,
                 createParent: contextMenu.createParent,
+                // A row is the only thing a remote link can address, so the
+                // blank area gets no links at all rather than a stale list.
+                remoteLinks: contextMenu.row === undefined ? undefined : remoteLinks,
               },
               t,
             ),
-      [capabilities, contextMenu, t, workspace],
+      [capabilities, contextMenu, remoteLinks, t, workspace],
     );
 
     const collapseAll = (): void => setExpanded(new Set());

@@ -13,6 +13,7 @@
  * adapts these entries to whatever the host offers.
  */
 import type { WorkspaceCapabilities } from "../host/types.ts";
+import type { RemoteLink } from "./remote-url.ts";
 
 /**
  * Action ids the view dispatches on.
@@ -26,6 +27,13 @@ export const MENU_ACTION = {
   reveal: "reveal",
   copyAbsolute: "copy.absolute",
   copyRelative: "copy.relative",
+  /**
+   * Prefix, not a whole id: each remote row is `copy.remote.<name>`.
+   *
+   * The view dispatches on the prefix and looks the URL up in the link list it
+   * already built, so a remote added or renamed needs no id table here.
+   */
+  copyRemote: "copy.remote",
 } as const;
 
 /** Where a context menu opens, in viewport coordinates. */
@@ -76,6 +84,14 @@ export interface ContextMenuInput {
    * is why this is not folded into the row's own path.
    */
   readonly createParent: string | undefined;
+  /**
+   * One link per configured remote, or undefined when the channel never answered.
+   *
+   * An empty array and undefined are different answers: the first is a repository
+   * with no remote, the second is a host that never reported any. Both disable the
+   * row, but only the first is a fact about the repository.
+   */
+  readonly remoteLinks: readonly RemoteLink[] | undefined;
 }
 
 /**
@@ -156,5 +172,28 @@ export function buildContextMenu(
   };
   const relative: ContextMenuEntry = { id: MENU_ACTION.copyRelative, label: t("menu.copy.relative") };
 
-  return [...createRows, reveal, { id: "menu.copy", label: t("menu.copy"), submenu: [absolute, relative] }];
+  // The remote row is top level, not a child of "copy path": the host `Menu`
+  // opens exactly one level of submenu, so a row nested inside another submenu
+  // would never open. It carries its own level instead, one row per remote.
+  const links = input.remoteLinks;
+  const remote: ContextMenuEntry =
+    links !== undefined && links.length > 0
+      ? {
+          id: MENU_ACTION.copyRemote,
+          label: t("menu.copy.remote"),
+          submenu: links.map(link => ({ id: link.id, label: link.label })),
+        }
+      : {
+          id: MENU_ACTION.copyRemote,
+          label: t("menu.copy.remote"),
+          disabled: true,
+          reason: t("menu.copy.remote.reason"),
+        };
+
+  return [
+    ...createRows,
+    reveal,
+    { id: "menu.copy", label: t("menu.copy"), submenu: [absolute, relative] },
+    remote,
+  ];
 }

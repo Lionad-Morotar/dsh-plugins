@@ -53,6 +53,7 @@ describe("buildContextMenu", () => {
         capabilities: capabilities("finder"),
         absolutePath: "/workspace/docs/a.md",
         createParent: "docs",
+        remoteLinks: undefined,
       },
       t,
     );
@@ -62,12 +63,17 @@ describe("buildContextMenu", () => {
       MENU_ACTION.createFolder,
       MENU_ACTION.reveal,
       "menu.copy",
+      MENU_ACTION.copyRemote,
     ]);
     expect(copyEntries(entries).map(entry => entry.id)).toEqual([
       MENU_ACTION.copyAbsolute,
       MENU_ACTION.copyRelative,
     ]);
-    expect(entries.every(entry => entry.disabled !== true)).toBe(true);
+    // The remote row is disabled here because this input reports no remote
+    // channel; the rows this test is about are the reveal and copy ones.
+    expect(entries.filter(entry => entry.id !== MENU_ACTION.copyRemote).every(entry => entry.disabled !== true)).toBe(
+      true,
+    );
   });
 
   it("gives a directory row the same menu as a file row", () => {
@@ -76,6 +82,7 @@ describe("buildContextMenu", () => {
       capabilities: capabilities("finder"),
       absolutePath: "/workspace/docs",
       createParent: "docs",
+      remoteLinks: undefined,
     };
     const forDirectory = buildContextMenu({ ...input, row: directoryRow() }, t);
     const forFile = buildContextMenu({ ...input, row: fileRow() }, t);
@@ -90,6 +97,7 @@ describe("buildContextMenu", () => {
         capabilities: capabilities("finder"),
         absolutePath: undefined,
         createParent: "",
+        remoteLinks: undefined,
       },
       t,
     );
@@ -109,6 +117,7 @@ describe("buildContextMenu", () => {
             capabilities: capabilities(fileManager),
             absolutePath: "/w/a.md",
             createParent: "docs",
+            remoteLinks: undefined,
           },
           t,
         ),
@@ -128,6 +137,7 @@ describe("buildContextMenu", () => {
           capabilities: capabilities(null),
           absolutePath: "/w/a.md",
           createParent: "docs",
+          remoteLinks: undefined,
         },
         t,
       ),
@@ -147,6 +157,7 @@ describe("buildContextMenu", () => {
           capabilities: undefined,
           absolutePath: undefined,
           createParent: "docs",
+          remoteLinks: undefined,
         },
         t,
       ),
@@ -163,6 +174,7 @@ describe("buildContextMenu", () => {
         capabilities: capabilities("finder"),
         absolutePath: undefined,
         createParent: "docs",
+        remoteLinks: undefined,
       },
       t,
     );
@@ -179,6 +191,7 @@ describe("buildContextMenu", () => {
       reveal: "reveal",
       copyAbsolute: "copy.absolute",
       copyRelative: "copy.relative",
+      copyRemote: "copy.remote",
     });
   });
 });

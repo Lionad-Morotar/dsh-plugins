@@ -209,6 +209,71 @@ describe("normalizeStatusSnapshot", () => {
       expect(result.head).toBeUndefined();
     }
   });
+
+  it("folds the remote list the snapshot carries", () => {
+    const result = normalizeStatusSnapshot({
+      ok: true,
+      value: {
+        ok: true,
+        snapshot: {
+          isRepository: true,
+          status: "",
+          remotes: [
+            { name: "origin", url: "git@github.com:acme/app.git" },
+            { name: "upstream", url: "https://github.com/acme/up.git" },
+          ],
+        },
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.remotes).toEqual([
+        { name: "origin", url: "git@github.com:acme/app.git" },
+        { name: "upstream", url: "https://github.com/acme/up.git" },
+      ]);
+    }
+  });
+
+  it("leaves remotes undefined for a host that predates the field", () => {
+    // The menu reads undefined as "this deployment cannot tell me", which is a
+    // different sentence from "this repository has no remote".
+    const result = normalizeStatusSnapshot({
+      ok: true,
+      value: { ok: true, snapshot: { isRepository: true, status: "? a.md\0" } },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.remotes).toBeUndefined();
+  });
+
+  it("drops malformed remote entries one by one", () => {
+    const result = normalizeStatusSnapshot({
+      ok: true,
+      snapshot: {
+        isRepository: true,
+        status: "",
+        remotes: [
+          { name: "origin", url: "https://github.com/acme/app.git" },
+          { name: "", url: "https://example.com/x.git" },
+          { name: "no-url" },
+          { url: "https://example.com/orphan.git" },
+          { name: "blank", url: "" },
+          "nope",
+          null,
+        ],
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.remotes).toEqual([{ name: "origin", url: "https://github.com/acme/app.git" }]);
+  });
+
+  it("treats a non-array remote list as absent", () => {
+    const result = normalizeStatusSnapshot({
+      ok: true,
+      snapshot: { isRepository: true, status: "", remotes: "origin\thttps://example.com/a.git" },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.remotes).toBeUndefined();
+  });
 });
 
 describe("normalizeBytes", () => {
