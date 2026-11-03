@@ -259,6 +259,13 @@ export function createFsExplorerView({
     const files = useMemo<WorkspaceFilesFace | undefined>(() => resolveFiles(), [resolveFiles]);
     const statusFace = useMemo(() => resolveStatus(), [resolveStatus]);
     const gitFace = useMemo<GitShowFace | undefined>(() => resolveGit(), [resolveGit]);
+    // One locator per session, not one per render: the pane treats a changed
+    // locator as a different reader, so a fresh closure on an unrelated parent
+    // render would rebuild the preview loader and re-read the open file.
+    const sessionLocator = useMemo(
+      () => (sessionId === undefined || locate === undefined ? undefined : locate(sessionId)),
+      [locate, sessionId],
+    );
 
     const [levels, setLevels] = useState<ReadonlyMap<string, TreeLevel>>(() => new Map());
     const [statuses, setStatuses] = useState<StatusMap | undefined>(undefined);
@@ -1027,7 +1034,7 @@ export function createFsExplorerView({
                             visible={isActive}
                             renderers={renderers}
                             documents={documents}
-                            locate={sessionId === undefined ? undefined : locate?.(sessionId)}
+                            locate={sessionLocator}
                           />
                         </div>
                       );
