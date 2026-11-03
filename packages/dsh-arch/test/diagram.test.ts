@@ -111,6 +111,16 @@ describe("rendering", () => {
     expect(containerAt).toBeLessThan(childAt);
   });
 
+  it("leaves containers transparent so the view never paints its own canvas", () => {
+    createDiagram(host, structuredClone(dump.views.jump as DumpView), { viewport: VIEWPORT });
+    // The root container spans the whole view; an opaque fill here is what
+    // turned the panel white and made every label on it unreadable.
+    const containerBody = nodeG("dshPlugins.jump").querySelectorAll("rect")[1];
+    expect(containerBody?.getAttribute("fill")).toBe("none");
+    const cardBody = nodeG("dshPlugins.jump.jumpEntry").querySelectorAll("rect")[1];
+    expect(cardBody?.getAttribute("fill")).toBe("#3b82f6");
+  });
+
   it("applies the given viewport as the initial root transform", () => {
     createDiagram(host, structuredClone(dump.views.index as DumpView), { viewport: VIEWPORT });
     const root = host.querySelector("svg > g");
@@ -119,13 +129,19 @@ describe("rendering", () => {
 });
 
 describe("interaction seams", () => {
-  it("highlights the selected node and dims the rest", () => {
+  it("rings the selected node instead of fading the rest", () => {
     const diagram = createDiagram(host, structuredClone(dump.views.index as DumpView), { viewport: VIEWPORT });
+    const ringOf = (id: string): string | null =>
+      nodeG(id).querySelector("rect")?.getAttribute("display") ?? null;
     diagram.select("user");
-    expect(nodeG("user").getAttribute("opacity")).toBe("1");
-    expect(nodeG("dshPlugins").getAttribute("opacity")).toBe("0.4");
+    expect(ringOf("user")).toBe("inline");
+    expect(ringOf("dshPlugins")).toBe("none");
+    // Selection must never dim the drawing: the fade washed labels into the
+    // canvas, which is the readability bug the ring exists to avoid.
+    expect(nodeG("user").getAttribute("opacity")).toBeNull();
+    expect(nodeG("dshPlugins").getAttribute("opacity")).toBeNull();
     diagram.select(null);
-    expect(nodeG("dshPlugins").getAttribute("opacity")).toBe("1");
+    expect(ringOf("user")).toBe("none");
   });
 
   it("reports selection changes through onSelect", () => {

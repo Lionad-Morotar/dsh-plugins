@@ -233,30 +233,53 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
   }
 
   const nodeEls = new Map<string, SVGGElement>();
+  const nodeRings = new Map<string, SVGRectElement>();
   // Containers paint first so their children land on top; level is the depth.
   const ordered = [...nodes].sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
   for (const node of ordered) {
     const g = el("g", { transform: `translate(${node.x} ${node.y})`, style: "cursor:move" });
     g.setAttribute("data-id", node.id);
     const isContainer = (node.children ?? []).length > 0;
-    // A container is a grouping frame, not a card: a wash of blue with a
-    // border, so the children stay the only solid shapes. Its own caption
-    // therefore needs dark ink, where the cards use light ink on blue.
-    const fill = isContainer ? "#eff6ff" : node.color === "secondary" ? "#475569" : "#3b82f6";
-    g.append(
-      el("rect", {
-        width: node.width,
-        height: node.height,
-        rx: 8,
-        fill,
-        stroke: isContainer ? "#60a5fa" : "#2563eb",
-        "stroke-width": isContainer ? 2 : 1.5,
-      }),
-    );
+    // A container is a grouping frame, not a card, so it paints no fill at
+    // all: the outermost container spans the whole view, and an opaque wash
+    // there turned the canvas itself into a white slab that swallowed every
+    // label inside it. The border and caption carry the grouping instead, in
+    // the panel's own ink so the same drawing reads on light and dark hosts.
+    const fill = isContainer ? "none" : node.color === "secondary" ? "#475569" : "#3b82f6";
+    const ring = el("rect", {
+      x: -4,
+      y: -4,
+      width: node.width + 8,
+      height: node.height + 8,
+      rx: 11,
+      fill: "none",
+      stroke: "var(--dsw-alias-brand-primary, #60a5fa)",
+      "stroke-width": 2,
+      // A view-unit stroke vanishes at the readable zoom; the ring is a
+      // screen-space affordance, so it keeps its weight at every scale.
+      "vector-effect": "non-scaling-stroke",
+      // Decoration only: the ring must never steal a press from the node.
+      "pointer-events": "none",
+      display: "none",
+    });
+    const rect = el("rect", {
+      width: node.width,
+      height: node.height,
+      rx: 8,
+      fill,
+      // A transparent container still has to be clickable across its whole
+      // frame-less interior, or selecting the grouping becomes a pixel hunt
+      // along a 1.5px border.
+      "pointer-events": isContainer ? "all" : "visiblePainted",
+      stroke: isContainer ? "color-mix(in srgb, #60a5fa 80%, transparent)" : "#2563eb",
+      "stroke-width": 1.5,
+    });
+    g.append(ring, rect);
     const title = el("text", {
       x: 10,
       y: 24,
-      fill: isContainer ? "#1e3a8a" : "#eff6ff",
+      fill: isContainer ? "var(--dsw-alias-label-primary, #e5e7eb)" : "#eff6ff",
+      "fill-opacity": isContainer ? 0.88 : 1,
       "font-size": 16,
       "font-weight": 600,
       "font-family": "system-ui,sans-serif",
@@ -267,7 +290,7 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       const tech = el("text", {
         x: 10,
         y: 44,
-        fill: isContainer ? "#1d4ed8" : "#bfdbfe",
+        fill: isContainer ? "var(--dsw-alias-label-secondary, #9ca3af)" : "#bfdbfe",
         "font-size": 13,
         "font-family": "system-ui,sans-serif",
       });
@@ -279,7 +302,7 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       const desc = el("text", {
         x: 10,
         y: node.technology ? 64 : 44,
-        fill: isContainer ? "#1e40af" : "#e0edff",
+        fill: isContainer ? "var(--dsw-alias-label-secondary, #9ca3af)" : "#e0edff",
         "font-size": 12,
         "font-family": "system-ui,sans-serif",
       });
@@ -289,11 +312,15 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     }
     nodeLayer.append(g);
     nodeEls.set(node.id, g);
+    nodeRings.set(node.id, ring);
   }
 
+  // Selection is a ring, not a fade: dimming every other node to 40% washed
+  // their labels into the canvas and made a two-step read of a view the user
+  // opened precisely to read. The ring keeps the whole drawing legible.
   const highlight = (): void => {
-    for (const [id, g] of nodeEls) {
-      g.setAttribute("opacity", selected === null || selected === id ? "1" : "0.4");
+    for (const [id, ring] of nodeRings) {
+      ring.setAttribute("display", selected === id ? "inline" : "none");
     }
   };
 
