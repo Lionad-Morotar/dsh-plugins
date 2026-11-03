@@ -2,7 +2,7 @@
 
 <img src="./assets/icon.svg" width="72" height="72" alt="dsh-slash-commands icon" align="right" />
 
-DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回复放进系统剪贴板，web 与 desktop 用 `/rename` 改当前会话标题、用 `/resume` 切换到另一个会话，三端都用 `/archive` 归档当前会话、用 `/unarchive` 把归档的当前会话放回来；中文标点态下按 `/` 键打出的顿号会在行首自动折叠成 `/`，让命令面板照常唤出。
+DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回复放进系统剪贴板，web 与 desktop 用 `/rename` 改当前会话标题、用 `/resume` 切换到另一个会话，三端都用 `/archive` 归档当前会话、用 `/unarchive` 把归档的当前会话放回来、用 `/placeholder` 只追加一条不触发模型的用户消息；中文标点态下按 `/` 键打出的顿号会在行首自动折叠成 `/`，让命令面板照常唤出。
 
 [命令归属](#命令归属) · [安装](#安装) · [顿号折叠](#中文标点态唤出命令面板) · [实现要点](#实现要点) · [开发](#开发)
 
@@ -16,6 +16,7 @@ DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回�
 | `/rename` | TUI 自带同名命令 | 有 | 有 | 走 harness 全局的命令注册表，一处注册三端可见。TUI 的本地命令表会遮蔽同名注册项，所以 TUI 侧始终用自带的那个 |
 | `/resume` | 无 | 有 | 有 | 只在客户端半注册：切换会话是客户端 UI 导航（`ctx.uiWorkspace`），宿主没有这个能力 |
 | `/archive` | 有 | 有 | 有 | 归档是宿主持久层的状态写入（`workspaceRegistry`），没有端别错配，全局注册表一处注册三端可见 |
+| `/placeholder` | 有 | 有 | 有 | 只向当前 Session 追加一条可回放的用户消息，不创建 turn，也不触发模型 |
 | `/unarchive` | 有 | 有 | 有 | TUI 走宿主注册表（归档后会话保持打开，恒显诚实）；web 与 desktop 走客户端贡献，只在当前会话已归档时出现在命令面板 |
 
 ## `/resume`
@@ -53,6 +54,16 @@ DSH 三端的 slash 命令集合：TUI 用 `/copy` 把最近几轮的最终回�
 「当前会话处于归档态」在三端的分布并不对称，这决定了 `/unarchive` 的端别形态：TUI 归档后会话保持打开，命令是即时的恢复手段，宿主注册表恒显；web 与 desktop 上宿主在归档写入后的推送会让主视图立即切走，且归档会话不可再打开（宿主对归档行的派发有 `archivedNotOpenable` 门槛，会话恢复导航也显式跳过归档行），所以命令改为客户端贡献、按会话状态门控——只在当前会话真的处于归档集时进入命令面板，未归档会话的列表里没有这条死命令。门控读的是 `workspaces.list` 快照的归档集合，每次面板构建候选时现读；执行走侧边栏「取消归档」同一个 rpc。
 
 端别行为有一处天然差异：web 与 desktop 归档当前会话后，主视图会被宿主自己的 reconcile 清掉并自动导航到别处（与侧边栏归档行为同一条链）；TUI 没有主视图概念，会话保持打开，归档事实只发生在持久层。另外 TUI 自带的 `/bg` 会话管理器里有个文案叫「归档」的删除动作，那个是真删会话日志，与本命令同名不同义。
+
+## `/placeholder`
+
+```
+/placeholder 先记下这段话，稍后继续
+```
+
+命令只向当前 Session 追加一条可回放的 `user/message`，正文是参数去掉首尾空白后的原文；中间空白与换行不改写。它不调用 Agent 的投递接口，因此不创建 turn 或 assistant 消息，也不触发模型。空白输入返回用法且零追加；会话不可用或写入失败时返回错误，不伪装成功。
+
+宿主注册表仍会写 `command/run` 与 `command/done` 两条 log-only 审计事件，但它们不是对话轮次。命令声明 `recordInput: false`，正文只留在用户消息里，不在 `command/run.args` 再记一份。
 
 ## `/rename`
 
@@ -127,9 +138,9 @@ macOS 中文输入法的标点态把物理 `/` 键映射成顿号「、」，而
 
 ## 安装
 
-包根带 `dsh-plugin.json`（Community Draft 0.15），把 `/copy`、`/rename`、`/archive` 与 `/unarchive` 作为声明式命令贡献出去，并各自申请 `commands.invoke` 权限。`/resume` 不在这个清单里：它是纯客户端贡献，靠 `package.json#dsh.client` 被发现，写进 manifest 的 `contributes` 反而会和它对不上。
+包根带 `dsh-plugin.json`（Community Draft 0.15），把 `/copy`、`/rename`、`/archive` 与 `/placeholder` 作为声明式命令贡献出去，并各自申请 `commands.invoke` 权限。`/resume` 不在这个清单里：它是纯客户端贡献，靠 `package.json#dsh.client` 被发现，写进 manifest 的 `contributes` 反而会和它对不上；`/unarchive` 则是 TUI 的运行时注册与 web/desktop 的客户端贡献，也不在该清单里。
 
-装到哪个 profile 取决于要哪些命令：只有 tui profile 能拿到 `/copy`，`/rename`、`/archive` 与 `/unarchive` 三端都有，`/resume` 在 web 与 desktop。
+装到哪个 profile 取决于要哪些命令：只有 tui profile 能拿到 `/copy`，`/rename`、`/archive`、`/unarchive` 与 `/placeholder` 三端都有，`/resume` 在 web 与 desktop。
 
 ### 从索引源安装
 
@@ -172,6 +183,7 @@ macOS 中文输入法的标点态把物理 `/` 键映射成顿号「、」，而
 - `src/clipboard.ts` 是剪贴板三档路径，effects 全注入，每个分支都能在无终端环境下测。
 - `src/command.ts` 组装命令；优先走宿主中介的 `tuiPluginHost.registerCommand`（命令会带插件身份，宿主能按 `commands.invoke` 逐插件管控），未准入时回落到 `commands.register`，让命令仍然可用。本机 dsh-tui 组合实测未向第三方激活授予 Component 身份（`componentIdentityOf` 返回 undefined），因此实际走的是回落路径，命令可用但不带归属。
 - `src/rename.ts` 是 `/rename` 的文法（纯函数），`src/rename-command.ts` 组装命令并把标题交给 `sessionTitle`。
+- `src/placeholder.ts` 是 `/placeholder` 的文法（纯函数），`src/placeholder-command.ts` 直接经 `session.append('user/message', message, { surfaceOp: 'append' })` 写入带 UUID、角色与来源的完整消息；`input.hint` 保证 web/desktop 把参数交给命令，`recordInput: false` 避免审计事件重复记录正文。
 - `src/archive.ts` 是 `/archive` 与 `/unarchive` 的文法（纯函数）：`--stop` 精确匹配不做大小写宽容（破坏性 flag 不 forgiving），`/unarchive` 拒绝任何参数。文法归 TUI 的宿主注册行与 web/desktop 的客户端执行共用；后者的面板可见性由 `src/client/unarchive-contribution.ts` 的 `available` 门控（宿主命令注册表没有按会话状态过滤的钩子，客户端贡献面才有，且与宿主目录同名合并冲突会 fail loud，所以两端各走一边）。
 - `src/archive-command.ts` 组装两条归档命令并按错误类名分类宿主失败（`WorkspaceActiveSessionError` 带活动列表、`WorkspaceUnknownSessionError`）。registry 的读取刻意不走 `inject`：声明会让整行等待服务，headless 这类不带 workspace 域的最小组合会把 `/rename`、`/copy` 一起拖成 pending（真机 boot 实测）；改为逐次调用的软探针 `ctx.get(name)`（宿主沙箱里唯一不要求声明的服务读，属性访问未声明且服务已挂载会被 guard 拒绝，所以顺序是 get 在前、属性直读只留给测试夹具）。
 - `src/client/resume.ts` 是 `/resume` 的全部判定（行集、范围过滤、切换派发），DOM-free、协作者全用结构化类型接收，因此切换语义不需要浏览器就能测。
@@ -179,7 +191,7 @@ macOS 中文输入法的标点态把物理 `/` 键映射成顿号「、」，而
 - `src/client/clipboard-shim.ts` 是有界的剪贴板写入：预算、兜底、以及「包装只装一次」的实现（`writeText` 通常挂在原型上，还原时要删掉自己加的影子属性而不是把原型方法拷成自有属性）。
 - `src/client/comma-fold.ts` 是顿号折叠的纯判定（来源、合成态、可取消、行首四个条件），`src/client/comma-listener.ts` 只做 DOM 接线：按事件落点找 composer、取光标前文本、命中后取消原插入并写入斜杠。元素判定走 nodeType 与 `contenteditable` 属性而不是 `instanceof Element`（node 环境没有那个全局）或 `isContentEditable`（jsdom 未实现），这两处坑都由 jsdom 契约测试钉住。
 - `test/bundle.test.ts` 读提交态的 `lib/client.js`：ModuleLoader 形状、自包含（工厂拿不到 `node:` 内建）、折叠代码存活于压缩文本、裸 window 里能加载出插件对象。
-- `src/index.ts` 是宿主半，`inject = ['commands', 'sessionTitle']`，两者都必须声明：漏了 `sessionTitle` 时 Cordis 抛 gateway 契约错误，被 catch 吞掉后表现为「命令执行失败」却给不出原因；`commands` 则是插件行激活早于命令服务挂载，不声明会出现 `apply` 先跑、注册不到、装完即失效（首次真机启动即如此）。它还决定端别分派：探到终端服务才注册 `/copy` 与 `/unarchive`，`/rename` 与 `/archive` 无条件注册。注册再延后一个宏任务，因为 `tuiPluginHost` 由另一行挂载，`apply` 时它还不存在（实测 apply 时缺失、约 250ms 后出现）。
+- `src/index.ts` 是宿主半，`inject = ['commands', 'sessionTitle']`，两者都必须声明：漏了 `sessionTitle` 时 Cordis 抛 gateway 契约错误，被 catch 吞掉后表现为「命令执行失败」却给不出原因；`commands` 则是插件行激活早于命令服务挂载，不声明会出现 `apply` 先跑、注册不到、装完即失效（首次真机启动即如此）。它还决定端别分派：探到终端服务才注册 `/copy` 与 `/unarchive`，`/rename`、`/archive` 与 `/placeholder` 无条件注册。注册再延后一个宏任务，因为 `tuiPluginHost` 由另一行挂载，`apply` 时它还不存在（实测 apply 时缺失、约 250ms 后出现）。
 
 `lib/` 是构建产物且要提交：harness 从安装包直接读它，不会替你跑构建。改了 `src/` 就 `pnpm build` 再提交。
 

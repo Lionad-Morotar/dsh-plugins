@@ -354,6 +354,60 @@ function registerCopyCommand(ctx, environment, effects) {
   return commands.register(definition);
 }
 
+// src/placeholder-command.ts
+import { randomUUID } from "node:crypto";
+
+// src/placeholder.ts
+var PLACEHOLDER_COMMAND_NAME = "placeholder";
+var PLACEHOLDER_COMMAND_DESCRIPTION = "Append a user message without running the model";
+var PLACEHOLDER_USAGE = "\u7528\u6CD5\uFF1A/placeholder <text>";
+function parsePlaceholderInput(rawInput) {
+  const text = rawInput.trim();
+  if (text.length === 0) return { ok: false, message: PLACEHOLDER_USAGE };
+  return { ok: true, text };
+}
+
+// src/placeholder-command.ts
+function createPlaceholderCommand() {
+  return {
+    name: PLACEHOLDER_COMMAND_NAME,
+    description: PLACEHOLDER_COMMAND_DESCRIPTION,
+    input: { hint: "<text>" },
+    recordInput: false,
+    handler(invocation) {
+      const parsed = parsePlaceholderInput(invocation.rawInput);
+      if (!parsed.ok) return { kind: "error", text: parsed.message };
+      const session = invocation.agent.session;
+      if (session === void 0) {
+        return { kind: "error", text: "/placeholder \u5F53\u524D\u4F1A\u8BDD\u4E0D\u53EF\u7528\uFF0C\u65E0\u6CD5\u8FFD\u52A0\u6D88\u606F" };
+      }
+      try {
+        session.append(
+          "user/message",
+          {
+            id: randomUUID(),
+            role: "user",
+            source: { kind: "user" },
+            content: [{ type: "text", text: parsed.text }]
+          },
+          { surfaceOp: "append" }
+        );
+        return { kind: "success", text: "" };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        return { kind: "error", text: `/placeholder \u6D88\u606F\u8FFD\u52A0\u5931\u8D25\uFF1A${detail}` };
+      }
+    }
+  };
+}
+function registerPlaceholderCommand(ctx) {
+  const commands = ctx.get?.("commands", false) ?? ctx.commands;
+  if (typeof commands?.register !== "function") {
+    throw new Error("/placeholder cannot register: the commands service is not mounted on this context");
+  }
+  return commands.register(createPlaceholderCommand());
+}
+
 // src/rename.ts
 var RENAME_COMMAND_NAME = "rename";
 var RENAME_COMMAND_DESCRIPTION = "Rename the current session";
@@ -483,6 +537,13 @@ function apply(ctx) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     ctx.logger?.info?.("dsh-slash-commands: /archive is unavailable on this composition: " + detail);
+  }
+  try {
+    registerPlaceholderCommand(ctx);
+    ctx.logger?.info?.("/placeholder is ready: /placeholder <text>");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    ctx.logger?.info?.("dsh-slash-commands: /placeholder is unavailable on this composition: " + detail);
   }
   setTimeout(() => {
     if (!isTerminalSurface(ctx)) {

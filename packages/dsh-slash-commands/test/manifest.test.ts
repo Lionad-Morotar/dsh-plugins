@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import manifest from "../dsh-plugin.json" with { type: "json" };
 import { ARCHIVE_COMMAND_NAME } from "../src/archive.ts";
 import { COPY_COMMAND_NAME } from "../src/command.ts";
+import { PLACEHOLDER_COMMAND_NAME } from "../src/placeholder.ts";
 import { RENAME_COMMAND_NAME } from "../src/rename.ts";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,6 +24,7 @@ describe("the admission manifest", () => {
       COPY_COMMAND_NAME,
       RENAME_COMMAND_NAME,
       ARCHIVE_COMMAND_NAME,
+      PLACEHOLDER_COMMAND_NAME,
     ]);
   });
 

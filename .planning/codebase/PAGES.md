@@ -48,7 +48,7 @@
 | `dsh-jump` | `jump` | `dsh-jump` | `packages/dsh-jump/cordis.patch.yml` | 无；市场文案走 `locale/{zh,en}.json` 的 `meta` |
 | `dsh-better-keybindings` | `better-keybindings` | `dsh-better-keybindings` | `packages/dsh-better-keybindings/cordis.patch.yml` | 无；同上 |
 | `dsh-preview-more` | `preview-more` | `dsh-preview-more` | `packages/dsh-preview-more/cordis.patch.yml` | `icon.svg` + `locale/{zh,en}.json` |
-| `dsh-slash-commands` | `dsh-slash-commands` | `dsh-slash-commands` | `packages/dsh-slash-commands/cordis.patch.yml` | `dsh-plugin.json`（Community Draft 0.15 准入清单，只声明宿主侧 `/copy` 与 `/rename`） |
+| `dsh-slash-commands` | `dsh-slash-commands` | `dsh-slash-commands` | `packages/dsh-slash-commands/cordis.patch.yml` | `dsh-plugin.json`（Community Draft 0.15 准入清单，声明宿主侧 `/copy`、`/rename`、`/archive` 与 `/placeholder`；`/unarchive` 为运行时注册） |
 | `dsh-session-timing` | `session-timing` | `dsh-session-timing` | `packages/dsh-session-timing/cordis.patch.yml` | 无；宿主半注册 `sessionTiming` projection，市场文案走 `locale/{zh,en}.json` 的 `meta` |
 | `dsh-session-interruption` | `session-interruption` | `dsh-session-interruption` | `packages/dsh-session-interruption/cordis.patch.yml` | 无；宿主半注册 `sessionInterruption` projection，市场文案走 `locale/{zh,en}.json` 的 `meta` |
 | `dsh-better` | `better` | `dsh-better` | `packages/dsh-better/cordis.patch.yml` | 无；宿主半经 `ctx.inject(["sessionProjections"])` 软探测注册 `sessionCompaction` projection（其余功能在客户端半边），宿主缺该 seam 时读数不出现而其余面照旧 |

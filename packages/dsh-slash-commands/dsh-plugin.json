@@ -34,6 +34,11 @@
       "name": "commands.invoke",
       "scope": "lionad.dsh-slash-commands.archive",
       "reason": "/archive 由用户手动发起，把当前会话写入宿主归档集合（--stop 时附带请求停止其运行中的工作）"
+    },
+    {
+      "name": "commands.invoke",
+      "scope": "lionad.dsh-slash-commands.placeholder",
+      "reason": "/placeholder 由用户手动发起，只向当前会话追加一条用户消息，不触发模型"
     }
   ],
   "contributes": {
@@ -52,6 +57,11 @@
         "id": "lionad.dsh-slash-commands.archive",
         "title": "/archive",
         "description": "Archive the current session (--stop also stops its running work)"
+      },
+      {
+        "id": "lionad.dsh-slash-commands.placeholder",
+        "title": "/placeholder",
+        "description": "Append a user message without running the model"
       }
     ]
   },

@@ -1,12 +1,15 @@
 /**
  * Host half of dsh-slash-commands.
  *
- * One package, one host half, two commands with different homes:
+ * One package, one host half, commands with different homes:
  *
  * - `/rename` registers on the harness-wide `commands` registry. Every UI
  *   adapter reads that catalog over the same remote surface, so this single
  *   registration is what makes the command visible on web, desktop and TUI at
  *   once. It needs no terminal.
+ * - `/placeholder` uses the same registry to append a replayable user message
+ *   directly to the current Session on all three surfaces, without waking the
+ *   agent or creating a model turn.
  * - `/archive` registers on the same registry for the same reason: the write
  *   belongs to the host's `workspaceRegistry` (the durable archive set), so
  *   every surface can execute it and the host's push stream converges the
@@ -37,6 +40,7 @@ import { MISSING_TOOL } from "./clipboard.ts";
 import { registerArchiveCommand, registerUnarchiveCommand } from "./archive-command.ts";
 import { registerCopyCommand } from "./command.ts";
 import type { ClipboardEffects, HostContextLike } from "./command.ts";
+import { registerPlaceholderCommand } from "./placeholder-command.ts";
 import { registerRenameCommand } from "./rename-command.ts";
 
 export const name = "dsh-slash-commands";
@@ -148,9 +152,9 @@ export function apply(ctx: PluginContext): void {
 
   // `/rename` changes a session title through the harness-wide registry, so it
   // is surface-independent and goes in immediately: the macrotask delay below
-  // exists for `tuiPluginHost`, which this command never touches. The archive
-  // pair shares that independence — the host registry write converges every
-  // surface — so it registers in the same immediate pass.
+  // exists for `tuiPluginHost`, which these commands never touch. The archive
+  // pair and /placeholder share that independence, so they register in the
+  // same immediate pass.
   try {
     registerRenameCommand(ctx);
     ctx.logger?.info?.("/rename is ready: /rename <new title>");
@@ -166,6 +170,14 @@ export function apply(ctx: PluginContext): void {
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     ctx.logger?.info?.("dsh-slash-commands: /archive is unavailable on this composition: " + detail);
+  }
+
+  try {
+    registerPlaceholderCommand(ctx);
+    ctx.logger?.info?.("/placeholder is ready: /placeholder <text>");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    ctx.logger?.info?.("dsh-slash-commands: /placeholder is unavailable on this composition: " + detail);
   }
 
   // One macrotask later the host row is mounted; registering from the same

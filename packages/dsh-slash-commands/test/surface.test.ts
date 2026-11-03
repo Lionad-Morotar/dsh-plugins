@@ -68,12 +68,12 @@ describe("surface gating", () => {
     expect(registered.map(entry => entry.name)).toContain("rename");
   });
 
-  it("registers /rename and /archive on a non-terminal surface", async () => {
+  it("registers /rename, /archive and /placeholder on a non-terminal surface", async () => {
     const { registered, ctx } = context({ terminal: false, withCommands: true });
 
     await settle(() => apply(ctx as never));
 
-    expect(registered.map(entry => entry.name).sort()).toEqual(["archive", "rename"]);
+    expect(registered.map(entry => entry.name).sort()).toEqual(["archive", "placeholder", "rename"]);
   });
 
   it("does not offer /unarchive on a non-terminal surface", async () => {
@@ -106,7 +106,13 @@ describe("surface gating", () => {
 
     await settle(() => apply(ctx as never));
 
-    expect(registered.map(entry => entry.name).sort()).toEqual(["archive", "copy", "rename", "unarchive"]);
+    expect(registered.map(entry => entry.name).sort()).toEqual([
+      "archive",
+      "copy",
+      "placeholder",
+      "rename",
+      "unarchive",
+    ]);
   });
 
   it("still registers nothing when no commands service is mounted", async () => {
