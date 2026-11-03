@@ -59,11 +59,19 @@ export interface WorkbenchFace {
 
 /** Services this plugin waits for before applying.
  *
- * `slots` is required: the conversation tab is the entry the user looks for.
- * `workbench` stays so the dock kind can still register when the core is up;
- * a host without it still gets the conversation tab.
+ * `slots` and `locale` are what the conversation tab needs to register.
+ * `workbench` used to be required too, and that is what dropped the tab: a hot
+ * reload tears the plugin down and brings it back while its services are still
+ * settling, and one required service that is briefly absent keeps the whole
+ * plugin inactive, so the tab registration never runs and the strip loses it
+ * until the next full boot. The dock kind still registers when the service is
+ * present; `apply` reads it and skips the kind when it is not.
+ *
+ * An array, not `{ required, optional }`: the loader treats every key of an
+ * object inject as a service name, so a `required` key would wait forever for
+ * a service that does not exist.
  */
-export const inject = ["slots", "locale", "workbench"];
+export const inject = ["slots", "locale"];
 
 /** Disposer of the dictionary currently sitting in the host's locale table.
 * A repeat apply on one host process meets the same table, and the table

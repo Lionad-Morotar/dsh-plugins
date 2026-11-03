@@ -68,7 +68,10 @@ function createContext(options: { workbench?: boolean } = {}) {
 describe("arch entry wiring", () => {
   it("declares the slots, locale and workbench services it waits for", () => {
     expect(clientPlugin.name).toBe("dsh-arch");
-    expect(clientPlugin.inject).toEqual(["slots", "locale", "workbench"]);
+    // workbench is not waited on: a hot reload that catches it momentarily
+    // absent must still register the conversation tab instead of parking the
+    // plugin. The dock kind registers from inside apply when it is present.
+    expect(clientPlugin.inject).toEqual(["slots", "locale"]);
   });
 
   it("registers an architecture conversation view beside files and git", () => {
