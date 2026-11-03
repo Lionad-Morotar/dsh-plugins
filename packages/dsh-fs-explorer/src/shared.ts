@@ -25,6 +25,16 @@ export const LOCALE_NAMESPACE = "fs-explorer";
 export const DOCUMENTS_SERVICE = "fsExplorerDocuments";
 
 /**
+ * Host service key of the workspace channel.
+ *
+ * A second namespace beside {@link DOCUMENTS_SERVICE}, not a fourth method on
+ * it: the document channel is about one editable file's text and version, while
+ * this one is about where a path is and what the reader's desktop can do with
+ * it. Both are reached the same way, through the Typert gateway.
+ */
+export const WORKSPACE_SERVICE = "fsExplorerWorkspace";
+
+/**
  * Prefix for a host-truncated directory listing.
  *
  * `workspaceFiles.list` caps each level and has no paging parameter, so the

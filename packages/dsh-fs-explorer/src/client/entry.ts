@@ -47,7 +47,8 @@ import {
   languageFor,
   normalizePreviewPage,
 } from "./preview.ts";
-import { boot, previewChunkRoute } from "./preview-chunk.ts";
+import { boot as bootPreviewChunk, previewChunkRoute } from "./preview-chunk.ts";
+import { boot as bootMenuKit } from "./platform.ts";
 import { PREVIEW_COPY, createBuiltinRenderers } from "./preview-pane.tsx";
 import {
   createRendererRegistry,
@@ -60,6 +61,7 @@ import { insertStyles } from "./styles.ts";
 import { parseStatusZ, statusBadge, statusTone } from "./status.ts";
 import { buildWorkspaceMap, workspaceTagFor } from "./workspace-map.ts";
 import { createFsExplorerView, type WorkbenchFace } from "./view.tsx";
+import { createWorkspaceClient } from "./workspace-face.ts";
 import {
   createFilesResolver,
   createGitShowResolver,
@@ -228,6 +230,7 @@ export function apply(ctx: ClientContextLike): () => void {
     renderers: registry,
     documents: documentsStore(ctx),
     locate: sessionId => createSymlinkLocator(ctx, sessionId),
+    workspace: () => createWorkspaceClient(ctx),
   });
 
   // The address bridge hangs off the optional right sidebar; it registers
@@ -309,9 +312,15 @@ export const clientPlugin = { name: "dsh-fs-explorer", inject, apply, __test };
 
 /**
  * The loader hands its `require` to this export after the module body runs.
+ *
  * It is the only reachable handle on `require.async`, which is how the preview
- * chunk is fetched.
+ * chunk is fetched, and on the static module table, which is where the host's UI
+ * primitives live. Both halves take it; a host that seeds no primitives leaves
+ * the context menu on this package's own card.
  */
-export { boot };
+export function boot(loaderRequire: Parameters<typeof bootMenuKit>[0] & Parameters<typeof bootPreviewChunk>[0]): void {
+  bootMenuKit(loaderRequire);
+  bootPreviewChunk(loaderRequire);
+}
 
 export default clientPlugin;

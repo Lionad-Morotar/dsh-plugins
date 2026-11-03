@@ -129,6 +129,15 @@ export interface FsWriteOutcome {
 export interface FileSystemFace {
   resolve(path: string, opts?: { readonly cwd?: string; readonly signal?: AbortSignal }): Promise<FsTargetFace>;
   stat(target: FsTargetFace, signal?: AbortSignal): Promise<FsFileInfo | undefined>;
+  /**
+   * Canonical containment: whether `child` is `parent` or a descendant of it.
+   *
+   * Optional only so a test fake can omit it; every installed backend
+   * implements it, and it is the one check the workspace channel trusts for
+   * its boundary. A backend without it answers `unsupported` rather than
+   * guessing from string prefixes, which a symlink or a `..` segment defeats.
+   */
+  contains?(parent: FsTargetFace, child: FsTargetFace): boolean;
   readText(target: FsTargetFace, signal?: AbortSignal): Promise<string>;
   writeText(
     target: FsTargetFace,
@@ -151,6 +160,76 @@ export interface FileSystemFace {
 export interface FsPathInfo {
   readonly type: "file" | "directory" | "symlink" | "other";
 }
+
+/**
+ * Failure vocabulary of the workspace channel.
+ *
+ * Closed on purpose, like {@link DocumentFailureCode}: the client maps each
+ * code to one sentence, so a code it does not know would render as a silent
+ * no-op. Every backend failure that has no client-facing meaning collapses
+ * into `io-error` with the backend's own message attached.
+ */
+export type WorkspaceFailureCode =
+  | "no-workspace"
+  | "outside-workspace"
+  | "not-found"
+  | "unsupported"
+  | "permission"
+  | "io-error";
+
+export interface WorkspaceFailure {
+  readonly code: WorkspaceFailureCode;
+  readonly message: string;
+}
+
+/**
+ * The file manager a host can hand a path to.
+ *
+ * `finder` and `explorer` select the entry; `directory` opens the containing
+ * folder, because the Linux desktop has no portable "select this file" verb.
+ */
+export type WorkspaceFileManager = "finder" | "explorer" | "directory";
+
+/** What the client needs to label and enable the reveal row. */
+export interface WorkspaceCapabilities {
+  readonly fileManager: WorkspaceFileManager | null;
+  readonly canReveal: boolean;
+}
+
+/** One path as the workspace channel describes it. */
+export interface WorkspacePathInfo {
+  /** Canonical absolute path in the session's execution world. */
+  readonly absolutePath: string;
+  readonly type: "file" | "directory" | "other";
+  readonly exists: boolean;
+}
+
+export interface WorkspaceCapabilitiesRequest {
+  readonly sessionId: string;
+}
+
+export interface WorkspaceInfoRequest {
+  readonly sessionId: string;
+  /** Workspace-relative or absolute; resolved against the session's cwd. */
+  readonly path: string;
+}
+
+export interface WorkspaceRevealRequest {
+  readonly sessionId: string;
+  readonly path: string;
+}
+
+export type WorkspaceCapabilitiesResult =
+  | { readonly ok: true; readonly capabilities: WorkspaceCapabilities }
+  | { readonly ok: false; readonly error: WorkspaceFailure };
+
+export type WorkspaceInfoResult =
+  | { readonly ok: true; readonly info: WorkspacePathInfo }
+  | { readonly ok: false; readonly error: WorkspaceFailure };
+
+export type WorkspaceRevealResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: WorkspaceFailure };
 
 /** Structural slice of the live session store: only the header cwd is read. */
 export interface SessionsFace {

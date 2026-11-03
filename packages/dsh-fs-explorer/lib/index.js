@@ -50,6 +50,8 @@ var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "acce
 // src/index.ts
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import Schema from "@deepseek-ai/schemastery";
+import { spawn as nodeSpawn } from "node:child_process";
+import { release as osRelease } from "node:os";
 
 // src/host/documents.ts
 var DEFAULT_DOCUMENTS_CONFIG = { maxBytes: 2 * 1024 * 1024 };
@@ -161,18 +163,196 @@ async function locatePath(deps, request, signal) {
   }
 }
 
+// src/host/workspace.ts
+import path from "node:path";
+var MAX_MESSAGE2 = 600;
+function messageOf2(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function fail2(code, message) {
+  return { ok: false, error: { code, message: message.slice(0, MAX_MESSAGE2) } };
+}
+var FS_FAILURES2 = {
+  FS_NOT_FOUND: "not-found",
+  FS_NOT_DIRECTORY: "not-found",
+  FS_PERMISSION_DENIED: "permission"
+};
+function codeOf2(error) {
+  if (typeof error !== "object" || error === null) return void 0;
+  const { code } = error;
+  return typeof code === "string" ? code : void 0;
+}
+function failureOf2(error) {
+  const code = codeOf2(error);
+  return fail2((code === void 0 ? void 0 : FS_FAILURES2[code]) ?? "io-error", messageOf2(error));
+}
+function present(value) {
+  return value !== void 0 && value !== "";
+}
+function isWsl(env) {
+  if (present(env.env.WSL_DISTRO_NAME) || present(env.env.WSL_INTEROP)) return true;
+  return (env.release ?? "").toLowerCase().includes("microsoft");
+}
+function fileManagerOf(env) {
+  if (env.platform === "darwin") return "finder";
+  if (env.platform === "win32") return "explorer";
+  if (env.platform !== "linux") return null;
+  if (isWsl(env)) return "explorer";
+  return present(env.env.DISPLAY) || present(env.env.WAYLAND_DISPLAY) ? "directory" : null;
+}
+function workspaceCapabilities(env) {
+  const fileManager = fileManagerOf(env);
+  return { fileManager, canReveal: fileManager !== null };
+}
+function pathOf(platform) {
+  return platform === "win32" ? path.win32 : path.posix;
+}
+async function resolveInside(deps, requestPath, signal) {
+  if (typeof requestPath !== "string" || requestPath.trim() === "") {
+    return fail2("not-found", "path must be a non-empty string");
+  }
+  if (typeof deps.fs.contains !== "function") {
+    return fail2("unsupported", "this filesystem backend cannot prove workspace containment");
+  }
+  try {
+    const root = await deps.fs.resolve(deps.cwd, { cwd: deps.cwd, signal });
+    const target = await deps.fs.resolve(requestPath, { cwd: deps.cwd, signal });
+    if (!deps.fs.contains(root, target)) {
+      return fail2("outside-workspace", `${requestPath} is outside the session workspace`);
+    }
+    return { target, absolutePath: deps.fs.processPath?.(target) ?? target.displayPath, root };
+  } catch (error) {
+    return failureOf2(error);
+  }
+}
+async function describeWorkspacePath(deps, request, signal) {
+  const resolved = await resolveInside(deps, request?.path, signal);
+  if ("ok" in resolved) return resolved;
+  try {
+    const info = await deps.fs.stat(resolved.target, signal);
+    const described = {
+      absolutePath: resolved.absolutePath,
+      type: info?.type ?? "other",
+      exists: info !== void 0
+    };
+    return { ok: true, info: described };
+  } catch (error) {
+    return failureOf2(error);
+  }
+}
+function run(env, command, args, capture = false) {
+  return new Promise((settle, reject) => {
+    let child;
+    try {
+      child = env.spawn(command, args, {
+        stdio: ["ignore", capture ? "pipe" : "ignore", "ignore"],
+        windowsHide: true
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    let stdout = "";
+    let settled = false;
+    const finish = (outcome) => {
+      if (settled) return;
+      settled = true;
+      settle(outcome);
+    };
+    const abort = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    child.on("error", abort);
+    if (capture) {
+      child.stdout?.on("data", (chunk) => {
+        stdout += typeof chunk === "string" ? chunk : Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      });
+    }
+    child.on("exit", (code) => finish({ code, stdout }));
+  });
+}
+async function revealOn(env, absolutePath) {
+  const manager = fileManagerOf(env);
+  if (manager === "finder") {
+    const outcome = await run(env, "open", ["-R", absolutePath]);
+    if (outcome.code !== 0) throw new Error(`open -R exited with ${String(outcome.code)}`);
+    return;
+  }
+  if (manager === "explorer") {
+    let windowsPath = absolutePath;
+    if (env.platform === "linux") {
+      const translated = await run(env, "wslpath", ["-w", absolutePath], true);
+      if (translated.code !== 0) throw new Error(`wslpath exited with ${String(translated.code)}`);
+      windowsPath = translated.stdout.replace(/[\r\n]+$/u, "");
+      if (windowsPath === "") throw new Error("wslpath returned no Windows path");
+    }
+    const outcome = await run(env, "explorer.exe", ["/select,", windowsPath]);
+    if (outcome.code !== 0 && outcome.code !== 1) {
+      throw new Error(`explorer.exe exited with ${String(outcome.code)}`);
+    }
+    return;
+  }
+  if (manager === "directory") {
+    const outcome = await run(env, "xdg-open", [pathOf(env.platform).dirname(absolutePath)]);
+    if (outcome.code !== 0) throw new Error(`xdg-open exited with ${String(outcome.code)}`);
+    return;
+  }
+  throw Object.assign(new Error(`no file manager on ${env.platform}`), { code: "unsupported" });
+}
+async function revealWorkspacePath(deps, request, signal) {
+  const resolved = await resolveInside(deps, request?.path, signal);
+  if ("ok" in resolved) return resolved;
+  if (fileManagerOf(deps.env) === null) {
+    return fail2("unsupported", `no file manager is available on ${deps.env.platform}`);
+  }
+  try {
+    const info = await deps.fs.stat(resolved.target, signal);
+    if (info === void 0) return fail2("not-found", `${request.path} does not exist`);
+    await revealOn(deps.env, resolved.absolutePath);
+    return { ok: true };
+  } catch (error) {
+    if (codeOf2(error) === "unsupported") return fail2("unsupported", messageOf2(error));
+    return failureOf2(error);
+  }
+}
+function capabilitiesResult(env) {
+  return { ok: true, capabilities: workspaceCapabilities(env) };
+}
+
 // src/shared.ts
 var PACKAGE_NAME = "dsh-fs-explorer";
 var VIEW_SLOT = "conversation.view";
 var VIEW_ID = "fs-explorer";
 var VIEW_ORDER = 100;
 var DOCUMENTS_SERVICE = "fsExplorerDocuments";
+var WORKSPACE_SERVICE = "fsExplorerWorkspace";
 
 // src/index.ts
 var name = PACKAGE_NAME;
 var inject = ["fs", "sessions", "sessionPersistence"];
 function describe() {
   return { name: PACKAGE_NAME, slot: VIEW_SLOT, id: VIEW_ID, order: VIEW_ORDER };
+}
+function realWorkspaceEnv() {
+  const spawn = (command, args, options) => nodeSpawn(command, [...args], options);
+  return { platform: process.platform, env: process.env, spawn, release: osRelease() };
+}
+function readService(ctx, service) {
+  const reader = ctx;
+  const value = reader.get?.call(ctx, service);
+  return value === null ? void 0 : value;
+}
+async function baseDirectory(sessions, sessionPersistence, sessionId) {
+  const live = sessions?.get(sessionId)?.header?.cwd;
+  if (typeof live === "string" && live !== "") return live;
+  try {
+    const persisted = (await sessionPersistence?.stat(sessionId))?.header?.cwd;
+    if (typeof persisted === "string" && persisted !== "") return persisted;
+  } catch {
+  }
+  return void 0;
 }
 var _locate_dec, _save_dec, _open_dec, _a, _init;
 var FsExplorerDocumentsService = class extends (_a = TypertRemoteService, _open_dec = [Remote("open")], _save_dec = [Remote("save")], _locate_dec = [Remote("locate")], _a) {
@@ -184,33 +364,15 @@ var FsExplorerDocumentsService = class extends (_a = TypertRemoteService, _open_
     __publicField(this, "sessionPersistence");
     __publicField(this, "config");
     this.config = normalizeConfig(config);
-    const reader = ctx;
-    const read = (service) => {
-      const value = reader.get?.call(ctx, service);
-      return value === null ? void 0 : value;
-    };
-    const fs = read("fs");
+    const fs = readService(ctx, "fs");
     if (fs === void 0) throw new Error("dsh-fs-explorer: fs service is unavailable");
     this.fs = fs;
-    this.sessions = read("sessions");
-    this.sessionPersistence = read("sessionPersistence");
+    this.sessions = readService(ctx, "sessions");
+    this.sessionPersistence = readService(ctx, "sessionPersistence");
   }
-  /**
-   * Resolve the working directory a request's path is relative to.
-   *
-   * Order: live session header, then persisted header. There is deliberately no
-   * `process.cwd()` last resort — a save must never land in whatever directory
-   * the host process happens to run from.
-   */
+  /** Resolve the working directory this request's path is relative to. */
   async baseDirectory(sessionId) {
-    const live = this.sessions?.get(sessionId)?.header?.cwd;
-    if (typeof live === "string" && live !== "") return live;
-    try {
-      const persisted = (await this.sessionPersistence?.stat(sessionId))?.header?.cwd;
-      if (typeof persisted === "string" && persisted !== "") return persisted;
-    } catch {
-    }
-    return void 0;
+    return baseDirectory(this.sessions, this.sessionPersistence, sessionId);
   }
   async open(request, signal) {
     const cwd = await this.baseDirectory(request.sessionId);
@@ -237,15 +399,65 @@ __publicField(FsExplorerDocumentsService, "inject", inject);
 __publicField(FsExplorerDocumentsService, "Config", Schema.object({
   maxBytes: Schema.number().default(DEFAULT_DOCUMENTS_CONFIG.maxBytes).description("\u5355\u4EFD\u53EF\u8BFB\u53D6\u4E0E\u4FDD\u5B58\u7684\u6587\u6863\u5B57\u8282\u4E0A\u9650")
 }));
-var index_default = FsExplorerDocumentsService;
+var _reveal_dec, _info_dec, _capabilities_dec, _a2, _init2;
+var FsExplorerWorkspaceService = class extends (_a2 = TypertRemoteService, _capabilities_dec = [Remote("capabilities")], _info_dec = [Remote("info")], _reveal_dec = [Remote("reveal")], _a2) {
+  constructor(ctx, env) {
+    super(ctx, WORKSPACE_SERVICE);
+    __runInitializers(_init2, 5, this);
+    __publicField(this, "fs");
+    __publicField(this, "sessions");
+    __publicField(this, "sessionPersistence");
+    __publicField(this, "env");
+    const fs = readService(ctx, "fs");
+    if (fs === void 0) throw new Error("dsh-fs-explorer: fs service is unavailable");
+    this.fs = fs;
+    this.sessions = readService(ctx, "sessions");
+    this.sessionPersistence = readService(ctx, "sessionPersistence");
+    this.env = env ?? realWorkspaceEnv();
+  }
+  /** Resolve one request's dependencies, or the failure to answer with. */
+  async deps(sessionId) {
+    const cwd = await baseDirectory(this.sessions, this.sessionPersistence, sessionId);
+    if (cwd === void 0) return fail2("no-workspace", `session ${sessionId} has no workspace directory`);
+    return { fs: this.fs, cwd, env: this.env };
+  }
+  capabilities(request) {
+    void request;
+    return capabilitiesResult(this.env);
+  }
+  async info(request, signal) {
+    const deps = await this.deps(request.sessionId);
+    if ("ok" in deps) return deps;
+    return describeWorkspacePath(deps, request, signal);
+  }
+  async reveal(request, signal) {
+    const deps = await this.deps(request.sessionId);
+    if ("ok" in deps) return deps;
+    return revealWorkspacePath(deps, request, signal);
+  }
+};
+_init2 = __decoratorStart(_a2);
+__decorateElement(_init2, 1, "capabilities", _capabilities_dec, FsExplorerWorkspaceService);
+__decorateElement(_init2, 1, "info", _info_dec, FsExplorerWorkspaceService);
+__decorateElement(_init2, 1, "reveal", _reveal_dec, FsExplorerWorkspaceService);
+__decoratorMetadata(_init2, FsExplorerWorkspaceService);
+__publicField(FsExplorerWorkspaceService, "inject", ["fs"]);
+function apply(ctx, config) {
+  new FsExplorerDocumentsService(ctx, config);
+  new FsExplorerWorkspaceService(ctx);
+}
+var index_default = apply;
 export {
   DEFAULT_DOCUMENTS_CONFIG,
   DOCUMENTS_SERVICE,
   FsExplorerDocumentsService,
+  FsExplorerWorkspaceService,
   PACKAGE_NAME,
   VIEW_ID,
   VIEW_ORDER,
   VIEW_SLOT,
+  WORKSPACE_SERVICE,
+  apply,
   index_default as default,
   describe,
   inject,

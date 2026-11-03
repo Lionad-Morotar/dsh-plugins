@@ -106,6 +106,67 @@ export const FS_STYLES = `
   font-variant-numeric: tabular-nums;
 }
 .fx-head-meta b { color: var(--fx-text-2); font-weight: 600; }
+
+/* One transient sentence about what the last action did. It sits between the
+   header and the panes rather than floating over them: a toast would cover the
+   tree row the reader just acted on, which is exactly what they are looking at. */
+.fx-notice {
+  flex: none;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--fx-border-soft);
+  background: var(--fx-panel-2);
+  color: var(--fx-text-2);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fx-notice[data-tone="ok"] { color: var(--dsw-alias-state-success-primary, var(--fx-text-2)); }
+.fx-notice[data-tone="error"] { color: var(--dsw-alias-state-error-primary, var(--fx-text-2)); }
+
+/* The context menu's own card, used only when the host seeds no primitive kit.
+   The host's Menu brings its own material; this exists so right-click still
+   works on a host that has none, not as a second menu design. */
+.fx-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--fx-border);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  box-shadow: 0 8px 24px color-mix(in srgb, currentColor 16%, transparent);
+  color: var(--fx-text);
+  font-family: var(--fx-font);
+  font-size: 12px;
+}
+.fx-menu-sub {
+  position: absolute;
+  left: 100%;
+  top: -5px;
+  margin-left: 2px;
+}
+.fx-menu-item-wrap { position: relative; }
+.fx-menu-item {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fx-menu-item:hover:not(:disabled) { background: var(--fx-hover); }
+.fx-menu-item:disabled { color: var(--fx-caption); cursor: default; }
+.fx-menu-item[aria-disabled="true"] { color: var(--fx-caption); }
+.fx-menu-item[aria-haspopup="menu"]::after { content: " ›"; float: right; color: var(--fx-caption); }
+/* The reason a row cannot run, shown on the row itself: the host Menu's data rows
+   have no disabledReason, and a greyed row with no explanation reads as broken. */
+.fx-menu-reason { display: block; color: var(--fx-caption); font-size: 11px; line-height: 1.4; }
 .fx-btn {
   display: inline-flex;
   align-items: center;

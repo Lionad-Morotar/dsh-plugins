@@ -21,6 +21,15 @@ import {
 } from "react";
 
 import type { Translate } from "./copy.ts";
+import {
+  MENU_ACTION,
+  buildContextMenu,
+  type ContextMenuAnchor,
+  type ContextMenuEntry,
+  type ContextMenuRow,
+} from "./context-menu.ts";
+import { ContextMenu, type MenuAnchor } from "./context-menu-view.tsx";
+import { writeClipboard } from "./clipboard.ts";
 import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap } from "./keyboard.ts";
 import type { DocumentStore } from "./document-session.ts";
 import type { SymlinkLocator } from "./preview.ts";
@@ -52,6 +61,8 @@ import { PreviewPane, saveFailureReason } from "./preview-pane.tsx";
 import type { RendererRegistry } from "./renderer-registry.ts";
 import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody, type TreeEntryFocus } from "./tree.tsx";
 import { buildWorkspaceMap, MANIFEST_FILES, type WorkspaceTag } from "./workspace-map.ts";
+import { createWorkspaceClient, type WorkspaceClient, type WorkspaceError } from "./workspace-face.ts";
+import type { WorkspaceCapabilities } from "../host/types.ts";
 import {
   describeFailure,
   normalizeListing,
@@ -118,6 +129,14 @@ export interface ViewWiring {
    * can do and nothing more.
    */
   readonly locate?: (sessionId: string) => SymlinkLocator;
+  /**
+   * The workspace channel behind the tree's context menu.
+   *
+   * Absent leaves the menu's reveal row disabled with a reason and the absolute
+   * copy unavailable, which is what a host without the channel can honestly
+   * offer. A test injects a fake here.
+   */
+  readonly workspace?: (sessionId: string) => WorkspaceClient;
 }
 
 /** The first-paint state without waiting for an effect. */
@@ -244,6 +263,7 @@ export function createFsExplorerView({
   renderers,
   documents,
   locate,
+  workspace: resolveWorkspace,
 }: ViewWiring) {
   // One registry per registered view: the host mounts and unmounts this
   // component on every view switch, while the factory itself lives on.
@@ -266,6 +286,36 @@ export function createFsExplorerView({
       () => (sessionId === undefined || locate === undefined ? undefined : locate(sessionId)),
       [locate, sessionId],
     );
+
+    // The context menu's channel. Resolved once per session, like the locator:
+    // a fresh client identity on every render would restart the capability probe.
+    const workspace = useMemo<WorkspaceClient | undefined>(
+      () => (sessionId === undefined || resolveWorkspace === undefined ? undefined : resolveWorkspace(sessionId)),
+      [resolveWorkspace, sessionId],
+    );
+
+    // Read by the Escape handler, which is registered once and must not be
+    // rebuilt every time the menu opens.
+    const contextMenuOpen = useRef(false);
+
+    // The open context menu: which row it addresses (undefined for the blank
+    // area), where it opened, and the absolute path `info` answered for it.
+    const [contextMenu, setContextMenu] = useState<
+      | {
+          readonly row: ContextMenuRow | undefined;
+          readonly anchor: MenuAnchor;
+          readonly absolutePath: string | undefined;
+          /** Where the keyboard goes when the menu closes. */
+          readonly trigger: HTMLElement | undefined;
+        }
+      | null
+    >(null);
+    // What the host's desktop can do. Probed once per session, not per menu: the
+    // answer is a property of the host, not of the click.
+    const [capabilities, setCapabilities] = useState<WorkspaceCapabilities | undefined>(undefined);
+    // One transient sentence under the header: what the last action did.
+    const [notice, setNotice] = useState<{ readonly text: string; readonly tone: "ok" | "error" } | null>(null);
+    const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const [levels, setLevels] = useState<ReadonlyMap<string, TreeLevel>>(() => new Map());
     const [statuses, setStatuses] = useState<StatusMap | undefined>(undefined);
@@ -762,7 +812,7 @@ export function createFsExplorerView({
       if (typeof document === "undefined") return;
       const handler = createEscapeHandler({
         focusComposer,
-        hasModal: () => pendingCloseRef.current !== null || hasOpenModal(document),
+        hasModal: () => pendingCloseRef.current !== null || contextMenuOpen.current || hasOpenModal(document),
       });
       const listener = (event: KeyboardEvent): void => handler(event);
       document.addEventListener("keydown", listener, true);
@@ -852,6 +902,151 @@ export function createFsExplorerView({
       [sessionId, files, loadLevel],
     );
 
+    /**
+     * Show one sentence under the header for a few seconds.
+     *
+     * One timer for the whole view: a second action replaces the first notice
+     * rather than stacking, and the timer is cleared on unmount so a notice
+     * cannot land on a view that is gone.
+     * @param text - the sentence, already translated.
+     * @param tone - whether it reports success or a refusal.
+     */
+    const announce = useCallback((text: string, tone: "ok" | "error"): void => {
+      if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
+      setNotice({ text, tone });
+      noticeTimer.current = setTimeout(() => {
+        noticeTimer.current = null;
+        setNotice(null);
+      }, 4000);
+    }, []);
+
+    useEffect(
+      () => () => {
+        if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
+      },
+      [],
+    );
+
+    // The capability probe. A host without the channel, or one whose probe
+    // failed, leaves the reveal row disabled with a reason: an action that
+    // cannot run must say so rather than disappear.
+    useEffect(() => {
+      if (workspace === undefined) {
+        setCapabilities(undefined);
+        return;
+      }
+      let alive = true;
+      void workspace.capabilities(sessionId ?? "").then(outcome => {
+        if (!alive) return;
+        setCapabilities(outcome.ok ? outcome.capabilities : undefined);
+      });
+      return () => {
+        alive = false;
+      };
+    }, [workspace, sessionId]);
+
+    /**
+     * Open the context menu for one row, or for the tree's blank area.
+     *
+     * The absolute path is asked for here rather than when the row is copied:
+     * the menu has to know whether that action can run before it paints, and a
+     * menu that offers a row which then fails is worse than one that says why.
+     * The answer is allowed to arrive late; the menu opens immediately and the
+     * row enables itself when it lands.
+     */
+    const openContextMenu = useCallback(
+      (row: ContextMenuRow | undefined, anchor: ContextMenuAnchor, trigger?: HTMLElement): void => {
+        setContextMenu({ row, anchor, absolutePath: undefined, trigger });
+        if (row === undefined || workspace === undefined) return;
+        const target = row.path;
+        void workspace.info(sessionId ?? "", target).then(outcome => {
+          setContextMenu(current => {
+            // A menu that closed, or moved to another row, must not adopt this
+            // answer: the absolute path belongs to the row that asked.
+            if (current === null || current.row?.path !== target) return current;
+            return { ...current, absolutePath: outcome.ok ? outcome.info.absolutePath : undefined };
+          });
+        });
+      },
+      [sessionId, workspace],
+    );
+
+    const closeContextMenu = useCallback((): void => setContextMenu(null), []);
+
+    // The Escape handler reads this flag rather than the state, so the menu
+    // closing never re-registers the document listener.
+    contextMenuOpen.current = contextMenu !== null;
+
+    /** The sentence one reveal failure paints. */
+    const revealFailureText = useCallback(
+      (error: WorkspaceError): string =>
+        t("notice.revealFailed").replace("{reason}", t(`notice.reveal.${error.code}`)),
+      [t],
+    );
+
+    /**
+     * Run one menu action.
+     *
+     * The menu closes first: every action here is a one-shot, and leaving the
+     * card up while a clipboard write or a spawn settles would make the reader
+     * wonder whether the click landed.
+     */
+    const runMenuAction = useCallback(
+      (id: string): void => {
+        const menu = contextMenu;
+        setContextMenu(null);
+        if (menu === null || menu.row === undefined) return;
+        const row = menu.row;
+
+        if (id === MENU_ACTION.copyRelative) {
+          void writeClipboard(row.path).then(ok => {
+            announce(ok ? t("notice.copiedRelative") : t("notice.copyFailed"), ok ? "ok" : "error");
+          });
+          return;
+        }
+        if (id === MENU_ACTION.copyAbsolute) {
+          const absolute = menu.absolutePath;
+          if (absolute === undefined) return;
+          void writeClipboard(absolute).then(ok => {
+            announce(ok ? t("notice.copiedAbsolute") : t("notice.copyFailed"), ok ? "ok" : "error");
+          });
+          return;
+        }
+        if (id !== MENU_ACTION.reveal) return;
+        if (workspace === undefined) {
+          announce(revealFailureText({ code: "unsupported", message: "" }), "error");
+          return;
+        }
+        void workspace.reveal(sessionId ?? "", row.path).then(outcome => {
+          if (!outcome.ok) {
+            announce(revealFailureText(outcome.error), "error");
+            return;
+          }
+          const manager = t(`menu.manager.${capabilities?.fileManager ?? "directory"}`);
+          announce(t("notice.revealed").replace("{manager}", manager), "ok");
+        });
+      },
+      [announce, capabilities, contextMenu, revealFailureText, sessionId, t, workspace],
+    );
+
+    // The menu's rows, rebuilt from the state it opened with. A blank-area menu
+    // has no row, so this is also where the disabled note comes from.
+    const menuEntries: readonly ContextMenuEntry[] = useMemo(
+      () =>
+        contextMenu === null
+          ? []
+          : buildContextMenu(
+              {
+                row: contextMenu.row,
+                notices: { workspace: workspace !== undefined },
+                capabilities,
+                absolutePath: contextMenu.absolutePath,
+              },
+              t,
+            ),
+      [capabilities, contextMenu, t, workspace],
+    );
+
     const collapseAll = (): void => setExpanded(new Set());
     const refresh = (): void => setReloadToken(token => token + 1);
 
@@ -913,6 +1108,12 @@ export function createFsExplorerView({
           </div>
         </header>
 
+        {notice === null ? null : (
+          <div className="fx-notice" role="status" data-tone={notice.tone} data-testid="fx-notice">
+            {notice.text}
+          </div>
+        )}
+
         <div className="fx-main">
           {sessionId === undefined ? (
             <StateBlock
@@ -960,6 +1161,7 @@ export function createFsExplorerView({
                   onSelect={path => stack.open(path)}
                   onRetry={retryDirectory}
                   onEntryFocusSettled={releaseEntryFocus}
+                  onContextMenu={openContextMenu}
                 />
               </div>
               <div
@@ -1045,6 +1247,18 @@ export function createFsExplorerView({
             </>
           )}
         </div>
+
+        {contextMenu === null ? null : (
+          <ContextMenu
+            entries={menuEntries}
+            anchor={contextMenu.anchor}
+            onSelect={runMenuAction}
+            onClose={closeContextMenu}
+            {...(contextMenu.trigger === undefined
+              ? {}
+              : { returnFocus: () => contextMenu.trigger ?? null })}
+          />
+        )}
 
         {rootLevel?.status === "ready" ? (
           <footer className="fx-foot" data-testid="fs-foot">
