@@ -95,6 +95,87 @@ export const FS_STYLES = `
   white-space: nowrap;
   flex: none;
 }
+
+/* The bookmark bar takes the header's elastic middle. It scrolls horizontally
+   rather than wrapping, because a second row would change the header's height
+   and push the whole panel down when a reader adds one bookmark too many. The
+   scrollbar is hidden for the same reason: a 38px header has no room for one. */
+.fx-bookmarks {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.fx-bookmarks::-webkit-scrollbar { display: none; }
+.fx-bookmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 24px;
+  max-width: 160px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fx-text-2);
+  font: inherit;
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fx-bookmark:hover { background: var(--fx-hover); color: var(--fx-text); }
+.fx-bookmark:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -1px; }
+.fx-bookmark[aria-expanded="true"] { background: var(--fx-active); color: var(--fx-text); }
+.fx-bookmark-name { overflow: hidden; text-overflow: ellipsis; }
+.fx-bookmark-chevron { display: inline-flex; color: var(--fx-caption); flex: none; }
+.fx-bookmark-empty { color: var(--fx-caption); font-size: 11px; white-space: nowrap; }
+
+/* Flyouts are fixed and placed from the chip's own rect: .fx-root sets
+   overflow: hidden, so an absolutely positioned card would be clipped at the
+   panel edge. The nested card hangs off its parent row instead. */
+.fx-bookmark-flyout {
+  position: fixed;
+  z-index: 70;
+  min-width: 180px;
+  max-width: 280px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--fx-border);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-family: var(--fx-font);
+  font-size: 12px;
+}
+.fx-bookmark-flyout-sub { position: absolute; left: 100%; top: 0; margin-left: 2px; }
+.fx-bookmark-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fx-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fx-bookmark-item:hover:not(:disabled) { background: var(--fx-hover); }
+.fx-bookmark-item:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -1px; }
+.fx-bookmark-item:disabled { color: var(--fx-caption); cursor: default; }
+.fx-bookmark-item[aria-disabled="true"] { color: var(--fx-caption); }
+.fx-bookmark-new { border-top: 1px solid var(--fx-border-soft); border-radius: 0 0 5px 5px; color: var(--fx-text-2); }
 .fx-head-meta {
   margin-left: auto;
   display: flex;

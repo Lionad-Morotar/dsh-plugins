@@ -77,6 +77,7 @@ const off = ctx.fsExplorer.registerRenderer({
 
 ## 已知边界
 
+- 书签栏在文件面板头部的中段（`.fx-scope` 与项数之间）：顶层按 `tree.roots` 的数组顺序渲染，不按创建时间重排。点文件书签打开它，点目录书签展开祖先链、读取缺失层并把光标落到该目录。书签组悬浮或聚焦弹出浮层，组可以任意嵌套（宿主 `Menu` 只展开一级，所以这里自绘浮层）；浮层用 `position: fixed` 按 chip 的 rect 定位，避开 `.fx-root` 的 `overflow: hidden`，关闭有 120ms 宽限，指针从 chip 移到卡片不会闪断。
 - 书签走宿主 `storageDomain`（领域 `dsh_fs_explorer`，表 `bookmarks`，键是工作区 realpath），所以同一工作区的多个会话共享一份，不同工作区互不污染，也不会脏 `git status`。宿主没有这个服务时（或调用失败时）回退到 `localStorage` 的 `dsh-fs-explorer.bookmarks.<sessionId>`，不报错也不丢内存里的书签；两者都不可用时静默降级为空树。
 - 目录列表由宿主按 `maxEntries` 截断，DSH 默认 2000 项（profile 可调，调到 4000 就按 4000 截断）。面板显示宿主回报的实际截断数，不写死数字，也不提供"继续加载"。
 - 标签栈没有淘汰、也没有上限：打开过的文件会一直留在标签栏，直到手动关闭或换会话。

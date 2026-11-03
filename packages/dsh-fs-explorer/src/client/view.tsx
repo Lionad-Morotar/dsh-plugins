@@ -30,6 +30,10 @@ import {
   type ContextMenuRow,
 } from "./context-menu.ts";
 import { ContextMenu, type MenuAnchor } from "./context-menu-view.tsx";
+import { BookmarkBar } from "./bookmark-bar.tsx";
+import { createBookmarkStore } from "./bookmarks-store.ts";
+import { emptyBookmarkTree } from "./bookmarks-model.ts";
+import type { BookmarkTree } from "../bookmarks.ts";
 import { writeClipboard } from "./clipboard.ts";
 import { NamePrompt } from "./name-prompt.tsx";
 import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap } from "./keyboard.ts";
@@ -296,6 +300,14 @@ export function createFsExplorerView({
     const workspace = useMemo<WorkspaceClient | undefined>(
       () => (sessionId === undefined || resolveWorkspace === undefined ? undefined : resolveWorkspace(sessionId)),
       [resolveWorkspace, sessionId],
+    );
+
+    // The bookmark store and the tree it serves. The store is rebuilt only when
+    // the channel changes; the tree starts empty so the bar renders on the first
+    // paint instead of waiting for a round trip.
+    const bookmarkStore = useMemo(() => createBookmarkStore(workspace), [workspace]);
+    const [bookmarks, setBookmarks] = useState<BookmarkTree>(() =>
+      emptyBookmarkTree(new Date().toISOString()),
     );
 
     // Read by the Escape handler, which is registered once and must not be
@@ -930,6 +942,65 @@ export function createFsExplorerView({
       [sessionId, files, loadLevel],
     );
 
+    // Load this session's bookmarks. The store never rejects, but the guard and
+    // the catch are both here anyway: a bookmark bar that throws on mount would
+    // take the tree down with it, and the tree is the reader's actual work.
+    useEffect(() => {
+      let alive = true;
+      void bookmarkStore
+        .load(sessionId ?? "")
+        .then(tree => {
+          if (alive) setBookmarks(tree);
+        })
+        .catch(() => {
+          // Keep the empty tree the first paint already rendered.
+        });
+      return () => {
+        alive = false;
+      };
+    }, [bookmarkStore, sessionId]);
+
+    /**
+     * Expand and locate one bookmarked directory.
+     *
+     * The same two steps the active-panel reveal takes: put the directory and
+     * its ancestors in the expanded set, then read every level that is not
+     * already loaded. The cursor then lands on the directory itself, which is
+     * what makes a bookmark feel like a jump rather than a scroll.
+     */
+    const openBookmarkFolder = useCallback(
+      (path: string): void => {
+        const chain = [...ancestorChain(path), path];
+        setExpanded(previous => {
+          const next = new Set(previous);
+          for (const directory of chain) next.add(directory);
+          return next;
+        });
+        if (sessionId !== undefined && files !== undefined) {
+          const missing = chain.filter(directory => levelsRef.current.get(directory)?.status !== "ready");
+          if (missing.length > 0) {
+            void Promise.all(missing.map(directory => loadLevel(directory, sessionId, files)));
+          }
+        }
+        setEntryFocus({ path });
+      },
+      [sessionId, files, loadLevel],
+    );
+
+    /**
+     * Open one bookmarked file.
+     *
+     * Through the panel stack, not a private "temporary" state: `activePath` is
+     * the single source of reveal, so the tree expands to the file and the tab
+     * strip agrees about what is open.
+     */
+    const openBookmarkFile = useCallback(
+      (path: string): void => {
+        stack.open(path);
+      },
+      [stack],
+    );
+
     /**
      * Show one sentence under the header for a few seconds.
      *
@@ -1215,6 +1286,12 @@ export function createFsExplorerView({
           </span>
           <h2 className="fx-title">{t("view.title")}</h2>
           <span className="fx-scope">{t("view.scope")}</span>
+          <BookmarkBar
+            tree={bookmarks}
+            t={t}
+            onOpenFile={openBookmarkFile}
+            onOpenFolder={openBookmarkFolder}
+          />
           <div className="fx-head-meta">
             {rootLevel?.status === "ready" ? (
               <span>
