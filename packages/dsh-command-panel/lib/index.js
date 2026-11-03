@@ -48,17 +48,102 @@ var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
 
-// src/host/path-explorer.ts
-import { readdir, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { isAbsolute, normalize, resolve } from "node:path";
+// src/host/native-open.ts
+import { spawn as nodeSpawn } from "node:child_process";
+import { stat as nodeStat } from "node:fs/promises";
+import { release } from "node:os";
+import path from "node:path";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 // src/shared.ts
 var PATH_SERVICE = "pathExplorer";
 var SHUTDOWN_SERVICE = "hostShutdown";
+var OPEN_SERVICE = "nativeOpen";
+
+// src/host/native-open.ts
+var REAL_ENV = {
+  platform: process.platform,
+  env: process.env,
+  stat: (target) => nodeStat(target),
+  spawn: (command, args, options) => nodeSpawn(command, [...args], options),
+  release: release()
+};
+function pathOf(platform) {
+  return platform === "win32" ? path.win32 : path.posix;
+}
+function isWsl(env) {
+  if (env.env.WSL_DISTRO_NAME !== void 0 && env.env.WSL_DISTRO_NAME !== "") return true;
+  if (env.env.WSL_INTEROP !== void 0 && env.env.WSL_INTEROP !== "") return true;
+  return (env.release ?? "").toLowerCase().includes("microsoft");
+}
+function commandFor(target, env) {
+  if (env.platform === "darwin") return { command: "open", args: [target] };
+  if (env.platform === "win32") {
+    return { command: "cmd.exe", args: ["/d", "/s", "/c", "start", "", target] };
+  }
+  if (env.platform === "linux") {
+    const display = env.env.DISPLAY !== void 0 && env.env.DISPLAY !== "";
+    const wayland = env.env.WAYLAND_DISPLAY !== void 0 && env.env.WAYLAND_DISPLAY !== "";
+    if (!display && !wayland && !isWsl(env)) return void 0;
+    return { command: "xdg-open", args: [target] };
+  }
+  return void 0;
+}
+async function openWithDefaultApp(target, env = REAL_ENV) {
+  if (target === "") return "unavailable";
+  const paths = pathOf(env.platform);
+  const absolute = paths.resolve(target);
+  if (!paths.isAbsolute(absolute)) return "unavailable";
+  try {
+    await env.stat(absolute);
+  } catch {
+    return "unavailable";
+  }
+  const command = commandFor(absolute, env);
+  if (command === void 0) return "unavailable";
+  return new Promise((settle) => {
+    let child;
+    try {
+      child = env.spawn(command.command, command.args, { stdio: "ignore", windowsHide: true });
+    } catch {
+      settle("failed");
+      return;
+    }
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      settle(result);
+    };
+    child.on("error", () => {
+      finish("failed");
+    });
+    child.on("exit", (code) => finish(code === 0 ? "opened" : "failed"));
+  });
+}
+var _open_dec, _a, _init;
+var NativeOpenService = class extends (_a = TypertRemoteService, _open_dec = [Remote("open")], _a) {
+  constructor(ctx) {
+    super(ctx, OPEN_SERVICE);
+    __runInitializers(_init, 5, this);
+  }
+  async open(request, signal) {
+    void signal;
+    const path2 = request?.path;
+    if (typeof path2 !== "string") return "unavailable";
+    return openWithDefaultApp(path2);
+  }
+};
+_init = __decoratorStart(_a);
+__decorateElement(_init, 1, "open", _open_dec, NativeOpenService);
+__decoratorMetadata(_init, NativeOpenService);
+__publicField(NativeOpenService, "inject", []);
 
 // src/host/path-explorer.ts
+import { readdir, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { isAbsolute, normalize, resolve } from "node:path";
+import { Remote as Remote2, TypertRemoteService as TypertRemoteService2 } from "@deepseek-ai/dsh-typert-protocol";
 var DEFAULT_LIMIT = 20;
 var MAX_LIMIT = 100;
 function clampLimit(value) {
@@ -98,11 +183,11 @@ async function childrenOf(directory) {
   });
   return entries;
 }
-var _resolve_dec, _a, _init;
-var PathExplorerService = class extends (_a = TypertRemoteService, _resolve_dec = [Remote("resolve")], _a) {
+var _resolve_dec, _a2, _init2;
+var PathExplorerService = class extends (_a2 = TypertRemoteService2, _resolve_dec = [Remote2("resolve")], _a2) {
   constructor(ctx) {
     super(ctx, PATH_SERVICE);
-    __runInitializers(_init, 5, this);
+    __runInitializers(_init2, 5, this);
   }
   async resolve(request, signal) {
     void signal;
@@ -148,13 +233,13 @@ var PathExplorerService = class extends (_a = TypertRemoteService, _resolve_dec 
     return { ok: true, home, entries: entries.slice(0, clampLimit(request.limit)) };
   }
 };
-_init = __decoratorStart(_a);
-__decorateElement(_init, 1, "resolve", _resolve_dec, PathExplorerService);
-__decoratorMetadata(_init, PathExplorerService);
+_init2 = __decoratorStart(_a2);
+__decorateElement(_init2, 1, "resolve", _resolve_dec, PathExplorerService);
+__decoratorMetadata(_init2, PathExplorerService);
 __publicField(PathExplorerService, "inject", []);
 
 // src/host/shutdown-remote.ts
-import { Remote as Remote2, TypertRemoteService as TypertRemoteService2 } from "@deepseek-ai/dsh-typert-protocol";
+import { Remote as Remote3, TypertRemoteService as TypertRemoteService3 } from "@deepseek-ai/dsh-typert-protocol";
 
 // src/host/shutdown.ts
 function requestShutdown(ctx) {
@@ -169,11 +254,11 @@ function requestShutdown(ctx) {
 }
 
 // src/host/shutdown-remote.ts
-var _request_dec, _a2, _ctx, _init2;
-var HostShutdownService = class extends (_a2 = TypertRemoteService2, _request_dec = [Remote2("request")], _a2) {
+var _request_dec, _a3, _ctx, _init3;
+var HostShutdownService = class extends (_a3 = TypertRemoteService3, _request_dec = [Remote3("request")], _a3) {
   constructor(ctx) {
     super(ctx, SHUTDOWN_SERVICE);
-    __runInitializers(_init2, 5, this);
+    __runInitializers(_init3, 5, this);
     __privateAdd(this, _ctx);
     __privateSet(this, _ctx, ctx);
   }
@@ -181,10 +266,10 @@ var HostShutdownService = class extends (_a2 = TypertRemoteService2, _request_de
     return requestShutdown(__privateGet(this, _ctx));
   }
 };
-_init2 = __decoratorStart(_a2);
+_init3 = __decoratorStart(_a3);
 _ctx = new WeakMap();
-__decorateElement(_init2, 1, "request", _request_dec, HostShutdownService);
-__decoratorMetadata(_init2, HostShutdownService);
+__decorateElement(_init3, 1, "request", _request_dec, HostShutdownService);
+__decoratorMetadata(_init3, HostShutdownService);
 __publicField(HostShutdownService, "inject", []);
 
 // src/index.ts
@@ -193,9 +278,12 @@ var inject = [];
 function apply(ctx) {
   new PathExplorerService(ctx);
   new HostShutdownService(ctx);
+  new NativeOpenService(ctx);
 }
 export {
   HostShutdownService,
+  NativeOpenService,
+  OPEN_SERVICE,
   PATH_SERVICE,
   PathExplorerService,
   SHUTDOWN_SERVICE,
