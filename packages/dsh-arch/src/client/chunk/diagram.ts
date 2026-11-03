@@ -92,6 +92,15 @@ export interface DiagramInteractions {
 }
 
 const SVG = "http://www.w3.org/2000/svg";
+
+/**
+ * Wheel delta that counts as one zoom step, and how much of that step to
+ * apply. A mouse notch is about 100px, so it still moves roughly a third of
+ * the old fixed 1.12; a trackpad gesture is a run of far smaller deltas and
+ * slows by the same factor.
+ */
+const WHEEL_STEP_PX = 100;
+const WHEEL_SENSITIVITY = 0.3;
 const ZOOM_MIN = 0.05;
 const ZOOM_MAX = 4;
 
@@ -419,7 +428,11 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     event => {
       event.preventDefault();
       const box = host.getBoundingClientRect();
-      handle.zoomBy(event.deltaY < 0 ? 1.12 : 1 / 1.12, {
+      // Proportional to the gesture, not a fixed step per event. A trackpad
+      // pinch emits a stream of small deltas, and a fixed 1.12 per event made
+      // one gesture jump several times over; 0.3 of that rate keeps it tame.
+      const steps = -event.deltaY / WHEEL_STEP_PX;
+      handle.zoomBy(Math.exp(steps * Math.log(1.12) * WHEEL_SENSITIVITY), {
         x: event.clientX - box.left,
         y: event.clientY - box.top,
       });
