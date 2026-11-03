@@ -34,6 +34,7 @@ import {
   type SkillInputStoreLike,
 } from "./skill-enhancer.tsx";
 import { insertSkillEnhancerStyles } from "./skill-styles.ts";
+import { workspaceUsageOf, type SessionUsageRow } from "./skill-usage-reading.ts";
 import type { SkillProfileWire } from "../skill-profile.ts";
 import { createOverlay, type OverlayDeps, type OverlayProps } from "./overlay.tsx";
 import {
@@ -167,6 +168,13 @@ export interface LoaderRequire {
  */
 export interface SessionsLike {
   scope?(sessionId: string): unknown;
+  /**
+   * The session list snapshot store.
+   *
+   * Optional: it is read only for the workspace-wide usage figure, and a host
+   * without it must still get the ghost, the panel and the session count.
+   */
+  list?: SessionsListLike;
 }
 
 /** What this entry needs from `ctx.commandUi`. */
@@ -292,9 +300,28 @@ export interface SessionProjectionsLike {
   >;
 }
 
+/** One session as the sessions list publishes it. */
+export interface SessionListEntryLike {
+  readonly cwd?: string;
+  readonly projectionValues?: unknown;
+}
+
+/** The sessions list snapshot the usage reading walks. */
+export interface SessionsListSnapshotLike {
+  readonly ids?: readonly string[];
+  readonly byId?: Readonly<Record<string, SessionListEntryLike | null>>;
+  readonly projectionsBySession?: Readonly<
+    Record<
+      string,
+      { readonly values?: Readonly<Record<string, unknown>>; readonly state?: string } | null
+    >
+  >;
+}
+
 /** The slice of `ctx.sessions.list` the usage lookup reads. */
 export interface SessionsListLike {
-  getSnapshot?(): SessionProjectionsLike;
+  getSnapshot?(): SessionsListSnapshotLike;
+  subscribe?(listener: () => void): () => void;
 }
 
 /** The client context this plugin reads. */
@@ -1050,23 +1077,53 @@ async function loadSkillProfile(
 }
 
 /**
- * Read one skill's invocation counts.
+ * Read one skill's invocation counts, for this session and for its workspace.
  *
- * The session figure comes from the `skillUsage` projection. The workspace figure
- * is not aggregated here: it needs every session of the workspace, which this
- * surface does not enumerate, so the field stays absent and the panel shows one
- * line instead of a wrong one.
+ * The session figure is one projection read. The workspace figure sums the same
+ * projection over every session whose `cwd` matches this one exactly, which is
+ * the host's own notion of a workspace; the arithmetic lives in
+ * `workspaceUsageOf` so it can be tested without a client context.
+ *
+ * This runs on the panel's render path, so every shape problem degrades to the
+ * session figure alone rather than throwing: a stale or half-populated snapshot
+ * must not take the panel down with it. It is a pure in-memory read, no IO.
  * @param ctx - client context.
  * @param sessionId - session to read.
  * @param name - skill name.
- * @returns the counts; `session` is 0 when the projection is unavailable.
+ * @returns the counts; `workspace` is absent when it cannot be determined.
  */
-function readSkillUsage(ctx: ClientContextLike, sessionId: string, name: string): { session: number } {
-  const list = ctx.sessionsList ?? (readHostService(ctx, "sessions.list") as SessionsListLike | undefined);
+export function readSkillUsage(
+  ctx: ClientContextLike,
+  sessionId: string,
+  name: string,
+): { session: number; workspace?: number } {
+  const list = ctx.sessions.list ?? (readHostService(ctx, "sessions.list") as SessionsListLike | undefined);
   try {
-    const counts = list?.getSnapshot?.()?.projectionsBySession?.[sessionId]?.values?.skillUsage?.counts;
-    const session = counts?.[name];
-    return { session: typeof session === "number" ? session : 0 };
+    const snapshot = list?.getSnapshot?.();
+    const countsOf = (id: string): Readonly<Record<string, number>> | undefined => {
+      const values = snapshot?.projectionsBySession?.[id]?.values;
+      const skillUsage = values?.skillUsage;
+      if (typeof skillUsage !== "object" || skillUsage === null) return undefined;
+      const counts = (skillUsage as { readonly counts?: unknown }).counts;
+      return typeof counts === "object" && counts !== null ? (counts as Readonly<Record<string, number>>) : undefined;
+    };
+
+    const own = countsOf(sessionId)?.[name];
+    const session = typeof own === "number" && Number.isFinite(own) ? own : 0;
+
+    const cwd = snapshot?.byId?.[sessionId]?.cwd;
+    if (typeof cwd !== "string" || cwd === "") return { session };
+
+    const rows: SessionUsageRow[] = Object.keys(snapshot?.byId ?? {}).map(id => {
+      const usage = countsOf(id);
+      const rowCwd = snapshot?.byId?.[id]?.cwd;
+      return {
+        ...(typeof rowCwd === "string" ? { cwd: rowCwd } : {}),
+        ...(usage === undefined ? {} : { usage }),
+      };
+    });
+    const workspace = workspaceUsageOf(rows, cwd, name);
+    return workspace === undefined ? { session } : { session, workspace };
   } catch {
     return { session: 0 };
   }
