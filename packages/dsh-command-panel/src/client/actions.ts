@@ -76,6 +76,21 @@ function fail(deps: ActionDeps, what: string, code: string | undefined): void {
 
 // ── session lifecycle ──────────────────────────────────────────────────────
 
+async function copySessionId(deps: ActionDeps): Promise<void> {
+  const id = deps.currentSessionId();
+  if (id === null) {
+    deps.notify(deps.copy().actions.sessionIdNoSession, "error");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(id);
+    deps.close();
+    deps.notify(deps.copy().actions.sessionIdCopied);
+  } catch {
+    deps.notify(deps.copy().actions.sessionIdCopyFailed, "error");
+  }
+}
+
 async function createSession(
   scope: "workspace" | "ungrouped",
   deps: ActionDeps,
@@ -435,6 +450,9 @@ export async function runCatalogAction(action: RowAction, deps: ActionDeps): Pro
       return true;
     case "session-command":
       await sessionCommand(action.command, deps);
+      return true;
+    case "copy-session-id":
+      await copySessionId(deps);
       return true;
     case "open-surface":
       await openSurface(action.surface, deps);

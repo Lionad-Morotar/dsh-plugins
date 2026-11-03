@@ -46,6 +46,7 @@ describe("availableCatalog", () => {
     const listed = ids(idle);
     expect(listed).toContain("session.newUngrouped");
     expect(listed).toContain("session.rename");
+    expect(listed).toContain("session.copyId");
     expect(listed).toContain("session.archive");
     expect(listed).toContain("session.fork");
     expect(listed).toContain("session.pin");

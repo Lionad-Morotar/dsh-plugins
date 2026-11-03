@@ -47,6 +47,7 @@ export type RowAction =
   /** Write `/name ` into the composer and let the host command take the argument. */
   | { readonly kind: "insert-command"; readonly name: string }
   | { readonly kind: "session-command"; readonly command: "archive" | "fork" | "cancel" | "pin" }
+  | { readonly kind: "copy-session-id" }
   | {
       readonly kind: "open-surface";
       readonly surface: "plugins" | "settings" | "shortcuts" | "sidebar" | "files" | "terminal" | "browser";

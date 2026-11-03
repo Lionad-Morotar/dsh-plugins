@@ -81,6 +81,9 @@ export interface Copy {
     readonly noSessionSurface: string;
     readonly seatUnavailable: string;
     readonly sessionBusy: string;
+    readonly sessionIdCopied: string;
+    readonly sessionIdCopyFailed: string;
+    readonly sessionIdNoSession: string;
     readonly forked: (title: string) => string;
     readonly pinned: (pinned: boolean) => string;
     readonly restored: (title: string) => string;
@@ -165,6 +168,7 @@ const ZH: Copy = {
     "app.quit": "关闭 DSH",
     "session.newInWorkspace": "在当前工作区创建新会话",
     "session.newUngrouped": "创建未分组新会话",
+    "session.copyId": "复制当前会话 Session ID",
     "session.rename": "重命名当前会话",
     "session.archive": "归档当前会话",
     "session.fork": "Fork 当前会话",
@@ -184,6 +188,9 @@ const ZH: Copy = {
     noSessionSurface: "右侧栏需要屏幕上有会话",
     seatUnavailable: "宿主的这个入口当前不可达",
     sessionBusy: "会话还在运行，先中断回复或稍后再归档",
+    sessionIdCopied: "已复制当前会话 Session ID",
+    sessionIdCopyFailed: "复制 Session ID 失败，请检查剪贴板权限",
+    sessionIdNoSession: "当前没有打开的会话，无法复制 Session ID",
     forked: title => `已 Fork 到新会话「${title}」`,
     pinned: pinned => (pinned ? "已置顶当前会话" : "已取消置顶"),
     restored: title => `已恢复「${title}」`,
@@ -273,6 +280,7 @@ const EN: Copy = {
     "app.quit": "Quit DSH",
     "session.newInWorkspace": "New session in this workspace",
     "session.newUngrouped": "New ungrouped session",
+    "session.copyId": "Copy current session ID",
     "session.rename": "Rename this session",
     "session.archive": "Archive this session",
     "session.fork": "Fork this session",
@@ -292,6 +300,9 @@ const EN: Copy = {
     noSessionSurface: "The right column needs a session on screen",
     seatUnavailable: "That host surface is not reachable right now",
     sessionBusy: "The session is still running; stop the reply or archive later",
+    sessionIdCopied: "Copied the current session ID",
+    sessionIdCopyFailed: "Could not copy the session ID; check clipboard permissions",
+    sessionIdNoSession: "No session is open, so its ID cannot be copied",
     forked: title => `Forked into “${title}”`,
     pinned: pinned => (pinned ? "Pinned this session" : "Unpinned this session"),
     restored: title => `Restored “${title}”`,

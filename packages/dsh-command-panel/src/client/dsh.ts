@@ -41,6 +41,16 @@ export interface FileReferenceCandidate {
   readonly kind: "file" | "directory";
 }
 
+// Private service seam shared with dsh-better; the host exposes no contribution getter.
+export interface CommandUiService {
+  readonly live?: { readonly contributions?: Map<string, {
+    readonly label?: string | (() => string);
+    readonly description?: string | (() => string);
+    readonly available?: (context: { sessionId: string }) => boolean;
+    readonly ui?: { readonly kind: string; readonly run?: (context: { sessionId: string }) => unknown };
+  }> };
+}
+
 // ── Host command registry ──────────────────────────────────────────────────
 
 /** Optional free-form input a command advertises to the composer. */

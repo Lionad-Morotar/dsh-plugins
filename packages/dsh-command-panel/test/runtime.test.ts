@@ -20,6 +20,7 @@ import { copyFor } from "../src/client/copy.ts";
 import type {
   ClientContext,
   CommandDescriptor,
+  CommandUiService,
   FileReferenceCandidate,
   GitExplorerRemote,
   HostShutdownRemote,
@@ -78,6 +79,7 @@ const HOST_COMMANDS: readonly CommandDescriptor[] = [
 
 interface HarnessOptions {
   readonly platform?: PanelPlatform;
+  readonly commandUi?: CommandUiService;
   readonly claimBlocked?: boolean;
   readonly seatSurfaces?: boolean;
   readonly openViewResult?: { readonly opened: boolean; readonly focused: boolean };
@@ -178,6 +180,7 @@ function harness(options: HarnessOptions = {}): Harness {
       unpinSession: vi.fn(async () => undefined),
     },
     locale: { getSnapshot: () => ({ active: "zh" }) },
+    commandUi: options.commandUi,
     "remote.fileReferences": files,
     "remote.commands": { list: vi.fn(async () => ({ ok: true as const, value: HOST_COMMANDS })), execute: vi.fn() },
     shortcuts: {
@@ -393,6 +396,53 @@ describe("panel lifecycle", () => {
     const labels = h.store.getSnapshot().rows.map(row => row.label);
     expect(labels).not.toContain("导航：打开设置");
     expect(labels).toContain("导航：打开插件页面");
+  });
+});
+
+describe("client command contributions", () => {
+  it("rebuilds immediately on every opening and executes only the current available action", async () => {
+    let current = SESSION_A.id;
+    const muted = new Set<string>();
+    const run = vi.fn(({ sessionId }: { sessionId: string }) => { muted.add(sessionId); });
+    const contributions = new Map([
+      ["mute-session", { label: () => "静音会话", available: ({ sessionId }: { sessionId: string }) => !muted.has(sessionId), ui: { kind: "action", run } }],
+      ["unmute-session", { label: () => "取消静音", available: ({ sessionId }: { sessionId: string }) => muted.has(sessionId), ui: { kind: "action", run: ({ sessionId }: { sessionId: string }) => { muted.delete(sessionId); } } }],
+      ["popup", { label: () => "弹窗", available: () => true, ui: { kind: "popupSelect", run } }],
+    ]);
+    const sessions = {
+      ...fakeSessionsWithScope(),
+      list: { getSnapshot: () => sessionList([{ ...SESSION_A, retainedBy: { mainView: current === SESSION_A.id ? 1 : 0 } }, { ...SESSION_B, retainedBy: { mainView: current === SESSION_B.id ? 1 : 0 } }]), subscribe: () => () => undefined },
+    };
+    const h = harness({ commandUi: { live: { contributions } }, sessions });
+    runCommand(h, "command-panel.commands");
+    expect(h.store.getSnapshot().rows.map(row => row.label)).toContain("静音会话");
+    expect(h.store.getSnapshot().rows.map(row => row.label)).not.toContain("弹窗");
+    const row = h.store.getSnapshot().rows.find(item => item.label === "静音会话")!;
+    current = SESSION_B.id;
+    muted.add(SESSION_B.id);
+    h.verbs.accept(row);
+    await vi.waitFor(() => expect(h.store.getSnapshot().noticeTone).toBe("error"));
+    expect(run).not.toHaveBeenCalled();
+    h.verbs.dismiss();
+    runCommand(h, "command-panel.commands");
+    expect(h.store.getSnapshot().rows.map(item => item.label)).toContain("取消静音");
+    expect(h.store.getSnapshot().rows.map(item => item.label)).not.toContain("静音会话");
+    h.verbs.accept(h.store.getSnapshot().rows.find(item => item.label === "取消静音")!);
+    await vi.waitFor(() => expect(h.store.getSnapshot().open).toBe(false));
+    expect(muted.has(SESSION_B.id)).toBe(false);
+    runCommand(h, "command-panel.commands");
+    expect(h.store.getSnapshot().rows.map(item => item.label)).toContain("静音会话");
+    expect(h.store.getSnapshot().rows.map(item => item.label)).not.toContain("取消静音");
+    h.runtime.dispose();
+  });
+
+  it("reports a rejected action without closing the panel", async () => {
+    const h = harness({ commandUi: { live: { contributions: new Map([["fail", { label: "失败", ui: { kind: "action", run: async () => { throw new Error("broken"); } } }]]) } } });
+    runCommand(h, "command-panel.commands");
+    h.verbs.accept(h.store.getSnapshot().rows.find(row => row.label === "失败")!);
+    await vi.waitFor(() => expect(h.store.getSnapshot().notice).toContain("broken"));
+    expect(h.store.getSnapshot().open).toBe(true);
+    h.runtime.dispose();
   });
 });
 

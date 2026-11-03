@@ -129,6 +129,12 @@ export const CATALOG: readonly CatalogEntry[] = [
     requires: ["cwd"],
   },
   {
+    id: "session.copyId",
+    category: "session",
+    action: { kind: "copy-session-id" },
+    requires: ["session"],
+  },
+  {
     id: "session.rename",
     category: "session",
     action: { kind: "insert-command", name: "rename" },

@@ -20,6 +20,7 @@
 import type {
   ClientContext,
   CommandsRemote,
+  CommandUiService,
   ConversationService,
   FileReferencesRemote,
   GitExplorerRemote,
@@ -45,6 +46,8 @@ import type {
 import { isGitExplorerFace, isHostShutdownFace, isNativeOpenFace, isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
 import { runCatalogAction, type ActionDeps } from "./actions.ts";
 import { createBridgeView, type BridgeState } from "./bridge.ts";
+import { clientCommandRows, isClientCommandRow, runClientCommand } from "./client-commands.ts";
+import { notifyMuteRow, runNotifyMute } from "./notify-mute.ts";
 import { planClaim, type ClaimProbe, type ClaimTarget } from "./claims.ts";
 import type { Copy } from "./copy.ts";
 import { copyFor } from "./copy.ts";
@@ -196,6 +199,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   const refs: {
     fileReferences?: FileReferencesRemote;
     commands?: CommandsRemote;
+    commandUi?: CommandUiService;
     pathExplorer?: PathExplorerRemote;
     nativeOpen?: NativeOpenFace;
     gitExplorer?: GitExplorerRemote;
@@ -464,7 +468,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     const keyRows = shortcuts === undefined
       ? []
       : shortcutRows(shortcuts.catalog.getSnapshot(), copy(), covered);
-    return [...catalogRows(copy(), entries, keycapHints()), ...keyRows, ...hostRows];
+    return [...catalogRows(copy(), entries, keycapHints()), ...keyRows, ...clientCommandRows(refs.commandUi, currentSessionId(), copy()), ...notifyMuteRow(refs.commandUi, currentSessionId(), copy()), ...hostRows];
   }
 
   /** What the executors may call; one object per dispatch keeps them pure of globals. */
@@ -542,10 +546,15 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     const ticket = ++sequence;
 
     try {
-      const result = await loadRows(services, request(local.signal));
+      const loadRequest = request(local.signal);
+      const result = await loadRows(services, loadRequest);
       if (disposed || ticket !== sequence) return;
       const latest = store.getSnapshot();
       if (!latest.open) return;
+      if (latest.model.mode !== loadRequest.mode || currentSessionId() !== loadRequest.sessionId) {
+        queued = true;
+        return;
+      }
 
       if (latest.model.mode === "command" && result.status === "ready") {
         knownHostCommands = new Set(
@@ -561,8 +570,8 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         message: result.message ?? null,
         // A degraded catalogue still leaves usable rows, so its reason rides the
         // notice line instead of replacing the list with an error.
-        notice: result.warning ?? null,
-        noticeTone: result.warning === undefined ? undefined : "error",
+        notice: latest.notice ?? result.warning ?? null,
+        noticeTone: latest.notice !== null ? latest.noticeTone : result.warning === undefined ? undefined : "error",
       });
     } catch (error) {
       if (disposed || ticket !== sequence) return;
@@ -636,10 +645,13 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     const model = withQuery(modelFor(mode), initialQuery);
     const sessionId = currentSessionId();
     const cached = cache.get(cacheKey(mode, "root", "-", sessionId));
-    rawRows = cached ?? [];
-    // The panel's own rows need no host round trip, so the command mode can
-    // honour "open and there is already content" even on a cold start.
-    const seeded = cached === undefined && mode === "command" ? composeCommandRows([]) : (cached ?? []);
+    // Rebuild local actions even when a previous host result is cached.
+    const hostRows = (cached ?? []).filter(row => row.key.startsWith("command:"));
+    if (mode === "command") {
+      knownHostCommands = new Set(hostRows.flatMap(row => row.action.kind === "execute-command" ? [row.action.name] : []));
+    }
+    const seeded = mode === "command" ? composeCommandRows(hostRows) : (cached ?? []);
+    rawRows = seeded;
     store.set({
       open: true,
       model,
@@ -839,6 +851,22 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         openCommit(row.action.hash);
         return;
       case "execute-command":
+        if (row.key.startsWith("notify-mute:")) {
+          try {
+            runNotifyMute(row.action.name, currentSessionId());
+            close();
+          } catch (error) {
+            notice(copy().noticeExecuteFailed(row.action.name, error instanceof Error ? error.message : undefined), "error");
+          }
+          return;
+        }
+        if (isClientCommandRow(row)) {
+          const name = row.action.name;
+          void runClientCommand(refs.commandUi, name, currentSessionId()).then(() => close()).catch(error => {
+            notice(copy().noticeExecuteFailed(name, error instanceof Error ? error.message : undefined), "error");
+          });
+          return;
+        }
         if (row.action.needsInput) acceptCommandToken(row.action.name);
         else void acceptCommand(row.action.name);
         return;
@@ -1386,6 +1414,12 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         };
       },
     ),
+  );
+  disposers.push(
+    deps.ctx.inject(["commandUi"], scope => {
+      refs.commandUi = scope.get<CommandUiService>("commandUi");
+      return () => { refs.commandUi = undefined; };
+    }),
   );
   // The Remote namespaces are separate dotted services; each is injected on its
   // own so a missing one disables one mode instead of the whole plugin.

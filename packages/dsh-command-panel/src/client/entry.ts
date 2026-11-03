@@ -84,6 +84,7 @@ export const inject = [
   "workspaces",
   "uiWorkspace",
   "conversation",
+  "commandUi",
   "remote",
   "remote.fileReferences",
   "remote.commands",

@@ -7,7 +7,7 @@
  * the thing this layer exists to prevent.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { failureCode, runCatalogAction, seatActions, type ActionDeps } from "../src/client/actions.ts";
 import { copyFor } from "../src/client/copy.ts";
@@ -202,6 +202,40 @@ describe("create-session", () => {
     await runCatalogAction({ kind: "create-session", scope: "ungrouped" }, h.deps);
     expect(h.notices[0]?.text).toBe(copy.actions.failed(copy.actionLabels["session.newUngrouped"]!, "workspace/not-found"));
     expect(h.notices[0]?.tone).toBe("error");
+  });
+});
+
+describe("copy-session-id", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("copies the current session ID and confirms success", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const h = harness({ currentSessionId: "session-current" });
+    expect(await runCatalogAction({ kind: "copy-session-id" }, h.deps)).toBe(true);
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("session-current");
+    expect(h.closed()).toBe(1);
+    expect(h.notices).toEqual([{ text: copy.actions.sessionIdCopied, tone: "info" }]);
+  });
+
+  it("keeps the panel open on rejected or unavailable clipboard access", async () => {
+    for (const clipboard of [{ writeText: vi.fn().mockRejectedValue(new Error("denied")) }, undefined]) {
+      vi.stubGlobal("navigator", { clipboard });
+      const h = harness();
+      await runCatalogAction({ kind: "copy-session-id" }, h.deps);
+      expect(h.closed()).toBe(0);
+      expect(h.notices).toEqual([{ text: copy.actions.sessionIdCopyFailed, tone: "error" }]);
+    }
+  });
+
+  it("does not write if the session disappears before selection", async () => {
+    const writeText = vi.fn();
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const h = harness({ currentSessionId: null });
+    await runCatalogAction({ kind: "copy-session-id" }, h.deps);
+    expect(writeText).not.toHaveBeenCalled();
+    expect(h.closed()).toBe(0);
+    expect(h.notices).toEqual([{ text: copy.actions.sessionIdNoSession, tone: "error" }]);
   });
 });
 
