@@ -277,7 +277,7 @@ describe("createWorkspaceEntry", () => {
 });
 
 describe("FsExplorerWorkspaceService create endpoint", () => {
-  it("publishes four endpoints", () => {
+  it("publishes the workspace endpoints", () => {
     const ctx = new Context();
     ctx.provide("fs", fakeWriteFs());
     const service = new FsExplorerWorkspaceService(ctx);
@@ -286,6 +286,8 @@ describe("FsExplorerWorkspaceService create endpoint", () => {
       "info",
       "reveal",
       "create",
+      "loadBookmarks",
+      "saveBookmarks",
     ]);
   });
 

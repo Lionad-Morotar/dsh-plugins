@@ -77,6 +77,7 @@ const off = ctx.fsExplorer.registerRenderer({
 
 ## 已知边界
 
+- 书签走宿主 `storageDomain`（领域 `dsh_fs_explorer`，表 `bookmarks`，键是工作区 realpath），所以同一工作区的多个会话共享一份，不同工作区互不污染，也不会脏 `git status`。宿主没有这个服务时（或调用失败时）回退到 `localStorage` 的 `dsh-fs-explorer.bookmarks.<sessionId>`，不报错也不丢内存里的书签；两者都不可用时静默降级为空树。
 - 目录列表由宿主按 `maxEntries` 截断，DSH 默认 2000 项（profile 可调，调到 4000 就按 4000 截断）。面板显示宿主回报的实际截断数，不写死数字，也不提供"继续加载"。
 - 标签栈没有淘汰、也没有上限：打开过的文件会一直留在标签栏，直到手动关闭或换会话。
 - 文本按页读，家族文件整份读。家族文件超过宿主的 `maxFileBytes` 时按"超上限"失败，不会拿到半份字节去解码；不属于三个家族、又不是 UTF-8 文本的文件仍落到"不是文本文件"，无权限、文件已删除同样落到对应错误态。宿主的 `workspaceFiles.read` 拒绝末端符号链接，预览改走本包的 `locate`：链接解析成普通文件时按真实路径重读，挂链或指向目录的链接仍显示符号链接错误态。

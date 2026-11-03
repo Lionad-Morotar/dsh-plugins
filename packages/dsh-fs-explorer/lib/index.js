@@ -387,6 +387,104 @@ async function createWorkspaceEntry(deps, request, signal) {
   }
 }
 
+// src/bookmarks.ts
+var BOOKMARK_DOMAIN_NAME = "dsh_fs_explorer";
+var BOOKMARK_TABLE_NAME = "bookmarks";
+var MAX_BOOKMARK_DEPTH = 32;
+var MAX_NAME2 = 200;
+var MAX_PATH = 4096;
+function fail3(message) {
+  throw new Error(`bookmarks: ${message}`);
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function requireText(value, field, max) {
+  if (typeof value !== "string") fail3(`${field} must be a string`);
+  const text = value.trim();
+  if (text === "") fail3(`${field} must not be empty`);
+  if (text.length > max) fail3(`${field} must be at most ${String(max)} characters`);
+  return text;
+}
+function parseNode(value, where, depth, seen) {
+  if (depth > MAX_BOOKMARK_DEPTH) {
+    fail3(`${where} is nested deeper than ${String(MAX_BOOKMARK_DEPTH)} levels`);
+  }
+  if (!isRecord(value)) fail3(`${where} must be an object`);
+  const id = requireText(value.id, `${where}.id`, MAX_NAME2);
+  if (seen.has(id)) fail3(`duplicate id "${id}" at ${where}`);
+  seen.add(id);
+  const name2 = requireText(value.name, `${where}.name`, MAX_NAME2);
+  const createdAt = value.createdAt;
+  if (typeof createdAt !== "number" || !Number.isFinite(createdAt)) {
+    fail3(`${where}.createdAt must be a finite number`);
+  }
+  const kind = value.kind;
+  if (kind === "group") {
+    const children = value.children;
+    if (!Array.isArray(children)) fail3(`${where}.children must be an array`);
+    return {
+      id,
+      kind: "group",
+      name: name2,
+      createdAt,
+      children: children.map((child, index) => parseNode(child, `${where}.children[${String(index)}]`, depth + 1, seen))
+    };
+  }
+  if (kind === "file" || kind === "folder") {
+    const path2 = requireText(value.path, `${where}.path`, MAX_PATH);
+    return { id, kind, name: name2, createdAt, path: path2 };
+  }
+  return fail3(`${where}.kind must be "group", "file" or "folder"`);
+}
+function parseBookmarkTree(value) {
+  if (!isRecord(value)) fail3("a bookmark tree must be an object");
+  if (value.version !== 1) fail3(`version must be 1, received ${JSON.stringify(value.version)}`);
+  const updatedAt = requireText(value.updatedAt, "updatedAt", MAX_PATH);
+  const roots = value.roots;
+  if (!Array.isArray(roots)) fail3("roots must be an array");
+  const seen = /* @__PURE__ */ new Set();
+  return {
+    version: 1,
+    roots: roots.map((node, index) => parseNode(node, `roots[${String(index)}]`, 1, seen)),
+    updatedAt
+  };
+}
+var BOOKMARK_DOMAIN_SPEC = {
+  name: BOOKMARK_DOMAIN_NAME,
+  version: 1,
+  invalidRecords: "backup-and-skip",
+  tables: {
+    [BOOKMARK_TABLE_NAME]: {
+      valueSchema: { parse: parseBookmarkTree }
+    }
+  }
+};
+
+// src/host/bookmarks.ts
+async function openBookmarkStore(storageDomain) {
+  if (storageDomain === void 0) return null;
+  const domain = await storageDomain.open(BOOKMARK_DOMAIN_SPEC);
+  const table = domain.table(BOOKMARK_TABLE_NAME);
+  return {
+    async load(key) {
+      const stored = table.get(key);
+      if (stored === void 0 || stored === null) return null;
+      try {
+        return parseBookmarkTree(stored);
+      } catch {
+        return null;
+      }
+    },
+    async save(key, tree) {
+      await table.put(key, parseBookmarkTree(tree));
+    },
+    async close() {
+      await domain.close();
+    }
+  };
+}
+
 // src/shared.ts
 var PACKAGE_NAME = "dsh-fs-explorer";
 var VIEW_SLOT = "conversation.view";
@@ -465,20 +563,34 @@ __publicField(FsExplorerDocumentsService, "inject", inject);
 __publicField(FsExplorerDocumentsService, "Config", Schema.object({
   maxBytes: Schema.number().default(DEFAULT_DOCUMENTS_CONFIG.maxBytes).description("\u5355\u4EFD\u53EF\u8BFB\u53D6\u4E0E\u4FDD\u5B58\u7684\u6587\u6863\u5B57\u8282\u4E0A\u9650")
 }));
-var _create_dec, _reveal_dec, _info_dec, _capabilities_dec, _a2, _init2;
-var FsExplorerWorkspaceService = class extends (_a2 = TypertRemoteService, _capabilities_dec = [Remote("capabilities")], _info_dec = [Remote("info")], _reveal_dec = [Remote("reveal")], _create_dec = [Remote("create")], _a2) {
+var _saveBookmarks_dec, _loadBookmarks_dec, _create_dec, _reveal_dec, _info_dec, _capabilities_dec, _a2, _init2;
+var FsExplorerWorkspaceService = class extends (_a2 = TypertRemoteService, _capabilities_dec = [Remote("capabilities")], _info_dec = [Remote("info")], _reveal_dec = [Remote("reveal")], _create_dec = [Remote("create")], _loadBookmarks_dec = [Remote("loadBookmarks")], _saveBookmarks_dec = [Remote("saveBookmarks")], _a2) {
   constructor(ctx, env) {
     super(ctx, WORKSPACE_SERVICE);
     __runInitializers(_init2, 5, this);
     __publicField(this, "fs");
     __publicField(this, "sessions");
     __publicField(this, "sessionPersistence");
+    __publicField(this, "storageDomain");
     __publicField(this, "env");
+    /**
+     * The bookmark store, opened once and remembered.
+     *
+     * Lazy because opening it touches the host's storage directory, and a session
+     * that never opens the bookmark bar should not pay for that. Remembered
+     * because the domain holds an open handle: reopening it per request would leak
+     * one handle per bookmark action.
+     *
+     * A host without `storageDomain` resolves to null, which every endpoint below
+     * turns into `no-storage` rather than an error the reader cannot act on.
+     */
+    __publicField(this, "storePromise");
     const fs = readService(ctx, "fs");
     if (fs === void 0) throw new Error("dsh-fs-explorer: fs service is unavailable");
     this.fs = fs;
     this.sessions = readService(ctx, "sessions");
     this.sessionPersistence = readService(ctx, "sessionPersistence");
+    this.storageDomain = readService(ctx, "storageDomain");
     this.env = env ?? realWorkspaceEnv();
   }
   /** Resolve one request's dependencies, or the failure to answer with. */
@@ -506,12 +618,66 @@ var FsExplorerWorkspaceService = class extends (_a2 = TypertRemoteService, _capa
     if ("ok" in deps) return deps;
     return createWorkspaceEntry(deps, request, signal);
   }
+  bookmarkStore() {
+    this.storePromise ??= openBookmarkStore(this.storageDomain);
+    return this.storePromise;
+  }
+  /**
+   * The storage key one session's bookmarks live under.
+   *
+   * The workspace's canonical path, not the session id: two sessions in one
+   * workspace are the same place, and a reader who opens a second conversation
+   * there expects the same bookmarks. `processPath` is the one value a backend
+   * documents as an absolute path in its execution world; `displayPath` is the
+   * fallback for a fake that omits it.
+   * @param sessionId - the session whose workspace to key.
+   * @returns the key, or the failure to answer with.
+   */
+  async bookmarkKey(sessionId) {
+    const deps = await this.deps(sessionId);
+    if ("ok" in deps) return deps;
+    try {
+      const target = await deps.fs.resolve(deps.cwd, { cwd: deps.cwd });
+      return deps.fs.processPath?.(target) ?? target.displayPath;
+    } catch (error) {
+      return fail2("io-error", error instanceof Error ? error.message : String(error));
+    }
+  }
+  async loadBookmarks(request) {
+    const key = await this.bookmarkKey(request.sessionId);
+    if (typeof key !== "string") return key;
+    const store = await this.bookmarkStore();
+    if (store === null) {
+      return fail2("no-storage", "this host has no storage domain; bookmarks stay in the browser");
+    }
+    try {
+      return { ok: true, tree: await store.load(key) };
+    } catch (error) {
+      return fail2("io-error", error instanceof Error ? error.message : String(error));
+    }
+  }
+  async saveBookmarks(request) {
+    const key = await this.bookmarkKey(request.sessionId);
+    if (typeof key !== "string") return key;
+    const store = await this.bookmarkStore();
+    if (store === null) {
+      return fail2("no-storage", "this host has no storage domain; bookmarks stay in the browser");
+    }
+    try {
+      await store.save(key, request.tree);
+      return { ok: true };
+    } catch (error) {
+      return fail2("io-error", error instanceof Error ? error.message : String(error));
+    }
+  }
 };
 _init2 = __decoratorStart(_a2);
 __decorateElement(_init2, 1, "capabilities", _capabilities_dec, FsExplorerWorkspaceService);
 __decorateElement(_init2, 1, "info", _info_dec, FsExplorerWorkspaceService);
 __decorateElement(_init2, 1, "reveal", _reveal_dec, FsExplorerWorkspaceService);
 __decorateElement(_init2, 1, "create", _create_dec, FsExplorerWorkspaceService);
+__decorateElement(_init2, 1, "loadBookmarks", _loadBookmarks_dec, FsExplorerWorkspaceService);
+__decorateElement(_init2, 1, "saveBookmarks", _saveBookmarks_dec, FsExplorerWorkspaceService);
 __decoratorMetadata(_init2, FsExplorerWorkspaceService);
 __publicField(FsExplorerWorkspaceService, "inject", ["fs"]);
 function apply(ctx, config) {

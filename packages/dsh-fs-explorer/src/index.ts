@@ -49,6 +49,11 @@ import {
   type WorkspaceEnv,
   type WorkspaceFsFace,
 } from "./host/workspace.ts";
+import {
+  openBookmarkStore,
+  type BookmarkStorageDomainFace,
+  type BookmarkStore,
+} from "./host/bookmarks.ts";
 import type {
   FileSystemFace,
   LocateRequest,
@@ -59,6 +64,10 @@ import type {
   SaveDocumentResult,
   SessionPersistenceFace,
   SessionsFace,
+  BookmarkLoadRequest,
+  BookmarkLoadResult,
+  BookmarkSaveRequest,
+  BookmarkSaveResult,
   WorkspaceCapabilitiesRequest,
   WorkspaceFailure,
   WorkspaceCapabilitiesResult,
@@ -249,6 +258,7 @@ export class FsExplorerWorkspaceService extends TypertRemoteService {
   private readonly fs: WorkspaceFsFace;
   private readonly sessions: SessionsFace | undefined;
   private readonly sessionPersistence: SessionPersistenceFace | undefined;
+  private readonly storageDomain: BookmarkStorageDomainFace | undefined;
   private readonly env: WorkspaceEnv;
 
   constructor(ctx: Context, env?: WorkspaceEnv) {
@@ -258,6 +268,9 @@ export class FsExplorerWorkspaceService extends TypertRemoteService {
     this.fs = fs as WorkspaceFsFace;
     this.sessions = readService(ctx, "sessions") as SessionsFace | undefined;
     this.sessionPersistence = readService(ctx, "sessionPersistence") as SessionPersistenceFace | undefined;
+    // Read structurally, never declared in `inject`: a name the host does not
+    // provide would keep the whole row pending forever, silently.
+    this.storageDomain = readService(ctx, "storageDomain") as BookmarkStorageDomainFace | undefined;
     this.env = env ?? realWorkspaceEnv();
   }
 
@@ -305,6 +318,83 @@ export class FsExplorerWorkspaceService extends TypertRemoteService {
     const deps = await this.deps(request.sessionId);
     if ("ok" in deps) return deps;
     return createWorkspaceEntry(deps, request, signal);
+  }
+
+  /**
+   * The bookmark store, opened once and remembered.
+   *
+   * Lazy because opening it touches the host's storage directory, and a session
+   * that never opens the bookmark bar should not pay for that. Remembered
+   * because the domain holds an open handle: reopening it per request would leak
+   * one handle per bookmark action.
+   *
+   * A host without `storageDomain` resolves to null, which every endpoint below
+   * turns into `no-storage` rather than an error the reader cannot act on.
+   */
+  private storePromise: Promise<BookmarkStore | null> | undefined;
+
+  private bookmarkStore(): Promise<BookmarkStore | null> {
+    this.storePromise ??= openBookmarkStore(this.storageDomain);
+    return this.storePromise;
+  }
+
+  /**
+   * The storage key one session's bookmarks live under.
+   *
+   * The workspace's canonical path, not the session id: two sessions in one
+   * workspace are the same place, and a reader who opens a second conversation
+   * there expects the same bookmarks. `processPath` is the one value a backend
+   * documents as an absolute path in its execution world; `displayPath` is the
+   * fallback for a fake that omits it.
+   * @param sessionId - the session whose workspace to key.
+   * @returns the key, or the failure to answer with.
+   */
+  private async bookmarkKey(
+    sessionId: string,
+  ): Promise<string | { readonly ok: false; readonly error: WorkspaceFailure }> {
+    const deps = await this.deps(sessionId);
+    if ("ok" in deps) return deps;
+    try {
+      const target = await deps.fs.resolve(deps.cwd, { cwd: deps.cwd });
+      return deps.fs.processPath?.(target) ?? target.displayPath;
+    } catch (error) {
+      return failWorkspace("io-error", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /** One workspace's bookmark tree, or null when it has none. */
+  @Remote("loadBookmarks")
+  async loadBookmarks(request: BookmarkLoadRequest): Promise<BookmarkLoadResult> {
+    const key = await this.bookmarkKey(request.sessionId);
+    if (typeof key !== "string") return key;
+    const store = await this.bookmarkStore();
+    if (store === null) {
+      return failWorkspace("no-storage", "this host has no storage domain; bookmarks stay in the browser");
+    }
+    try {
+      return { ok: true, tree: await store.load(key) };
+    } catch (error) {
+      return failWorkspace("io-error", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  /** Replace one workspace's bookmark tree. */
+  @Remote("saveBookmarks")
+  async saveBookmarks(request: BookmarkSaveRequest): Promise<BookmarkSaveResult> {
+    const key = await this.bookmarkKey(request.sessionId);
+    if (typeof key !== "string") return key;
+    const store = await this.bookmarkStore();
+    if (store === null) {
+      return failWorkspace("no-storage", "this host has no storage domain; bookmarks stay in the browser");
+    }
+    try {
+      await store.save(key, request.tree);
+      return { ok: true };
+    } catch (error) {
+      // A tree the parser rejects and a storage write that failed are the same
+      // answer to the client: this write did not land, so keep your own copy.
+      return failWorkspace("io-error", error instanceof Error ? error.message : String(error));
+    }
   }
 }
 

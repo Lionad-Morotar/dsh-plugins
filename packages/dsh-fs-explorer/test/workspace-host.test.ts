@@ -369,6 +369,8 @@ describe("FsExplorerWorkspaceService", () => {
       "info",
       "reveal",
       "create",
+      "loadBookmarks",
+      "saveBookmarks",
     ]);
   });
 

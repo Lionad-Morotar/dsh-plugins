@@ -11,6 +11,7 @@
  * caller here paints a sentence from the failure code.
  */
 import { WORKSPACE_SERVICE } from "../shared.ts";
+import { parseBookmarkTree, type BookmarkTree } from "../bookmarks.ts";
 import type { WorkspaceCapabilities, WorkspaceFailureCode, WorkspacePathInfo } from "../host/types.ts";
 
 /** What one mounted workspace face must expose. */
@@ -32,6 +33,12 @@ export interface WorkspaceFace {
       readonly name: string;
       readonly kind: "file" | "directory";
     },
+    signal?: AbortSignal,
+  ): Promise<unknown> | unknown;
+  /** Absent on a host that predates the bookmark channel. */
+  loadBookmarks?(request: { readonly sessionId: string }, signal?: AbortSignal): Promise<unknown> | unknown;
+  saveBookmarks?(
+    request: { readonly sessionId: string; readonly tree: BookmarkTree },
     signal?: AbortSignal,
   ): Promise<unknown> | unknown;
 }
@@ -102,6 +109,8 @@ export function createRpcWorkspaceFace(call: WorkspaceRpcCall): WorkspaceFace {
     info: invoke("info"),
     reveal: invoke("reveal"),
     create: invoke("create"),
+    loadBookmarks: invoke("loadBookmarks"),
+    saveBookmarks: invoke("saveBookmarks"),
   };
 }
 
@@ -168,8 +177,12 @@ const KNOWN_CODES: readonly WorkspaceFailureCode[] = [
   "no-workspace",
   "outside-workspace",
   "not-found",
+  "not-directory",
+  "exists",
+  "invalid-name",
   "unsupported",
   "permission",
+  "no-storage",
   "io-error",
 ];
 
@@ -205,6 +218,16 @@ export type RevealOutcome = { readonly ok: true } | { readonly ok: false; readon
 /** What one create call answered: the workspace-relative path of the new entry. */
 export type CreateOutcome =
   | { readonly ok: true; readonly path: string }
+  | { readonly ok: false; readonly error: WorkspaceError };
+
+/** What one bookmark load answered. A null tree is a workspace with none yet. */
+export type BookmarkLoadOutcome =
+  | { readonly ok: true; readonly tree: BookmarkTree | null }
+  | { readonly ok: false; readonly error: WorkspaceError };
+
+/** What one bookmark save answered. */
+export type BookmarkSaveOutcome =
+  | { readonly ok: true }
   | { readonly ok: false; readonly error: WorkspaceError };
 
 /**
@@ -278,6 +301,39 @@ export function normalizeCreate(response: unknown): CreateOutcome {
     : { ok: false, error: { code: "io-error", message: "" } };
 }
 
+/**
+ * Fold one `loadBookmarks` answer down to a tree or a failure.
+ *
+ * The tree is re-parsed here even though the host already parsed it: this value
+ * crossed a wire and may have been produced by an older build, and a tree the
+ * model cannot operate on is worse than no tree at all.
+ * @param response - whatever the endpoint resolved to.
+ * @returns the tree (possibly null), or the failure to paint.
+ */
+export function normalizeBookmarkLoad(response: unknown): BookmarkLoadOutcome {
+  const result = unwrap(response);
+  if (result === undefined) return { ok: false, error: { code: "io-error", message: "" } };
+  if (result.ok === false) return { ok: false, error: errorOf(result.error) };
+  if (result.tree === null || result.tree === undefined) return { ok: true, tree: null };
+  try {
+    return { ok: true, tree: parseBookmarkTree(result.tree) };
+  } catch (error) {
+    return { ok: false, error: { code: "io-error", message: error instanceof Error ? error.message : "" } };
+  }
+}
+
+/**
+ * Fold one `saveBookmarks` answer down to a receipt or a failure.
+ * @param response - whatever the endpoint resolved to.
+ * @returns the receipt, or the failure to paint.
+ */
+export function normalizeBookmarkSave(response: unknown): BookmarkSaveOutcome {
+  const result = unwrap(response);
+  if (result === undefined) return { ok: false, error: { code: "io-error", message: "" } };
+  if (result.ok === false) return { ok: false, error: errorOf(result.error) };
+  return { ok: true };
+}
+
 /** The calls the view makes, already folded and never throwing. */
 export interface WorkspaceClient {
   capabilities(sessionId: string, signal?: AbortSignal): Promise<CapabilitiesOutcome>;
@@ -297,6 +353,14 @@ export interface WorkspaceClient {
     kind: "file" | "directory",
     signal?: AbortSignal,
   ): Promise<CreateOutcome>;
+  /**
+   * One workspace's bookmarks.
+   *
+   * Absent on a host that predates the bookmark channel, which the store reads
+   * as "keep your own copy" rather than as an error.
+   */
+  loadBookmarks?(sessionId: string, signal?: AbortSignal): Promise<BookmarkLoadOutcome>;
+  saveBookmarks?(sessionId: string, tree: BookmarkTree, signal?: AbortSignal): Promise<BookmarkSaveOutcome>;
 }
 
 /** The failure a missing channel answers with. */
@@ -334,5 +398,17 @@ export function createWorkspaceClient(ctx: WorkspaceContextLike): WorkspaceClien
         if (typeof create !== "function") return { ok: false, error: UNAVAILABLE };
         return create.call(face, { sessionId, parent, name, kind }, signal);
       }, normalizeCreate),
+    loadBookmarks: (sessionId, signal) =>
+      guard(face => {
+        const load = face.loadBookmarks;
+        if (typeof load !== "function") return { ok: false, error: UNAVAILABLE };
+        return load.call(face, { sessionId }, signal);
+      }, normalizeBookmarkLoad),
+    saveBookmarks: (sessionId, tree, signal) =>
+      guard(face => {
+        const save = face.saveBookmarks;
+        if (typeof save !== "function") return { ok: false, error: UNAVAILABLE };
+        return save.call(face, { sessionId, tree }, signal);
+      }, normalizeBookmarkSave),
   };
 }

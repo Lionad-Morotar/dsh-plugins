@@ -201,6 +201,14 @@ export type WorkspaceFailureCode =
   | "invalid-name"
   | "unsupported"
   | "permission"
+  /**
+   * This host has no storage domain.
+   *
+   * Not an error the reader caused, and not one they can fix: it is the signal
+   * that tells the client to keep its own copy in localStorage instead of
+   * showing a message.
+   */
+  | "no-storage"
   | "io-error";
 
 export interface WorkspaceFailure {
@@ -292,37 +300,30 @@ export interface SessionPersistenceFace {
 }
 
 /**
- * Failure vocabulary of the bookmark channel.
+ * One bookmark request: which session's workspace the record belongs to.
  *
- * Closed like the other two, and for the same reason: the client paints one
- * sentence per code, so a code it does not know would render as a silent no-op.
- * `degraded` is the one code that is not an error the reader caused: it means
- * this host has no storage domain, and the client falls back to localStorage.
+ * The key is the workspace's canonical path, resolved on the host, so the client
+ * never has to know how a workspace is identified.
  */
-export type BookmarkFailureCode = "no-workspace" | "degraded" | "invalid-tree" | "io-error";
-
-export interface BookmarkFailure {
-  readonly code: BookmarkFailureCode;
-  readonly message: string;
+export interface BookmarkLoadRequest {
+  readonly sessionId: string;
 }
 
 /**
- * One workspace's bookmarks as `load` returns them.
+ * One workspace's bookmarks.
  *
- * `degraded: true` with a null tree is a successful answer, not a failure: it
- * tells the client to keep its own copy in localStorage rather than treat the
- * absence as an error the reader has to see.
+ * A null tree is a successful answer: it means this workspace has no bookmarks
+ * yet, which is the ordinary state of a workspace nobody has bookmarked in.
  */
-export interface BookmarkLoadValue {
-  readonly workspace: string;
-  readonly degraded: boolean;
-  readonly tree: import("../bookmarks.ts").BookmarkTree | null;
+export type BookmarkLoadResult =
+  | { readonly ok: true; readonly tree: import("../bookmarks.ts").BookmarkTree | null }
+  | { readonly ok: false; readonly error: WorkspaceFailure };
+
+export interface BookmarkSaveRequest {
+  readonly sessionId: string;
+  readonly tree: import("../bookmarks.ts").BookmarkTree;
 }
 
-export type BookmarkLoadResult =
-  | { readonly ok: true; readonly value: BookmarkLoadValue }
-  | { readonly ok: false; readonly error: BookmarkFailure };
-
-export type BookmarkSaveOutcome =
+export type BookmarkSaveResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly error: BookmarkFailure };
+  | { readonly ok: false; readonly error: WorkspaceFailure }; 
