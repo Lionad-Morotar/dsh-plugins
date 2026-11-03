@@ -310,7 +310,7 @@ describe("header branch action", () => {
   });
 
   it("disables a branch another worktree already holds", async () => {
-    await renderReady();
+    await renderReady(undefined, LIST, zh);
 
     await click(trigger());
 
