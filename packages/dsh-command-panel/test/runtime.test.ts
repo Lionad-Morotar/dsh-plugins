@@ -23,6 +23,7 @@ import type {
   FileReferenceCandidate,
   GitExplorerRemote,
   HostShutdownRemote,
+  NativeOpenFace,
   PathExplorerRemote,
   SessionInput,
   SessionOpenFace,
@@ -36,6 +37,7 @@ import {
   SESSION_ARCHIVED,
   SESSION_B,
   fakeGitExplorer,
+  fakeNativeOpen,
   fakePathExplorer,
   fakeSessionOpen,
   fakeWorkspaces,
@@ -83,6 +85,8 @@ interface HarnessOptions {
   readonly pathExplorer?: PathExplorerRemote | null;
   /** The session open remote for the reveal fallback; null keeps it out. */
   readonly sessionOpen?: SessionOpenFace | null;
+  /** This package's own system-open face; null keeps it out. */
+  readonly nativeOpen?: NativeOpenFace | null;
   /** The gitExplorer remote the hex commit plane reads; absent keeps it out. */
   readonly gitExplorer?: GitExplorerRemote;
   /** The remote shutdown face; null keeps the namespace out of the context. */
@@ -217,6 +221,9 @@ function harness(options: HarnessOptions = {}): Harness {
     ...(options.sessionOpen === undefined || options.sessionOpen === null
       ? {}
       : { "remote.session": options.sessionOpen }),
+    ...(options.nativeOpen === undefined || options.nativeOpen === null
+      ? {}
+      : { "remote.nativeOpen": options.nativeOpen }),
     ...(options.gitExplorer === undefined ? {} : { "remote.gitExplorer": options.gitExplorer }),
     ...(options.sessions !== undefined && !Array.isArray(options.sessions)
       ? { sessions: options.sessions }
@@ -638,7 +645,7 @@ describe("reveal fallback", () => {
   it("opens the file with the system application when the file view is missing", async () => {
     const h = harness({
       openViewResult: { opened: false, focused: false },
-      sessionOpen: fakeSessionOpen({ canOpen: true }),
+      nativeOpen: fakeNativeOpen(),
     });
     runCommand(h, "command-panel.navigate");
     await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
@@ -657,6 +664,7 @@ describe("reveal fallback", () => {
   it("explains when neither the view nor a system opener is available", async () => {
     const h = harness({
       openViewResult: { opened: false, focused: false },
+      nativeOpen: null,
       sessionOpen: null,
     });
     runCommand(h, "command-panel.navigate");
@@ -672,6 +680,26 @@ describe("reveal fallback", () => {
     const snapshot = h.store.getSnapshot();
     expect(snapshot.open).toBe(true);
     expect(snapshot.notice).toContain("文件面板不可用");
+  });
+
+  it("falls back to the session opener when the host half cannot open the path", async () => {
+    const h = harness({
+      openViewResult: { opened: false, focused: false },
+      nativeOpen: fakeNativeOpen({ result: "unavailable" }),
+      sessionOpen: fakeSessionOpen({ canOpen: true }),
+    });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery("packages/dsh-command-panel/src/client/panel.ts");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label.endsWith("panel.ts"))).toBe(true),
+    );
+    h.verbs.highlight(0);
+    h.verbs.revealActive();
+
+    await vi.waitFor(() => expect(h.store.getSnapshot().open).toBe(false));
+    expect(h.input.notify).toHaveBeenCalledWith("info", expect.stringContaining("系统默认应用"));
   });
 });
 
