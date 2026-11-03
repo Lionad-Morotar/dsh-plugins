@@ -47,6 +47,8 @@ export interface PanelVerbs {
   readonly treeInto: () => void;
   /** Hand the highlighted file to the file workbench. */
   readonly revealActive: () => void;
+  /** Open the highlighted file as a tab of the right column. */
+  readonly openInSidebar: () => void;
   /** Whether the arrows currently belong to the tree rather than to the caret. */
   readonly treeActive: () => boolean;
   readonly accept: (row: PanelRow) => void;
@@ -74,6 +76,30 @@ const INPUT_PROPS = {
   "data-dcp-query": "",
   "data-modal-autofocus": "",
 } as const;
+
+/** What a confirm key means for the panel, once its modifiers are read. */
+export type ConfirmIntent = "reveal" | "sidebar" | "accept";
+
+/**
+ * Read one confirm key into the destination it asks for.
+ *
+ * `⌘`/`Ctrl` is the heavier modifier and keeps the file workbench, so `⌘⇧↩`
+ * stays where it has always been. Shift is the sidebar accent on Enter only:
+ * `⇧Tab` is reverse tabbing, and the panel answers Tab as a second confirm key,
+ * so folding shift in there would silently take a focus gesture.
+ * @param event - the key, read for its `key` and its three modifiers.
+ * @returns the destination the runtime should act on.
+ */
+export function confirmIntent(event: {
+  readonly key: string;
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly shiftKey: boolean;
+}): ConfirmIntent {
+  if (event.metaKey || event.ctrlKey) return "reveal";
+  if (event.shiftKey && event.key === "Enter") return "sidebar";
+  return "accept";
+}
 
 /** Keys the panel answers itself while it is open. */
 const OWNED_KEYS = new Set([
@@ -178,15 +204,15 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
             deps.treeInto();
             return;
           case "Enter":
-          case "Tab":
-            // The accelerator hands the file to the file workbench instead of
-            // writing its path: same row, different destination.
-            if (event.metaKey || event.ctrlKey) {
-              deps.revealActive();
-              return;
-            }
-            deps.acceptActive();
+          case "Tab": {
+            // Three destinations for one row: the path into the composer, the
+            // file workbench, or a tab of the right column.
+            const intent = confirmIntent(event);
+            if (intent === "reveal") deps.revealActive();
+            else if (intent === "sidebar") deps.openInSidebar();
+            else deps.acceptActive();
             return;
+          }
           case "Escape":
             deps.back();
             return;
@@ -285,6 +311,7 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
         tree ? h("span", null, copy.footer.tree) : null,
         h("span", null, copy.footer.accept),
         tree ? h("span", null, copy.footer.reveal) : null,
+        tree && copy.footer.sidebar !== undefined ? h("span", null, copy.footer.sidebar) : null,
         h("span", null, crumb === null ? copy.footer.close : copy.footer.back),
       ),
     );

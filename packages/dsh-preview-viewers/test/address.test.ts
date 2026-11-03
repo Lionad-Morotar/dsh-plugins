@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { baseName, parseSessionFileAddress } from "../src/address.ts";
+import { baseName, parseSessionFileAddress, sessionFileAddress } from "../src/address.ts";
 
 describe("session file address", () => {
   it("decodes the session and the absolute path", () => {
@@ -58,5 +58,44 @@ describe("baseName", () => {
   it("takes everything after the last slash", () => {
     expect(baseName("/a/b/c.glb")).toBe("c.glb");
     expect(baseName("c.glb")).toBe("c.glb");
+  });
+});
+
+describe("sessionFileAddress", () => {
+  it("keeps a workspace-relative path relative", () => {
+    expect(sessionFileAddress("abc-123", "src/client/panel.ts")).toBe(
+      "dsh-resource://file/session/abc-123/src/client/panel.ts",
+    );
+  });
+
+  it("keeps an absolute path absolute inside the session scope", () => {
+    // The leading slash is what tells the host to resolve from the filesystem
+    // root instead of the workspace one, so a file outside the workspace still
+    // reads.
+    expect(sessionFileAddress("s1", "/Users/lionad/notes.md")).toBe(
+      "dsh-resource://file/session/s1//Users/lionad/notes.md",
+    );
+  });
+
+  it("escapes every segment and leaves a drive letter readable", () => {
+    expect(sessionFileAddress("s 1", "temp/my model 模型.glb")).toBe(
+      "dsh-resource://file/session/s%201/temp/my%20model%20%E6%A8%A1%E5%9E%8B.glb",
+    );
+    expect(sessionFileAddress("s1", "C:/work/a#b.txt")).toBe(
+      "dsh-resource://file/session/s1/C:/work/a%23b.txt",
+    );
+  });
+
+  it("normalizes backslashes and a leading ./ but keeps a UNC prefix", () => {
+    expect(sessionFileAddress("s1", ".\\src/a.ts")).toBe("dsh-resource://file/session/s1/src/a.ts");
+    expect(sessionFileAddress("s1", "//server/share/a.ts")).toBe(
+      "dsh-resource://file/session/s1///server/share/a.ts",
+    );
+  });
+
+  it("round-trips through the parser the bodies use", () => {
+    for (const path of ["src/a.ts", "/Users/lionad/a b.md", "C:/work/模型.pdf", "//server/share/x"]) {
+      expect(parseSessionFileAddress(sessionFileAddress("s1", path))?.path).toBe(path);
+    }
   });
 });

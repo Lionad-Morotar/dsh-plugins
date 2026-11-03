@@ -44,6 +44,7 @@ import type {
   WorkspacesService,
 } from "./dsh.ts";
 import { isGitExplorerFace, isHostShutdownFace, isNativeOpenFace, isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
+import { sessionFileAddress } from "dsh-preview-viewers/address.ts";
 import { runCatalogAction, type ActionDeps } from "./actions.ts";
 import { createBridgeView, type BridgeState } from "./bridge.ts";
 import { clientCommandRows, isClientCommandRow, runClientCommand } from "./client-commands.ts";
@@ -960,22 +961,29 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   }
 
   /**
-   * What the reveal accelerator hands to the file workbench for one row.
+   * What an accelerator hands to a file surface for one row.
    *
    * Workspace rows speak the relative `path:` protocol; filesystem rows carry
    * their own absolute path, so they speak `abs:` and out-of-workspace files
-   * preview too. Directories and non-file rows have no panel to open.
+   * preview too. Directories and non-file rows have no file to open.
+   *
+   * `addressPath` is the same decision in the right column's grammar: the
+   * relative spelling for workspace rows, because that is how the host's own
+   * file links are spelt and one file must not become two tabs, and the
+   * absolute one for filesystem rows.
    */
-  function revealTarget(row: PanelRow | undefined): { focus: string; absolutePath: string } | undefined {
+  function revealTarget(row: PanelRow | undefined): { focus: string; absolutePath: string; addressPath: string } | undefined {
     if (row === undefined || row.kind === "directory") return undefined;
     if (row.origin === "filesystem" && row.action.kind === "insert-path") {
-      return { focus: `abs:${row.action.absolutePath}`, absolutePath: row.action.absolutePath };
+      const absolute = row.action.absolutePath;
+      return { focus: `abs:${absolute}`, absolutePath: absolute, addressPath: absolute };
     }
     const path = focusPath(row);
     if (path === undefined) return undefined;
     return {
       focus: `path:${path}`,
       absolutePath: row.action.kind === "insert-path" ? row.action.absolutePath : path,
+      addressPath: path,
     };
   }
 
@@ -1083,6 +1091,57 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       return;
     }
     void revealWithSystemApp(target.absolutePath);
+  }
+
+  /**
+   * The built-in document preview's tab kind.
+   *
+   * Named outright because a ranked open is claimed on this host by the file
+   * explorer's address bridge: an extension-band type over
+   * `dsh-resource://file/**` that exists only to hand the address to the main
+   * column and close its own tab again. Opening into the column must not be a
+   * forward out of it, so the panel asks for the preview by name. That type's
+   * `canOpen` still applies, and a host without the package falls back to the
+   * ranked open below.
+   */
+  const DOCUMENT_PREVIEW_KIND = "text";
+
+  /**
+   * Open the highlighted file as a tab of the right column.
+   *
+   * The second destination of the same row: `⌘↩` leaves the conversation for
+   * the file workbench, this one stays beside it. Failures are notices, never a
+   * silent no-op, because a sidebar that does nothing is indistinguishable from
+   * a key that is not bound.
+   */
+  function openInSidebar(): void {
+    if (!treeActive()) return;
+    const snapshot = store.getSnapshot();
+    const row = snapshot.rows[clampHighlight(snapshot.model.highlight, snapshot.rows.length)];
+    const target = revealTarget(row);
+    if (target === undefined) return;
+    const sidebar = refs.sidebarRight;
+    if (sidebar?.openResource === undefined) {
+      notice(copy().noticeSidebarUnavailable, "error");
+      return;
+    }
+    const sessionId = currentSessionId();
+    if (sessionId === null) {
+      notice(copy().actions.noSessionSurface, "error");
+      return;
+    }
+    const address = sessionFileAddress(sessionId, target.addressPath);
+    try {
+      sidebar.openResource(address, { kind: DOCUMENT_PREVIEW_KIND });
+    } catch {
+      try {
+        sidebar.openResource(address);
+      } catch {
+        notice(copy().noticeSidebarOpenFailed, "error");
+        return;
+      }
+    }
+    close();
   }
 
   function acceptActive(): void {
@@ -1389,6 +1448,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     treeUp,
     treeInto,
     revealActive,
+    openInSidebar,
     treeActive,
     crumbLabel,
   };

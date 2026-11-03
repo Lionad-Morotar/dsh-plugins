@@ -557,14 +557,24 @@ export interface PluginNavigationService {
 }
 
 /**
- * Right-column page types.
+ * The right column: page tabs and resource tabs.
  *
  * `mounted` is the on-screen session, and it is what makes these commands
  * conditional: with a global panel in the main column (or no session at all)
- * every `openTab` call throws instead of doing nothing.
+ * every `openTab` and `openResource` call throws instead of doing nothing.
  */
 export interface SidebarRightService {
   readonly mounted: Snapshot<string | undefined>;
+  /**
+   * Open a `dsh-resource://` address as a tab.
+   *
+   * Without `kind` the registry ranks the types whose globs and `canOpen`
+   * accept the address; with it, that one type opens the address and its
+   * `canOpen` still applies. An address no type will open throws, which is a
+   * wiring mistake rather than a user error, so callers surface it as a notice.
+   * Absent on older builds.
+   */
+  openResource?(address: string, options?: { readonly kind?: string; readonly params?: unknown }): void;
   openTab(kind: string, options?: { readonly params?: unknown }): void;
   toggleExpanded(): void;
   isExpanded(): boolean;

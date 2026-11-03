@@ -19,6 +19,8 @@ export interface FooterHint {
   readonly tree?: string;
   /** Only shown where a file can be handed to the file workbench. */
   readonly reveal?: string;
+  /** Only shown where a file can be opened as a tab of the right column. */
+  readonly sidebar?: string;
 }
 
 export interface Copy {
@@ -60,6 +62,8 @@ export interface Copy {
   readonly noticeRevealUnfocused: string;
   readonly noticeOpenedBySystem: string;
   readonly noticeOpenUnavailable: string;
+  readonly noticeSidebarUnavailable: string;
+  readonly noticeSidebarOpenFailed: string;
   readonly noticeGitPanelMissing: string;
   readonly noticeNoSession: string;
   readonly noticeInsertFailed: string;
@@ -148,10 +152,13 @@ const ZH: Copy = {
     close: "esc 关闭",
     tree: "←→ 上下层",
     reveal: "⌘↵ 文件面板",
+    sidebar: "⇧↵ 侧边栏",
   },
   noticeRevealUnfocused: "已切到文件面板；这个宿主没把定位能力交给插件，请手动打开该文件",
   noticeOpenedBySystem: "已用系统默认应用打开",
   noticeOpenUnavailable: "文件面板不可用，用系统默认应用打开也失败了",
+  noticeSidebarUnavailable: "这个宿主没有可用的右侧栏，无法在侧边栏打开",
+  noticeSidebarOpenFailed: "右侧栏没有能打开这个文件的类型",
   noticeGitPanelMissing: "Git 面板未安装，无法查看提交详情",
   noticeNoSession: "当前没有打开的会话，无法写入输入框",
   noticeInsertFailed: "输入框正忙，稍后重试",
@@ -260,10 +267,13 @@ const EN: Copy = {
     close: "esc close",
     tree: "←→ up/down a level",
     reveal: "⌘↵ file panel",
+    sidebar: "⇧↵ sidebar",
   },
   noticeRevealUnfocused: "Switched to the file panel; this host hands out no focus capability, so open the file there",
   noticeOpenedBySystem: "Opened with the system default application",
   noticeOpenUnavailable: "No file panel, and the system application failed to open it",
+  noticeSidebarUnavailable: "This host has no right column, so the file cannot open in the sidebar",
+  noticeSidebarOpenFailed: "No tab type in the right column opens this file",
   noticeGitPanelMissing: "The Git panel is not installed, so the commit cannot be shown",
   noticeNoSession: "No open session, so there is no composer to write to",
   noticeInsertFailed: "The composer is busy; try again",

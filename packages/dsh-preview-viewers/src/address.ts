@@ -1,5 +1,5 @@
 /**
- * File-address decoding for the preview bodies.
+ * File-address encoding and decoding for the preview bodies.
  *
  * A document body receives `resourceAddress` — a `dsh-resource://` URL, not a
  * path — and the byte reader wants a Session id plus a path. The parsing rules
@@ -7,6 +7,10 @@
  * preview package already relies on instead of inventing a looser one:
  * `dsh-resource://file/session/<sessionId>/<path>`, with any leading slashes of
  * `<path>` preserved because they are part of an absolute filesystem path.
+ *
+ * The builder here exists for callers that hand a path to the right column
+ * themselves instead of forwarding an address they received; both directions
+ * live together so a spelling change cannot drift between them.
  */
 
 /** One decoded session file address. */
@@ -34,6 +38,32 @@ function decodeSegment(segment: string): string {
   } catch {
     return segment;
   }
+}
+
+/**
+ * Encode one id or path segment, keeping `:` literal for a drive letter.
+ * @param segment - one plain segment.
+ * @returns the escaped segment.
+ */
+function encodeSegment(segment: string): string {
+  return encodeURIComponent(segment).replace(/%3A/gi, ":");
+}
+
+/**
+ * Build the address of one file read through a session.
+ *
+ * The inverse of `parseSessionFileAddress`, and it has to agree with it segment
+ * for segment: the host keys an open tab on the address string, so one file
+ * spelled two ways is two tabs for one file. Backslashes become `/` and a
+ * leading `./` is dropped, but a leading `/` is kept, because an absolute path
+ * stays absolute inside the session scope.
+ * @param sessionId - the session whose workspace root resolves the path.
+ * @param path - absolute or workspace-relative path.
+ * @returns the `dsh-resource://file/session/<sessionId>/<path>` address.
+ */
+export function sessionFileAddress(sessionId: string, path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
+  return `${PREFIX}session/${encodeSegment(sessionId)}/${normalized.split("/").map(encodeSegment).join("/")}`;
 }
 
 /**

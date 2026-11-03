@@ -83,6 +83,8 @@ interface HarnessOptions {
   readonly claimBlocked?: boolean;
   readonly seatSurfaces?: boolean;
   readonly openViewResult?: { readonly opened: boolean; readonly focused: boolean };
+  /** `null` leaves the right column out; `openResource: false` keeps a column without resource tabs. */
+  readonly sidebarRight?: null | { readonly openResource?: boolean };
   /** The filesystem exploration remote; null keeps it out of the context. */
   readonly pathExplorer?: PathExplorerRemote | null;
   /** The session open remote for the reveal fallback; null keeps it out. */
@@ -116,6 +118,10 @@ interface Harness {
   readonly input: SessionInput;
   readonly inserted: string[];
   readonly shutdownRequest: ReturnType<typeof vi.fn>;
+  readonly sidebar: {
+    readonly openResource: ReturnType<typeof vi.fn>;
+    readonly openTab: ReturnType<typeof vi.fn>;
+  };
   readonly verbs: PanelVerbs;
   readonly store: ReturnType<typeof createRuntime>["__test"]["store"];
 }
@@ -124,6 +130,8 @@ function harness(options: HarnessOptions = {}): Harness {
   const commands: ShortcutCommand[] = [];
   const inserted: string[] = [];
   const edit = vi.fn(async () => ({ status: "saved" }));
+  const sidebarOpenResource = vi.fn();
+  const sidebarOpenTab = vi.fn();
   const describeBinding = vi.fn(() => ({
     binding: { code: "KeyP", modifiers: ["primary"] as const },
     keys: ["⌘", "P"] as const,
@@ -206,12 +214,17 @@ function harness(options: HarnessOptions = {}): Harness {
       getTheme: () => ({ preference: "dark", active: { id: "dark", colorScheme: "dark" as const } }),
       setTheme: vi.fn(),
     },
-    sidebarRight: {
-      mounted: snapshotOf<string | undefined>(SESSION_A.id),
-      openTab: vi.fn(),
-      toggleExpanded: vi.fn(),
-      isExpanded: () => false,
-    },
+    ...(options.sidebarRight === null
+      ? {}
+      : {
+          sidebarRight: {
+            mounted: snapshotOf<string | undefined>(SESSION_A.id),
+            ...(options.sidebarRight?.openResource === false ? {} : { openResource: sidebarOpenResource }),
+            openTab: sidebarOpenTab,
+            toggleExpanded: vi.fn(),
+            isExpanded: () => false,
+          },
+        }),
     slots: {
       inject: (_key: string, callback: () => () => void) => callback(),
       register: () => () => undefined,
@@ -277,6 +290,7 @@ function harness(options: HarnessOptions = {}): Harness {
     verbs: runtime.__test.verbs,
     store: runtime.__test.store,
     shutdownRequest,
+    sidebar: { openResource: sidebarOpenResource, openTab: sidebarOpenTab },
   };
 }
 
@@ -644,6 +658,125 @@ describe("file reveal", () => {
     const snapshot = h.store.getSnapshot();
     expect(snapshot.open).toBe(true);
     expect(snapshot.notice).toContain("文件面板不可用");
+  });
+});
+
+describe("sidebar open", () => {
+  const PANEL_FILE = "packages/dsh-command-panel/src/client/panel.ts";
+  const PANEL_FILE_ADDRESS = `dsh-resource://file/session/${SESSION_A.id}/${PANEL_FILE}`;
+
+  /** Put the cursor on the same workspace file the reveal cases use. */
+  async function onPanelFile(h: Harness): Promise<void> {
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    h.verbs.setQuery(PANEL_FILE);
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label.endsWith("panel.ts"))).toBe(true),
+    );
+    h.verbs.highlight(0);
+  }
+
+  it("opens the file as a right-column tab and leaves the conversation alone", async () => {
+    const h = harness();
+    await onPanelFile(h);
+    h.verbs.openInSidebar();
+
+    expect(h.sidebar.openResource).toHaveBeenCalledWith(PANEL_FILE_ADDRESS, { kind: "text" });
+    expect(h.store.getSnapshot().open).toBe(false);
+    // The column is the point of this accelerator: the file workbench is
+    // Cmd+Enter's destination, and reaching it here would be the same jump
+    // with an extra flash.
+    expect(h.workbench.openViewOrSwitch).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the ranked open when the host has no document preview", async () => {
+    const h = harness();
+    h.sidebar.openResource.mockImplementationOnce(() => {
+      throw new Error('sidebarRight: no tab type is registered as "text"');
+    });
+    await onPanelFile(h);
+    h.verbs.openInSidebar();
+
+    expect(h.sidebar.openResource).toHaveBeenCalledTimes(2);
+    expect(h.sidebar.openResource).toHaveBeenLastCalledWith(PANEL_FILE_ADDRESS);
+    expect(h.store.getSnapshot().open).toBe(false);
+  });
+
+  it("keeps the panel open and says so when nothing claims the address", async () => {
+    const h = harness();
+    h.sidebar.openResource.mockImplementation(() => {
+      throw new Error("sidebarRight: no tab type claims the address");
+    });
+    await onPanelFile(h);
+    h.verbs.openInSidebar();
+
+    const snapshot = h.store.getSnapshot();
+    expect(snapshot.open).toBe(true);
+    expect(snapshot.notice).toBe(copyFor("zh").noticeSidebarOpenFailed);
+  });
+
+  it("says so when the host has no right column", async () => {
+    const h = harness({ sidebarRight: null });
+    await onPanelFile(h);
+    h.verbs.openInSidebar();
+
+    const snapshot = h.store.getSnapshot();
+    expect(snapshot.open).toBe(true);
+    expect(snapshot.notice).toBe(copyFor("zh").noticeSidebarUnavailable);
+  });
+
+  it("says so when the column predates resource tabs", async () => {
+    const h = harness({ sidebarRight: { openResource: false } });
+    await onPanelFile(h);
+    h.verbs.openInSidebar();
+
+    expect(h.store.getSnapshot().notice).toBe(copyFor("zh").noticeSidebarUnavailable);
+  });
+
+  it("sends an out-of-workspace file by its absolute path inside the session scope", async () => {
+    const h = harness({
+      pathExplorer: fakePathExplorer({
+        home: "/Users/lionad",
+        entries: [{ path: "/Users/lionad/notes/todo.md", kind: "file", exists: true }],
+      }),
+    });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    h.verbs.setQuery("/Users/lionad/notes/tod");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label === "/Users/lionad/notes/todo.md")).toBe(true),
+    );
+    h.verbs.highlight(0);
+    h.verbs.openInSidebar();
+
+    expect(h.sidebar.openResource).toHaveBeenCalledWith(
+      `dsh-resource://file/session/${SESSION_A.id}//Users/lionad/notes/todo.md`,
+      { kind: "text" },
+    );
+  });
+
+  it("has no destination outside the navigate mode", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.commands");
+    h.verbs.openInSidebar();
+
+    expect(h.sidebar.openResource).not.toHaveBeenCalled();
+    expect(h.store.getSnapshot().open).toBe(true);
+  });
+
+  it("leaves a directory row alone", async () => {
+    const h = harness();
+    await onPanelFile(h);
+    h.verbs.setQuery("packages/");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.kind === "directory")).toBe(true),
+    );
+    const index = h.store.getSnapshot().rows.findIndex(row => row.kind === "directory");
+    h.verbs.highlight(index);
+    h.verbs.openInSidebar();
+
+    expect(h.sidebar.openResource).not.toHaveBeenCalled();
+    expect(h.store.getSnapshot().open).toBe(true);
   });
 });
 
