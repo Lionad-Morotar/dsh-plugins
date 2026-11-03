@@ -956,9 +956,12 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
    *
    * This package's own host half goes first: it runs in the reader's host
    * process on both deployments, where the session namespace's open pair is
-   * deliberately off for web. `"unavailable"` (or no face at all) falls through
-   * to that pair, which still serves a desktop host. Only a `"failed"` open, or
-   * both openers missing, reaches the notice — a reveal that silently does
+   * deliberately off for web. `"unavailable"`, no face, a thrown face, and a
+   * carrier rejection (`ok: false`) all fall through to that pair, which still
+   * serves a desktop host. A carrier rejection is not the host half's verdict:
+   * the gateway refused, the transport died, or the response was malformed, so
+   * the host half never said the open failed. Only a business `"failed"`, or
+   * both openers missing, reaches the notice. A reveal that silently does
    * nothing is the one failure a reader cannot diagnose.
    */
   async function revealWithSystemApp(absolutePath: string): Promise<void> {
@@ -975,10 +978,8 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
           notice(copy().noticeOpenUnavailable, "error");
           return;
         }
-        if (!opened.ok) {
-          notice(copy().noticeOpenUnavailable, "error");
-          return;
-        }
+        // Short of a business "failed", including ok: false, the host half
+        // has not ruled the open out, so the session channel still gets a turn.
       } catch {
         // A face that throws is an unavailable opener, same as a missing one.
       }

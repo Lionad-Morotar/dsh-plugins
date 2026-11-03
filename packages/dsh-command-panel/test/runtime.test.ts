@@ -701,6 +701,26 @@ describe("reveal fallback", () => {
     await vi.waitFor(() => expect(h.store.getSnapshot().open).toBe(false));
     expect(h.input.notify).toHaveBeenCalledWith("info", expect.stringContaining("系统默认应用"));
   });
+
+  it("falls back to the session opener when the native open carrier rejects", async () => {
+    const h = harness({
+      openViewResult: { opened: false, focused: false },
+      nativeOpen: fakeNativeOpen({ error: "rpc-error" }),
+      sessionOpen: fakeSessionOpen({ canOpen: true }),
+    });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.setQuery("packages/dsh-command-panel/src/client/panel.ts");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label.endsWith("panel.ts"))).toBe(true),
+    );
+    h.verbs.highlight(0);
+    h.verbs.revealActive();
+
+    await vi.waitFor(() => expect(h.store.getSnapshot().open).toBe(false));
+    expect(h.input.notify).toHaveBeenCalledWith("info", expect.stringContaining("系统默认应用"));
+  });
 });
 
 describe("accept", () => {
