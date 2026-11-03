@@ -1,7 +1,9 @@
-/** The left column: working-tree changes grouped by directory. */
-import { useEffect, useRef } from "react";
+/** The left column: working-tree changes grouped by directory, with a row cursor and a path filter. */
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
-import { basename, statusLetter, type ChangeGroup } from "./model.ts";
+import { basename, statusLetter, type ChangeEntry, type ChangeGroup } from "./model.ts";
+import { cursorActionOf, stepCursor } from "./cursor.ts";
+import { filterChangeGroups } from "./filter.ts";
 import type { Translate } from "./copy.ts";
 
 /** Line counts for one path, absent for untracked files. */
@@ -20,6 +22,45 @@ export interface ChangesPaneProps {
   readonly claimFocus: boolean;
   /** Called once the claim is spent, so a reload cannot replay it. */
   readonly onFocusClaimed: () => void;
+}
+
+/**
+ * One row the keyboard can rest on: a directory header or a file.
+ *
+ * Headers are stops even though they only label a group. The list is what the
+ * reader is walking, and a cursor that skipped a visible line would look like it
+ * had missed a step. What Enter does is decided separately from whether a row can
+ * hold the cursor.
+ */
+type ChangeRow =
+  | { readonly kind: "group"; readonly dir: string; readonly count: number }
+  | { readonly kind: "file"; readonly file: ChangeEntry };
+
+/**
+ * The stable name of a keyboard row.
+ *
+ * A filter rewrites the row list under the cursor, so the cursor has to be
+ * remembered as something the rewrite cannot silently repoint: a path for a
+ * file, the directory for a header.
+ * @param row - the row to name.
+ * @returns a key that survives filtering and reordering.
+ */
+function rowKey(row: ChangeRow): string {
+  return row.kind === "group" ? `group:${row.dir}` : `file:${row.file.path}`;
+}
+
+/**
+ * Flatten groups into the keyboard's row order.
+ * @param groups - visible groups, already filtered.
+ * @returns headers and file rows interleaved exactly as they render.
+ */
+function changeRows(groups: readonly ChangeGroup[]): ChangeRow[] {
+  const rows: ChangeRow[] = [];
+  for (const group of groups) {
+    rows.push({ kind: "group", dir: group.dir, count: group.files.length });
+    for (const file of group.files) rows.push({ kind: "file", file });
+  }
+  return rows;
 }
 
 /**
@@ -61,68 +102,173 @@ function Stat({ stat }: { readonly stat: ChangeStatFace | undefined }) {
  * @returns the pane element.
  */
 export function ChangesPane({ groups, stats, t, onOpen, claimFocus, onFocusClaimed }: ChangesPaneProps) {
-  const total = groups.reduce((sum, group) => sum + group.files.length, 0);
   const pane = useRef<HTMLElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState("");
+  const visible = useMemo(() => filterChangeGroups(groups, query), [groups, query]);
+  const rows = useMemo(() => changeRows(visible), [visible]);
+  const rowKeys = useMemo(() => rows.map(rowKey), [rows]);
+  const total = groups.reduce((sum, group) => sum + group.files.length, 0);
+  const matched = useMemo(() => visible.reduce((sum, group) => sum + group.files.length, 0), [visible]);
+  const filtered = query.trim() !== "";
 
-  // The claim is spent before it is served: a snapshot reload unmounts and
-  // remounts this pane, so a claim kept here would fire again and pull a
-  // keyboard reader off whatever row they had moved on to since.
+  // The cursor names a row by key, not by index: the filter replaces the row
+  // list underneath it, and an index would quietly come to mean a different row.
+  const [cursorKey, setCursorKey] = useState<string | undefined>(undefined);
+  const cursor = useMemo(() => {
+    if (cursorKey === undefined) return -1;
+    return rowKeys.indexOf(cursorKey);
+  }, [cursorKey, rowKeys]);
+  // Where the cursor last stood, so a filter that hides it can land in the same
+  // neighbourhood instead of snapping to the top of the list.
+  const resting = useRef(0);
+  useEffect(() => {
+    if (cursor >= 0) resting.current = cursor;
+  }, [cursor]);
+
+  // The claim must not re-run when the row list changes: it lands the cursor once
+  // on entry, and a second landing would undo an arrow press made right after.
+  // Reading the rows through a ref keeps that effect independent of them.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+
+  // A claim that spans a re-render must not drag the cursor back to the first
+  // row afterwards, so it is spent before it is served: a snapshot reload
+  // unmounts and remounts this pane, and a claim kept here would fire again and
+  // pull a keyboard reader off whatever row they had moved on to since.
   useEffect(() => {
     if (!claimFocus) return;
     onFocusClaimed();
     focusFirstChangeRow(pane.current);
+    // The claim is about a row that opens something, so a header cannot hold it.
+    const first = rowsRef.current.find(row => row.kind === "file");
+    if (first !== undefined) setCursorKey(rowKey(first));
   }, [claimFocus, onFocusClaimed]);
+
+  // A cursor whose row the filter removed has to move somewhere visible; keeping
+  // it would leave Enter aimed at a row nobody can see.
+  useEffect(() => {
+    if (cursorKey === undefined || cursor >= 0 || rows.length === 0) return;
+    const landed = rows[Math.min(resting.current, rows.length - 1)];
+    if (landed !== undefined) setCursorKey(rowKey(landed));
+  }, [cursor, cursorKey, rows]);
+
+  const moveCursor = useCallback(
+    (index: number): void => {
+      const key = rowKeys[index];
+      if (key === undefined) return;
+      setCursorKey(key);
+      scroller.current?.focus({ preventScroll: true });
+    },
+    [rowKeys],
+  );
+
+  // Minimum-movement reveal: the browser's "nearest" block is exactly that, and
+  // it measures the real row heights, which a formula could not do here because
+  // headers and file rows differ.
+  useEffect(() => {
+    if (cursor < 0) return;
+    const row = scroller.current?.querySelector<HTMLElement>('[data-cursor="true"]');
+    row?.scrollIntoView?.({ block: "nearest" });
+  }, [cursor, cursorKey]);
+
+  const handleKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+      const action = cursorActionOf({
+        key: event.key,
+        composing: event.nativeEvent.isComposing,
+        alt: event.altKey,
+        ctrl: event.ctrlKey,
+        meta: event.metaKey,
+        shift: event.shiftKey,
+      });
+      if (action === null) return;
+      event.preventDefault();
+      if (action === "activate") {
+        const row = cursor < 0 ? undefined : rows[cursor];
+        // A header labels a group and a directory row is a working-tree entry
+        // with no file behind it; neither has anything to open, and falling
+        // through to a neighbouring file would open something nobody chose.
+        if (row?.kind === "file" && !row.file.isDirectory) onOpen(row.file.path, 1);
+        return;
+      }
+      const next = stepCursor(cursor < 0 ? undefined : cursor, action, rows.length);
+      if (next !== undefined) moveCursor(next);
+    },
+    [cursor, moveCursor, onOpen, rows],
+  );
 
   return (
     <section ref={pane} className="gx-pane" data-testid="git-changes">
       <header className="gx-pane-head">
         <span>{t("changes.title")}</span>
-        <span className="gx-count">{total}</span>
+        <span className="gx-count">{filtered ? `${String(matched)} / ${String(total)}` : total}</span>
+        <span className="gx-spacer" />
+        {/* The filter sits in the header, outside `.gx-scroll`: an input inside
+            the key handler's container would be handed the arrows it types. */}
+        <input
+          className="gx-filter"
+          type="search"
+          value={query}
+          spellCheck={false}
+          placeholder={t("changes.filter")}
+          aria-label={t("changes.filter")}
+          data-testid="gx-changes-filter"
+          onChange={event => setQuery(event.currentTarget.value)}
+        />
       </header>
-      <div className="gx-scroll">
+      <div className="gx-scroll" ref={scroller} tabIndex={0} data-testid="git-changes-scroll" onKeyDown={handleKeyDown}>
         {total === 0 ? (
           <div className="gx-empty gx-empty-inline">
             <strong>{t("changes.empty")}</strong>
           </div>
+        ) : rows.length === 0 ? (
+          <div className="gx-empty gx-empty-inline" data-testid="git-changes-no-match">
+            <strong>{t("changes.noMatch")}</strong>
+          </div>
         ) : (
-          groups.map(group => (
-            <div key={group.dir === "" ? "." : group.dir}>
-              <div className="gx-group-head">
-                <span className="gx-group-dir">{group.dir === "" ? t("changes.root") : group.dir}</span>
-                <span className="gx-count">{group.files.length}</span>
+          rows.map(row =>
+            row.kind === "group" ? (
+              <div key={rowKey(row)} className="gx-group-head" data-cursor={rowKey(row) === cursorKey ? "true" : "false"}>
+                <span className="gx-group-dir">{row.dir === "" ? t("changes.root") : row.dir}</span>
+                <span className="gx-count">{row.count}</span>
               </div>
-              {group.files.map(file => {
-                const stat = stats.get(file.path);
-                const label = t(`status.${file.status}`);
-                return (
-                  <button
-                    key={file.path}
-                    type="button"
-                    className="gx-file"
-                    data-status={file.status}
-                    data-directory={file.isDirectory ? "true" : "false"}
-                    data-renamed={file.origPath === undefined ? "false" : "true"}
-                    data-testid="git-change-file"
-                    title={file.isDirectory ? `${label} · ${t("changes.directory")}` : `${label} · ${t("changes.jump")}`}
-                    onClick={() => {
-                      if (!file.isDirectory) onOpen(file.path, 1);
-                    }}
-                  >
-                    <span className="gx-badge" data-status={file.status}>
-                      {statusLetter(file.status)}
-                    </span>
-                    <span className="gx-file-name">
-                      {basename(file.path)}
-                      {file.origPath === undefined ? null : <span className="gx-file-orig">{basename(file.origPath)}</span>}
-                    </span>
-                    <span className="gx-file-stats">
-                      <Stat stat={stat} />
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          ))
+            ) : (
+              <button
+                key={rowKey(row)}
+                type="button"
+                className="gx-file"
+                data-status={row.file.status}
+                data-directory={row.file.isDirectory ? "true" : "false"}
+                data-renamed={row.file.origPath === undefined ? "false" : "true"}
+                data-cursor={rowKey(row) === cursorKey ? "true" : "false"}
+                data-testid="git-change-file"
+                title={
+                  row.file.isDirectory
+                    ? `${t(`status.${row.file.status}`)} · ${t("changes.directory")}`
+                    : `${t(`status.${row.file.status}`)} · ${t("changes.jump")}`
+                }
+                onClick={() => {
+                  setCursorKey(rowKey(row));
+                  scroller.current?.focus({ preventScroll: true });
+                  if (!row.file.isDirectory) onOpen(row.file.path, 1);
+                }}
+              >
+                <span className="gx-badge" data-status={row.file.status}>
+                  {statusLetter(row.file.status)}
+                </span>
+                <span className="gx-file-name">
+                  {basename(row.file.path)}
+                  {row.file.origPath === undefined ? null : (
+                    <span className="gx-file-orig">{basename(row.file.origPath)}</span>
+                  )}
+                </span>
+                <span className="gx-file-stats">
+                  <Stat stat={stats.get(row.file.path)} />
+                </span>
+              </button>
+            ),
+          )
         )}
       </div>
     </section>

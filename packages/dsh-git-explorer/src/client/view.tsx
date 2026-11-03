@@ -21,7 +21,8 @@ import {
 import { ChangesPane } from "./changes-pane.tsx";
 import { getBranchStore, type BranchStoreFace } from "./branch-store.ts";
 import { DetailPane } from "./detail-pane.tsx";
-import { HistoryPane, HISTORY_PAGE_SIZE } from "./history-pane.tsx";
+import { HistoryPane } from "./history-pane.tsx";
+import { pageQuery } from "./history-query.ts";
 import type { Translate } from "./copy.ts";
 import { createCommitJump, createJump, groupChanges, layoutGraph, parseCommitFocus, type CommitJumpSeam, type GraphRow } from "./model.ts";
 import {
@@ -38,6 +39,16 @@ import {
 import { describeFailure, unwrapTransport, type GitRemoteFace, type RemoteResolver } from "./wire.ts";
 import type { GitCommitNode, GitQueryResult, GitSnapshot, GitSnapshotResult } from "../host/types.ts";
 import { VIEW_ID } from "../shared.ts";
+
+/**
+ * Wait before turning the search box into a `git log` call.
+ *
+ * The query is a repository-wide grep, which costs a process launch and a walk
+ * of the history; typing a phrase one letter at a time would pay that for every
+ * letter. Long enough to cover normal typing, short enough that a pause reads as
+ * "about to search".
+ */
+const SEARCH_DEBOUNCE_MS = 250;
 
 /** The `workbench.views` seam this view binds and jumps through. */
 export interface ViewSeamFace {
@@ -240,6 +251,18 @@ export function createGitExplorerView(wiring: ViewWiring) {
     const [loadingMore, setLoadingMore] = useState(false);
     const [loadError, setLoadError] = useState<string | undefined>(undefined);
     const [selected, setSelected] = useState<string | undefined>(undefined);
+    // The history search. It is a *source* switch, not a filter: the host greps
+    // the whole repository, because filtering the loaded page would report an
+    // empty list whenever the only match sits on a page not fetched yet.
+    const [search, setSearch] = useState("");
+    const [searching, setSearching] = useState(false);
+    // What the loaded `commits` are actually a page of. `loadMore` must repeat
+    // this query and not the input box's current text, or a page in flight while
+    // the reader keeps typing appends commits from a different search.
+    const loadedQuery = useRef("");
+    // Each query bump supersedes the previous one; a slower earlier response
+    // must not overwrite a newer one's rows.
+    const queryToken = useRef(0);
     // A focus consumed while the snapshot is still in flight must survive the
     // snapshot's default selection, so it parks here until the page arrives.
     const pendingFocus = useRef<string | undefined>(undefined);
@@ -397,6 +420,13 @@ export function createGitExplorerView(wiring: ViewWiring) {
       let alive = true;
       setLoad({ kind: "loading" });
       setLoadError(undefined);
+      // A refresh returns the list to the snapshot's page, so any search the
+      // reader had typed is dropped with it: leaving the box filled while the
+      // rows underneath are unfiltered would describe a list that is not there.
+      queryToken.current += 1;
+      loadedQuery.current = "";
+      setSearch("");
+      setSearching(false);
       Promise.resolve()
         .then(() => remote.snapshot({ sessionId }))
         .then(transport => {
@@ -485,17 +515,100 @@ export function createGitExplorerView(wiring: ViewWiring) {
       return map;
     }, [snapshot]);
 
+    // The history search swaps the list's source: one host query with `--grep`,
+    // replacing both rows and graph, so lanes are laid out from the filtered page
+    // exactly as they are from the snapshot page. Clearing the box restores the
+    // snapshot page the view already holds, which is why that page is kept: going
+    // back to the repository for it would re-fetch a page this view already paid
+    // for, and would come back thinner (one page) than what was on screen before
+    // the search started.
+    useEffect(() => {
+      if (sessionId === undefined || remote === undefined) return;
+      if (load.kind !== "ready") return;
+      const query = search.trim();
+      if (query === loadedQuery.current) return;
+      const requested = sessionId;
+      // Each keystroke supersedes the previous one, so the token is bumped at
+      // once; the query itself waits out the typing because every search is a
+      // `git log` process, and typing a phrase would otherwise spawn one per
+      // letter.
+      const token = queryToken.current + 1;
+      queryToken.current = token;
+      setLoadError(undefined);
+      setLoadingMore(false);
+      // Clearing the box is not a query: the page the view already holds *is*
+      // the snapshot list, so restoring it is a state change rather than a round
+      // trip that would come back with one page instead of what was there before
+      // the search started.
+      if (query === "") {
+        loadedQuery.current = "";
+        setSearching(false);
+        const first = load.snapshot.commits;
+        setCommits(first);
+        setHasMore(first.length < load.snapshot.counts.commits);
+        setSelected(previous =>
+          previous !== undefined && first.some(commit => commit.hash === previous) ? previous : first[0]?.hash,
+        );
+        return;
+      }
+      setSearching(true);
+      const timer = setTimeout(() => {
+        loadedQuery.current = query;
+        Promise.resolve()
+          .then(() => remote.query(pageQuery(sessionId, query, 0)))
+          .then(transport => {
+            // A newer query (or a session switch) owns the list by now; letting
+            // this page land would replace newer results with older ones.
+            if (queryToken.current !== token || sessionRef.current !== requested) return;
+            const unwrapped = unwrapTransport<GitQueryResult>(transport);
+            if (!unwrapped.ok) {
+              setLoadError(unwrapped.message);
+              return;
+            }
+            const result = unwrapped.result;
+            if (!result.ok) {
+              setLoadError(result.error.message === "" ? result.error.code : result.error.message);
+              return;
+            }
+            const page = result.page;
+            const refs = refsByHash;
+            setCommits(page.commits.map(commit => ({ ...commit, refs: refs.get(commit.hash) ?? [] })));
+            setHasMore(page.hasMore);
+            setSelected(previous => {
+              if (previous !== undefined && page.commits.some(commit => commit.hash === previous)) return previous;
+              return page.commits[0]?.hash;
+            });
+          })
+          .catch((error: unknown) => {
+            if (queryToken.current === token) setLoadError(describeFailure(error));
+          })
+          .finally(() => {
+            if (queryToken.current === token) setSearching(false);
+          });
+      }, SEARCH_DEBOUNCE_MS);
+      return () => {
+        clearTimeout(timer);
+      };
+    }, [search, sessionId, remote, load.kind, refsByHash]);
+
     const loadMore = useCallback((): void => {
       if (sessionId === undefined || remote === undefined || !hasMore || loadingMore) return;
       const requested = sessionId;
+      // The page being extended is the one on screen, so it repeats the query
+      // that produced it. Reading the input box here instead would append
+      // unfiltered commits under a filtered list whenever the reader edits the
+      // box while a page is loading.
+      const query = loadedQuery.current;
+      const token = queryToken.current;
       setLoadingMore(true);
       setLoadError(undefined);
       Promise.resolve()
-        .then(() => remote.query({ sessionId, skip: commits.length, limit: HISTORY_PAGE_SIZE }))
+        .then(() => remote.query(pageQuery(sessionId, query, commits.length)))
         .then(transport => {
           // The user may have switched conversations while this page was in
-          // flight; appending it would mix two repositories in one list.
-          if (sessionRef.current !== requested) return;
+          // flight; appending it would mix two repositories in one list. A new
+          // search is the same kind of replacement: its page starts over.
+          if (sessionRef.current !== requested || queryToken.current !== token) return;
           const unwrapped = unwrapTransport<GitQueryResult>(transport);
           if (!unwrapped.ok) {
             setLoadError(unwrapped.message);
@@ -676,9 +789,12 @@ export function createGitExplorerView(wiring: ViewWiring) {
                 hasMore={hasMore}
                 loadingMore={loadingMore}
                 loadError={loadError}
+                searching={searching}
+                search={search}
                 t={t}
                 onSelect={setSelected}
                 onLoadMore={loadMore}
+                onSearch={setSearch}
                 {...(load.snapshot.counts.commits === 0
                   ? {
                       emptyTitle: t("state.emptyRepository.title"),

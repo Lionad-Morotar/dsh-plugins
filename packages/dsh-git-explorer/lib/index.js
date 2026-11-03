@@ -859,7 +859,7 @@ async function collectQuery(options, request = {}, signal) {
   const argv = ["log", "--topo-order", "--parents", LOG_FORMAT, `--max-count=${limit + 1}`];
   if (skip > 0) argv.push(`--skip=${skip}`);
   const search = cleanFilter(request.search);
-  if (search !== void 0) argv.push(`--grep=${search}`);
+  if (search !== void 0) argv.push("-F", `--grep=${search}`);
   const author = cleanFilter(request.author);
   if (author !== void 0) argv.push(`--author=${author}`);
   if (ref === void 0) argv.push("--all");

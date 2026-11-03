@@ -182,10 +182,40 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 }
 .gx-pane-head .gx-count { color: var(--gx-caption); font-weight: 400; font-variant-numeric: tabular-nums; }
 .gx-pane-head .gx-spacer { flex: 1; }
+/* The filter seat sits in the header, so it keeps the header's type scale and
+   only grows a hairline: a full input chrome would outweigh the row list. */
+.gx-filter {
+  flex: none;
+  width: 132px;
+  height: 20px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  color: var(--gx-text);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  outline: none;
+}
+.gx-filter::placeholder { color: var(--gx-caption); }
+.gx-filter:hover { background: color-mix(in srgb, currentColor 11%, transparent); }
+.gx-filter:focus { border-color: var(--gx-accent); background: transparent; }
+/* The search reads as an input rather than as a text field with a control bar:
+   the native cancel affordance is the only chrome the seat needs. */
+.gx-filter::-webkit-search-cancel-button { cursor: pointer; }
+/* The in-flight note lives in the footer, where the row count already reports
+   progress; it is caption-weight so it never competes with a load error. */
+.gx-search-status { color: var(--gx-caption); }
 .gx-scroll {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* The keyboard cursor lives here, so the container must not grow a second ring
+     on top of the row it already outlines. */
+  outline: none;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--dsw-alias-scrollbar-bg-l2, color-mix(in srgb, currentColor 22%, transparent)) transparent;
@@ -210,6 +240,10 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 }
 .gx-group-head .gx-group-dir { font-family: var(--gx-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gx-group-head .gx-count { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* A group header is a cursor stop too, so it needs the same stroke the file rows
+   use. -2px rather than -1.5px because the header is only 22px tall and is
+   already separated by hairlines; the softer inset keeps the stroke off them. */
+.gx-group-head[data-cursor="true"] { outline: 1.5px solid var(--gx-accent); outline-offset: -2px; }
 
 .gx-file {
   display: grid;
@@ -230,6 +264,12 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 }
 .gx-file:hover { background: var(--gx-hover); }
 .gx-file:focus-visible { outline: 2px solid var(--gx-accent); outline-offset: -2px; }
+/* The keyboard cursor, in the same language as the file tree: a 1.5px inset
+   stroke that reads as "this row" without competing with the selection wash. */
+.gx-file[data-cursor="true"] { outline: 1.5px solid var(--gx-accent); outline-offset: -1.5px; z-index: 1; }
+/* The cursor outlives the pointer leaving the row, so it reuses the hover wash
+   instead of inventing a second selection colour. */
+.gx-file[data-cursor="true"]:hover { background: var(--gx-hover); }
 .gx-file[data-directory="true"] { cursor: default; color: var(--gx-text-2); }
 .gx-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .gx-file-name .gx-file-dir { color: var(--gx-caption); font-family: var(--gx-mono); font-size: 10.5px; margin-right: 4px; }
@@ -286,6 +326,10 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 .gx-row:hover { background: var(--gx-hover); }
 .gx-row[data-selected="true"] { background: var(--gx-active); box-shadow: inset 2px 0 0 var(--gx-accent); }
 .gx-row:focus-visible { outline: 2px solid var(--gx-accent); outline-offset: -2px; }
+/* Same cursor language as the changes pane and the file tree. z-index keeps
+   the stroke above the neighbouring rows, which are absolutely positioned and
+   would otherwise paint over its edge. */
+.gx-row[data-cursor="true"] { outline: 1.5px solid var(--gx-accent); outline-offset: -1.5px; z-index: 1; }
 .gx-graph { flex: none; display: block; overflow: visible; }
 .gx-hash { flex: none; color: var(--gx-caption); font-family: var(--gx-mono); font-size: 10.5px; }
 .gx-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
