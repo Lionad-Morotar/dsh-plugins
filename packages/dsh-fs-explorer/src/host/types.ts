@@ -290,3 +290,39 @@ export interface SessionsFace {
 export interface SessionPersistenceFace {
   stat(id: string): Promise<{ readonly header?: { readonly cwd?: string } } | undefined>;
 }
+
+/**
+ * Failure vocabulary of the bookmark channel.
+ *
+ * Closed like the other two, and for the same reason: the client paints one
+ * sentence per code, so a code it does not know would render as a silent no-op.
+ * `degraded` is the one code that is not an error the reader caused: it means
+ * this host has no storage domain, and the client falls back to localStorage.
+ */
+export type BookmarkFailureCode = "no-workspace" | "degraded" | "invalid-tree" | "io-error";
+
+export interface BookmarkFailure {
+  readonly code: BookmarkFailureCode;
+  readonly message: string;
+}
+
+/**
+ * One workspace's bookmarks as `load` returns them.
+ *
+ * `degraded: true` with a null tree is a successful answer, not a failure: it
+ * tells the client to keep its own copy in localStorage rather than treat the
+ * absence as an error the reader has to see.
+ */
+export interface BookmarkLoadValue {
+  readonly workspace: string;
+  readonly degraded: boolean;
+  readonly tree: import("../bookmarks.ts").BookmarkTree | null;
+}
+
+export type BookmarkLoadResult =
+  | { readonly ok: true; readonly value: BookmarkLoadValue }
+  | { readonly ok: false; readonly error: BookmarkFailure };
+
+export type BookmarkSaveOutcome =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: BookmarkFailure };
