@@ -80,13 +80,21 @@ export interface DetailsPaneHandle {
   render(element: ArchElementDetails | null): void;
 }
 
+/**
+ * The pane fills its host column outright. Sizing used to live here as
+ * `width:480px;max-width:40%`, but the host is a shrink-to-fit flex item, so
+ * the percentage resolved against that item instead of the panel and every
+ * line wrapped inside a third of the column. The host owns the width now
+ * (chrome.tsx); the pane only fills it.
+ */
 const paneStyle =
-  "flex:none;width:480px;max-width:40%;overflow:auto;" +
-  "border-left:1px solid color-mix(in srgb, currentColor 12%, transparent);padding:16px 20px;font-size:22px";
-const titleStyle = "font-size:24px;font-weight:600;margin:0 48px 12px 0";
+  "width:100%;height:100%;box-sizing:border-box;overflow:auto;" +
+  "border-left:1px solid color-mix(in srgb, currentColor 12%, transparent);" +
+  "padding:16px 20px;font-size:15px;line-height:1.55";
+const titleStyle = "font-size:17px;font-weight:600;margin:0 36px 10px 0";
 const closeStyle =
   "position:absolute;top:8px;right:8px;border:none;background:transparent;color:inherit;" +
-  "cursor:pointer;font-size:24px;padding:4px 12px;border-radius:6px;opacity:0.7";
+  "cursor:pointer;font-size:17px;padding:4px 10px;border-radius:6px;opacity:0.7";
 const rowLabelStyle = "opacity:0.6;margin-right:6px";
 const linkStyle = "color:inherit";
 
@@ -101,6 +109,11 @@ const linkStyle = "color:inherit";
  * @returns the render handle.
  */
 export function mountArchDetailsPane(host: HTMLElement, options: DetailsPaneOptions): DetailsPaneHandle {
+  // The host is a fixed-width flex column; an empty one would keep its width
+  // and leave a dead strip beside the diagram, so the column hides itself
+  // whenever the pane is closed.
+  host.style.display = "none";
+
   const pane = document.createElement("aside");
   pane.dataset.archDetails = "";
   pane.style.cssText = `${paneStyle};position:relative`;
@@ -150,8 +163,10 @@ export function mountArchDetailsPane(host: HTMLElement, options: DetailsPaneOpti
       if (element === null) {
         pane.remove();
         body.replaceChildren();
+        host.style.display = "none";
         return;
       }
+      host.style.display = "block";
       title.textContent = element.title ?? element.id;
       const parts: HTMLElement[] = [];
       if (element.technology !== null) parts.push(row("technology", element.technology));

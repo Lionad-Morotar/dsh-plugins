@@ -194,7 +194,14 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
 
   // The details pane outlives body rebuilds (it is re-parented into each new
   // one) so an open pane survives a view switch's content re-render.
+  //
+  // The width lives here, not in the pane: a flex item sized by its own
+  // content makes a `max-width: 40%` on the child resolve against that
+  // shrink-to-fit box, which wrapped every line into a third of the column.
+  // `min(480px, 40%)` is measured against the row instead, and the pane fills
+  // whatever this column ends up being.
   const detailsHost = document.createElement("div");
+  detailsHost.style.cssText = "flex:none;width:min(480px, 40%);min-height:0;overflow:hidden";
   const detailsPane = mountArchDetailsPane(detailsHost, {
     onClose: () => {
       handle?.select(null);
