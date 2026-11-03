@@ -34,6 +34,7 @@ export const MENU_ACTION = {
    * already built, so a remote added or renamed needs no id table here.
    */
   copyRemote: "copy.remote",
+  addBookmark: "add.bookmark",
 } as const;
 
 /** Where a context menu opens, in viewport coordinates. */
@@ -92,6 +93,15 @@ export interface ContextMenuInput {
    * row, but only the first is a fact about the repository.
    */
   readonly remoteLinks: readonly RemoteLink[] | undefined;
+  /**
+   * The row a bookmark would point at, or undefined when there is no row.
+   *
+   * Only a row can be bookmarked: the blank area has no path, so the action has
+   * nothing to record and the menu does not offer it there.
+   */
+  readonly bookmarkTarget:
+    | { readonly name: string; readonly path: string; readonly kind: "file" | "directory" }
+    | undefined;
 }
 
 /**
@@ -195,5 +205,15 @@ export function buildContextMenu(
     reveal,
     { id: "menu.copy", label: t("menu.copy"), submenu: [absolute, relative] },
     remote,
+    // Bookmarking needs a row to point at. The blank area has none, so the row
+    // is absent there rather than disabled: an action that can never apply is
+    // noise in a menu that is already long.
+    {
+      id: MENU_ACTION.addBookmark,
+      label: t("menu.addBookmark"),
+      ...(notices.workspace && input.bookmarkTarget !== undefined
+        ? {}
+        : { disabled: true, reason: t("menu.addBookmark.reason") }),
+    },
   ];
 }

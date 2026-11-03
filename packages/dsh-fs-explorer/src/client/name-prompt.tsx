@@ -74,6 +74,12 @@ export interface NamePromptProps {
   readonly error?: string | undefined;
   /** A create is in flight: the input and the button are inert. */
   readonly busy?: boolean;
+  /** The name the card opens with; defaults to the kind's suggestion. */
+  readonly initialName?: string;
+  /** The heading's copy key; defaults to the kind's own title. */
+  readonly titleKey?: string;
+  /** The submit button's copy key; defaults to `prompt.submit`. */
+  readonly submitKey?: string;
 }
 
 /**
@@ -86,11 +92,31 @@ export interface NamePromptProps {
  * @param props - the kind, the parent, the copy and the two gestures.
  * @returns the card.
  */
-export function NamePrompt({ kind, parent, t, onSubmit, onCancel, error, busy = false }: NamePromptProps) {
-  const [value, setValue] = useState(() => defaultEntryName(kind));
+export function NamePrompt({
+  kind,
+  parent,
+  t,
+  onSubmit,
+  onCancel,
+  error,
+  busy = false,
+  initialName,
+  titleKey,
+  submitKey,
+}: NamePromptProps) {
+  const [value, setValue] = useState(() => initialName ?? defaultEntryName(kind));
   const [localError, setLocalError] = useState<string | undefined>(undefined);
   const field = useRef<HTMLInputElement>(null);
   const kit = resolveMenuKit();
+
+  // A card reused for a different subject must show that subject's name, not the
+  // one it was first mounted with. The reset is keyed on the incoming name so a
+  // reader's own edit is never overwritten by an unrelated parent render.
+  useEffect(() => {
+    if (initialName === undefined) return;
+    setValue(initialName);
+    setLocalError(undefined);
+  }, [initialName]);
 
   // The default name is selected, not just present: a reader who types a name
   // should replace the suggestion rather than append to it.
@@ -130,19 +156,20 @@ export function NamePrompt({ kind, parent, t, onSubmit, onCancel, error, busy = 
 
   const message = localError ?? error;
   const Input = kit.Input;
+  const heading = titleKey ?? (kind === "directory" ? "prompt.title.folder" : "prompt.title.file");
 
   return (
     <div
       className="fx-name-prompt"
       role="dialog"
       aria-modal="false"
-      aria-label={t(kind === "directory" ? "prompt.title.folder" : "prompt.title.file")}
+      aria-label={t(heading)}
       data-testid="fx-name-prompt"
       data-kind={kind}
       onKeyDown={onKeyDown}
     >
       <div className="fx-name-prompt-head">
-        <strong>{t(kind === "directory" ? "prompt.title.folder" : "prompt.title.file")}</strong>
+        <strong>{t(heading)}</strong>
         <span className="fx-name-prompt-parent">{parent === "" ? t("prompt.root") : parent}</span>
       </div>
       {Input === undefined ? (
@@ -187,7 +214,7 @@ export function NamePrompt({ kind, parent, t, onSubmit, onCancel, error, busy = 
           {t("prompt.cancel")}
         </button>
         <button type="button" className="fx-btn fx-btn-primary" disabled={busy} onClick={submit}>
-          {t("prompt.submit")}
+          {t(submitKey ?? "prompt.submit")}
         </button>
       </div>
     </div>

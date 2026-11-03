@@ -176,6 +176,55 @@ export const FS_STYLES = `
 .fx-bookmark-item:disabled { color: var(--fx-caption); cursor: default; }
 .fx-bookmark-item[aria-disabled="true"] { color: var(--fx-caption); }
 .fx-bookmark-new { border-top: 1px solid var(--fx-border-soft); border-radius: 0 0 5px 5px; color: var(--fx-text-2); }
+
+/* A chip and its management button share one slot, so the button can sit beside
+   the chip without becoming a second navigation target. */
+.fx-bookmark-slot { position: relative; display: inline-flex; align-items: center; flex: none; }
+.fx-bookmark-slot[data-dragging="true"] { opacity: 0.45; }
+.fx-bookmark-item-wrap { position: relative; display: flex; align-items: center; }
+.fx-bookmark-manage {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fx-caption);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+.fx-bookmark-slot:hover .fx-bookmark-manage,
+.fx-bookmark-slot:focus-within .fx-bookmark-manage,
+.fx-bookmark-item-wrap:hover .fx-bookmark-manage,
+.fx-bookmark-item-wrap:focus-within .fx-bookmark-manage { opacity: 1; }
+.fx-bookmark-manage:hover { background: var(--fx-hover); color: var(--fx-text); }
+.fx-bookmark-manage:focus-visible { opacity: 1; outline: 2px solid var(--fx-accent); outline-offset: -1px; }
+
+/* The management menu is fixed and placed from its button's rect, for the same
+   reason the flyouts are: the header clips its overflow. */
+.fx-bookmark-manage-menu {
+  position: fixed; z-index: 75; min-width: 150px; padding: 4px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 1px; font-family: var(--fx-font); font-size: 12px; }
+
+/* The destination picker: one card, one level at a time. */
+.fx-bookmark-picker {
+  position: absolute; z-index: 65; top: 44px; left: 12px; width: 280px; max-height: 60vh; overflow-y: auto; padding: 10px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 8px; font-family: var(--fx-font); font-size: 12px; }
+.fx-bookmark-picker-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.fx-bookmark-picker-head strong { font-size: 12px; font-weight: 600; }
+.fx-bookmark-picker-target { color: var(--fx-caption); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-bookmark-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+.fx-bookmark-crumb {
+  padding: 2px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--fx-text-2); font: inherit; font-size: 11px; cursor: pointer; }
+.fx-bookmark-crumb:hover { background: var(--fx-hover); color: var(--fx-text); }
+.fx-bookmark-crumb + .fx-bookmark-crumb::before { content: "/"; color: var(--fx-caption); margin-right: 4px; }
+.fx-bookmark-picker-list {
+  display: flex; flex-direction: column; gap: 1px; max-height: 30vh; overflow-y: auto; padding: 2px 0; border-top: 1px solid var(--fx-border-soft); border-bottom: 1px solid var(--fx-border-soft); }
+.fx-bookmark-picker-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .fx-head-meta {
   margin-left: auto;
   display: flex;

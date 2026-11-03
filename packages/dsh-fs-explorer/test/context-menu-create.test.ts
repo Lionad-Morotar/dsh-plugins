@@ -70,6 +70,7 @@ describe("buildContextMenu create rows", () => {
         absolutePath: "/workspace/docs/guides/a.md",
         createParent: "docs/guides",
         remoteLinks: undefined,
+        bookmarkTarget: undefined,
       },
       t,
     );
@@ -87,6 +88,7 @@ describe("buildContextMenu create rows", () => {
         absolutePath: "/workspace/docs/guides",
         createParent: "docs/guides",
         remoteLinks: undefined,
+        bookmarkTarget: undefined,
       },
       t,
     );
@@ -103,6 +105,7 @@ describe("buildContextMenu create rows", () => {
         absolutePath: undefined,
         createParent: "",
         remoteLinks: undefined,
+        bookmarkTarget: undefined,
       },
       t,
     );
@@ -121,6 +124,7 @@ describe("buildContextMenu create rows", () => {
         absolutePath: undefined,
         createParent: "docs/guides",
         remoteLinks: undefined,
+        bookmarkTarget: undefined,
       },
       t,
     );
@@ -139,6 +143,7 @@ describe("buildContextMenu create rows", () => {
         absolutePath: "/workspace/docs/guides/a.md",
         createParent: undefined,
         remoteLinks: undefined,
+        bookmarkTarget: undefined,
       },
       t,
     );
@@ -155,6 +160,7 @@ describe("buildContextMenu create rows", () => {
         absolutePath: "/workspace/docs/guides/a.md",
         createParent: "docs/guides",
         remoteLinks: undefined,
+        bookmarkTarget: undefined,
       },
       t,
     );
@@ -164,6 +170,7 @@ describe("buildContextMenu create rows", () => {
       MENU_ACTION.reveal,
       "menu.copy",
       MENU_ACTION.copyRemote,
+      MENU_ACTION.addBookmark,
     ]);
   });
 

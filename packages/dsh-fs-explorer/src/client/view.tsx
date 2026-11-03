@@ -31,9 +31,17 @@ import {
 } from "./context-menu.ts";
 import { ContextMenu, type MenuAnchor } from "./context-menu-view.tsx";
 import { BookmarkBar } from "./bookmark-bar.tsx";
+import { BookmarkPicker } from "./bookmark-picker.tsx";
 import { createBookmarkStore } from "./bookmarks-store.ts";
-import { emptyBookmarkTree } from "./bookmarks-model.ts";
-import type { BookmarkTree } from "../bookmarks.ts";
+import {
+  emptyBookmarkTree,
+  insertNode,
+  makeNode,
+  removeNode,
+  renameNode,
+  reorderChildren,
+} from "./bookmarks-model.ts";
+import type { BookmarkNode, BookmarkTree } from "../bookmarks.ts";
 import { writeClipboard } from "./clipboard.ts";
 import { NamePrompt } from "./name-prompt.tsx";
 import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap } from "./keyboard.ts";
@@ -159,6 +167,13 @@ export type InitialViewState = "idle" | "no-service" | "loading";
 export function initialViewState(sessionId: string | undefined, hasFiles: boolean): InitialViewState {
   if (sessionId === undefined) return "idle";
   return hasFiles ? "loading" : "no-service";
+}
+
+/** One bookmark id nothing else will collide with. */
+function newBookmarkId(): string {
+  const uuid = globalThis.crypto?.randomUUID;
+  if (typeof uuid === "function") return uuid.call(globalThis.crypto);
+  return `bm-${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
 }
 
 const loadingLevel = (): TreeLevel => ({ status: "loading", nodes: [], truncated: false, total: 0 });
@@ -309,6 +324,22 @@ export function createFsExplorerView({
     const [bookmarks, setBookmarks] = useState<BookmarkTree>(() =>
       emptyBookmarkTree(new Date().toISOString()),
     );
+
+    // The two bookmark editors. One picker for "which group", one name card for
+    // "what to call it"; both are transient, and neither owns the tree.
+    const [bookmarkPicker, setBookmarkPicker] = useState<
+      | {
+          readonly mode: "add";
+          readonly target: { readonly name: string; readonly path: string; readonly kind: "file" | "directory" };
+        }
+      | { readonly mode: "move"; readonly node: BookmarkNode }
+      | null
+    >(null);
+    const [bookmarkPrompt, setBookmarkPrompt] = useState<
+      | { readonly mode: "group"; readonly parentId: string | null }
+      | { readonly mode: "rename"; readonly node: BookmarkNode }
+      | null
+    >(null);
 
     // Read by the Escape handler, which is registered once and must not be
     // rebuilt every time the menu opens.
@@ -1026,6 +1057,51 @@ export function createFsExplorerView({
       [],
     );
 
+    /**
+     * Publish one bookmark tree and write it through.
+     *
+     * The in-memory tree moves first: the bar is the reader's feedback, and
+     * waiting for a round trip would make every bookmark action feel laggy. A
+     * failed write says so and leaves the tree as it is, because the reader's
+     * change is still the best copy of their intent until they reload.
+     * @param next - the tree to publish.
+     */
+    const persistBookmarks = useCallback(
+      (next: BookmarkTree): void => {
+        setBookmarks(next);
+        void bookmarkStore.save(sessionId ?? "", next).catch(() => {
+          announce(t("bookmarks.saveFailed"), "error");
+        });
+      },
+      [announce, bookmarkStore, sessionId, t],
+    );
+
+    /** Remove one bookmark, or one group with everything under it. */
+    const removeBookmark = useCallback(
+      (node: BookmarkNode): void => {
+        try {
+          persistBookmarks(removeNode(bookmarks, node.id).tree);
+          announce(t("bookmarks.removed"), "ok");
+        } catch {
+          // A node that vanished under the click is already gone; nothing to say.
+        }
+      },
+      [announce, bookmarks, persistBookmarks, t],
+    );
+
+    /** Replace one parent's child order, from a drag or an up/down row. */
+    const reorderBookmarks = useCallback(
+      (parentId: string | null, orderedIds: readonly string[]): void => {
+        try {
+          persistBookmarks(reorderChildren(bookmarks, parentId, orderedIds));
+        } catch {
+          // A stale order (the tree moved under the drag) is dropped rather than
+          // applied to the wrong list.
+        }
+      },
+      [bookmarks, persistBookmarks],
+    );
+
     // The capability probe. A host without the channel, or one whose probe
     // failed, leaves the reveal row disabled with a reason: an action that
     // cannot run must say so rather than disappear.
@@ -1163,6 +1239,13 @@ export function createFsExplorerView({
           });
           return;
         }
+        if (id === MENU_ACTION.addBookmark) {
+          setBookmarkPicker({
+            mode: "add",
+            target: { name: row.name, path: row.path, kind: row.kind },
+          });
+          return;
+        }
         if (id !== MENU_ACTION.reveal) return;
         if (workspace === undefined) {
           announce(revealFailureText({ code: "unsupported", message: "" }), "error");
@@ -1248,6 +1331,14 @@ export function createFsExplorerView({
                 // A row is the only thing a remote link can address, so the
                 // blank area gets no links at all rather than a stale list.
                 remoteLinks: contextMenu.row === undefined ? undefined : remoteLinks,
+                bookmarkTarget:
+                  contextMenu.row === undefined
+                    ? undefined
+                    : {
+                        name: contextMenu.row.name,
+                        path: contextMenu.row.path,
+                        kind: contextMenu.row.kind,
+                      },
               },
               t,
             ),
@@ -1291,6 +1382,11 @@ export function createFsExplorerView({
             t={t}
             onOpenFile={openBookmarkFile}
             onOpenFolder={openBookmarkFolder}
+            onCreateGroup={parentId => setBookmarkPrompt({ mode: "group", parentId })}
+            onRename={node => setBookmarkPrompt({ mode: "rename", node })}
+            onRemove={removeBookmark}
+            onMove={node => setBookmarkPicker({ mode: "move", node })}
+            onReorder={reorderBookmarks}
           />
           <div className="fx-head-meta">
             {rootLevel?.status === "ready" ? (
@@ -1482,6 +1578,54 @@ export function createFsExplorerView({
             busy={namePrompt.busy}
             onSubmit={submitCreate}
             onCancel={cancelCreate}
+          />
+        )}
+
+        {bookmarkPicker === null ? null : (
+          <BookmarkPicker
+            tree={bookmarks}
+            target={bookmarkPicker.mode === "add" ? bookmarkPicker.target : undefined}
+            t={t}
+            mode={bookmarkPicker.mode}
+            {...(bookmarkPicker.mode === "move" ? { node: bookmarkPicker.node } : {})}
+            onCommit={next => {
+              const mode = bookmarkPicker.mode;
+              persistBookmarks(next);
+              setBookmarkPicker(null);
+              announce(t(mode === "move" ? "bookmarks.moved" : "bookmarks.added"), "ok");
+            }}
+            onClose={() => setBookmarkPicker(null)}
+          />
+        )}
+
+        {bookmarkPrompt === null ? null : (
+          <NamePrompt
+            kind="directory"
+            parent=""
+            t={t}
+            initialName={bookmarkPrompt.mode === "rename" ? bookmarkPrompt.node.name : t("bookmarks.newGroup")}
+            titleKey={bookmarkPrompt.mode === "rename" ? "bookmarks.rename" : "bookmarks.newGroup"}
+            onSubmit={name => {
+              const prompt = bookmarkPrompt;
+              setBookmarkPrompt(null);
+              try {
+                if (prompt.mode === "rename") {
+                  persistBookmarks(renameNode(bookmarks, prompt.node.id, name));
+                  announce(t("bookmarks.renamed"), "ok");
+                  return;
+                }
+                const created = makeNode("group", {
+                  id: newBookmarkId(),
+                  name,
+                  createdAt: Date.now(),
+                });
+                persistBookmarks(insertNode(bookmarks, prompt.parentId, created));
+                announce(t("bookmarks.groupCreated"), "ok");
+              } catch {
+                announce(t("bookmarks.saveFailed"), "error");
+              }
+            }}
+            onCancel={() => setBookmarkPrompt(null)}
           />
         )}
 

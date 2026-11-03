@@ -38,10 +38,18 @@ export interface BookmarkBarProps {
   /**
    * Create a group inside `parentId`, or at the root for null.
    *
-   * Absent in this slice: the empty-group row is then disabled with a reason,
-   * which is honest about a feature that is not wired yet.
+   * Absent means this build cannot create groups: the empty-group row is then
+   * disabled with a reason rather than silently doing nothing.
    */
   readonly onCreateGroup?: (parentId: string | null) => void;
+  /** Rename one bookmark or group. */
+  readonly onRename?: (node: BookmarkNode) => void;
+  /** Remove one bookmark, or one group with everything under it. */
+  readonly onRemove?: (node: BookmarkNode) => void;
+  /** Move one node to another group. */
+  readonly onMove?: (node: BookmarkNode) => void;
+  /** Replace one parent's child order; `parentId` is null for the root. */
+  readonly onReorder?: (parentId: string | null, orderedIds: readonly string[]) => void;
 }
 
 /** One open flyout: which group it belongs to and where it sits. */
@@ -52,6 +60,16 @@ interface FlyoutState {
   readonly top: number;
   /** Depth from the bar, so a nested card can be indented by its parent. */
   readonly depth: number;
+}
+
+/** One open management menu: which node it belongs to and where it sits. */
+interface ManageState {
+  readonly node: BookmarkNode;
+  /** The siblings the up/down rows reorder, and the parent that owns them. */
+  readonly parentId: string | null;
+  readonly siblings: readonly BookmarkNode[];
+  readonly left: number;
+  readonly top: number;
 }
 
 /** The chevron a group row carries to say it opens further. */
@@ -74,16 +92,71 @@ function Chevron() {
 }
 
 /**
+ * The `⋯` button one row carries to open its management menu.
+ *
+ * A separate button rather than a click modifier on the row: the row itself is a
+ * navigation target, and a reader who wants to rename a bookmark should not have
+ * to discover a chord to do it.
+ * @param props - the node, the copy and the open gesture.
+ * @returns the button.
+ */
+function ManageButton({
+  node,
+  t,
+  onOpen,
+}: {
+  readonly node: BookmarkNode;
+  readonly t: Translate;
+  readonly onOpen: (node: BookmarkNode, anchor: HTMLElement | null) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="fx-bookmark-manage"
+      data-testid="fx-bookmark-manage"
+      aria-haspopup="menu"
+      aria-label={t("bookmarks.manage")}
+      title={t("bookmarks.manage")}
+      onClick={event => {
+        // The row underneath is a navigation target; opening the menu must not
+        // also navigate.
+        event.stopPropagation();
+        onOpen(node, event.currentTarget);
+      }}
+    >
+      <span aria-hidden="true">⋯</span>
+    </button>
+  );
+}
+
+/**
  * The bookmark bar.
  * @param props - the tree, the copy and the two navigation gestures.
  * @returns the nav element, plus any open flyout.
  */
-export function BookmarkBar({ tree, t, onOpenFile, onOpenFolder, onCreateGroup }: BookmarkBarProps) {
+export function BookmarkBar({
+  tree,
+  t,
+  onOpenFile,
+  onOpenFolder,
+  onCreateGroup,
+  onRename,
+  onRemove,
+  onMove,
+  onReorder,
+}: BookmarkBarProps) {
   // The flyouts currently open, outermost first. A stack rather than one card:
   // each nested group opens its own, and hovering a sibling replaces the levels
   // below it rather than leaving them stranded.
   const [flyouts, setFlyouts] = useState<readonly FlyoutState[]>([]);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The management menu, when one is open. Separate from the flyouts: it is a
+  // per-row action list, not a navigation level, and the two must not close
+  // each other by accident.
+  const [manage, setManage] = useState<ManageState | null>(null);
+  // The id being dragged, so the bar can mark it and the drop target can tell
+  // whether anything is actually in flight.
+  const [dragging, setDragging] = useState<string | null>(null);
 
   const cancelClose = useCallback((): void => {
     if (closeTimer.current !== null) {
@@ -175,6 +248,100 @@ export function BookmarkBar({ tree, t, onOpenFile, onOpenFolder, onCreateGroup }
     return found;
   };
 
+  /**
+   * The siblings one node lives among, and the parent that owns them.
+   *
+   * The up/down rows reorder within this list, so it has to be the list the node
+   * is actually in rather than the bar's top level.
+   */
+  const siblingsOf = (id: string): { readonly parentId: string | null; readonly siblings: readonly BookmarkNode[] } => {
+    const search = (
+      nodes: readonly BookmarkNode[],
+      parentId: string | null,
+    ): { readonly parentId: string | null; readonly siblings: readonly BookmarkNode[] } | undefined => {
+      if (nodes.some(node => node.id === id)) return { parentId, siblings: nodes };
+      for (const node of nodes) {
+        if (node.kind !== "group") continue;
+        const found = search(node.children, node.id);
+        if (found !== undefined) return found;
+      }
+      return undefined;
+    };
+    return search(tree.roots, null) ?? { parentId: null, siblings: [] };
+  };
+
+  /** Open the management menu for one row, anchored under its button. */
+  const openManage = (node: BookmarkNode, anchor: HTMLElement | null): void => {
+    const rect = anchor?.getBoundingClientRect();
+    const { parentId, siblings } = siblingsOf(node.id);
+    setManage({
+      node,
+      parentId,
+      siblings,
+      left: rect?.left ?? 0,
+      top: (rect?.bottom ?? 0) + 4,
+    });
+  };
+
+  /** Move one node one step within its own siblings. */
+  const shift = (node: BookmarkNode, delta: -1 | 1): void => {
+    const { parentId, siblings } = siblingsOf(node.id);
+    const ids = siblings.map(sibling => sibling.id);
+    const from = ids.indexOf(node.id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    const next = [...ids];
+    const [moved] = next.splice(from, 1);
+    if (moved === undefined) return;
+    next.splice(to, 0, moved);
+    setManage(null);
+    onReorder?.(parentId, next);
+  };
+
+  /** Drop one dragged chip onto another position at the top level. */
+  const dropOn = (targetId: string): void => {
+    const draggedId = dragging;
+    setDragging(null);
+    if (draggedId === null || draggedId === targetId) return;
+    const ids = tree.roots.map(node => node.id);
+    const from = ids.indexOf(draggedId);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) return;
+    const next = [...ids];
+    const [moved] = next.splice(from, 1);
+    if (moved === undefined) return;
+    next.splice(to, 0, moved);
+    onReorder?.(null, next);
+  };
+
+  // A management menu closes on an outside click or Escape, like every other
+  // transient card in this panel.
+  useEffect(() => {
+    if (manage === null || typeof document === "undefined") return;
+    const onPointerDown = (event: PointerEvent): void => {
+      if (!(event.target instanceof Node)) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest("[data-testid='fx-bookmark-manage-menu'], [data-testid='fx-bookmark-manage']") !== null
+      ) {
+        return;
+      }
+      setManage(null);
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setManage(null);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [manage]);
+
   return (
     <>
       <nav className="fx-bookmarks" data-testid="fx-bookmarks" aria-label={t("bookmarks.label")}>
@@ -183,42 +350,122 @@ export function BookmarkBar({ tree, t, onOpenFile, onOpenFolder, onCreateGroup }
             {t("bookmarks.empty")}
           </span>
         ) : (
-          tree.roots.map(node =>
-            node.kind === "group" ? (
-              <button
-                key={node.id}
-                type="button"
-                className="fx-bookmark fx-bookmark-group"
-                data-testid="fx-bookmark"
-                data-kind="group"
-                aria-haspopup="menu"
-                aria-expanded={flyouts.some(flyout => flyout.groupId === node.id)}
-                title={t("bookmarks.group")}
-                onPointerEnter={event => openFlyout(node.id, 1, event.currentTarget)}
-                onFocus={event => openFlyout(node.id, 1, event.currentTarget)}
-                onPointerLeave={scheduleClose}
-              >
-                <span className="fx-bookmark-name">{node.name}</span>
-                <span className="fx-bookmark-chevron" aria-hidden="true">
-                  <Chevron />
-                </span>
-              </button>
-            ) : (
-              <button
-                key={node.id}
-                type="button"
-                className="fx-bookmark"
-                data-testid="fx-bookmark"
-                data-kind={node.kind}
-                title={node.path}
-                onClick={() => choose(node)}
-              >
-                <span className="fx-bookmark-name">{node.name}</span>
-              </button>
-            ),
-          )
+          tree.roots.map(node => (
+            <span
+              key={node.id}
+              className="fx-bookmark-slot"
+              data-dragging={dragging === node.id ? "true" : undefined}
+              draggable
+              onDragStart={() => setDragging(node.id)}
+              onDragEnd={() => setDragging(null)}
+              onDragOver={event => event.preventDefault()}
+              onDrop={event => {
+                event.preventDefault();
+                dropOn(node.id);
+              }}
+            >
+              {node.kind === "group" ? (
+                <button
+                  type="button"
+                  className="fx-bookmark fx-bookmark-group"
+                  data-testid="fx-bookmark"
+                  data-kind="group"
+                  aria-haspopup="menu"
+                  aria-expanded={flyouts.some(flyout => flyout.groupId === node.id)}
+                  title={t("bookmarks.group")}
+                  onPointerEnter={event => openFlyout(node.id, 1, event.currentTarget)}
+                  onFocus={event => openFlyout(node.id, 1, event.currentTarget)}
+                  onPointerLeave={scheduleClose}
+                >
+                  <span className="fx-bookmark-name">{node.name}</span>
+                  <span className="fx-bookmark-chevron" aria-hidden="true">
+                    <Chevron />
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="fx-bookmark"
+                  data-testid="fx-bookmark"
+                  data-kind={node.kind}
+                  title={node.path}
+                  onClick={() => choose(node)}
+                >
+                  <span className="fx-bookmark-name">{node.name}</span>
+                </button>
+              )}
+              <ManageButton node={node} t={t} onOpen={openManage} />
+            </span>
+          ))
         )}
       </nav>
+
+      {manage === null ? null : (
+        <div
+          className="fx-bookmark-manage-menu"
+          data-testid="fx-bookmark-manage-menu"
+          role="menu"
+          aria-label={t("bookmarks.manage")}
+          style={{ left: manage.left, top: manage.top }}
+        >
+          <button
+            type="button"
+            className="fx-bookmark-item"
+            role="menuitem"
+            data-testid="fx-bookmark-manage-rename"
+            onClick={() => {
+              setManage(null);
+              onRename?.(manage.node);
+            }}
+          >
+            {t("bookmarks.rename")}
+          </button>
+          <button
+            type="button"
+            className="fx-bookmark-item"
+            role="menuitem"
+            data-testid="fx-bookmark-manage-remove"
+            onClick={() => {
+              setManage(null);
+              onRemove?.(manage.node);
+            }}
+          >
+            {t("bookmarks.remove")}
+          </button>
+          <button
+            type="button"
+            className="fx-bookmark-item"
+            role="menuitem"
+            data-testid="fx-bookmark-manage-up"
+            disabled={manage.siblings[0]?.id === manage.node.id}
+            onClick={() => shift(manage.node, -1)}
+          >
+            {t("bookmarks.moveUp")}
+          </button>
+          <button
+            type="button"
+            className="fx-bookmark-item"
+            role="menuitem"
+            data-testid="fx-bookmark-manage-down"
+            disabled={manage.siblings[manage.siblings.length - 1]?.id === manage.node.id}
+            onClick={() => shift(manage.node, 1)}
+          >
+            {t("bookmarks.moveDown")}
+          </button>
+          <button
+            type="button"
+            className="fx-bookmark-item"
+            role="menuitem"
+            data-testid="fx-bookmark-manage-move"
+            onClick={() => {
+              setManage(null);
+              onMove?.(manage.node);
+            }}
+          >
+            {t("bookmarks.moveToGroup")}
+          </button>
+        </div>
+      )}
 
       {flyouts.map(flyout => {
         const group = groupOf(flyout.groupId);
@@ -241,40 +488,41 @@ export function BookmarkBar({ tree, t, onOpenFile, onOpenFolder, onCreateGroup }
             onPointerLeave={scheduleClose}
           >
             {group.children.length === 0 ? null : (
-              group.children.map(child =>
-                child.kind === "group" ? (
-                  <button
-                    key={child.id}
-                    type="button"
-                    className="fx-bookmark-item"
-                    data-testid="fx-bookmark-item"
-                    data-kind="group"
-                    role="menuitem"
-                    aria-haspopup="menu"
-                    aria-expanded={flyouts.some(candidate => candidate.groupId === child.id)}
-                    onPointerEnter={event => openFlyout(child.id, flyout.depth + 1, event.currentTarget)}
-                    onFocus={event => openFlyout(child.id, flyout.depth + 1, event.currentTarget)}
-                  >
-                    <span className="fx-bookmark-name">{child.name}</span>
-                    <span className="fx-bookmark-chevron" aria-hidden="true">
-                      <Chevron />
-                    </span>
-                  </button>
-                ) : (
-                  <button
-                    key={child.id}
-                    type="button"
-                    className="fx-bookmark-item"
-                    data-testid="fx-bookmark-item"
-                    data-kind={child.kind}
-                    role="menuitem"
-                    title={child.path}
-                    onClick={() => choose(child)}
-                  >
-                    <span className="fx-bookmark-name">{child.name}</span>
-                  </button>
-                ),
-              )
+              group.children.map(child => (
+                <span key={child.id} className="fx-bookmark-item-wrap">
+                  {child.kind === "group" ? (
+                    <button
+                      type="button"
+                      className="fx-bookmark-item"
+                      data-testid="fx-bookmark-item"
+                      data-kind="group"
+                      role="menuitem"
+                      aria-haspopup="menu"
+                      aria-expanded={flyouts.some(candidate => candidate.groupId === child.id)}
+                      onPointerEnter={event => openFlyout(child.id, flyout.depth + 1, event.currentTarget)}
+                      onFocus={event => openFlyout(child.id, flyout.depth + 1, event.currentTarget)}
+                    >
+                      <span className="fx-bookmark-name">{child.name}</span>
+                      <span className="fx-bookmark-chevron" aria-hidden="true">
+                        <Chevron />
+                      </span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="fx-bookmark-item"
+                      data-testid="fx-bookmark-item"
+                      data-kind={child.kind}
+                      role="menuitem"
+                      title={child.path}
+                      onClick={() => choose(child)}
+                    >
+                      <span className="fx-bookmark-name">{child.name}</span>
+                    </button>
+                  )}
+                  <ManageButton node={child} t={t} onOpen={openManage} />
+                </span>
+              ))
             )}
             {/* Every group offers this row, empty or not: it is the one action a
                 group can take that does not need a bookmark to already exist. */}

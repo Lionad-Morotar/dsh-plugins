@@ -272,3 +272,102 @@ describe("BookmarkBar", () => {
     }
   });
 });
+
+describe("BookmarkBar management", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let renamed: string[];
+  let removed: string[];
+  let moved: string[];
+  let reordered: { parentId: string | null; ids: readonly string[] }[];
+  let createdGroups: (string | null)[];
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    renamed = [];
+    removed = [];
+    moved = [];
+    reordered = [];
+    createdGroups = [];
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  /** Mount the bar with every management gesture recorded. */
+  async function mount(tree: BookmarkTree): Promise<void> {
+    await act(async () => {
+      root.render(
+        createElement(BookmarkBar, {
+          tree,
+          t,
+          onOpenFile: () => undefined,
+          onOpenFolder: () => undefined,
+          onCreateGroup: (parentId: string | null) => void createdGroups.push(parentId),
+          onRename: (node: BookmarkNode) => void renamed.push(node.id),
+          onRemove: (node: BookmarkNode) => void removed.push(node.id),
+          onMove: (node: BookmarkNode) => void moved.push(node.id),
+          onReorder: (parentId: string | null, ids: readonly string[]) => void reordered.push({ parentId, ids }),
+        }),
+      );
+    });
+  }
+
+  /** The management button of the slot whose chip text is `name`. */
+  function manageButton(name: string): HTMLElement {
+    const slot = [...host.querySelectorAll<HTMLElement>(".fx-bookmark-slot")].find(
+      element => element.querySelector('[data-testid="fx-bookmark"]')?.textContent?.trim() === name,
+    );
+    const button = slot?.querySelector<HTMLElement>('[data-testid="fx-bookmark-manage"]');
+    if (button === null || button === undefined) throw new Error(`no manage button for ${name}`);
+    return button;
+  }
+
+  /** One row of the open management menu. */
+  function manageRow(action: string): HTMLElement {
+    const found = host.querySelector<HTMLElement>(`[data-testid="fx-bookmark-manage-${action}"]`);
+    if (found === null) throw new Error(`no manage row ${action}`);
+    return found;
+  }
+
+  /** Open one chip's management menu. */
+  async function openManage(name: string): Promise<void> {
+    await act(async () => {
+      manageButton(name).click(); }); }
+
+  it("opens a management menu with the five actions", async () => {
+    await mount(treeOf([file("a"), file("b")])); await openManage("a"); const menu = host.querySelector('[data-testid="fx-bookmark-manage-menu"]'); expect(menu).not.toBeNull(); expect(menu?.getAttribute("role")).toBe("menu"); for (const action of ["rename", "remove", "up", "down", "move"]) {
+      expect(manageRow(action)).not.toBeNull(); }
+  }); it("reports a rename", async () => {
+    await mount(treeOf([file("a")])); await openManage("a"); await act(async () => {
+      manageRow("rename").click(); }); expect(renamed).toEqual(["a"]); // The menu closes on a choice.
+    expect(host.querySelector('[data-testid="fx-bookmark-manage-menu"]')).toBeNull(); }); it("reports a removal", async () => {
+    await mount(treeOf([file("a")])); await openManage("a"); await act(async () => {
+      manageRow("remove").click(); }); expect(removed).toEqual(["a"]); }); it("reports a move", async () => {
+    await mount(treeOf([file("a")])); await openManage("a"); await act(async () => {
+      manageRow("move").click(); }); expect(moved).toEqual(["a"]); }); it("reorders upward with the full sibling list", async () => {
+    await mount(treeOf([file("a"), file("b"), file("c")])); await openManage("b"); await act(async () => {
+      manageRow("up").click(); }); expect(reordered).toEqual([{ parentId: null, ids: ["b", "a", "c"] }]); }); it("reorders downward with the full sibling list", async () => {
+    await mount(treeOf([file("a"), file("b"), file("c")])); await openManage("b"); await act(async () => {
+      manageRow("down").click(); }); expect(reordered).toEqual([{ parentId: null, ids: ["a", "c", "b"] }]); }); it("disables up on the first row and down on the last", async () => {
+    await mount(treeOf([file("a"), file("b")])); await openManage("a"); expect((manageRow("up") as HTMLButtonElement).disabled).toBe(true); await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); }); await openManage("b"); expect((manageRow("down") as HTMLButtonElement).disabled).toBe(true); }); it("reorders by dragging one chip onto another", async () => {
+    await mount(treeOf([file("a"), file("b"), file("c")])); const slots = [...host.querySelectorAll<HTMLElement>(".fx-bookmark-slot")]; const first = slots[0]; const third = slots[2]; if (first === undefined || third === undefined) throw new Error("missing slots"); await act(async () => {
+      first.dispatchEvent(new Event("dragstart", { bubbles: true })); }); expect(first.getAttribute("data-dragging")).toBe("true"); await act(async () => {
+      third.dispatchEvent(new Event("dragover", { bubbles: true, cancelable: true })); }); await act(async () => {
+      third.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true })); }); expect(reordered).toEqual([{ parentId: null, ids: ["b", "c", "a"] }]); }); it("lets an empty group create one now that the gesture is wired", async () => {
+    await mount(treeOf([group("empty")])); await act(async () => {
+      [...host.querySelectorAll<HTMLElement>('[data-testid="fx-bookmark"]')]
+        .find(element => element.textContent?.trim() === "empty")
+        ?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true, relatedTarget: null })); }); const row = [...host.querySelectorAll<HTMLElement>('[data-testid="fx-bookmark-item"]')].find(
+      element => element.textContent === "bookmarks.newGroup",
+    ); if (row === undefined) throw new Error("no new-group row"); expect(row.getAttribute("aria-disabled")).not.toBe("true"); await act(async () => {
+      row.click(); }); expect(createdGroups).toEqual(["empty"]); }); it("closes the management menu on Escape", async () => {
+    await mount(treeOf([file("a")])); await openManage("a"); await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); }); expect(host.querySelector('[data-testid="fx-bookmark-manage-menu"]')).toBeNull(); }); }); 

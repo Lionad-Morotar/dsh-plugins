@@ -53,6 +53,7 @@ describe("buildContextMenu remote rows", () => {
         absolutePath: "/repo/a.md",
         createParent: "docs",
         remoteLinks: links(),
+        bookmarkTarget: undefined,
       },
       t,
     );
@@ -72,6 +73,7 @@ describe("buildContextMenu remote rows", () => {
         absolutePath: "/repo/a.md",
         createParent: "docs",
         remoteLinks: [],
+        bookmarkTarget: undefined,
       },
       t,
     );
@@ -91,6 +93,7 @@ describe("buildContextMenu remote rows", () => {
         absolutePath: "/repo/a.md",
         createParent: "docs",
         remoteLinks: undefined,
+        bookmarkTarget: undefined,
       },
       t,
     );
@@ -108,6 +111,7 @@ describe("buildContextMenu remote rows", () => {
         absolutePath: "/repo/a.md",
         createParent: "docs",
         remoteLinks: links(),
+        bookmarkTarget: undefined,
       },
       t,
     );
@@ -125,6 +129,7 @@ describe("buildContextMenu remote rows", () => {
         absolutePath: "/repo/a.md",
         createParent: "docs",
         remoteLinks: links(),
+        bookmarkTarget: undefined,
       },
       t,
     );
@@ -134,6 +139,7 @@ describe("buildContextMenu remote rows", () => {
       MENU_ACTION.reveal,
       "menu.copy",
       MENU_ACTION.copyRemote,
+      MENU_ACTION.addBookmark,
     ]);
   });
 
@@ -147,6 +153,7 @@ describe("buildContextMenu remote rows", () => {
         absolutePath: undefined,
         createParent: "",
         remoteLinks: links(),
+        bookmarkTarget: undefined,
       },
       t,
     );
