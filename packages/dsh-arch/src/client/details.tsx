@@ -81,12 +81,12 @@ export interface DetailsPaneHandle {
 }
 
 const paneStyle =
-  "flex:none;width:240px;max-width:40%;overflow:auto;" +
-  "border-left:1px solid color-mix(in srgb, currentColor 12%, transparent);padding:8px 10px;font-size:11px";
-const titleStyle = "font-size:12px;font-weight:600;margin:0 24px 6px 0";
+  "flex:none;width:480px;max-width:40%;overflow:auto;" +
+  "border-left:1px solid color-mix(in srgb, currentColor 12%, transparent);padding:16px 20px;font-size:22px";
+const titleStyle = "font-size:24px;font-weight:600;margin:0 48px 12px 0";
 const closeStyle =
-  "position:absolute;top:4px;right:4px;border:none;background:transparent;color:inherit;" +
-  "cursor:pointer;font-size:12px;padding:2px 6px;border-radius:6px;opacity:0.7";
+  "position:absolute;top:8px;right:8px;border:none;background:transparent;color:inherit;" +
+  "cursor:pointer;font-size:24px;padding:4px 12px;border-radius:6px;opacity:0.7";
 const rowLabelStyle = "opacity:0.6;margin-right:6px";
 const linkStyle = "color:inherit";
 
