@@ -120,6 +120,29 @@ describe("arch entry wiring", () => {
     expect(typeof dispose).toBe("function");
   });
 
+  it("survives a host that throws on an undeclared service read", () => {
+    // Real Cordis does not return undefined for a service the plugin did not
+    // declare in `inject`; it throws from the property read. `workbench` is
+    // deliberately not injected, so both probes must be guarded or `apply`
+    // throws and the plugin never activates.
+    const { ctx, slots } = createContext({ workbench: false });
+    const throwing = {
+      ...ctx,
+      get(name: string): unknown {
+        throw new Error(`cannot get property "${name}" without inject`);
+      },
+    };
+    Object.defineProperty(throwing, "workbench", {
+      get(): never {
+        throw new Error('cannot get property "workbench" without inject');
+      },
+    });
+
+    expect(() => apply(throwing)).not.toThrow();
+    expect(slots).toHaveLength(1);
+    expect(slots[0]?.options.id).toBe("arch");
+  });
+
   it("re-registers instead of stacking on a second apply (desktop double apply)", () => {
     const first = createContext();
     const disposeOne = apply(first.ctx);

@@ -67,6 +67,12 @@ export interface WorkbenchFace {
  * until the next full boot. The dock kind still registers when the service is
  * present; `apply` reads it and skips the kind when it is not.
  *
+ * Reading an undeclared service is not free: Cordis throws from the property
+ * read ("cannot get property \"workbench\" without inject") rather than
+ * returning undefined, so `readWorkbench` wraps both probes. Keep the guards
+ * when touching this list — dropping `workbench` here without them makes
+ * `apply` throw and the plugin fail to activate.
+ *
  * An array, not `{ required, optional }`: the loader treats every key of an
  * object inject as a service name, so a `required` key would wait forever for
  * a service that does not exist.
@@ -89,10 +95,25 @@ let registeredKind: (() => void) | undefined;
  * @returns the service face, or undefined when the core is absent.
  */
 function readWorkbench(ctx: ArchClientContext): WorkbenchFace | undefined {
-  const direct = ctx.workbench;
-  if (direct !== undefined && direct !== null) return direct;
-  const viaGet = typeof ctx.get === "function" ? ctx.get("workbench") : undefined;
-  return viaGet !== undefined && viaGet !== null && typeof viaGet === "object" ? (viaGet as WorkbenchFace) : undefined;
+  // Both reads are guarded. Cordis throws on a property read for a service the
+  // plugin did not declare in `inject` ("cannot get property \"workbench\"
+  // without inject") instead of yielding undefined, and `workbench` is
+  // deliberately optional here — so a miss is a supported composition, not an
+  // error. Without the guards the whole `apply` throws and the plugin never
+  // activates, which is exactly what dropping `workbench` from `inject` did.
+  try {
+    const direct = ctx.workbench;
+    if (direct !== undefined && direct !== null) return direct;
+  } catch {
+    // Not injected: fall through to the `get` probe.
+  }
+  if (typeof ctx.get !== "function") return undefined;
+  try {
+    const viaGet = ctx.get("workbench");
+    return viaGet !== undefined && viaGet !== null && typeof viaGet === "object" ? (viaGet as WorkbenchFace) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
