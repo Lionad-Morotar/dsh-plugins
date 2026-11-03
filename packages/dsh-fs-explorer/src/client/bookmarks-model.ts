@@ -11,7 +11,13 @@
  * by date added" gesture, not as a read-time rule: a reader who drags a bookmark
  * somewhere expects it to stay there.
  */
-import type { BookmarkGroup, BookmarkKind, BookmarkNode, BookmarkTree } from "../bookmarks.ts";
+import {
+  MAX_BOOKMARK_DEPTH,
+  type BookmarkGroup,
+  type BookmarkKind,
+  type BookmarkNode,
+  type BookmarkTree,
+} from "../bookmarks.ts";
 
 /** Where a new node goes: a group id, or null for the root. */
 export type BookmarkParentId = string | null;
@@ -53,6 +59,56 @@ export function makeNode(kind: BookmarkKind, input: NewNodeInput): BookmarkNode 
   const path = typeof input.path === "string" ? input.path.trim() : "";
   if (path === "") fail(`a ${kind} bookmark needs a non-empty path`);
   return { id: input.id, kind, name, createdAt: input.createdAt, path };
+}
+
+/**
+ * The depth of one node, counting the root as 1.
+ * @param tree - the tree to measure in.
+ * @param id - the node to measure.
+ * @returns the depth, or 0 when the id is not in the tree.
+ */
+function depthOf(tree: BookmarkTree, id: string): number {
+  let depth = 0;
+  const walk = (nodes: readonly BookmarkNode[], level: number): boolean => {
+    for (const node of nodes) {
+      if (node.id === id) {
+        depth = level;
+        return true;
+      }
+      if (node.kind === "group" && walk(node.children, level + 1)) return true;
+    }
+    return false;
+  };
+  walk(tree.roots, 1);
+  return depth;
+}
+
+/**
+ * The deepest level one subtree reaches, counting its own root as `base`.
+ * @param node - the subtree root.
+ * @param base - the depth that root will sit at.
+ * @returns the deepest level in the subtree.
+ */
+function deepestOf(node: BookmarkNode, base: number): number {
+  if (node.kind !== "group") return base;
+  return node.children.reduce((deepest, child) => Math.max(deepest, deepestOf(child, base + 1)), base);
+}
+
+/**
+ * Refuse a tree the parser would reject on the next load.
+ *
+ * The model and the parser have to agree about the bound, or the UI can build a
+ * tree it can never save: `parseBookmarkTree` would reject the record and the
+ * reader would lose the whole tree, not just the level that went too deep.
+ * @param tree - the tree the operation produced.
+ * @param node - the node that moved or was inserted.
+ */
+function assertDepth(tree: BookmarkTree, node: BookmarkNode): void {
+  const base = depthOf(tree, node.id);
+  if (base === 0) return;
+  if (deepestOf(node, base) > MAX_BOOKMARK_DEPTH) {
+    fail(`a bookmark cannot be nested deeper than ${String(MAX_BOOKMARK_DEPTH)} levels`);
+  }
 }
 
 /** Depth-first walk over every node, parents before children. */
@@ -162,7 +218,9 @@ export function insertNode(
     node,
     ...children.slice(at),
   ]);
-  return touched(tree, roots, now());
+  const next = touched(tree, roots, now());
+  assertDepth(next, node);
+  return next;
 }
 
 /**
@@ -238,7 +296,11 @@ export function moveNode(
     node,
     ...children.slice(at),
   ]);
-  return touched(tree, roots, now());
+  const next = touched(tree, roots, now());
+  // A move can push a whole subtree past the parser's bound just as an insert
+  // can; both have to refuse it here rather than at the next save.
+  assertDepth(next, node);
+  return next;
 }
 
 /**
@@ -246,6 +308,11 @@ export function moveNode(
  *
  * Stable on purpose: two bookmarks added in the same millisecond keep the order
  * they were inserted in, which is the order the reader saw them appear in.
+ *
+ * Reserved for the "sort by date added" gesture. Nothing in the UI calls it yet:
+ * the array order is the display order, and a reader who drags a bookmark
+ * somewhere expects it to stay there. It lives here rather than in the surface
+ * that will need it because the stable-order rule is a property of the model.
  * @param nodes - the list to copy.
  * @returns a new array; the input is untouched.
  */

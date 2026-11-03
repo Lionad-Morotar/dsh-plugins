@@ -339,35 +339,156 @@ describe("BookmarkBar management", () => {
   /** Open one chip's management menu. */
   async function openManage(name: string): Promise<void> {
     await act(async () => {
-      manageButton(name).click(); }); }
+      manageButton(name).click();
+    });
+  }
+
+  /** The first top-level chip. */
+  function chip(): HTMLElement {
+    const found = host.querySelector<HTMLElement>('[data-testid="fx-bookmark"]');
+    if (found === null) throw new Error("no chip");
+    return found;
+  }
 
   it("opens a management menu with the five actions", async () => {
-    await mount(treeOf([file("a"), file("b")])); await openManage("a"); const menu = host.querySelector('[data-testid="fx-bookmark-manage-menu"]'); expect(menu).not.toBeNull(); expect(menu?.getAttribute("role")).toBe("menu"); for (const action of ["rename", "remove", "up", "down", "move"]) {
-      expect(manageRow(action)).not.toBeNull(); }
-  }); it("reports a rename", async () => {
-    await mount(treeOf([file("a")])); await openManage("a"); await act(async () => {
-      manageRow("rename").click(); }); expect(renamed).toEqual(["a"]); // The menu closes on a choice.
-    expect(host.querySelector('[data-testid="fx-bookmark-manage-menu"]')).toBeNull(); }); it("reports a removal", async () => {
-    await mount(treeOf([file("a")])); await openManage("a"); await act(async () => {
-      manageRow("remove").click(); }); expect(removed).toEqual(["a"]); }); it("reports a move", async () => {
-    await mount(treeOf([file("a")])); await openManage("a"); await act(async () => {
-      manageRow("move").click(); }); expect(moved).toEqual(["a"]); }); it("reorders upward with the full sibling list", async () => {
-    await mount(treeOf([file("a"), file("b"), file("c")])); await openManage("b"); await act(async () => {
-      manageRow("up").click(); }); expect(reordered).toEqual([{ parentId: null, ids: ["b", "a", "c"] }]); }); it("reorders downward with the full sibling list", async () => {
-    await mount(treeOf([file("a"), file("b"), file("c")])); await openManage("b"); await act(async () => {
-      manageRow("down").click(); }); expect(reordered).toEqual([{ parentId: null, ids: ["a", "c", "b"] }]); }); it("disables up on the first row and down on the last", async () => {
-    await mount(treeOf([file("a"), file("b")])); await openManage("a"); expect((manageRow("up") as HTMLButtonElement).disabled).toBe(true); await act(async () => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); }); await openManage("b"); expect((manageRow("down") as HTMLButtonElement).disabled).toBe(true); }); it("reorders by dragging one chip onto another", async () => {
-    await mount(treeOf([file("a"), file("b"), file("c")])); const slots = [...host.querySelectorAll<HTMLElement>(".fx-bookmark-slot")]; const first = slots[0]; const third = slots[2]; if (first === undefined || third === undefined) throw new Error("missing slots"); await act(async () => {
-      first.dispatchEvent(new Event("dragstart", { bubbles: true })); }); expect(first.getAttribute("data-dragging")).toBe("true"); await act(async () => {
-      third.dispatchEvent(new Event("dragover", { bubbles: true, cancelable: true })); }); await act(async () => {
-      third.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true })); }); expect(reordered).toEqual([{ parentId: null, ids: ["b", "c", "a"] }]); }); it("lets an empty group create one now that the gesture is wired", async () => {
-    await mount(treeOf([group("empty")])); await act(async () => {
-      [...host.querySelectorAll<HTMLElement>('[data-testid="fx-bookmark"]')]
-        .find(element => element.textContent?.trim() === "empty")
-        ?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true, relatedTarget: null })); }); const row = [...host.querySelectorAll<HTMLElement>('[data-testid="fx-bookmark-item"]')].find(
+    await mount(treeOf([file("a"), file("b")]));
+    await openManage("a");
+    const menu = host.querySelector('[data-testid="fx-bookmark-manage-menu"]');
+    expect(menu).not.toBeNull();
+    expect(menu?.getAttribute("role")).toBe("menu");
+    for (const action of ["rename", "remove", "up", "down", "move"]) {
+      expect(manageRow(action)).not.toBeNull();
+    }
+  });
+
+  it("reports a rename", async () => {
+    await mount(treeOf([file("a")]));
+    await openManage("a");
+    await act(async () => {
+      manageRow("rename").click();
+    });
+    expect(renamed).toEqual(["a"]);
+    // The menu closes on a choice.
+    expect(host.querySelector('[data-testid="fx-bookmark-manage-menu"]')).toBeNull();
+  });
+
+  it("reports a removal", async () => {
+    await mount(treeOf([file("a")]));
+    await openManage("a");
+    await act(async () => {
+      manageRow("remove").click();
+    });
+    expect(removed).toEqual(["a"]);
+  });
+
+  it("reports a move", async () => {
+    await mount(treeOf([file("a")]));
+    await openManage("a");
+    await act(async () => {
+      manageRow("move").click();
+    });
+    expect(moved).toEqual(["a"]);
+  });
+
+  it("reorders upward with the full sibling list", async () => {
+    await mount(treeOf([file("a"), file("b"), file("c")]));
+    await openManage("b");
+    await act(async () => {
+      manageRow("up").click();
+    });
+    expect(reordered).toEqual([{ parentId: null, ids: ["b", "a", "c"] }]);
+  });
+
+  it("reorders downward with the full sibling list", async () => {
+    await mount(treeOf([file("a"), file("b"), file("c")]));
+    await openManage("b");
+    await act(async () => {
+      manageRow("down").click();
+    });
+    expect(reordered).toEqual([{ parentId: null, ids: ["a", "c", "b"] }]);
+  });
+
+  it("disables up on the first row and down on the last", async () => {
+    await mount(treeOf([file("a"), file("b")]));
+    await openManage("a");
+    expect((manageRow("up") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await openManage("b");
+    expect((manageRow("down") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("reorders by dragging one chip onto another", async () => {
+    await mount(treeOf([file("a"), file("b"), file("c")]));
+    const slots = [...host.querySelectorAll<HTMLElement>(".fx-bookmark-slot")];
+    const first = slots[0];
+    const third = slots[2];
+    if (first === undefined || third === undefined) throw new Error("missing slots");
+
+    await act(async () => {
+      first.dispatchEvent(new Event("dragstart", { bubbles: true }));
+    });
+    expect(first.getAttribute("data-dragging")).toBe("true");
+    await act(async () => {
+      third.dispatchEvent(new Event("dragover", { bubbles: true, cancelable: true }));
+    });
+    await act(async () => {
+      third.dispatchEvent(new Event("drop", { bubbles: true, cancelable: true }));
+    });
+    expect(reordered).toEqual([{ parentId: null, ids: ["b", "c", "a"] }]);
+  });
+
+  it("lets an empty group create one now that the gesture is wired", async () => {
+    await mount(treeOf([group("empty")]));
+    await act(async () => {
+      chip().dispatchEvent(new MouseEvent("pointerover", { bubbles: true, relatedTarget: null }));
+    });
+    const row = [...host.querySelectorAll<HTMLElement>('[data-testid="fx-bookmark-item"]')].find(
       element => element.textContent === "bookmarks.newGroup",
-    ); if (row === undefined) throw new Error("no new-group row"); expect(row.getAttribute("aria-disabled")).not.toBe("true"); await act(async () => {
-      row.click(); }); expect(createdGroups).toEqual(["empty"]); }); it("closes the management menu on Escape", async () => {
-    await mount(treeOf([file("a")])); await openManage("a"); await act(async () => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); }); expect(host.querySelector('[data-testid="fx-bookmark-manage-menu"]')).toBeNull(); }); }); 
+    );
+    if (row === undefined) throw new Error("no new-group row");
+    expect(row.getAttribute("aria-disabled")).not.toBe("true");
+    await act(async () => {
+      row.click();
+    });
+    expect(createdGroups).toEqual(["empty"]);
+  });
+
+  it("opens the same management menu from a right-click on a chip", async () => {
+    // The requirement names right-click; the `⋯` button is the discoverable
+    // path, and this is the gesture the requirement asks for.
+    await mount(treeOf([file("a")]));
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 30, clientY: 40 });
+    await act(async () => {
+      chip().dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(true);
+    expect(host.querySelector('[data-testid="fx-bookmark-manage-menu"]')).not.toBeNull();
+    // The same rows, not a second menu.
+    expect(manageRow("rename")).not.toBeNull();
+    expect(manageRow("remove")).not.toBeNull();
+  });
+
+  it("opens the management menu from a right-click inside a flyout", async () => {
+    await mount(treeOf([group("work", [file("a")])]));
+    await act(async () => {
+      chip().dispatchEvent(new MouseEvent("pointerover", { bubbles: true, relatedTarget: null }));
+    });
+    const row = host.querySelector<HTMLElement>('[data-testid="fx-bookmark-item"]');
+    if (row === null) throw new Error("no flyout row");
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 6 }));
+    });
+    expect(host.querySelector('[data-testid="fx-bookmark-manage-menu"]')).not.toBeNull();
+  });
+
+  it("closes the management menu on Escape", async () => {
+    await mount(treeOf([file("a")]));
+    await openManage("a");
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(host.querySelector('[data-testid="fx-bookmark-manage-menu"]')).toBeNull();
+  });
+});

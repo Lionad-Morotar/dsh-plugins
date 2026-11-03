@@ -31,6 +31,17 @@ function storageKey(sessionId: string): string {
 }
 
 /**
+ * The marker saying the fallback record has not reached the host yet.
+ *
+ * Without it, a save that fell back and a host that later answers "no record"
+ * are indistinguishable, and that empty answer would shadow the reader's own
+ * bookmarks until they wrote again.
+ */
+function pendingKey(sessionId: string): string {
+  return `${storageKey(sessionId)}.pending`;
+}
+
+/**
  * localStorage, or undefined when this runtime has none or refuses access.
  *
  * `globalThis` rather than `window`: the same module runs in a browser, in a
@@ -72,8 +83,33 @@ function writeFallback(sessionId: string, tree: BookmarkTree): void {
   if (store === undefined) return;
   try {
     store.setItem(storageKey(sessionId), JSON.stringify(tree));
+    // The record is now the only copy: mark it so a later empty host answer
+    // does not shadow it.
+    store.setItem(pendingKey(sessionId), "1");
   } catch {
     // A full or forbidden quota costs the fallback, not the session.
+  }
+}
+
+/** Whether the fallback record still has to reach the host. */
+function isPending(sessionId: string): boolean {
+  const store = storage();
+  if (store === undefined) return false;
+  try {
+    return store.getItem(pendingKey(sessionId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Drop the marker: the host now holds this record. */
+function clearPending(sessionId: string): void {
+  const store = storage();
+  if (store === undefined) return;
+  try {
+    store.removeItem(pendingKey(sessionId));
+  } catch {
+    // A marker that cannot be removed costs one extra fallback read, nothing more.
   }
 }
 
@@ -92,10 +128,21 @@ export function createBookmarkStore(workspace: WorkspaceClient | undefined): Boo
       if (remote !== undefined) {
         try {
           const outcome = await remote.call(workspace, sessionId);
-          // A null tree is a real answer: this workspace has no bookmarks yet.
-          // It is not a reason to consult the fallback, which would resurrect a
-          // record the host has deliberately never written.
-          if (outcome.ok) return outcome.tree ?? emptyBookmarkTree(new Date().toISOString());
+          if (outcome.ok) {
+            if (outcome.tree !== null) {
+              // The host holds the record, so any fallback copy is stale.
+              clearPending(sessionId);
+              return outcome.tree;
+            }
+            // A null tree usually means "this workspace has no bookmarks yet".
+            // It also means "nothing reached the host", which is what a fallback
+            // record with a pending marker is: that copy is the only one, so it
+            // wins over the empty answer.
+            if (isPending(sessionId)) {
+              return readFallback(sessionId) ?? emptyBookmarkTree(new Date().toISOString());
+            }
+            return emptyBookmarkTree(new Date().toISOString());
+          }
         } catch {
           // A transport failure is the same as no host: fall through.
         }
@@ -112,7 +159,11 @@ export function createBookmarkStore(workspace: WorkspaceClient | undefined): Boo
       if (remote !== undefined) {
         try {
           const outcome = await remote.call(workspace, sessionId, parsed);
-          if (outcome.ok) return;
+          if (outcome.ok) {
+            // The host took it, so the fallback copy and its marker are done.
+            clearPending(sessionId);
+            return;
+          }
         } catch {
           // Fall through to the fallback rather than losing the write.
         }

@@ -155,7 +155,23 @@ describe("createBookmarkStore", () => {
     expect(JSON.parse(storage.getItem(keyOf("s1")) ?? "null")).toEqual(tree());
   });
 
-  it("round-trips through the fallback", async () => {
+  it("keeps a fallback record visible when the host later answers empty", async () => {
+    // The failure this protects: a save that fell back, then a host that answers
+    // "no record" on the next load. Without the pending marker the empty answer
+    // looks like "no bookmarks yet" and shadows the reader's own copy.
+    let hostHasRecord = false; const workspace = fakeWorkspace({
+      saveBookmarks: async () => ({ ok: false, error: { code: "no-storage", message: "" } }),
+      loadBookmarks: async () => ({ ok: true, tree: hostHasRecord ? tree() : null }),
+    }); const store = createBookmarkStore(workspace); await store.save("s1", tree()); await expect(store.load("s1")).resolves.toEqual(tree()); }); it("lets a host record win and drops the fallback marker", async () => {
+    const workspace = fakeWorkspace({
+      saveBookmarks: async () => ({ ok: false, error: { code: "no-storage", message: "" } }),
+      loadBookmarks: async () => ({ ok: true, tree: tree() }),
+    }); const store = createBookmarkStore(workspace); await store.save("s1", tree()); await expect(store.load("s1")).resolves.toEqual(tree()); // The host now holds it, so the marker is gone and a later empty answer is
+    // taken at face value.
+    expect(storage.getItem(`${keyOf("s1")}.pending`)).toBeNull(); }); it("clears the marker once the host accepts a save", async () => {
+    let hostAccepts = false; const workspace = fakeWorkspace({
+      saveBookmarks: async () => (hostAccepts ? { ok: true as const } : { ok: false as const, error: { code: "io-error" as const, message: "" } }),
+    }); const store = createBookmarkStore(workspace); await store.save("s1", tree()); expect(storage.getItem(`${keyOf("s1")}.pending`)).toBe("1"); hostAccepts = true; await store.save("s1", tree()); expect(storage.getItem(`${keyOf("s1")}.pending`)).toBeNull(); });   it("round-trips through the fallback", async () => {
     const store = createBookmarkStore(fakeWorkspace());
     await store.save("s1", tree());
     await expect(store.load("s1")).resolves.toEqual(tree());

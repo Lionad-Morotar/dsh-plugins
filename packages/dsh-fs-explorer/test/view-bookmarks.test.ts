@@ -139,6 +139,84 @@ describe("file view bookmark management", () => {
     expect(chip?.textContent?.trim()).toBe("a.md");
   });
 
+  it("does not let a slow load overwrite an edit made while it was in flight", async () => {
+    // The first paint is an empty tree, so "add a bookmark" is available before
+    // the host answers. A load that lands afterwards must not replace it.
+    let releaseLoad: ((tree: BookmarkTree | null) => void) | undefined;
+    const saved: BookmarkTree[] = [];
+    const workspace: WorkspaceClient = {
+      capabilities: async () => ({ ok: true, capabilities: { fileManager: "finder", canReveal: true } }),
+      info: async (_sessionId, path) => ({
+        ok: true,
+        info: { absolutePath: `/workspace/${path}`, type: "file", exists: true },
+      }),
+      reveal: async () => ({ ok: true }),
+      loadBookmarks: () =>
+        new Promise(resolve => {
+          releaseLoad = (tree: BookmarkTree | null) => resolve({ ok: true, tree });
+        }),
+      saveBookmarks: async (_sessionId, tree) => {
+        saved.push(tree);
+        return { ok: true };
+      },
+    };
+
+    const View = createFsExplorerView({
+      workbench,
+      version: 1,
+      t,
+      files: () => ({ list: async () => LISTING }),
+      status: () => undefined,
+      workspace: () => workspace,
+    });
+    await act(async () => {
+      root.render(createElement(View, { sessionId: "s1" }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The reader adds a bookmark while the load is still outstanding.
+    const row = host.querySelector<HTMLElement>('[data-path="a.md"]');
+    if (row === null) throw new Error("no row");
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 1, clientY: 2 }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const addRow = host.querySelector<HTMLElement>('[data-action="add.bookmark"]');
+    if (addRow === null) throw new Error("no add-bookmark row");
+    await act(async () => {
+      addRow.click();
+    });
+    const commit = host.querySelector<HTMLElement>('[data-testid="fx-bookmark-picker-commit"]');
+    if (commit === null) throw new Error("no commit button");
+    await act(async () => {
+      commit.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(saved).toHaveLength(1);
+
+    // The stale load now lands with a different tree.
+    await act(async () => {
+      releaseLoad?.({
+        version: 1,
+        updatedAt: "2020-01-01T00:00:00.000Z",
+        roots: [{ id: "stale", kind: "file", name: "stale", path: "stale.md", createdAt: 1 }],
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The reader's bookmark is still the one on screen.
+    const chip = host.querySelector<HTMLElement>('[data-testid="fx-bookmark"]');
+    expect(chip?.textContent?.trim()).toBe("a.md");
+  });
+
   it("renames a bookmark and saves the new name", async () => {
     const workspace = fakeWorkspace({
       version: 1,

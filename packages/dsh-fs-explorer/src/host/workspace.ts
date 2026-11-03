@@ -506,6 +506,14 @@ export async function createWorkspaceEntry(
     }
     const sentinelPath = `${joinRelative(parentPath, name)}/${SENTINEL_PREFIX}${randomUUID()}`;
     const sentinel = await deps.fs.resolve(sentinelPath, { cwd: deps.cwd, signal });
+    // The target was proved inside the workspace before the stat, but the
+    // sentinel is a second resolution of a path that may now pass through a
+    // directory swapped for a symlink in between. Checking the resolved sentinel
+    // is what closes that window: a write is the one thing here that changes the
+    // reader's disk.
+    if (typeof deps.fs.contains === "function" && !deps.fs.contains(resolved.root, sentinel)) {
+      return fail("outside-workspace", `${name} would land outside the session workspace`);
+    }
     await deps.fs.writeText(sentinel, "", { kind: "createIfAbsent" }, signal);
     try {
       await deps.fs.deleteFile?.(sentinel, undefined, signal);

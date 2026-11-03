@@ -374,6 +374,9 @@ async function createWorkspaceEntry(deps, request, signal) {
     }
     const sentinelPath = `${joinRelative(parentPath, name2)}/${SENTINEL_PREFIX}${randomUUID()}`;
     const sentinel = await deps.fs.resolve(sentinelPath, { cwd: deps.cwd, signal });
+    if (typeof deps.fs.contains === "function" && !deps.fs.contains(resolved.root, sentinel)) {
+      return fail2("outside-workspace", `${name2} would land outside the session workspace`);
+    }
     await deps.fs.writeText(sentinel, "", { kind: "createIfAbsent" }, signal);
     try {
       await deps.fs.deleteFile?.(sentinel, void 0, signal);
@@ -619,7 +622,10 @@ var FsExplorerWorkspaceService = class extends (_a2 = TypertRemoteService, _capa
     return createWorkspaceEntry(deps, request, signal);
   }
   bookmarkStore() {
-    this.storePromise ??= openBookmarkStore(this.storageDomain);
+    this.storePromise ??= openBookmarkStore(this.storageDomain).catch(() => {
+      this.storePromise = void 0;
+      return null;
+    });
     return this.storePromise;
   }
   /**

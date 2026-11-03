@@ -324,6 +324,8 @@ export function createFsExplorerView({
     const [bookmarks, setBookmarks] = useState<BookmarkTree>(() =>
       emptyBookmarkTree(new Date().toISOString()),
     );
+    // Set by the first edit, read by the load that may still be in flight.
+    const bookmarksDirty = useRef(false);
 
     // The two bookmark editors. One picker for "which group", one name card for
     // "what to call it"; both are transient, and neither owns the tree.
@@ -976,12 +978,24 @@ export function createFsExplorerView({
     // Load this session's bookmarks. The store never rejects, but the guard and
     // the catch are both here anyway: a bookmark bar that throws on mount would
     // take the tree down with it, and the tree is the reader's actual work.
+    //
+    // `bookmarksDirty` is what keeps a slow load from overwriting an edit the
+    // reader made while it was in flight: the first paint is an empty tree, so
+    // "add a bookmark" is available immediately, and a load that lands afterwards
+    // would otherwise replace that bookmark with whatever the host had.
     useEffect(() => {
       let alive = true;
+      bookmarksDirty.current = false;
+      // No session means no workspace to key a record by: ask nobody, show an
+      // empty bar.
+      if (sessionId === undefined) {
+        setBookmarks(emptyBookmarkTree(new Date().toISOString()));
+        return;
+      }
       void bookmarkStore
-        .load(sessionId ?? "")
+        .load(sessionId)
         .then(tree => {
-          if (alive) setBookmarks(tree);
+          if (alive && !bookmarksDirty.current) setBookmarks(tree);
         })
         .catch(() => {
           // Keep the empty tree the first paint already rendered.
@@ -1068,8 +1082,13 @@ export function createFsExplorerView({
      */
     const persistBookmarks = useCallback(
       (next: BookmarkTree): void => {
+        // An edit outranks a load that has not landed yet.
+        bookmarksDirty.current = true;
         setBookmarks(next);
-        void bookmarkStore.save(sessionId ?? "", next).catch(() => {
+        // No session means no record to key: the tree stays in memory rather
+        // than landing under an empty key that no later session would read.
+        if (sessionId === undefined) return;
+        void bookmarkStore.save(sessionId, next).catch(() => {
           announce(t("bookmarks.saveFailed"), "error");
         });
       },
@@ -1156,7 +1175,6 @@ export function createFsExplorerView({
     // closing never re-registers the document listener.
     contextMenuOpen.current = contextMenu !== null;
 
-    /** The sentence one reveal failure paints. */
     // The remote rows, rebuilt whenever the snapshot, the row or the absolute
     // path changes. `absolutePath` arrives asynchronously from `info`, so this
     // is what turns the row from disabled to enabled a beat after the menu
@@ -1173,6 +1191,7 @@ export function createFsExplorerView({
       [contextMenu?.absolutePath, contextMenu?.row?.kind, gitRoot, head, remotes],
     );
 
+    /** The sentence one reveal failure paints. */
     const revealFailureText = useCallback(
       (error: WorkspaceError): string =>
         t("notice.revealFailed").replace("{reason}", t(`notice.reveal.${error.code}`)),

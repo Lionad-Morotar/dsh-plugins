@@ -334,7 +334,14 @@ export class FsExplorerWorkspaceService extends TypertRemoteService {
   private storePromise: Promise<BookmarkStore | null> | undefined;
 
   private bookmarkStore(): Promise<BookmarkStore | null> {
-    this.storePromise ??= openBookmarkStore(this.storageDomain);
+    // A failed open is not cached: a transient fault (a full disk, a directory
+    // the process cannot read yet) would otherwise poison every later bookmark
+    // call until the row restarts, and the client would silently keep using its
+    // fallback with no way back.
+    this.storePromise ??= openBookmarkStore(this.storageDomain).catch(() => {
+      this.storePromise = undefined;
+      return null;
+    });
     return this.storePromise;
   }
 

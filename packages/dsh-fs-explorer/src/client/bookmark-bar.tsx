@@ -27,6 +27,45 @@ import type { Translate } from "./copy.ts";
  */
 const CLOSE_DELAY_MS = 120;
 
+/** The widest a flyout card gets; the clamp below needs the number, not the CSS. */
+const FLYOUT_WIDTH = 280;
+
+/** Smallest gap between a card and the viewport edge. */
+const VIEWPORT_MARGIN = 8;
+
+/**
+ * Keep one card inside the viewport horizontally.
+ *
+ * A card anchored to a chip near the right edge would otherwise hang off it, and
+ * the part that hangs off is the part the reader cannot reach.
+ * @param left - the preferred left edge.
+ * @returns the left edge, pulled inside the viewport.
+ */
+function clampLeft(left: number): number {
+  const limit = typeof window === "undefined" ? left : window.innerWidth - FLYOUT_WIDTH;
+  return Math.max(VIEWPORT_MARGIN, Math.min(left, Math.max(VIEWPORT_MARGIN, limit)));
+}
+
+/**
+ * Where one flyout card goes, from the rect of the row that opened it.
+ *
+ * The first level hangs under its chip; every level below hangs off the right of
+ * the row that opened it, which is what makes a deep tree readable as a path
+ * rather than as a stack of cards covering each other. When there is no room on
+ * the right, the card flips to the left of that row instead of being clamped on
+ * top of it.
+ * @param rect - the anchor row's box, or undefined before layout.
+ * @param depth - 1 for a chip's own card, 2 and up for nested ones.
+ * @returns the viewport coordinates of the card's top-left corner.
+ */
+function flyoutPosition(rect: DOMRect | undefined, depth: number): { readonly left: number; readonly top: number } {
+  if (rect === undefined) return { left: VIEWPORT_MARGIN, top: VIEWPORT_MARGIN };
+  if (depth <= 1) return { left: clampLeft(rect.left), top: rect.bottom + 4 };
+  const right = rect.right + 4;
+  const fitsRight = typeof window === "undefined" || right + FLYOUT_WIDTH <= window.innerWidth;
+  return { left: clampLeft(fitsRight ? right : rect.left - FLYOUT_WIDTH - 4), top: rect.top };
+}
+
 /** Props for one bookmark bar. */
 export interface BookmarkBarProps {
   readonly tree: BookmarkTree;
@@ -212,9 +251,7 @@ export function BookmarkBar({
   const openFlyout = useCallback(
     (groupId: string, depth: number, anchor: HTMLElement | null): void => {
       cancelClose();
-      const rect = anchor?.getBoundingClientRect();
-      const left = rect === undefined ? 0 : rect.left;
-      const top = rect === undefined ? 0 : rect.bottom + 4;
+      const { left, top } = flyoutPosition(anchor?.getBoundingClientRect(), depth);
       setFlyouts(previous => {
         const kept = previous.slice(0, depth);
         if (kept.length === depth && kept[depth - 1]?.groupId === groupId) return previous;
@@ -278,9 +315,22 @@ export function BookmarkBar({
       node,
       parentId,
       siblings,
-      left: rect?.left ?? 0,
+      left: clampLeft(rect?.left ?? 0),
       top: (rect?.bottom ?? 0) + 4,
     });
+  };
+
+  /**
+   * Open the same management menu from a right-click on one row.
+   *
+   * The menu is the `⋯` menu, not a second one: the actions are the same list,
+   * and two menus over one node would drift apart the first time one of them
+   * gained a row. The pointer position is the anchor, which is where a reader
+   * who right-clicked expects the menu to appear.
+   */
+  const openManageAt = (node: BookmarkNode, event: { readonly clientX: number; readonly clientY: number }): void => {
+    const { parentId, siblings } = siblingsOf(node.id);
+    setManage({ node, parentId, siblings, left: clampLeft(event.clientX), top: event.clientY });
   };
 
   /** Move one node one step within its own siblings. */
@@ -376,6 +426,11 @@ export function BookmarkBar({
                   onPointerEnter={event => openFlyout(node.id, 1, event.currentTarget)}
                   onFocus={event => openFlyout(node.id, 1, event.currentTarget)}
                   onPointerLeave={scheduleClose}
+                  onContextMenu={event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openManageAt(node, event);
+                  }}
                 >
                   <span className="fx-bookmark-name">{node.name}</span>
                   <span className="fx-bookmark-chevron" aria-hidden="true">
@@ -390,6 +445,11 @@ export function BookmarkBar({
                   data-kind={node.kind}
                   title={node.path}
                   onClick={() => choose(node)}
+                  onContextMenu={event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openManageAt(node, event);
+                  }}
                 >
                   <span className="fx-bookmark-name">{node.name}</span>
                 </button>
@@ -470,11 +530,6 @@ export function BookmarkBar({
       {flyouts.map(flyout => {
         const group = groupOf(flyout.groupId);
         if (group === undefined) return null;
-        const style: CSSProperties =
-          flyout.depth === 1
-            ? { left: flyout.left, top: flyout.top }
-            : // A nested card hangs off its parent row rather than off the chip.
-              { left: flyout.left, top: flyout.top };
         return (
           <div
             key={group.id}
@@ -483,7 +538,7 @@ export function BookmarkBar({
             data-depth={flyout.depth}
             role="menu"
             aria-label={group.name}
-            style={style}
+            style={{ left: flyout.left, top: flyout.top }}
             onPointerEnter={cancelClose}
             onPointerLeave={scheduleClose}
           >
@@ -501,6 +556,11 @@ export function BookmarkBar({
                       aria-expanded={flyouts.some(candidate => candidate.groupId === child.id)}
                       onPointerEnter={event => openFlyout(child.id, flyout.depth + 1, event.currentTarget)}
                       onFocus={event => openFlyout(child.id, flyout.depth + 1, event.currentTarget)}
+                      onContextMenu={event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        openManageAt(child, event);
+                      }}
                     >
                       <span className="fx-bookmark-name">{child.name}</span>
                       <span className="fx-bookmark-chevron" aria-hidden="true">
@@ -516,6 +576,11 @@ export function BookmarkBar({
                       role="menuitem"
                       title={child.path}
                       onClick={() => choose(child)}
+                      onContextMenu={event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        openManageAt(child, event);
+                      }}
                     >
                       <span className="fx-bookmark-name">{child.name}</span>
                     </button>

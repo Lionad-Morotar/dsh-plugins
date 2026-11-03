@@ -311,3 +311,57 @@ describe("flattenGroups", () => {
     expect(flattenGroups(treeOf(node("file", "a")))).toEqual([]);
   });
 });
+
+describe("depth bound", () => {
+  /**
+   * A tree of `groups` nested groups, each holding the next.
+   *
+   * Depth counts from 1 at the root, so the innermost group of a `groups`-deep
+   * chain sits at depth `groups`.
+   */
+  function chain(groups: number): BookmarkTree {
+    let node: BookmarkNode = node0(groups);
+    for (let index = groups - 1; index >= 1; index -= 1) {
+      node = makeNode("group", { id: `g${String(index)}`, name: `g${String(index)}`, createdAt: 1 });
+      node = { ...node, children: [node0(index + 1)] } as BookmarkNode;
+    }
+    return treeOf(node);
+  }
+
+  /** The group at one level of the chain, with no children yet. */
+  function node0(level: number): BookmarkNode {
+    return makeNode("group", { id: `g${String(level)}`, name: `g${String(level)}`, createdAt: 1 });
+  }
+
+  it("refuses an insert that would nest past the parser's bound", () => {
+    // The parser rejects a tree deeper than 32; a model that built one anyway
+    // would hand the reader a tree it can never save.
+    let tree = treeOf(node0(1));
+    for (let level = 2; level <= 32; level += 1) {
+      tree = insertNode(tree, `g${String(level - 1)}`, node0(level));
+    }
+    expect(() => insertNode(tree, "g32", node("file", "too-deep"))).toThrowError(/deeper than 32/u);
+  });
+
+  it("still allows an insert at the bound", () => {
+    let tree = treeOf(node0(1));
+    for (let level = 2; level <= 31; level += 1) {
+      tree = insertNode(tree, `g${String(level - 1)}`, node0(level));
+    }
+    // A leaf under the group at depth 31 sits at 32, which is the last allowed.
+    expect(() => insertNode(tree, "g31", node("file", "deep"))).not.toThrow();
+  });
+
+  it("refuses a move that would push a subtree past the bound", () => {
+    // A deep chain plus a separate branch: moving the branch's group under the
+    // chain's bottom would put its own children past the bound. The target has
+    // to be outside the moved subtree, or the cycle check answers first.
+    let tree = treeOf(node0(1));
+    for (let level = 2; level <= 32; level += 1) {
+      tree = insertNode(tree, `g${String(level - 1)}`, node0(level));
+    }
+    tree = insertNode(tree, null, node0(40));
+    tree = insertNode(tree, "g40", node0(41));
+    expect(() => moveNode(tree, "g40", "g32")).toThrowError(/deeper than 32/u);
+  });
+});

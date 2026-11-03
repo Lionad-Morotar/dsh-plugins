@@ -171,6 +171,22 @@ describe("createWorkspaceEntry", () => {
     await expect(fs.stat(targetOf("/workspace/docs/nested"))).resolves.toMatchObject({ type: "directory" });
   });
 
+  it("refuses to write a sentinel that resolves outside the workspace", async () => {
+    // The target was proved inside the workspace before the stat; the sentinel
+    // is a second resolution, and a directory swapped for a symlink in between
+    // would land the write somewhere else. Nothing may be written in that case.
+    const fs = fakeWriteFs();
+    fs.resolve.mockImplementation(async (path: string) => {
+      // Only the sentinel escapes; the parent and the target stay put.
+      if (path.includes(".dsh-mkdir-")) return targetOf("/etc/escaped");
+      return targetOf(posix.resolve("/workspace", path));
+    });
+    await expect(
+      createWorkspaceEntry(deps(fs), { sessionId: "s1", parent: "docs", name: "nested", kind: "directory" }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "outside-workspace" } });
+    expect(fs.created).toEqual([]);
+  });
+
   it("refuses a directory whose name already exists", async () => {
     const fs = fakeWriteFs({ existing: ["/workspace", "/workspace/docs", "/workspace/docs/nested"] });
     await expect(

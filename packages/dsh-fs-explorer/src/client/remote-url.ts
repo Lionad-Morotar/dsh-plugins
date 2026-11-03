@@ -184,10 +184,28 @@ function encodePath(path: string): string {
  */
 function refOf(head: FsGitHead | undefined): string {
   const branch = head?.branch;
-  if (typeof branch === "string" && branch !== "") return branch;
+  if (typeof branch === "string" && branch !== "") return encodeRef(branch);
   const hash = head?.hash;
   if (typeof hash === "string" && hash !== "") return hash;
   return "HEAD";
+}
+
+/**
+ * Encode one ref for a URL path, keeping its separators.
+ *
+ * Git allows `#`, `?` and `%` in a branch name, and each of them means something
+ * to a URL parser: `wip#1` would turn the rest of the link into a fragment and
+ * `a?b` into a query, so the file path would stop being part of the request. The
+ * `/` between segments is the one character that has to stay literal, because
+ * GitHub and GitLab read it as the ref separator.
+ * @param ref - the branch name as git reports it.
+ * @returns the ref with each segment encoded.
+ */
+function encodeRef(ref: string): string {
+  return ref
+    .split("/")
+    .map(segment => encodeURIComponent(segment))
+    .join("/");
 }
 
 /**

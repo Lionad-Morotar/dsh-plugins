@@ -14,6 +14,11 @@ const STYLE_ID = "dsh-fs-explorer-styles";
 
 export const FS_STYLES = `
 .fx-root {
+  /* The name card, the bookmark picker and the management menu are positioned
+     against this panel. Without a containing block here they resolve against
+     whatever positioned ancestor the host happens to provide, which is not
+     something this package can rely on. */
+  position: relative;
   --fx-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --fx-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --fx-row-h: 22px;
@@ -155,7 +160,10 @@ export const FS_STYLES = `
   font-family: var(--fx-font);
   font-size: 12px;
 }
-.fx-bookmark-flyout-sub { position: absolute; left: 100%; top: 0; margin-left: 2px; }
+/* A nested card is fixed and placed from its own row's rect, exactly like the
+   first level: the inline px coordinates are the whole position, so there is no
+   percentage offset to keep in sync. */
+.fx-bookmark-flyout-sub { position: fixed; }
 .fx-bookmark-item {
   display: flex;
   align-items: center;

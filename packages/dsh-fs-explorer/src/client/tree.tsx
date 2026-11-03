@@ -114,12 +114,6 @@ export function FileBadge({ name }: { readonly name: string }) {
  *
  * `row` is undefined for the tree's blank area: the reader right-clicked past
  * the last row, which is a different menu (nothing to act on yet), not a bug.
- */
-/**
- * One context-menu gesture.
- *
- * `row` is undefined for the tree's blank area: the reader right-clicked past
- * the last row, which is a different menu (nothing to act on yet), not a bug.
  * `trigger` is the element the menu was opened from, which is where the keyboard
  * goes back to when it closes: a right-click leaves focus on the body, and the
  * next Tab from there restarts at the top of the page.

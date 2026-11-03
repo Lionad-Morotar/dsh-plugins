@@ -214,3 +214,36 @@ describe("buildRemoteLinks", () => {
     expect(buildRemoteLinks(input({ absolutePath: "/repo-other/a.ts" }))).toEqual([]);
   });
 });
+
+describe("branch names that mean something to a URL parser", () => {
+  /** One link for a repository on GitHub with the given branch. */
+  function linkFor(branch: string): string {
+    const links = buildRemoteLinks({
+      remotes: [{ name: "origin", url: "https://github.com/acme/app.git" }],
+      root: "/repo",
+      absolutePath: "/repo/docs/a.md",
+      kind: "file",
+      head: { hash: "abc123", branch, detached: false },
+    });
+    return links[0]?.url ?? "";
+  }
+
+  it("encodes a hash so it cannot start a fragment", () => {
+    // `wip#1` unencoded would make everything after `#` a fragment, and the file
+    // path would stop being part of the request.
+    expect(linkFor("wip#1")).toBe("https://github.com/acme/app/blob/wip%231/docs/a.md");
+  });
+
+  it("encodes a question mark so it cannot start a query", () => {
+    expect(linkFor("a?b")).toBe("https://github.com/acme/app/blob/a%3Fb/docs/a.md");
+  });
+
+  it("encodes a percent so it cannot be read as an escape", () => {
+    expect(linkFor("100%")).toBe("https://github.com/acme/app/blob/100%25/docs/a.md");
+  });
+
+  it("keeps the slash between ref segments", () => {
+    // GitHub and GitLab read `/` as the ref separator; encoding it is a 404.
+    expect(linkFor("feature/x")).toBe("https://github.com/acme/app/blob/feature/x/docs/a.md");
+  });
+});
