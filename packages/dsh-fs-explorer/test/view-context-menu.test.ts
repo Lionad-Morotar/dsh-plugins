@@ -226,7 +226,7 @@ describe("file view context menu", () => {
     expect(menuItem("copy.absolute").getAttribute("aria-disabled")).toBe("true");
   });
 
-  it("shows one disabled note on the tree's blank area", async () => {
+  it("offers the create rows on the tree's blank area", async () => {
     const workspace = fakeWorkspace();
     await mount(workspace.client);
     const scroller = host.querySelector<HTMLElement>('[data-testid="fs-tree-scroll"]');
@@ -238,9 +238,9 @@ describe("file view context menu", () => {
     });
 
     const items = host.querySelectorAll('[data-testid="fx-menu-item"]');
-    expect(items).toHaveLength(1);
-    expect(items[0]?.textContent).toBe("menu.blank");
-    expect(items[0]?.getAttribute("aria-disabled")).toBe("true");
+    expect([...items].map(item => item.getAttribute("data-action"))).toEqual(["create.file", "create.folder"]);
+    // The blank area has no path, so nothing to reveal or copy.
+    expect(host.querySelector('[data-action="reveal"]')).toBeNull();
   });
 
   it("closes the menu on Escape", async () => {

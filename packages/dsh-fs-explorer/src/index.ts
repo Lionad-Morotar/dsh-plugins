@@ -39,6 +39,7 @@ import {
 } from "./host/documents.ts";
 import {
   capabilitiesResult,
+  createWorkspaceEntry,
   describeWorkspacePath,
   fail as failWorkspace,
   revealWorkspacePath,
@@ -61,6 +62,8 @@ import type {
   WorkspaceCapabilitiesRequest,
   WorkspaceFailure,
   WorkspaceCapabilitiesResult,
+  WorkspaceCreateRequest,
+  WorkspaceCreateResult,
   WorkspaceInfoRequest,
   WorkspaceInfoResult,
   WorkspaceRevealRequest,
@@ -92,6 +95,9 @@ export type {
   WorkspaceCapabilities,
   WorkspaceCapabilitiesRequest,
   WorkspaceCapabilitiesResult,
+  WorkspaceCreateRequest,
+  WorkspaceCreateResult,
+  WorkspaceCreatedEntry,
   WorkspaceFailure,
   WorkspaceFailureCode,
   WorkspaceFileManager,
@@ -291,6 +297,14 @@ export class FsExplorerWorkspaceService extends TypertRemoteService {
     const deps = await this.deps(request.sessionId);
     if ("ok" in deps) return deps;
     return revealWorkspacePath(deps, request, signal);
+  }
+
+  /** Create one empty file or one empty directory inside the workspace. */
+  @Remote("create")
+  async create(request: WorkspaceCreateRequest, signal?: AbortSignal): Promise<WorkspaceCreateResult> {
+    const deps = await this.deps(request.sessionId);
+    if ("ok" in deps) return deps;
+    return createWorkspaceEntry(deps, request, signal);
   }
 }
 

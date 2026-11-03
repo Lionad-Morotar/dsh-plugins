@@ -24,12 +24,14 @@ import type { Translate } from "./copy.ts";
 import {
   MENU_ACTION,
   buildContextMenu,
+  parentDirectory,
   type ContextMenuAnchor,
   type ContextMenuEntry,
   type ContextMenuRow,
 } from "./context-menu.ts";
 import { ContextMenu, type MenuAnchor } from "./context-menu-view.tsx";
 import { writeClipboard } from "./clipboard.ts";
+import { NamePrompt } from "./name-prompt.tsx";
 import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap } from "./keyboard.ts";
 import type { DocumentStore } from "./document-session.ts";
 import type { SymlinkLocator } from "./preview.ts";
@@ -305,6 +307,8 @@ export function createFsExplorerView({
           readonly row: ContextMenuRow | undefined;
           readonly anchor: MenuAnchor;
           readonly absolutePath: string | undefined;
+          /** The directory a create lands in; `""` is the workspace root. */
+          readonly createParent: string | undefined;
           /** Where the keyboard goes when the menu closes. */
           readonly trigger: HTMLElement | undefined;
         }
@@ -316,6 +320,19 @@ export function createFsExplorerView({
     // One transient sentence under the header: what the last action did.
     const [notice, setNotice] = useState<{ readonly text: string; readonly tone: "ok" | "error" } | null>(null);
     const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // The name card, while it is up: what is being created, where, and what the
+    // host said about the last attempt. A refusal keeps the card open, so the
+    // error lives here rather than in the notice bar.
+    const [namePrompt, setNamePrompt] = useState<
+      | {
+          readonly kind: "file" | "directory";
+          readonly parent: string;
+          readonly error: string | undefined;
+          readonly busy: boolean;
+        }
+      | null
+    >(null);
 
     const [levels, setLevels] = useState<ReadonlyMap<string, TreeLevel>>(() => new Map());
     const [statuses, setStatuses] = useState<StatusMap | undefined>(undefined);
@@ -956,7 +973,11 @@ export function createFsExplorerView({
      */
     const openContextMenu = useCallback(
       (row: ContextMenuRow | undefined, anchor: ContextMenuAnchor, trigger?: HTMLElement): void => {
-        setContextMenu({ row, anchor, absolutePath: undefined, trigger });
+        // A create lands beside the row that was right-clicked: a directory row
+        // names itself, a file row names its own directory, and the blank area
+        // names the workspace root. The root is `""`, which is a real answer.
+        const createParent = row === undefined ? "" : row.kind === "directory" ? row.path : parentDirectory(row.path);
+        setContextMenu({ row, anchor, absolutePath: undefined, trigger, createParent });
         if (row === undefined || workspace === undefined) return;
         const target = row.path;
         void workspace.info(sessionId ?? "", target).then(outcome => {
@@ -995,8 +1016,25 @@ export function createFsExplorerView({
       (id: string): void => {
         const menu = contextMenu;
         setContextMenu(null);
-        if (menu === null || menu.row === undefined) return;
+        if (menu === null) return;
+
+        // The two create rows are the only actions the blank area offers, and
+        // the only ones that do not need a row: their target is the directory
+        // the menu was built for.
+        if (id === MENU_ACTION.createFile || id === MENU_ACTION.createFolder) {
+          const parent = menu.createParent;
+          if (parent === undefined) return;
+          setNamePrompt({
+            kind: id === MENU_ACTION.createFolder ? "directory" : "file",
+            parent,
+            error: undefined,
+            busy: false,
+          });
+          return;
+        }
+
         const row = menu.row;
+        if (row === undefined) return;
 
         if (id === MENU_ACTION.copyRelative) {
           void writeClipboard(row.path).then(ok => {
@@ -1029,8 +1067,60 @@ export function createFsExplorerView({
       [announce, capabilities, contextMenu, revealFailureText, sessionId, t, workspace],
     );
 
+    /**
+     * Create one entry and show it.
+     *
+     * The parent is re-read rather than patched into the level ledger: the levels
+     * are the host's answer, and a locally spliced row would disagree with the
+     * next refresh about order and status. A file then opens, because creating one
+     * is a request to write in it; a folder expands and takes the cursor, because
+     * the reader's next move is to put something in it.
+     * @param name - the validated name from the card.
+     */
+    const submitCreate = useCallback(
+      (name: string): void => {
+        const prompt = namePrompt;
+        if (prompt === null) return;
+        if (workspace === undefined || workspace.create === undefined) {
+          setNamePrompt({ ...prompt, error: t("prompt.error.unsupported"), busy: false });
+          return;
+        }
+        const sid = sessionId;
+        if (sid === undefined) {
+          setNamePrompt({ ...prompt, error: t("prompt.error.no-workspace"), busy: false });
+          return;
+        }
+        setNamePrompt({ ...prompt, busy: true, error: undefined });
+        void workspace.create(sid, prompt.parent, name, prompt.kind).then(outcome => {
+          if (!outcome.ok) {
+            setNamePrompt(current =>
+              current === null ? current : { ...current, busy: false, error: t(`prompt.error.${outcome.error.code}`) },
+            );
+            return;
+          }
+          setNamePrompt(null);
+          const created = outcome.path;
+          if (files !== undefined) void loadLevel(prompt.parent, sid, files);
+          if (prompt.kind === "file") {
+            stack.open(created);
+            announce(t("notice.createdFile"), "ok");
+            return;
+          }
+          // A folder is a place to put things: expand it, list it, and leave the
+          // cursor on it so the next keystroke acts on what was just made.
+          setExpanded(previous => new Set(previous).add(created));
+          if (files !== undefined) void loadLevel(created, sid, files);
+          setEntryFocus({ path: created });
+          announce(t("notice.createdFolder"), "ok");
+        });
+      },
+      [announce, files, loadLevel, namePrompt, sessionId, stack, t, workspace],
+    );
+
+    const cancelCreate = useCallback((): void => setNamePrompt(null), []);
+
     // The menu's rows, rebuilt from the state it opened with. A blank-area menu
-    // has no row, so this is also where the disabled note comes from.
+    // has no row, so this is also where its create targets come from.
     const menuEntries: readonly ContextMenuEntry[] = useMemo(
       () =>
         contextMenu === null
@@ -1041,6 +1131,7 @@ export function createFsExplorerView({
                 notices: { workspace: workspace !== undefined },
                 capabilities,
                 absolutePath: contextMenu.absolutePath,
+                createParent: contextMenu.createParent,
               },
               t,
             ),
@@ -1257,6 +1348,18 @@ export function createFsExplorerView({
             {...(contextMenu.trigger === undefined
               ? {}
               : { returnFocus: () => contextMenu.trigger ?? null })}
+          />
+        )}
+
+        {namePrompt === null ? null : (
+          <NamePrompt
+            kind={namePrompt.kind}
+            parent={namePrompt.parent}
+            t={t}
+            error={namePrompt.error}
+            busy={namePrompt.busy}
+            onSubmit={submitCreate}
+            onCancel={cancelCreate}
           />
         )}
 

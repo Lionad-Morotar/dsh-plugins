@@ -13,11 +13,14 @@
  * so each platform gets the argv that selects rather than the one that opens.
  */
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import type {
   FsTargetFace,
   WorkspaceCapabilities,
   WorkspaceCapabilitiesResult,
+  WorkspaceCreateRequest,
+  WorkspaceCreateResult,
   WorkspaceFailure,
   WorkspaceFailureCode,
   WorkspaceInfoRequest,
@@ -62,14 +65,28 @@ export interface WorkspaceEnv {
 /**
  * Structural slice of `ctx.fs` this channel needs.
  *
- * Narrower than the document channel's slice on purpose: nothing here reads or
- * writes content, so a fake only has to answer the four questions a path raises.
- * `contains` is optional so the absence is a code (`unsupported`) rather than a
- * crash, and `processPath` is optional only for the same reason `stat` is not:
- * every installed backend has both.
+ * Narrower than the document channel's slice on purpose: nothing here reads
+ * content, so a fake only has to answer the questions a path raises. `contains`
+ * is optional so the absence is a code (`unsupported`) rather than a crash, and
+ * `deleteFile` is optional for the same reason: a directory create leaves a
+ * sentinel behind without it, so the endpoint refuses instead of writing one.
  */
 export interface WorkspaceFsFace {
-  resolve(path: string, opts?: { readonly cwd?: string; readonly signal?: AbortSignal }): Promise<FsTargetFace>; stat(target: FsTargetFace, signal?: AbortSignal): Promise<{ readonly type: "file" | "directory" | "other" } | undefined>; contains?(parent: FsTargetFace, child: FsTargetFace): boolean; processPath?(target: FsTargetFace): string; }
+  resolve(path: string, opts?: { readonly cwd?: string; readonly signal?: AbortSignal }): Promise<FsTargetFace>;
+  stat(
+    target: FsTargetFace,
+    signal?: AbortSignal,
+  ): Promise<{ readonly type: "file" | "directory" | "other" } | undefined>;
+  contains?(parent: FsTargetFace, child: FsTargetFace): boolean;
+  writeText?(
+    target: FsTargetFace,
+    content: string,
+    expected?: { readonly kind: "createIfAbsent" },
+    signal?: AbortSignal,
+  ): Promise<unknown>;
+  deleteFile?(target: FsTargetFace, expected?: { readonly version: string }, signal?: AbortSignal): Promise<unknown>;
+  processPath?(target: FsTargetFace): string;
+}
 
 /** What one endpoint call needs beyond the request. */
 export interface WorkspaceDeps {
@@ -99,8 +116,11 @@ export function fail(
  */
 const FS_FAILURES: Readonly<Record<string, WorkspaceFailureCode>> = {
   FS_NOT_FOUND: "not-found",
-  FS_NOT_DIRECTORY: "not-found",
+  FS_NOT_DIRECTORY: "not-directory",
   FS_PERMISSION_DENIED: "permission",
+  // The backend's own refusal of a guarded create onto an occupied path. It is
+  // the only race-free way to answer "this name is taken".
+  FS_NOT_OBSERVED: "exists",
 };
 
 function codeOf(error: unknown): string | undefined {
@@ -376,4 +396,127 @@ export async function revealWorkspacePath(
  */
 export function capabilitiesResult(env: WorkspaceEnv): WorkspaceCapabilitiesResult {
   return { ok: true, capabilities: workspaceCapabilities(env) };
+}
+
+/** Longest entry name this channel will create. */
+const MAX_NAME = 200;
+
+/** The prefix of the temporary file a directory create writes and removes. */
+const SENTINEL_PREFIX = ".dsh-mkdir-";
+
+/**
+ * Why one typed name cannot become an entry, or the name to create.
+ *
+ * The check runs on the host, not only in the card: the card is a convenience,
+ * and a client that skipped it would otherwise be able to address a different
+ * directory than the one it named. `""` is not a legal name here — the caller
+ * sends the parent separately, so an empty name has nowhere to land.
+ * @param raw - the name as the reader typed it.
+ * @returns the trimmed name, or the refusal.
+ */
+export function checkEntryName(
+  raw: unknown,
+):
+  | { readonly ok: true; readonly name: string }
+  | { readonly ok: false; readonly reason: "empty" | "dot" | "separator" | "too-long" } {
+  if (typeof raw !== "string") return { ok: false, reason: "empty" };
+  const name = raw.trim();
+  if (name === "") return { ok: false, reason: "empty" };
+  if (name === "." || name === "..") return { ok: false, reason: "dot" };
+  // NUL is grouped with the separators because it truncates a path in the C
+  // layer the backend eventually calls; the reader's intent is the same.
+  if (name.includes("/") || name.includes("\\") || name.includes("\u0000")) {
+    return { ok: false, reason: "separator" };
+  }
+  if (name.length > MAX_NAME) return { ok: false, reason: "too-long" };
+  return { ok: true, name };
+}
+
+/** The workspace-relative path one created entry will have. */
+function joinRelative(parent: string, name: string): string {
+  const base = parent.replace(/^\/+|\/+$/gu, "");
+  return base === "" ? name : `${base}/${name}`;
+}
+
+/**
+ * Create one empty file or one empty directory inside the workspace.
+ *
+ * The parent is resolved, proved to exist, proved to be a directory and proved to
+ * sit inside the workspace before anything is written: a create is the one
+ * endpoint here that changes the reader's disk, so its boundary is the whole
+ * point.
+ *
+ * A file is one guarded write with empty content, and the backend's own refusal
+ * of an occupied target is what makes "this name is taken" race-free. A
+ * directory has no `mkdir` in the filesystem abstraction, so it is a sentinel
+ * file whose atomic write creates the missing parents, removed immediately: the
+ * directory survives the removal because it is the parent of the file, not the
+ * file. A backend that cannot delete answers `unsupported` before writing,
+ * because a sentinel nobody can remove would surface in the tree as a file.
+ * @param deps - filesystem, working directory and platform.
+ * @param request - session, parent directory, name and kind.
+ * @param signal - caller lifetime.
+ * @returns the new entry's workspace-relative path, or the failure to answer with.
+ */
+export async function createWorkspaceEntry(
+  deps: WorkspaceDeps,
+  request: WorkspaceCreateRequest,
+  signal?: AbortSignal,
+): Promise<WorkspaceCreateResult> {
+  const checked = checkEntryName(request?.name);
+  if (!checked.ok) {
+    return fail("invalid-name", `"${String(request?.name)}" is not a usable name (${checked.reason})`);
+  }
+  const name = checked.name;
+  const kind = request?.kind === "directory" ? "directory" : "file";
+
+  if (typeof deps.fs.writeText !== "function") {
+    return fail("unsupported", "this filesystem backend cannot create entries");
+  }
+  if (kind === "directory" && typeof deps.fs.deleteFile !== "function") {
+    return fail("unsupported", "this filesystem backend cannot remove the directory sentinel");
+  }
+
+  // The root is a legal parent, and `resolveInside` refuses an empty path by
+  // design (nothing can be revealed or described without one), so the root is
+  // resolved explicitly here.
+  const parentPath = typeof request.parent === "string" ? request.parent : "";
+  const resolved = await resolveInside(deps, parentPath === "" ? "." : parentPath, signal);
+  if ("ok" in resolved) return resolved;
+
+  try {
+    const parentInfo = await deps.fs.stat(resolved.target, signal);
+    if (parentInfo === undefined) return fail("not-found", `${parentPath} does not exist`);
+    if (parentInfo.type !== "directory") return fail("not-directory", `${parentPath} is not a directory`);
+
+    const target = await deps.fs.resolve(joinRelative(parentPath, name), { cwd: deps.cwd, signal });
+    if (typeof deps.fs.contains === "function" && !deps.fs.contains(resolved.root, target)) {
+      return fail("outside-workspace", `${name} would land outside the session workspace`);
+    }
+
+    if (kind === "file") {
+      await deps.fs.writeText(target, "", { kind: "createIfAbsent" }, signal);
+      return { ok: true, path: joinRelative(parentPath, name) };
+    }
+
+    // A directory that already exists is a refusal, not a no-op: the reader
+    // asked to make one and there is nothing to make.
+    if ((await deps.fs.stat(target, signal)) !== undefined) {
+      return fail("exists", `${joinRelative(parentPath, name)} already exists`);
+    }
+    const sentinelPath = `${joinRelative(parentPath, name)}/${SENTINEL_PREFIX}${randomUUID()}`;
+    const sentinel = await deps.fs.resolve(sentinelPath, { cwd: deps.cwd, signal });
+    await deps.fs.writeText(sentinel, "", { kind: "createIfAbsent" }, signal);
+    try {
+      await deps.fs.deleteFile?.(sentinel, undefined, signal);
+    } catch (error) {
+      // The directory exists but carries a file nobody asked for; naming the
+      // leftover is the only way the reader can clean it up.
+      const absolute = deps.fs.processPath?.(sentinel) ?? sentinel.displayPath;
+      return fail("io-error", `created the directory but could not remove ${absolute}: ${messageOf(error)}`);
+    }
+    return { ok: true, path: joinRelative(parentPath, name) };
+  } catch (error) {
+    return failureOf(error);
+  }
 }

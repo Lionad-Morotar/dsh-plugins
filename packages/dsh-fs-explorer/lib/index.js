@@ -165,6 +165,7 @@ async function locatePath(deps, request, signal) {
 
 // src/host/workspace.ts
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 var MAX_MESSAGE2 = 600;
 function messageOf2(error) {
   return error instanceof Error ? error.message : String(error);
@@ -174,8 +175,11 @@ function fail2(code, message) {
 }
 var FS_FAILURES2 = {
   FS_NOT_FOUND: "not-found",
-  FS_NOT_DIRECTORY: "not-found",
-  FS_PERMISSION_DENIED: "permission"
+  FS_NOT_DIRECTORY: "not-directory",
+  FS_PERMISSION_DENIED: "permission",
+  // The backend's own refusal of a guarded create onto an occupied path. It is
+  // the only race-free way to answer "this name is taken".
+  FS_NOT_OBSERVED: "exists"
 };
 function codeOf2(error) {
   if (typeof error !== "object" || error === null) return void 0;
@@ -320,6 +324,68 @@ async function revealWorkspacePath(deps, request, signal) {
 function capabilitiesResult(env) {
   return { ok: true, capabilities: workspaceCapabilities(env) };
 }
+var MAX_NAME = 200;
+var SENTINEL_PREFIX = ".dsh-mkdir-";
+function checkEntryName(raw) {
+  if (typeof raw !== "string") return { ok: false, reason: "empty" };
+  const name2 = raw.trim();
+  if (name2 === "") return { ok: false, reason: "empty" };
+  if (name2 === "." || name2 === "..") return { ok: false, reason: "dot" };
+  if (name2.includes("/") || name2.includes("\\") || name2.includes("\0")) {
+    return { ok: false, reason: "separator" };
+  }
+  if (name2.length > MAX_NAME) return { ok: false, reason: "too-long" };
+  return { ok: true, name: name2 };
+}
+function joinRelative(parent, name2) {
+  const base = parent.replace(/^\/+|\/+$/gu, "");
+  return base === "" ? name2 : `${base}/${name2}`;
+}
+async function createWorkspaceEntry(deps, request, signal) {
+  const checked = checkEntryName(request?.name);
+  if (!checked.ok) {
+    return fail2("invalid-name", `"${String(request?.name)}" is not a usable name (${checked.reason})`);
+  }
+  const name2 = checked.name;
+  const kind = request?.kind === "directory" ? "directory" : "file";
+  if (typeof deps.fs.writeText !== "function") {
+    return fail2("unsupported", "this filesystem backend cannot create entries");
+  }
+  if (kind === "directory" && typeof deps.fs.deleteFile !== "function") {
+    return fail2("unsupported", "this filesystem backend cannot remove the directory sentinel");
+  }
+  const parentPath = typeof request.parent === "string" ? request.parent : "";
+  const resolved = await resolveInside(deps, parentPath === "" ? "." : parentPath, signal);
+  if ("ok" in resolved) return resolved;
+  try {
+    const parentInfo = await deps.fs.stat(resolved.target, signal);
+    if (parentInfo === void 0) return fail2("not-found", `${parentPath} does not exist`);
+    if (parentInfo.type !== "directory") return fail2("not-directory", `${parentPath} is not a directory`);
+    const target = await deps.fs.resolve(joinRelative(parentPath, name2), { cwd: deps.cwd, signal });
+    if (typeof deps.fs.contains === "function" && !deps.fs.contains(resolved.root, target)) {
+      return fail2("outside-workspace", `${name2} would land outside the session workspace`);
+    }
+    if (kind === "file") {
+      await deps.fs.writeText(target, "", { kind: "createIfAbsent" }, signal);
+      return { ok: true, path: joinRelative(parentPath, name2) };
+    }
+    if (await deps.fs.stat(target, signal) !== void 0) {
+      return fail2("exists", `${joinRelative(parentPath, name2)} already exists`);
+    }
+    const sentinelPath = `${joinRelative(parentPath, name2)}/${SENTINEL_PREFIX}${randomUUID()}`;
+    const sentinel = await deps.fs.resolve(sentinelPath, { cwd: deps.cwd, signal });
+    await deps.fs.writeText(sentinel, "", { kind: "createIfAbsent" }, signal);
+    try {
+      await deps.fs.deleteFile?.(sentinel, void 0, signal);
+    } catch (error) {
+      const absolute = deps.fs.processPath?.(sentinel) ?? sentinel.displayPath;
+      return fail2("io-error", `created the directory but could not remove ${absolute}: ${messageOf2(error)}`);
+    }
+    return { ok: true, path: joinRelative(parentPath, name2) };
+  } catch (error) {
+    return failureOf2(error);
+  }
+}
 
 // src/shared.ts
 var PACKAGE_NAME = "dsh-fs-explorer";
@@ -399,8 +465,8 @@ __publicField(FsExplorerDocumentsService, "inject", inject);
 __publicField(FsExplorerDocumentsService, "Config", Schema.object({
   maxBytes: Schema.number().default(DEFAULT_DOCUMENTS_CONFIG.maxBytes).description("\u5355\u4EFD\u53EF\u8BFB\u53D6\u4E0E\u4FDD\u5B58\u7684\u6587\u6863\u5B57\u8282\u4E0A\u9650")
 }));
-var _reveal_dec, _info_dec, _capabilities_dec, _a2, _init2;
-var FsExplorerWorkspaceService = class extends (_a2 = TypertRemoteService, _capabilities_dec = [Remote("capabilities")], _info_dec = [Remote("info")], _reveal_dec = [Remote("reveal")], _a2) {
+var _create_dec, _reveal_dec, _info_dec, _capabilities_dec, _a2, _init2;
+var FsExplorerWorkspaceService = class extends (_a2 = TypertRemoteService, _capabilities_dec = [Remote("capabilities")], _info_dec = [Remote("info")], _reveal_dec = [Remote("reveal")], _create_dec = [Remote("create")], _a2) {
   constructor(ctx, env) {
     super(ctx, WORKSPACE_SERVICE);
     __runInitializers(_init2, 5, this);
@@ -435,11 +501,17 @@ var FsExplorerWorkspaceService = class extends (_a2 = TypertRemoteService, _capa
     if ("ok" in deps) return deps;
     return revealWorkspacePath(deps, request, signal);
   }
+  async create(request, signal) {
+    const deps = await this.deps(request.sessionId);
+    if ("ok" in deps) return deps;
+    return createWorkspaceEntry(deps, request, signal);
+  }
 };
 _init2 = __decoratorStart(_a2);
 __decorateElement(_init2, 1, "capabilities", _capabilities_dec, FsExplorerWorkspaceService);
 __decorateElement(_init2, 1, "info", _info_dec, FsExplorerWorkspaceService);
 __decorateElement(_init2, 1, "reveal", _reveal_dec, FsExplorerWorkspaceService);
+__decorateElement(_init2, 1, "create", _create_dec, FsExplorerWorkspaceService);
 __decoratorMetadata(_init2, FsExplorerWorkspaceService);
 __publicField(FsExplorerWorkspaceService, "inject", ["fs"]);
 function apply(ctx, config) {

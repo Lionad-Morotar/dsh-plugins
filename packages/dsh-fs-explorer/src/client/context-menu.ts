@@ -21,6 +21,8 @@ import type { WorkspaceCapabilities } from "../host/types.ts";
  * view turns every click into a no-op.
  */
 export const MENU_ACTION = {
+  createFile: "create.file",
+  createFolder: "create.folder",
   reveal: "reveal",
   copyAbsolute: "copy.absolute",
   copyRelative: "copy.relative",
@@ -66,6 +68,29 @@ export interface ContextMenuInput {
   readonly capabilities: WorkspaceCapabilities | undefined;
   /** The canonical absolute path, when `info` already answered for this row. */
   readonly absolutePath: string | undefined;
+  /**
+   * The directory a create lands in, or undefined when it cannot be worked out.
+   *
+   * A directory row names itself; a file row names its own directory; the blank
+   * area names the workspace root. `""` is the root, which is a real answer and
+   * is why this is not folded into the row's own path.
+   */
+  readonly createParent: string | undefined;
+}
+
+/**
+ * The directory one path's siblings live in.
+ *
+ * Workspace paths use `/` on every platform because they are the tree's own
+ * vocabulary, not the host's; a trailing separator is ignored so a directory
+ * path and its children agree about their parent.
+ * @param path - a workspace-relative path, or `""` for the root.
+ * @returns the parent path, `""` when the path is top level.
+ */
+export function parentDirectory(path: string): string {
+  const trimmed = path.replace(/\/+$/u, "");
+  const cut = trimmed.lastIndexOf("/");
+  return cut < 0 ? "" : trimmed.slice(0, cut);
 }
 
 /** The label key for the reveal row, by file manager. */
@@ -78,11 +103,12 @@ export function revealLabelKey(fileManager: WorkspaceCapabilities["fileManager"]
 /**
  * Build the menu for one right-click.
  *
- * A row gets the reveal action and the two copy paths. The blank area gets one
- * disabled note and nothing else: there is no path to act on, and a menu that
- * offered actions for "nothing" would be lying about its target. The note is
- * what the next slice replaces with the create actions.
- * @param input - the row, the channel state and the known absolute path.
+ * The two create rows come first and exist on every row kind, because "make a
+ * file here" is the action a reader wants most often and hiding it on a file row
+ * would be a surprise. The blank area gets them too, at the workspace root: it
+ * has no path of its own, which is exactly why the root is the right target.
+ * Reveal and copy still need a row, so the blank area does not offer them.
+ * @param input - the row, the channel state, the known absolute path and the create target.
  * @param t - translator bound to this package's namespace.
  * @returns the rows to render, in display order.
  */
@@ -90,11 +116,26 @@ export function buildContextMenu(
   input: ContextMenuInput,
   t: (key: string) => string,
 ): readonly ContextMenuEntry[] {
-  const { row, notices, capabilities, absolutePath } = input;
+  const { row, notices, capabilities, absolutePath, createParent } = input;
 
-  if (row === undefined) {
-    return [{ id: "menu.blank", label: t("menu.blank"), disabled: true, reason: t("menu.blank.reason") }];
-  }
+  // Creating needs the channel and a directory to land in. Both rows share one
+  // reason: they fail for the same cause, and two different sentences would
+  // suggest two different problems.
+  const creatable = notices.workspace && createParent !== undefined;
+  const createRows: readonly ContextMenuEntry[] = [
+    {
+      id: MENU_ACTION.createFile,
+      label: t("menu.create.file"),
+      ...(creatable ? {} : { disabled: true, reason: t("menu.create.reason") }),
+    },
+    {
+      id: MENU_ACTION.createFolder,
+      label: t("menu.create.folder"),
+      ...(creatable ? {} : { disabled: true, reason: t("menu.create.reason") }),
+    },
+  ];
+
+  if (row === undefined) return createRows;
 
   // Reveal needs both the channel and a file manager to hand the path to. The
   // label still names a file manager so the row reads as an action rather than
@@ -115,8 +156,5 @@ export function buildContextMenu(
   };
   const relative: ContextMenuEntry = { id: MENU_ACTION.copyRelative, label: t("menu.copy.relative") };
 
-  return [
-    reveal,
-    { id: "menu.copy", label: t("menu.copy"), submenu: [absolute, relative] },
-  ];
+  return [...createRows, reveal, { id: "menu.copy", label: t("menu.copy"), submenu: [absolute, relative] }];
 }

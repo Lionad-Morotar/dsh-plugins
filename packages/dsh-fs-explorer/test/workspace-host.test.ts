@@ -15,6 +15,7 @@ import { remoteMethods } from "@deepseek-ai/dsh-typert-protocol";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createWorkspaceEntry,
   describeWorkspacePath,
   revealWorkspacePath,
   workspaceCapabilities,
@@ -359,7 +360,7 @@ describe("revealWorkspacePath", () => {
 });
 
 describe("FsExplorerWorkspaceService", () => {
-  it("publishes exactly the three workspace endpoints", () => {
+  it("publishes exactly the workspace endpoints", () => {
     const ctx = new Context();
     ctx.provide("fs", fakeFs());
     const service = new FsExplorerWorkspaceService(ctx);
@@ -367,6 +368,7 @@ describe("FsExplorerWorkspaceService", () => {
       "capabilities",
       "info",
       "reveal",
+      "create",
     ]);
   });
 

@@ -12,7 +12,7 @@
  * module-table lookup, and caching an early miss would pin the fallback for the
  * life of the page.
  */
-import type { ComponentType, CSSProperties, ReactNode, RefObject } from "react";
+import type { ComponentType, CSSProperties, ReactNode, Ref, RefObject } from "react";
 
 /** What an icon component needs from its callers. */
 export type IconLike = (props: { readonly className?: string }) => ReactNode;
@@ -69,11 +69,26 @@ export interface HostMenuItemButtonProps {
   readonly separatorBefore?: boolean;
 }
 
+/** The props this package passes the host `Input`. */
+export interface HostInputProps {
+  readonly ref?: Ref<HTMLInputElement>;
+  readonly className?: string;
+  readonly value?: string;
+  readonly disabled?: boolean;
+  readonly spellCheck?: boolean;
+  readonly autoComplete?: string;
+  readonly "aria-label"?: string;
+  readonly "aria-invalid"?: boolean;
+  readonly "data-testid"?: string;
+  readonly onChange?: (event: { readonly target: { readonly value: string } }) => void;
+}
+
 /** The host modules the context menu can use; a missing field means "degrade". */
 export interface MenuKit {
   readonly Menu?: ComponentType<HostMenuProps>;
   readonly MenuSurface?: ComponentType<HostMenuSurfaceProps>;
   readonly MenuItemButton?: ComponentType<HostMenuItemButtonProps>;
+  readonly Input?: ComponentType<HostInputProps>;
   readonly IconChevronDownOutlineRegular?: IconLike;
   readonly useAnchoredPosition?: AnchoredPositionHook;
 }
@@ -150,6 +165,8 @@ export function resolveMenuKit(): MenuKit {
   if (surface !== undefined) kit.MenuSurface = surface;
   const item = component<HostMenuItemButtonProps>("MenuItemButton");
   if (item !== undefined) kit.MenuItemButton = item;
+  const input = component<HostInputProps>("Input");
+  if (input !== undefined) kit.Input = input;
   const chevron = component<{ className?: string }>("IconChevronDownOutlineRegular");
   if (chevron !== undefined) kit.IconChevronDownOutlineRegular = chevron as IconLike;
   const anchored = fn<AnchoredPositionHook>("useAnchoredPosition");

@@ -24,6 +24,16 @@ export interface WorkspaceFace {
     request: { readonly sessionId: string; readonly path: string },
     signal?: AbortSignal,
   ): Promise<unknown> | unknown;
+  /** Absent on a host that predates the write channel. */
+  create?(
+    request: {
+      readonly sessionId: string;
+      readonly parent: string;
+      readonly name: string;
+      readonly kind: "file" | "directory";
+    },
+    signal?: AbortSignal,
+  ): Promise<unknown> | unknown;
 }
 
 /** The client context slice the resolver probes. */
@@ -87,7 +97,12 @@ export function createRpcWorkspaceFace(call: WorkspaceRpcCall): WorkspaceFace {
     (method: string) =>
     (request: unknown, signal?: AbortSignal): Promise<unknown> =>
       call(method, { args: { request } }, signal);
-  return { capabilities: invoke("capabilities"), info: invoke("info"), reveal: invoke("reveal") };
+  return {
+    capabilities: invoke("capabilities"),
+    info: invoke("info"),
+    reveal: invoke("reveal"),
+    create: invoke("create"),
+  };
 }
 
 /** Whether a value is the workspace face rather than a Cordis stub. */
@@ -187,6 +202,11 @@ export type InfoOutcome =
 /** What one reveal call answered. */
 export type RevealOutcome = { readonly ok: true } | { readonly ok: false; readonly error: WorkspaceError };
 
+/** What one create call answered: the workspace-relative path of the new entry. */
+export type CreateOutcome =
+  | { readonly ok: true; readonly path: string }
+  | { readonly ok: false; readonly error: WorkspaceError };
+
 /**
  * Fold one `capabilities` answer down to the two facts a menu row needs.
  * @param response - whatever the endpoint resolved to.
@@ -244,11 +264,39 @@ export function normalizeReveal(response: unknown): RevealOutcome {
   return { ok: true };
 }
 
-/** The three calls the view makes, already folded and never throwing. */
+/**
+ * Fold one `create` answer down to the path the view then opens or expands.
+ * @param response - whatever the endpoint resolved to.
+ * @returns the new path, or the failure to paint.
+ */
+export function normalizeCreate(response: unknown): CreateOutcome {
+  const result = unwrap(response);
+  if (result === undefined) return { ok: false, error: { code: "io-error", message: "" } };
+  if (result.ok === false) return { ok: false, error: errorOf(result.error) };
+  return typeof result.path === "string" && result.path !== ""
+    ? { ok: true, path: result.path }
+    : { ok: false, error: { code: "io-error", message: "" } };
+}
+
+/** The calls the view makes, already folded and never throwing. */
 export interface WorkspaceClient {
   capabilities(sessionId: string, signal?: AbortSignal): Promise<CapabilitiesOutcome>;
   info(sessionId: string, path: string, signal?: AbortSignal): Promise<InfoOutcome>;
   reveal(sessionId: string, path: string, signal?: AbortSignal): Promise<RevealOutcome>;
+  /**
+   * Create one entry inside `parent`.
+   *
+   * Absent on a host that predates the write channel: the menu reads the
+   * absence as "this deployment cannot create" rather than offering a row that
+   * would fail.
+   */
+  create?(
+    sessionId: string,
+    parent: string,
+    name: string,
+    kind: "file" | "directory",
+    signal?: AbortSignal,
+  ): Promise<CreateOutcome>;
 }
 
 /** The failure a missing channel answers with. */
@@ -280,5 +328,11 @@ export function createWorkspaceClient(ctx: WorkspaceContextLike): WorkspaceClien
     capabilities: (sessionId, signal) => guard(face => face.capabilities({ sessionId }, signal), normalizeCapabilities),
     info: (sessionId, path, signal) => guard(face => face.info({ sessionId, path }, signal), normalizeInfo),
     reveal: (sessionId, path, signal) => guard(face => face.reveal({ sessionId, path }, signal), normalizeReveal),
+    create: (sessionId, parent, name, kind, signal) =>
+      guard(face => {
+        const create = face.create;
+        if (typeof create !== "function") return { ok: false, error: UNAVAILABLE };
+        return create.call(face, { sessionId, parent, name, kind }, signal);
+      }, normalizeCreate),
   };
 }

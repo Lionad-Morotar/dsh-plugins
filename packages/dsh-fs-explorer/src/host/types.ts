@@ -110,6 +110,17 @@ export interface FsWriteIntent {
   readonly version: string;
 }
 
+/**
+ * A write that must not land on an existing path.
+ *
+ * The backend refuses an occupied target with `FS_NOT_OBSERVED`, which is the
+ * only way to create a file without a read-then-write race: a `stat` before the
+ * write would leave a window where another writer wins.
+ */
+export interface FsCreateIntent {
+  readonly kind: "createIfAbsent";
+}
+
 /** The part of a write outcome the channel reports back. */
 export interface FsWriteOutcome {
   readonly version: string;
@@ -142,7 +153,19 @@ export interface FileSystemFace {
   writeText(
     target: FsTargetFace,
     content: string,
-    expected?: FsWriteIntent,
+    expected?: FsWriteIntent | FsCreateIntent,
+    signal?: AbortSignal,
+  ): Promise<FsWriteOutcome>;
+  /**
+   * Remove one file.
+   *
+   * Optional because a test fake and a backend older than the probe can omit it;
+   * every installed local backend implements it. The workspace channel reads its
+   * absence as `unsupported` rather than writing a sentinel it cannot clean up.
+   */
+  deleteFile?(
+    target: FsTargetFace,
+    expected?: { readonly version: string },
     signal?: AbortSignal,
   ): Promise<FsWriteOutcome>;
   processPath?(target: FsTargetFace): string;
@@ -173,6 +196,9 @@ export type WorkspaceFailureCode =
   | "no-workspace"
   | "outside-workspace"
   | "not-found"
+  | "not-directory"
+  | "exists"
+  | "invalid-name"
   | "unsupported"
   | "permission"
   | "io-error";
@@ -219,6 +245,21 @@ export interface WorkspaceRevealRequest {
   readonly path: string;
 }
 
+/**
+ * One create request.
+ *
+ * `parent` is a workspace-relative directory path, with `""` naming the root.
+ * `name` is a single path segment: the endpoint refuses anything that could
+ * address a different directory, so the client cannot widen its own reach by
+ * sending `../x`.
+ */
+export interface WorkspaceCreateRequest {
+  readonly sessionId: string;
+  readonly parent: string;
+  readonly name: string;
+  readonly kind: "file" | "directory";
+}
+
 export type WorkspaceCapabilitiesResult =
   | { readonly ok: true; readonly capabilities: WorkspaceCapabilities }
   | { readonly ok: false; readonly error: WorkspaceFailure };
@@ -229,6 +270,15 @@ export type WorkspaceInfoResult =
 
 export type WorkspaceRevealResult =
   | { readonly ok: true }
+  | { readonly ok: false; readonly error: WorkspaceFailure };
+
+/** What `create` returns: the workspace-relative path of the new entry. */
+export interface WorkspaceCreatedEntry {
+  readonly path: string;
+}
+
+export type WorkspaceCreateResult =
+  | { readonly ok: true; readonly path: string }
   | { readonly ok: false; readonly error: WorkspaceFailure };
 
 /** Structural slice of the live session store: only the header cwd is read. */

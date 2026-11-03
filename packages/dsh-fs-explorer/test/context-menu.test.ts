@@ -52,11 +52,17 @@ describe("buildContextMenu", () => {
         notices: { workspace: true },
         capabilities: capabilities("finder"),
         absolutePath: "/workspace/docs/a.md",
+        createParent: "docs",
       },
       t,
     );
 
-    expect(entries.map(entry => entry.id)).toEqual([MENU_ACTION.reveal, "menu.copy"]);
+    expect(entries.map(entry => entry.id)).toEqual([
+      MENU_ACTION.createFile,
+      MENU_ACTION.createFolder,
+      MENU_ACTION.reveal,
+      "menu.copy",
+    ]);
     expect(copyEntries(entries).map(entry => entry.id)).toEqual([
       MENU_ACTION.copyAbsolute,
       MENU_ACTION.copyRelative,
@@ -69,21 +75,26 @@ describe("buildContextMenu", () => {
       notices: { workspace: true as const },
       capabilities: capabilities("finder"),
       absolutePath: "/workspace/docs",
+      createParent: "docs",
     };
     const forDirectory = buildContextMenu({ ...input, row: directoryRow() }, t);
     const forFile = buildContextMenu({ ...input, row: fileRow() }, t);
     expect(forDirectory.map(entry => entry.id)).toEqual(forFile.map(entry => entry.id));
   });
 
-  it("shows one disabled note on the tree's blank area", () => {
+  it("offers only the create rows on the tree's blank area", () => {
     const entries = buildContextMenu(
-      { row: undefined, notices: { workspace: true }, capabilities: capabilities("finder"), absolutePath: undefined },
+      {
+        row: undefined,
+        notices: { workspace: true },
+        capabilities: capabilities("finder"),
+        absolutePath: undefined,
+        createParent: "",
+      },
       t,
     );
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.disabled).toBe(true);
-    expect(entries[0]?.reason).toBe("menu.blank.reason");
-    // No row means nothing to reveal or copy.
+    expect(entries.map(entry => entry.id)).toEqual([MENU_ACTION.createFile, MENU_ACTION.createFolder]);
+    // No row means nothing to reveal or copy: those actions need a target.
     expect(entries.some(entry => entry.id === MENU_ACTION.reveal)).toBe(false);
     expect(entries.some(entry => entry.submenu !== undefined)).toBe(false);
   });
@@ -92,7 +103,13 @@ describe("buildContextMenu", () => {
     const label = (fileManager: WorkspaceCapabilities["fileManager"]): string =>
       revealEntry(
         buildContextMenu(
-          { row: fileRow(), notices: { workspace: true }, capabilities: capabilities(fileManager), absolutePath: "/w/a.md" },
+          {
+            row: fileRow(),
+            notices: { workspace: true },
+            capabilities: capabilities(fileManager),
+            absolutePath: "/w/a.md",
+            createParent: "docs",
+          },
           t,
         ),
       ).label;
@@ -105,7 +122,13 @@ describe("buildContextMenu", () => {
   it("disables the reveal row with a reason when the host has no file manager", () => {
     const entry = revealEntry(
       buildContextMenu(
-        { row: fileRow(), notices: { workspace: true }, capabilities: capabilities(null), absolutePath: "/w/a.md" },
+        {
+          row: fileRow(),
+          notices: { workspace: true },
+          capabilities: capabilities(null),
+          absolutePath: "/w/a.md",
+          createParent: "docs",
+        },
         t,
       ),
     );
@@ -118,7 +141,13 @@ describe("buildContextMenu", () => {
   it("disables the reveal row when the workspace channel never answered", () => {
     const entry = revealEntry(
       buildContextMenu(
-        { row: fileRow(), notices: { workspace: false }, capabilities: undefined, absolutePath: undefined },
+        {
+          row: fileRow(),
+          notices: { workspace: false },
+          capabilities: undefined,
+          absolutePath: undefined,
+          createParent: "docs",
+        },
         t,
       ),
     );
@@ -128,7 +157,13 @@ describe("buildContextMenu", () => {
 
   it("keeps the relative copy available without an absolute path", () => {
     const entries = buildContextMenu(
-      { row: fileRow(), notices: { workspace: true }, capabilities: capabilities("finder"), absolutePath: undefined },
+      {
+        row: fileRow(),
+        notices: { workspace: true },
+        capabilities: capabilities("finder"),
+        absolutePath: undefined,
+        createParent: "docs",
+      },
       t,
     );
     const [absolute, relative] = copyEntries(entries);
@@ -139,6 +174,8 @@ describe("buildContextMenu", () => {
 
   it("keeps the action ids stable for the view's dispatch", () => {
     expect(MENU_ACTION).toEqual({
+      createFile: "create.file",
+      createFolder: "create.folder",
       reveal: "reveal",
       copyAbsolute: "copy.absolute",
       copyRelative: "copy.relative",

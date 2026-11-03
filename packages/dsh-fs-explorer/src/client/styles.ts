@@ -167,6 +167,62 @@ export const FS_STYLES = `
 /* The reason a row cannot run, shown on the row itself: the host Menu's data rows
    have no disabledReason, and a greyed row with no explanation reads as broken. */
 .fx-menu-reason { display: block; color: var(--fx-caption); font-size: 11px; line-height: 1.4; }
+
+/* The name card. Anchored to the tree rather than centered on the page: the
+   reader right-clicked a row, and a modal would take the tree away at exactly
+   the moment they need to see which directory they are creating in. */
+.fx-name-prompt {
+  position: absolute;
+  z-index: 55;
+  top: 44px;
+  left: 12px;
+  width: 268px;
+  padding: 10px;
+  border: 1px solid var(--fx-border);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--fx-font);
+  font-size: 12px;
+}
+.fx-name-prompt-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.fx-name-prompt-head strong { font-size: 12px; font-weight: 600; }
+.fx-name-prompt-parent {
+  color: var(--fx-caption);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fx-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  border: 1px solid var(--fx-border);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base, transparent);
+  color: var(--fx-text);
+  font: inherit;
+}
+.fx-name-input:focus { outline: 2px solid var(--fx-accent); outline-offset: -1px; }
+.fx-name-input[aria-invalid="true"] { border-color: var(--dsw-alias-state-error-primary, var(--fx-border)); }
+.fx-name-prompt-error { color: var(--dsw-alias-state-error-primary, var(--fx-text-2)); font-size: 11px; line-height: 1.4; }
+.fx-name-prompt-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.fx-btn-text, .fx-btn-primary { width: auto; padding: 0 10px; height: 24px; }
+.fx-btn-primary {
+  border-color: var(--fx-accent);
+  background: var(--fx-accent);
+  color: var(--dsw-alias-bg-base, #fff);
+}
+.fx-btn-primary:disabled, .fx-btn-text:disabled { opacity: 0.55; cursor: default; }
 .fx-btn {
   display: inline-flex;
   align-items: center;
