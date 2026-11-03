@@ -1,6 +1,6 @@
 # dsh-better
 
-为原生 DeepSeek Harness 增加能力。六个面：`/model` 选择器支持按供应商搜索并在行内平铺推理等级；输入框的模型触发器改为打开同一个选择器，模型名左侧带上 provider 名；`⌘Space` 把键盘送回输入框，键位在宿主快捷键面板里可改；输入框全选时附件一起被选中，复制成文本加绝对路径、粘贴时按路径还原成附件；输入框下方的读数行里，上下文占用环右边多一个「压缩 N 次」；设置里多一个「Tab 管理」页，按已注册的会话标签逐个勾选是否出现在标签栏。
+为原生 DeepSeek Harness 增加能力。七个面：`/model` 选择器支持按供应商搜索并在行内平铺推理等级；输入框的模型触发器改为打开同一个选择器，模型名左侧带上 provider 名；`⌘Space` 把键盘送回输入框，键位在宿主快捷键面板里可改；输入框全选时附件一起被选中，复制成文本加绝对路径、粘贴时按路径还原成附件；输入框下方的读数行里，上下文占用环右边多一个「压缩 N 次」；设置里多一个「Tab 管理」页，按已注册的会话标签逐个勾选是否出现在标签栏；设置里再一个「技能别名」页，把 `wf` 这样的短词映射到 `/flow-workflow run`，输入时用原生斜杠菜单的面板选择。
 
 ## 解决的问题
 
@@ -123,6 +123,21 @@ fork 会话只算自己的：seeded 会话的日志前缀是父会话的事件�
 
 `order` 只收整数，所以「环右边、面板上方」写不成一个介于两者之间的值：占用环与统计 pill 保持默认 0，docked 终端（`dsh-term-dock`）占 1 并顺带把整行变成 wrap、面板独占一行。读数因此也进 order 1 这一档，同时用 slot `order: -1` 让自己在档内排在终端之前——落点就是「环右边、终端上方」。终端 docked 时那一档的 gap 被压成 0，读数自己补 12px 左边距。
 
+## 技能别名
+
+设置里多一个「技能别名」页（`settings.section`，id `aliases`，排在 Tab 管理与工作台之间），把短词映射到带参数的斜杠调用，例如 `wf` → `/flow-workflow run`。页面只有两个区：上面一个开关决定关键词是否必须带前导斜杠，下面一张表填关键词、技能或命令、参数；每行即时写入，没有保存按钮。
+
+规则只有一条但两侧必须一致：关键词在草稿最前面、且后面要么是结尾要么是空白时才算命中，大小写不敏感；空关键词或空目标的半成品行只是草稿，匹配时跳过。同一个关键词可以写多行，面板会把它们当作同一组候选。
+
+触发面分两种模式，共享同一个原生菜单：
+
+- 前缀开启（默认）：本包往宿主 `ctx.inputTriggers` 注册一个 `/` 源，名字 `alias`，排在原生 `command` 组之前。输入 `/` 时「技能别名」组和宿主的「技能」组并排出现，输入 `/wf` 后收窄到别名行；按空格后原生菜单本来会关闭，watcher 会用同一段草稿重开该组并把替换 span 扩到空格之后，所以 `/wf ` 仍然停在面板上。选择行插入 `/flow-workflow run `。
+- 前缀关闭：输入 `wf`（无需斜杠）时，`conversation.input.overlay` 里一个渲染 null 的 watcher 读 `conversation.input` 的会话草稿，调用同一个 `InputTriggerController.toggleSource` 打开只含别名组的菜单；输入空格后重新开一次以更新 span。草稿一旦不再等于某个关键词就关闭自己开的菜单，不会在写正常句子时乱弹。
+
+面板没有自绘：`alias-source.ts` 只提供 `candidates` 与 `onPick`，菜单本体、分组标题、键盘（↑/↓、Enter、Tab、Escape）、指针悬停与选择、`aria-activedescendant` 全是宿主 `MenuView` 的实现；这也是「操作完全仿照原生技能面板」的落地方式。`alias-watcher.tsx` 只做「什么时候打开」，不做任何菜单渲染。别名选择只插入文本，不自动提交，和原生技能面板的行为一致。
+
+配置存在 `localStorage` 的 `dsh-better.skill-aliases`，形如 `{"v":1,"prefix":true,"rows":[{"id":"…","keyword":"wf","target":"flow-workflow","params":"run"}]}`。坏文档当成空配置，坏行按类型丢弃，读取不会因为一条损坏记录丢掉整张表。
+
 ## 开发
 
 ```sh
@@ -131,7 +146,7 @@ pnpm --filter dsh-better typecheck
 pnpm --filter dsh-better build      # 产出 lib/
 ```
 
-`src/client/search.ts` 是纯排序逻辑（无 DOM、无 React），`groups.ts` 复刻原生分组与 per-group 排序，`overlay.tsx` 负责渲染与遮蔽，`focus.ts` 是快捷键的声明、解析器与两条宿主探测（当前会话、输入框是否在屏）。`test/focus.test.ts` 把宿主的命令 id 规则、web 可接受组合与解析器的三种让位情形钉成断言——注册被宿主拒绝时命令会从面板里消失且不报错，这种失败只能靠断言挡住。
+`src/client/search.ts` 是纯排序逻辑（无 DOM、无 React），`groups.ts` 复刻原生分组与 per-group 排序，`overlay.tsx` 负责渲染与遮蔽，`focus.ts` 是快捷键的声明、解析器与两条宿主探测（当前会话、输入框是否在屏）。`alias-store.ts` 是别名的文档编解码、增删改与两套草稿匹配（无 DOM、无 React），`alias-source.ts` 只生产原生菜单的候选与插入文本，`alias-watcher.tsx` 只决定何时用 `toggleSource` 打开它，`alias-page.tsx` 是设置页。`test/focus.test.ts` 把宿主的命令 id 规则、web 可接受组合与解析器的三种让位情形钉成断言——注册被宿主拒绝时命令会从面板里消失且不报错，这种失败只能靠断言挡住。
 
 `composer-clipboard.ts` 是剪贴板契约（编码、解码、纯文本拼装、路径列表解析、按路径去重），无 DOM 无 React，`test/composer-clipboard.test.ts` 钉住三件事：同应用往返无损、纯文本那份能单独用、文本解析足够窄（提到路径的句子不会被吞成附件）。`composer-attachments.tsx` 是附件栏的包装组件与 DOM 事件面，行为靠真机验证——全选标记、复制写入、粘贴还原、去重、清除时机。
 

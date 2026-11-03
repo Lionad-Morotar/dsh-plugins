@@ -19,6 +19,11 @@
  */
 import type { ReactNode } from "react";
 
+import { createAliasSettingsPage } from "./alias-page.tsx";
+import { createAliasSource } from "./alias-source.ts";
+import { createAliasStore } from "./alias-store.ts";
+import { insertAliasPageStyles } from "./alias-styles.ts";
+import { createAliasWatcher, type AliasTriggerController } from "./alias-watcher.tsx";
 import { createOverlay, type OverlayDeps, type OverlayProps } from "./overlay.tsx";
 import {
   createComposerAttachments,
@@ -58,6 +63,21 @@ import type { Primitives } from "./primitives.ts";
 
 /** The overlay slot the picker lives in. */
 const OVERLAY_SLOT = "conversation.input.overlay";
+
+/** The settings nav slot this package contributes its alias page to. */
+const ALIAS_SECTION_SLOT = "settings.section";
+
+/** A fresh section id, so the alias page is its own nav entry. */
+const ALIAS_SECTION_ID = "aliases";
+
+/** Sits just after the tab page (55) and before the workbench page (60). */
+const ALIAS_SECTION_ORDER = 56;
+
+/** The invisible overlay entry that opens the alias menu for bare keywords. */
+const ALIAS_WATCHER_ID = "alias-watcher";
+
+/** A floating-entry order after the visible menus; the watcher renders null. */
+const ALIAS_WATCHER_ORDER = 50;
 
 /** The composer seat whose trigger opens the picker instead of its own menu. */
 const SEAT_SLOT = "conversation.input.model";
@@ -150,7 +170,7 @@ export interface SlotsLike {
    * overlay's signature is what stops the page from having to pretend it
    * receives overlay props.
    */
-  registerUntyped?(options: SlotRegistration, component: () => unknown): () => void;
+  registerUntyped?(options: SlotRegistration, component: unknown): () => void;
   inject(key: string, callback: () => () => void): () => void;
   subscribe?(key: string, listener: () => void): () => void;
 }
@@ -203,11 +223,37 @@ export interface DirectorySnapshotLike {
   readonly groups: readonly { readonly id: string; readonly models: readonly unknown[] }[];
 }
 
+/** The input-trigger service surface used by the alias source and watcher. */
+export interface InputTriggersLike {
+  /** Register one `/` or `@` source; the disposer removes it. */
+  registerSource(source: unknown): () => void;
+  /** Resolve a session's controller for programmatic menu opening. */
+  sessionOf(actx: unknown): AliasTriggerController;
+}
+
+/** The scope the `inputTriggers` soft probe hands back. */
+export interface InputTriggersScopeLike {
+  readonly inputTriggers: InputTriggersLike;
+  effect(callback: () => () => void, label?: string): void;
+}
+
+/** One session's published composer state, narrowed to what the watcher reads. */
+export interface AliasInputStoreLike {
+  getSnapshot(): { readonly draft: string; readonly draftRev: number; readonly phase: "plain" | "adjudicating" | "claimed" | "submitting" };
+  subscribe(listener: () => void): () => void;
+}
+
+/** The slice of `ctx.conversation` the watcher reaches the draft through. */
+export interface ConversationLike {
+  readonly input?: { for?(scope: unknown): { readonly state: AliasInputStoreLike } | undefined };
+}
+
 /** The client context this plugin reads. */
 export interface ClientContextLike {
   readonly slots: SlotsLike;
   readonly sessions: SessionsLike;
   readonly commandUi: CommandUiLike;
+  readonly conversation?: ConversationLike;
   readonly locale: {
     /** Register a namespace's dictionaries, keyed by BCP 47-style locale tag. */
     register(namespace: string, dictionaries: Readonly<Record<string, Readonly<Record<string, string>>>>): () => void;
@@ -236,6 +282,7 @@ export interface ClientContextLike {
    * through this object — Cordis refuses a nested lookup that was not declared.
    */
   readonly remote?: unknown;
+  get?(name: string): unknown;
   effect(callback: () => () => void, label?: string): void;
   /**
    * Run a callback once the named services are mounted.
@@ -305,7 +352,7 @@ export const clientPlugin = {
   name: "dsh-better",
   // `modelDirectories` needs `remote.session` in scope, so both are declared:
   // the service builds its directories from that remote namespace.
-  inject: ["slots", "sessions", "commandUi", "locale", "modelDirectories", "remote", "remote.session"],
+  inject: ["slots", "sessions", "commandUi", "conversation", "locale", "modelDirectories", "remote", "remote.session"],
 
   apply(ctx: ClientContextLike): void {
     const doc = globalThis.document;
@@ -320,6 +367,15 @@ export const clientPlugin = {
     // The compression count carries its own sheet: it is installed by the dock
     // entry rather than the picker, so the two surfaces stay independent.
     ctx.effect(() => installCompactionStyles(doc), "dsh-better: compaction count stylesheet");
+
+    // Skill aliases. One document is shared by three surfaces: the settings page
+    // that edits it, the `/` source that lists it in the shipped slash menu, and
+    // the watcher that opens that same menu for bare keywords.
+    const aliases = createAliasStore(deviceStorage());
+    const aliasText = aliasTranslator(ctx);
+    // Shared one-shot flag: the watcher opens a synthetic menu for a bare
+    // keyword, and the source must serve rows even though prefix mode is off.
+    const aliasBareMenu = { open: false };
 
     // The two panel widths. The layout store is memory-only: every load rebuilds
     // it from the contract literals (left sidebar 280px, right panel null → 45%
@@ -498,6 +554,104 @@ export const clientPlugin = {
           );
         }),
       "dsh-better: composer attachment selection",
+    );
+
+    // The alias source, registered into the shipped trigger pipeline as one more
+    // `/` group. A soft probe because a host without the input-trigger bundle
+    // must still get every other feature in this package.
+    let inputTriggers: InputTriggersLike | undefined;
+    ctx.inject?.<InputTriggersScopeLike>(["inputTriggers"], scope => {
+      inputTriggers = scope.inputTriggers;
+      scope.effect(
+        () => () => {
+          inputTriggers = undefined;
+        },
+        "dsh-better: alias trigger service",
+      );
+      scope.effect(
+        () =>
+          scope.inputTriggers.registerSource(
+            createAliasSource({
+              config: () => aliases.getSnapshot(),
+              translate: aliasText,
+              bareMenuOpen: () => aliasBareMenu.open,
+            }),
+          ),
+        "dsh-better: alias slash source",
+      );
+    });
+
+    // The alias menu watcher. With the prefix on it reopens the shipped menu after
+    // the native one closes on a trailing space; with the switch off it opens the
+    // same menu programmatically for a bare keyword.
+    ctx.effect(
+      () =>
+        ctx.slots.inject(OVERLAY_SLOT, () => {
+          const AliasWatcher = createAliasWatcher({
+            store: aliases,
+            bareMenuOpen: aliasBareMenu,
+            inputStoreFor: sessionId => {
+              const actx = ctx.sessions.scope?.(sessionId);
+              if (actx === undefined || ctx.conversation === undefined) return undefined;
+              try {
+                return ctx.conversation.input?.for?.(actx)?.state;
+              } catch {
+                return undefined;
+              }
+            },
+            controllerFor: sessionId => {
+              const actx = ctx.sessions.scope?.(sessionId);
+              if (actx === undefined) return undefined;
+              const triggers = (readHostService(ctx, "inputTriggers") ?? inputTriggers) as
+                | InputTriggersLike
+                | undefined;
+              if (triggers === undefined) return undefined;
+              try {
+                return triggers.sessionOf(actx);
+              } catch {
+                return undefined;
+              }
+            },
+          });
+          return registerComponent(
+            ctx.slots,
+            {
+              name: OVERLAY_SLOT,
+              id: ALIAS_WATCHER_ID,
+              order: ALIAS_WATCHER_ORDER,
+              inject: (sessionId) => ({ sessionId }),
+            },
+            AliasWatcher,
+          );
+        }),
+      "dsh-better: alias selector watcher",
+    );
+
+    // The alias settings page. A page of its own rather than a General row: the
+    // table is the editor, and it needs room to show the keyword → target →
+    // params relationship.
+    ctx.effect(
+      () =>
+        ctx.slots.inject(ALIAS_SECTION_SLOT, () => {
+          const removeStyles = doc === undefined ? undefined : insertAliasPageStyles(doc);
+          const Page = createAliasSettingsPage({ store: aliases, translate: aliasText });
+          const removeSection = registerPlain(
+            ctx.slots,
+            {
+              name: ALIAS_SECTION_SLOT,
+              id: ALIAS_SECTION_ID,
+              order: ALIAS_SECTION_ORDER,
+              label: () => ctx.locale.bind?.(NS)?.("alias.nav") ?? "Skill aliases",
+              locale: NS,
+            },
+            Page as unknown as () => unknown,
+          );
+          return () => {
+            removeSection();
+            removeStyles?.();
+          };
+        }),
+      "dsh-better: alias settings page",
     );
 
     // The tab page. It occupies a settings section of its own because the thing
@@ -710,6 +864,21 @@ function registerPlain(
 }
 
 /**
+ * Register a component whose props the overlay signature does not describe.
+ *
+ * The alias watcher receives a `sessionId` inject rather than the overlay's
+ * popup props, so it goes through the widened view.
+ */
+function registerComponent(
+  slots: SlotsLike,
+  options: SlotRegistration,
+  component: unknown,
+): () => void {
+  const register = slots.registerUntyped ?? (slots.register as unknown as (options: SlotRegistration, component: unknown) => () => void);
+  return register.call(slots, options, component);
+}
+
+/**
  * The ledger the tab controller reads.
  *
  * `entriesOfSlot` is the shadowing projection, so a cell another plugin has
@@ -730,6 +899,45 @@ function deviceStorage(): Storage | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Read a host service without assuming a property read is legal.
+ *
+ * Cordis refuses property access for undeclared services; `get` is the
+ * non-throwing resolver. Watcher callbacks run on the keystroke path, where a
+ * missing service should degrade to "no alias menu", never throw.
+ * @param ctx - client context.
+ * @param name - service key.
+ * @returns the service, or undefined when it is not mounted.
+ */
+function readHostService(ctx: ClientContextLike, name: string): unknown {
+  try {
+    if (typeof ctx.get === "function") return ctx.get(name);
+    return (ctx as unknown as Record<string, unknown>)[name];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The `better` translator in the shape the alias surfaces call.
+ *
+ * Read lazily on every call so a locale switch relabels the next menu open and
+ * the next page paint without re-registering anything. The raw key is the last
+ * resort, never a crash: these strings decorate an optional feature.
+ */
+function aliasTranslator(ctx: ClientContextLike): (key: string, params?: Record<string, string | number>) => string {
+  return (key, params) => {
+    try {
+      const bound = ctx.locale.bind?.(NS) as
+        | ((key: string, params?: Record<string, string | number>) => string)
+        | undefined;
+      return bound?.(key, params) ?? key;
+    } catch {
+      return key;
+    }
+  };
 }
 
 /**
