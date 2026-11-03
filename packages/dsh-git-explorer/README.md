@@ -31,7 +31,7 @@
 - 宿主服务 `GitExplorerService`：Typert Remote 服务，服务名与线命名空间都是 `gitExplorer`，向客户端暴露 `snapshot` / `query` / `commit` / `show` / `branches` / `switchBranch` / `run` 七个端点。`branches` 是只读的分支清单，`switchBranch` 是唯一的写端点；`show` 按 `<hash>:<path>` 只读读取某个提交版本的单文件内容页；`run` 仍是类型化占位，当前一律回 `not-implemented`。
 - 客户端传输走连接服务的原生 RPC：`ctx.get("connection").rpc.call(rpc, "/api", "gitExplorer/<method>", { args: { request } }, signal)`，返回值是 `{ ok, value }` 传输封套。之所以不用 `ctx.remote.gitExplorer`：那个类型化命名空间只存在于「用 `ctx.remote.$mount()` 挂载了生成贡献物」的包里，第三方包没有生成物；宿主侧的 `typertRemote` 绑定会被网关的 source-mode 发现枚举，路由 `/api/gitExplorer/<method>` 因此开箱可用。
 - 只走 argv：所有 git 调用都是数组，从 `git` 开始，不拼 shell；每条命令 20s 超时、4MB 输出预算，超出走 spill 回读，stdout 有损时明确失败而不是交出半页数据。
-- 仓库快照：仓库根、当前分支与 HEAD（含游离 HEAD、领先 / 落后）、按 hash 分组的引用、工作区变更、逐文件增删行数、首页提交与泳道、原始 `git status --porcelain=v2 -z` 文本（供文件树着色复用）。
+- 仓库快照：仓库根、当前分支与 HEAD（含游离 HEAD、领先 / 落后）、按 hash 分组的引用、工作区变更、逐文件增删行数、首页提交与泳道、原始 `git status --porcelain=v2 -z` 文本（供文件树着色复用）。快照还带 `remotes`：`git remote -v` 的远端清单，每个名字一条、按名字字典序，同时有 fetch 与 push 时取 fetch URL，只有 push 时用 push URL；URL 原样保留不做归一化（归一化与 provider 识别在客户端），所以 `git@host:owner/repo.git` 与 `https://host/owner/repo` 在这里是两个不同的字符串。
 - 提交查询：`git log --topo-order --parents`，多取一条判断 `hasMore` 后丢掉。查询端点支持 `skip` / `limit`、`--grep` 与 `--author`（面板本身只用分页）；ref 只接受分支、标签或提交名，带修订语法或 `..` 的一律拒绝。
 - 泳道布局：单次扫描加最小堆复用泳道，线性历史同泳道、分叉换道、同层不撞道；父提交不在本页时只留悬空边，不占道。3000 commit 的解析与泳道分配在本机是 5ms 量级，判据门槛是 300ms。
 - 两栏视图：左侧变更按目录分组，状态字母（A/M/D/R/C/T/U/!）加每文件 `+n −n`；点非目录文件会跳到文件面板并打开对应行。右侧提交图只渲染视口内的行，选中提交在下方展开父提交、说明与变更文件清单。

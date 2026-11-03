@@ -581,6 +581,25 @@ function parseCommitMeta(text) {
     body
   };
 }
+function parseRemotes(text) {
+  const chosen = /* @__PURE__ */ new Map();
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\r$/u, "");
+    if (line.trim() === "") continue;
+    const tab = line.indexOf("	");
+    if (tab <= 0) continue;
+    const name2 = line.slice(0, tab);
+    const rest = line.slice(tab + 1);
+    const direction = /\s\((fetch|push)\)$/u.exec(rest);
+    if (direction === null) continue;
+    const url = rest.slice(0, direction.index).trim();
+    if (url === "") continue;
+    const fetch = direction[1] === "fetch";
+    const previous = chosen.get(name2);
+    if (previous === void 0 || fetch && !previous.fetch) chosen.set(name2, { url, fetch });
+  }
+  return [...chosen.entries()].map(([name2, entry]) => ({ name: name2, url: entry.url })).sort((left, right) => left.name.localeCompare(right.name));
+}
 
 // src/host/detail.ts
 var SAFE_HASH = /^[0-9a-fA-F]{4,64}$/u;
@@ -1046,7 +1065,8 @@ function emptySnapshot(root) {
     lanes: [],
     counts: { commits: 0, branches: 0, changes: 0 },
     status: "",
-    stats: []
+    stats: [],
+    remotes: []
   };
 }
 function mergeStats(staged, worktree) {
@@ -1109,7 +1129,11 @@ async function collectSnapshot(options, request = {}, signal) {
     options.runner.run(["status", "--porcelain=v2", "-z", "--branch"], { cwd: root, signal }),
     options.runner.run(["for-each-ref", REF_FORMAT, "refs/heads", "refs/remotes", "refs/tags"], { cwd: root, signal }),
     options.runner.run(["diff", "--numstat", "-z"], { cwd: root, signal }),
-    options.runner.run(["diff", "--cached", "--numstat", "-z"], { cwd: root, signal })
+    options.runner.run(["diff", "--cached", "--numstat", "-z"], { cwd: root, signal }),
+    // The remote list rides the same first-paint read: a client that wants to
+    // build a link to the code needs it, and a second round trip would make the
+    // link appear a beat after the panel.
+    options.runner.run(["remote", "-v"], { cwd: root, signal })
   ];
   const historyCommands = unborn ? null : [
     options.runner.run(["log", "--all", "--topo-order", "--parents", LOG_FORMAT2, `--max-count=${maxCommits}`], {
@@ -1118,11 +1142,11 @@ async function collectSnapshot(options, request = {}, signal) {
     }),
     options.runner.run(["rev-list", "--count", "--all"], { cwd: root, signal })
   ];
-  const [status, refs, worktreeStats, stagedStats] = await Promise.all(commands);
+  const [status, refs, worktreeStats, stagedStats, remotes] = await Promise.all(commands);
   const history = historyCommands === null ? null : await Promise.all(historyCommands);
   const log = history?.[0];
   const count = history?.[1];
-  for (const result of [status, refs, worktreeStats, stagedStats, ...history ?? []]) {
+  for (const result of [status, refs, worktreeStats, stagedStats, remotes, ...history ?? []]) {
     const failure = runFailure(result);
     if (failure !== null) return { ok: false, error: failure };
     if (result.stdoutLossy) return fail("git-failed", "command output exceeded the collection budget");
@@ -1154,7 +1178,8 @@ async function collectSnapshot(options, request = {}, signal) {
         changes: changes.length
       },
       status: status.stdout,
-      stats: mergeStats(parseNumStatZ(stagedStats.stdout), parseNumStatZ(worktreeStats.stdout))
+      stats: mergeStats(parseNumStatZ(stagedStats.stdout), parseNumStatZ(worktreeStats.stdout)),
+      remotes: parseRemotes(remotes.stdout)
     }
   };
 }
