@@ -17,6 +17,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, 
 import { createTerminalPanel } from "./terminal-panel.tsx";
 import { bleedBetween, pickColumn, type Box } from "./bleed.ts";
 import { createDockController, type DockVisibilitySource } from "./dock-controller.ts";
+import { initialFocusGate, noteClaim, noteShown, type FocusGate } from "./focus-request.ts";
 import { TERMINAL_PANEL_KIND, type DockPanel, type DockPanelKind, type DockState } from "./dock-state.ts";
 import { kindPickerChoices, planPanelBody, type PanelBodyPlan, type PanelKindDescriptor } from "./panel-body.ts";
 import type { DockHost } from "./host.ts";
@@ -391,7 +392,12 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
   }
 
   /** One panel body; owns the first `rack.open` for a terminal panel. */
-  function DockBody({ panel, sessionId, label }: { panel: DockPanel; sessionId: string; label: string }) {
+  function DockBody({ panel, sessionId, label, focusToken }: {
+    panel: DockPanel;
+    sessionId: string;
+    label: string;
+    focusToken: number;
+  }) {
     const plan = planPanelBody(panel.kind, host.panelKinds());
     if (plan.plan === "unknown") {
       return (
@@ -407,12 +413,15 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
         <div style={emptyStyle}>{t("dock.serviceMissing")}</div>
       );
     }
-    return <TerminalPanel binding={binding} label={label} />;
+    return <TerminalPanel binding={binding} label={label} focusToken={focusToken} />;
   }
 
   function TermDock() {
     const visible = useDockVisible(visibility);
     const snapshot = useSyncExternalStore(dock.subscribe, dock.snapshot);
+    const shown = visible && snapshot.mode !== "minimized";
+    const [focusGate, setFocusGate] = useState<FocusGate>(() => initialFocusGate(shown));
+    if (focusGate.shown !== shown) setFocusGate(noteShown(focusGate, shown));
     const sessionId = host.currentSessionId();
     const terminals = host.terminals();
     const panels = snapshot.panels.filter(panel => panel.sessionId === undefined || panel.sessionId === sessionId);
@@ -484,7 +493,10 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
                 data-panel-tab={panel.id}
                 data-panel-kind={panel.kind}
                 data-active={panel.id === activeId ? "true" : "false"}
-                onClick={() => dock.activate(panel.id)}
+                onClick={() => {
+                  dock.activate(panel.id);
+                  setFocusGate(current => noteClaim(current));
+                }}
                 style={panel.id === activeId ? tabActiveStyle : tabStyle}
               >
                 {panelLabel(panel, index)}
@@ -566,6 +578,7 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
                 panel={panel}
                 sessionId={sessionId}
                 label={panelLabel(panel, index)}
+                focusToken={panel.id === activeId ? focusGate.token : 0}
               />
             ))}
           </div>

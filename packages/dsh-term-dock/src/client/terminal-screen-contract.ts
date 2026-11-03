@@ -19,4 +19,12 @@ export interface TerminalScreenProps {
   readonly readOnly: boolean;
   /** Cell font size in pixels. */
   readonly fontSize?: number;
+  /**
+   * Focus the emulator when this number changes, and never otherwise.
+   *
+   * A monotonic request rather than a boolean, because the screen stays mounted
+   * while the dock is hidden and a boolean that stays true would refocus on
+   * every render. Zero and an absent value never focus.
+   */
+  readonly focusToken?: number;
 }

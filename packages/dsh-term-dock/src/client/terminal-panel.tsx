@@ -66,6 +66,11 @@ export interface TerminalPanelProps {
   readonly binding: TerminalBinding;
   /** Visible panel title, also the emulator's accessible name. */
   readonly label: string;
+  /**
+   * Latest focus request for this panel. Passed through even when it is not the
+   * active one: the screen only acts on a change, so a stale token is inert.
+   */
+  readonly focusToken?: number;
 }
 
 /**
@@ -74,7 +79,7 @@ export interface TerminalPanelProps {
  * @returns the component the dock lays out per panel.
  */
 export function createTerminalPanel({ t }: { t: Translate }): ComponentType<TerminalPanelProps> {
-  function TerminalPanel({ binding, label }: TerminalPanelProps) {
+  function TerminalPanel({ binding, label, focusToken }: TerminalPanelProps) {
     const view = useSyncExternalStore(binding.state.subscribe, binding.state.getSnapshot);
     const status = describeTerminal(view, t);
 
@@ -84,7 +89,7 @@ export function createTerminalPanel({ t }: { t: Translate }): ComponentType<Term
       <div data-workbench-terminal-panel={label} data-terminal-phase={view.phase} style={panelStyle}>
         <div style={screenStyle}>
           <Suspense fallback={<span style={loadingStyle}>{t("dock.chunkLoading")}</span>}>
-            <LazyTerminalScreen binding={binding} label={label} readOnly={status.readOnly} />
+            <LazyTerminalScreen binding={binding} label={label} readOnly={status.readOnly} focusToken={focusToken} />
           </Suspense>
         </div>
         {status.label === undefined ? null : (

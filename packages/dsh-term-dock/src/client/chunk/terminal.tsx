@@ -93,9 +93,10 @@ function readTheme(node: HTMLElement): ITheme {
  * @param props - binding, accessible label and input policy.
  * @returns the holder element xterm draws into.
  */
-export function TerminalScreen({ binding, label, readOnly, fontSize = 12 }: TerminalScreenProps) {
+export function TerminalScreen({ binding, label, readOnly, fontSize = 12, focusToken = 0 }: TerminalScreenProps) {
   const holder = useRef<HTMLDivElement | null>(null);
   const emulator = useRef<Terminal | null>(null);
+  const spentFocus = useRef(focusToken);
   const measureRef = useRef<() => void>(() => {});
   const grid = useRef({ cols: 0, rows: 0 });
 
@@ -191,6 +192,17 @@ export function TerminalScreen({ binding, label, readOnly, fontSize = 12 }: Term
     if (terminal === null) return;
     terminal.options.disableStdin = readOnly;
   }, [readOnly]);
+
+  // The creation effect above starts the emulator before this one runs, so a
+  // token that arrives with the first render is not lost. Read-only screens
+  // have nowhere useful to put the caret, and a spent token is never replayed.
+  useLayoutEffect(() => {
+    if (focusToken === 0 || focusToken === spentFocus.current || readOnly) return;
+    const terminal = emulator.current;
+    if (terminal === null) return;
+    spentFocus.current = focusToken;
+    terminal.focus();
+  }, [focusToken, readOnly]);
 
   return <div ref={holder} data-workbench-terminal-screen={label} />;
 }
