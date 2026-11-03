@@ -111,6 +111,67 @@ function readService(ctx: HostContextLike, name: string): unknown {
 }
 
 /**
+ * How often to re-read `webServer` while it is still absent, and how long to keep
+ * trying.
+ *
+ * The desktop web app provides the server well inside the first second, so 250ms
+ * is frequent enough to feel immediate without busy-looping a fiber. The 15s cap
+ * is the stop condition for a host that never grows one at all (headless): the
+ * same numbers `dsh-arch` arrived at for the same seam.
+ */
+export const WEB_SERVER_POLL_MS = 250;
+export const WEB_SERVER_WAIT_MS = 15000;
+
+/** What a `webServer` read may answer; the poll treats null as absent. */
+export type WebServerProbeRead = WebServerFace | null | undefined;
+
+/**
+ * Call `mount` once `read` answers a web server, waiting a bounded time for it.
+ *
+ * The first read is synchronous, so a host that already has the service mounts in
+ * the same turn with no timer at all. A host that never provides one stops after
+ * {@link WEB_SERVER_WAIT_MS} and is left exactly as it was.
+ *
+ * A throwing read is treated as "not yet": the scope may not be composed, and
+ * giving up on the first exception would lose the route for the whole session.
+ * @param read - reads the service from the calling scope.
+ * @param mount - installs the route; called at most once.
+ * @returns a disposer that stops the wait, safe to call after a successful mount.
+ */
+export function whenWebServer(
+  read: () => WebServerProbeRead,
+  mount: (webServer: WebServerFace) => void,
+): () => void {
+  const attempt = (): WebServerFace | undefined => {
+    try {
+      const value = read();
+      return value === null ? undefined : value;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const present = attempt();
+  if (present !== undefined) {
+    mount(present);
+    return () => undefined;
+  }
+
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    const webServer = attempt();
+    if (webServer === undefined) {
+      if (Date.now() - startedAt >= WEB_SERVER_WAIT_MS) clearInterval(timer);
+      return;
+    }
+    clearInterval(timer);
+    mount(webServer);
+  }, WEB_SERVER_POLL_MS);
+
+  return () => clearInterval(timer);
+}
+
+/**
  * Resolve a session's workspace directory.
  *
  * The live store is consulted first and persistence second, because a session
@@ -176,13 +237,23 @@ async function loadSkillProfile(
 }
 
 /**
- * Mount the skill-profile route when the host has a web server.
+ * Mount the skill-profile route once the host has a web server.
  *
- * A one-shot probe, deliberately: the route is an enhancement, and a host that
- * grows its web server after this fiber activates simply leaves the route
- * unmounted. The client then degrades to showing the skill's name and path
- * without parameters, which is the same thing it shows for a skill whose
- * frontmatter has no hint. Nothing else this package does is affected.
+ * A one-shot `ctx.get("webServer")` during `apply` misses the desktop
+ * composition: this row activates before `@deepseek-ai/dsh-web-app` provides the
+ * server, so the probe reads undefined and the route would never be registered.
+ * That is not a cosmetic loss — the route is the panel's entire data plane, so
+ * without it the panel can only show a skill's name and path.
+ *
+ * `ctx.inject` does not close the gap either. It re-checks the scope that
+ * provided the service, and a loader row's scope does not inherit the root's
+ * isolation table, so its own `ctx.get` never observes a service the root
+ * provides (verified against cordis 4). `dsh-arch` reached the same conclusion
+ * and polls its own scope; this follows it.
+ *
+ * The wait is bounded on purpose. A host that never grows a web server (headless)
+ * must stop looking and stay alive, which is the same degraded outcome as a
+ * one-shot miss: the projections and every client feature keep working.
  * @param ctx - host context.
  */
 function registerSkillProfile(ctx: HostContextLike): void {
@@ -197,14 +268,10 @@ function registerSkillProfile(ctx: HostContextLike): void {
     );
   };
 
-  const present = readService(ctx, "webServer") as WebServerFace | undefined;
-  if (present !== undefined && present !== null) {
-    mount(present);
-    return;
-  }
-  // Older hosts expose the service only through `inject`; the callback fires
-  // when the server appears, and never fires when it does not.
-  ctx.inject?.<{ readonly webServer: WebServerFace }>(["webServer"], scope => {
-    if (scope.webServer !== undefined && scope.webServer !== null) mount(scope.webServer);
-  });
+  // The poll rides this plugin's fiber, so unloading the plugin stops it even
+  // while it is still waiting for a server that will never arrive.
+  ctx.effect(
+    () => whenWebServer(() => readService(ctx, "webServer") as WebServerProbeRead, mount),
+    "dsh-better: webServer wait",
+  );
 }
