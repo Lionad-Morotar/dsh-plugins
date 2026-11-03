@@ -6,18 +6,20 @@
  * panels. Process lifetime stays with the host's `webTerminals` service: this file
  * decides layout, focus and which panel the keyboard acts on, nothing else.
  *
- * Keyboard discipline (blueprint D5): the dock binds exactly two keys locally and
- * both are scoped to the dock element. `Ctrl+W` closes the current terminal and
- * `Esc` returns to chat through the core's view seam. Everything else — including
- * the workbench's `Cmd/Ctrl+Shift+*` family — belongs to the core's shortcut
- * registration and is deliberately not read here.
+ * Keyboard discipline: the dock reads three keys, all scoped to the dock element.
+ * `Cmd/Ctrl+D` (and `Cmd+Insert` on macOS) splits the current panel, `Cmd/Ctrl+W`
+ * arms the current panel and closes it on the second press, and `Esc` returns to
+ * chat through the core's view seam. Everything else, including the workbench's
+ * `Cmd/Ctrl+Shift+*` family, belongs to the core and is deliberately not read here.
  */
 import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 
 import { createTerminalPanel } from "./terminal-panel.tsx";
 import { bleedBetween, pickColumn, type Box } from "./bleed.ts";
 import { createDockController, type DockVisibilitySource } from "./dock-controller.ts";
+import { CLOSE_ARM_MS, IDLE_ARM, isArmed, pressClose, reconcileArm, type CloseArm } from "./close-arm.ts";
 import { initialFocusGate, noteClaim, noteShown, type FocusGate } from "./focus-request.ts";
+import { dockAction, detectPlatform } from "./keyboard.ts";
 import { TERMINAL_PANEL_KIND, type DockPanel, type DockPanelKind, type DockState } from "./dock-state.ts";
 import { kindPickerChoices, planPanelBody, type PanelBodyPlan, type PanelKindDescriptor } from "./panel-body.ts";
 import type { DockHost } from "./host.ts";
@@ -442,8 +444,28 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
       dock.close(id);
     };
 
+    // The mark names one panel and a deadline. It lives in a ref because the
+    // second press has to see the first one synchronously, and in state because
+    // the tab's close mark has to repaint. A timer drops it when the deadline
+    // passes with no second press.
+    const armRef = useRef<CloseArm>(IDLE_ARM);
+    const [armedId, setArmedId] = useState<string | null>(null);
+    const armTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const setArm = (arm: CloseArm): void => {
+      armRef.current = arm;
+      setArmedId(arm.panelId);
+      if (armTimer.current !== undefined) clearTimeout(armTimer.current);
+      armTimer.current = arm.panelId === null ? undefined : setTimeout(() => setArm(IDLE_ARM), CLOSE_ARM_MS);
+    };
+    useEffect(() => () => {
+      if (armTimer.current !== undefined) clearTimeout(armTimer.current);
+    }, []);
+    const reconciled = reconcileArm(armRef.current, panels.map(panel => panel.id));
+    if (reconciled !== armRef.current) setArm(reconciled);
+
     const handleKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
       if (event.key === "Escape") {
+        if (armRef.current.panelId !== null) setArm(IDLE_ARM);
         if (hasOpenPopup(event.currentTarget)) return;
         const current = host.currentSessionId();
         if (current === undefined) return;
@@ -453,17 +475,40 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
         }
         return;
       }
-      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "w") {
-        const target = snapshot.activeId ?? panels[0]?.id;
-        if (target === undefined) return;
-        event.preventDefault();
-        event.stopPropagation();
-        closePanel(target);
+      const action = dockAction(event.nativeEvent, detectPlatform());
+      if (action === undefined) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (action === "split") {
+        const before = dock.snapshot().panels.length;
+        dock.split();
+        if (dock.snapshot().panels.length === before) return;
+        const opened = dock.snapshot().activeId;
+        if (opened !== null) setFocusGate(current => noteClaim(current));
+        return;
       }
+      const target = snapshot.activeId ?? panels[0]?.id;
+      if (target === undefined) return;
+      const pressed = pressClose(armRef.current, target, Date.now());
+      setArm(pressed.arm);
+      if (pressed.close) closePanel(target);
     };
 
     const rootRef = useRef<HTMLDivElement | null>(null);
     useDockBleed(rootRef, visible);
+    useEffect(() => {
+      const root = rootRef.current;
+      if (root === null) return undefined;
+      // Leaving the dock cancels the confirmation. A focus move inside the dock
+      // (tab to tab, or into the emulator) keeps it, which is what the second
+      // press needs.
+      const disarm = (event: FocusEvent): void => {
+        if (event.relatedTarget instanceof Node && root.contains(event.relatedTarget)) return;
+        if (armRef.current.panelId !== null) setArm(IDLE_ARM);
+      };
+      root.addEventListener("focusout", disarm);
+      return () => root.removeEventListener("focusout", disarm);
+    }, []);
     const height = snapshot.mode === "minimized" ? "auto" : snapshot.mode === "fullscreen" ? "min(72vh, 900px)" : DOCK_REST_HEIGHT;
     const activeId = snapshot.activeId;
     const minimized = snapshot.mode === "minimized";
@@ -502,13 +547,16 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
                 {panelLabel(panel, index)}
                 <span
                   role="button"
-                  aria-label={t("dock.closePanel")}
+                  aria-label={panel.id === armedId && isArmed(armRef.current, Date.now()) ? t("dock.closeConfirm") : t("dock.closePanel")}
                   data-testid={`dock-tab-close-${panel.id}`}
+                  data-close-armed={panel.id === armedId ? "true" : "false"}
                   onClick={event => {
                     event.stopPropagation();
                     closePanel(panel.id);
                   }}
-                  style={{ marginLeft: 4, opacity: 0.55 }}
+                  style={panel.id === armedId
+                    ? { marginLeft: 4, opacity: 1, color: "#c4483c", fontWeight: 700 }
+                    : { marginLeft: 4, opacity: 0.55 }}
                 >
                   ×
                 </span>
