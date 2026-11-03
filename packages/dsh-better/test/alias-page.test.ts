@@ -15,8 +15,8 @@ import { createAliasStore, type AliasRow } from "../src/client/alias-store.ts";
 
 /** Translation keys resolve to readable sentinels. */
 function translate(key: string, params?: Record<string, string | number>): string {
-  if (key === "alias.prefix.on") return `on:${params?.example ?? ""}`;
-  if (key === "alias.prefix.off") return `off:${params?.example ?? ""}`;
+  if (key === "alias.prefix.on") return "on";
+  if (key === "alias.prefix.off") return "off";
   if (key === "alias.remove") return `remove:${params?.keyword ?? ""}`;
   return key;
 }
@@ -55,6 +55,6 @@ describe("alias settings page", () => {
     const html = render([], false);
     expect(html).toContain('data-testid="alias-empty"');
     expect(html).not.toContain('data-testid="alias-row"');
-    expect(html).toContain("off:wf");
+    expect(html).toContain("off");
   });
 });

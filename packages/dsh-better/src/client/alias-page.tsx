@@ -24,11 +24,6 @@ export interface AliasPageDeps {
   readonly translate: AliasPageTranslate;
 }
 
-/** Prefix example for the hint line; mirrors the current mode. */
-function prefixExample(prefix: boolean): string {
-  return prefix ? "/wf " : "wf ";
-}
-
 /** One table row. */
 function AliasRowEditor(props: {
   row: AliasRow;
@@ -122,9 +117,7 @@ export function createAliasSettingsPage(deps: AliasPageDeps): ComponentType {
           <span>
             <span className="dsh-better-alias-prefix-title">{t("alias.prefix.title")}</span>
             <span className="dsh-better-alias-prefix-hint">
-              {t(config.prefix ? "alias.prefix.on" : "alias.prefix.off", {
-                example: prefixExample(config.prefix),
-              })}
+              {t(config.prefix ? "alias.prefix.on" : "alias.prefix.off")}
             </span>
           </span>
           <input
