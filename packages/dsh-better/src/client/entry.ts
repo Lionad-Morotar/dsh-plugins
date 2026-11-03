@@ -20,7 +20,11 @@
 import type { ReactNode } from "react";
 
 import { createAliasSettingsPage } from "./alias-page.tsx";
-import { createAliasSource } from "./alias-source.ts";
+import {
+  createAliasSource,
+  type AliasPick,
+  type AliasPickOutcome,
+} from "./alias-source.ts";
 import { createAliasStore } from "./alias-store.ts";
 import { insertAliasPageStyles } from "./alias-styles.ts";
 import { createAliasWatcher, type AliasTriggerController } from "./alias-watcher.tsx";
@@ -575,6 +579,9 @@ export const clientPlugin = {
               config: () => aliases.getSnapshot(),
               translate: aliasText,
               bareMenuOpen: () => aliasBareMenu.open,
+              // Only routed after insertion; the command source claims the
+              // resulting `/target ` draft on the next task.
+              routeCommand: (_target, pick) => claimPickedCommand(ctx, pick),
             }),
           ),
         "dsh-better: alias slash source",
@@ -917,6 +924,57 @@ function readHostService(ctx: ClientContextLike, name: string): unknown {
     return (ctx as unknown as Record<string, unknown>)[name];
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Let the shipped command source claim an alias target after the pick inserts it.
+ *
+ * The alias source can only return text, and a pick has to stay synchronous. So
+ * the pick inserts `/target ` and this helper rebases the trigger hit onto that
+ * token on the next task, then runs the trigger controller's space adjudication.
+ * A `leadingInput` command (the `/placeholder` case) becomes a real command chip
+ * whose submit runs inside the command service's own context; skills make
+ * `onSpace` a no-op and keep the inserted text.
+ * @param ctx - client context.
+ * @param pick - the menu pick carrying the session id.
+ */
+function claimPickedCommand(ctx: ClientContextLike, pick: AliasPick): void {
+  const sessionId = pick.session?.sessionId;
+  if (sessionId === undefined) return;
+  const actx = ctx.sessions.scope?.(sessionId);
+  if (actx === undefined) return;
+  const triggers = readHostService(ctx, "inputTriggers") as InputTriggersLike | undefined;
+  if (triggers === undefined) return;
+  try {
+    const controller = triggers.sessionOf(actx);
+    const input = ctx.conversation?.input?.for?.(actx)?.state;
+    let attempts = 0;
+    const tryClaim = (): void => {
+      const snapshot = input?.getSnapshot();
+      if (snapshot === undefined || snapshot.draft.trim() === "" || !snapshot.draft.startsWith("/")) return;
+      try {
+        // The pick inserted `/target params ` as text. The trigger detector only
+        // opens a token while the caret is inside it, so hand it just the command
+        // token; the claim then replaces that span and the configured params stay
+        // behind as ordinary command arguments.
+        const token = snapshot.draft.trimStart().split(/\s/u)[0] ?? "";
+        if (!token.startsWith("/")) return;
+        controller.track?.(token, token.length, { tier: "plain" }, snapshot.draftRev);
+        if (controller.onSpace?.() === true) return;
+        // A skill target is not a command: the synthetic track above opened the
+        // command menu, so close it again before it can paint.
+        controller.dismiss?.();
+      } catch {
+        // The hit moved between the pick and the timer; text stays as typed.
+      }
+      attempts += 1;
+      // The editor publishes the inserted text on its own task; retry briefly.
+      if (attempts < 4) setTimeout(tryClaim, 25);
+    };
+    setTimeout(tryClaim, 0);
+  } catch {
+    // Scope went away; the plain text is still a valid draft.
   }
 }
 

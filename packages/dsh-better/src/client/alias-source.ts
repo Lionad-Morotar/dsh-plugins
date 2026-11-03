@@ -6,9 +6,11 @@
  * the same `技能/指令` section styling as the skill picker in the screenshot.
  *
  * The source intentionally implements only `candidates` and `onPick`. Space and
- * Enter adjudication stay with the shipped command/skill sources: an alias is a
- * view over rows, not a host command, and should be chosen from the panel rather
- * than silently executed by a keystroke.
+ * Enter adjudication stay with the shipped command/skill sources. The pick
+ * inserts the canonical `/target params ` text; `routeCommand` then lets the
+ * plugin hand a command target to the command source, which upgrades the text
+ * into a real command chip. Targets that are not commands (skills) keep the
+ * plain-text insertion path.
  */
 import type { AliasConfig, AliasRow } from "./alias-store.ts";
 import { aliasExpansion, matchAliasRows } from "./alias-store.ts";
@@ -48,10 +50,14 @@ export interface AliasCandidateRequest {
 /** Pick shape; only the fields this source reads. */
 export interface AliasPick {
   readonly candidate: AliasCandidate;
+  readonly session?: AliasSession;
 }
 
 /** The output a pick returns to the input machine. */
 export type AliasPickOutcome = { readonly text: string } | undefined;
+
+/** Side-effect hook run after a target is resolved, used to claim commands. */
+export type AliasCommandRoute = (target: string, pick: AliasPick) => void;
 
 /** Translator seat owned by this package. */
 export type AliasTranslate = (key: string, params?: Record<string, string | number>) => string;
@@ -68,6 +74,12 @@ export interface AliasSourceDeps {
    * opens for `wf`.
    */
   readonly bareMenuOpen?: () => boolean;
+  /**
+   * Side-effect hook run after a row is resolved. The plugin uses it to let the
+   * shipped command source claim a target that names a command; skills simply
+   * keep the plain text the pick inserts.
+   */
+  readonly routeCommand?: AliasCommandRoute;
 }
 
 /** The structural source object the host registry accepts. */
@@ -130,9 +142,11 @@ export function createAliasSource(deps: AliasSourceDeps): AliasSource {
         aliasCandidateOf(row, deps.translate),
       );
     },
-    onPick({ candidate }) {
-      const row = deps.config().rows.find((item) => item.id === candidate.value);
+    onPick(pick) {
+      const row = deps.config().rows.find((item) => item.id === pick.candidate.value);
       if (row === undefined) return undefined;
+      const target = row.target.trim().replace(/^\/+/, "");
+      if (target !== "") deps.routeCommand?.(target, pick);
       const text = aliasExpansion(row);
       return text === "" ? undefined : { text };
     },

@@ -8,7 +8,12 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { createAliasSource, ALIAS_SOURCE_NAME, ALIAS_SOURCE_ORDER, ALIAS_SOURCE_TRIGGER } from "../src/client/alias-source.ts";
+import {
+  createAliasSource,
+  ALIAS_SOURCE_NAME,
+  ALIAS_SOURCE_ORDER,
+  ALIAS_SOURCE_TRIGGER,
+} from "../src/client/alias-source.ts";
 import type { AliasConfig } from "../src/client/alias-store.ts";
 
 /** A translator with the two keys the source reads. */
@@ -83,6 +88,34 @@ describe("createAliasSource", () => {
   it("picks into the canonical invocation", () => {
     const built = source();
     expect(built.onPick({ candidate: { name: "flow-workflow", value: "a" } })).toEqual({
+      text: "/flow-workflow run ",
+    });
+  });
+
+  it("routes a target through the command surface but keeps the text fallback", () => {
+    const commandConfig: AliasConfig = {
+      prefix: true,
+      rows: [{ id: "c", keyword: "td", target: "placeholder", params: "" }],
+    };
+    const calls: string[] = [];
+    const built = createAliasSource({
+      config: () => commandConfig,
+      translate,
+      routeCommand: target => {
+        calls.push(target);
+      },
+    });
+    expect(
+      built.onPick({
+        candidate: { name: "placeholder", value: "c" },
+        session: SESSION,
+      }),
+    ).toEqual({ text: "/placeholder " });
+    expect(calls).toEqual(["placeholder"]);
+  });
+
+  it("keeps plain-text insertion when there is no command router", () => {
+    expect(source().onPick({ candidate: { name: "flow-workflow", value: "a" } })).toEqual({
       text: "/flow-workflow run ",
     });
   });

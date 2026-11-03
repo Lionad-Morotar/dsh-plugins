@@ -136,6 +136,8 @@ fork 会话只算自己的：seeded 会话的日志前缀是父会话的事件�
 
 面板没有自绘：`alias-source.ts` 只提供 `candidates` 与 `onPick`，菜单本体、分组标题、键盘（↑/↓、Enter、Tab、Escape）、指针悬停与选择、`aria-activedescendant` 全是宿主 `MenuView` 的实现；这也是「操作完全仿照原生技能面板」的落地方式。`alias-watcher.tsx` 只做「什么时候打开」，不做任何菜单渲染。别名选择只插入文本，不自动提交，和原生技能面板的行为一致。
 
+选择行先插入 `/目标 参数 `。如果目标命中宿主已注册的命令（比如 `td` → `/placeholder`），插入后会把命令 token 交回同一个触发器流水线，由宿主的 command source 认领成真正的命令芯片，参数作为命令参数提交；不是命令的 skill 目标保持普通文本。这样 `td` 不会变成一条字面量 `/placeholder` 消息。
+
 配置存在 `localStorage` 的 `dsh-better.skill-aliases`，形如 `{"v":1,"prefix":true,"rows":[{"id":"…","keyword":"wf","target":"flow-workflow","params":"run"}]}`。坏文档当成空配置，坏行按类型丢弃，读取不会因为一条损坏记录丢掉整张表。
 
 ## 开发
