@@ -20,6 +20,7 @@ import { readFile } from "node:fs/promises";
 import { sessionCompactionProjection } from "./compaction.ts";
 import { registerSkillProfileRoutes, type WebServerFace } from "./host/skill-profile-routes.ts";
 import { readFrontmatterArgumentHint } from "./skill-profile.ts";
+import { sessionSkillUsageProjection } from "./skill-usage.ts";
 
 /** Loader row name; must match the id in `cordis.patch.yml`. */
 export const name = "dsh-better";
@@ -29,7 +30,7 @@ export const inject: string[] = [];
 
 /** One registered projection unit, narrowed to what this half calls. */
 interface ProjectionRegistryLike {
-  register(definition: typeof sessionCompactionProjection): () => void;
+  register(definition: typeof sessionCompactionProjection | typeof sessionSkillUsageProjection): () => void;
 }
 
 /** The scope the `sessionProjections` soft probe hands back. */
@@ -46,17 +47,22 @@ interface HostContextLike {
 }
 
 /**
- * Register the `sessionCompaction` unit.
+ * Register this package's projection units.
  *
- * The registration rides this plugin's own fiber (through `effect`), so unloading
- * the plugin takes the key back out of every snapshot instead of leaving a value
- * no one maintains.
+ * Both units ride the same registry and the same soft probe, and each
+ * registration is wrapped in its own `effect` on this plugin's fiber, so
+ * unloading the plugin takes both keys back out of every snapshot instead of
+ * leaving values no one maintains.
  * @param scope - scope carrying the registry.
  */
 function registerProjection(scope: ProjectionScopeLike): void {
   scope.effect(
     () => scope.sessionProjections.register(sessionCompactionProjection),
     "dsh-better: sessionCompaction projection",
+  );
+  scope.effect(
+    () => scope.sessionProjections.register(sessionSkillUsageProjection),
+    "dsh-better: skillUsage projection",
   );
 }
 
