@@ -239,9 +239,9 @@ describe("event binding thin layer", () => {
       new WheelEvent("wheel", { deltaY: -100, clientX: 10, clientY: 100, cancelable: true }),
     );
     const vp = diagram.viewport();
-    // One mouse notch (100px) applies 0.6 of the old fixed 1.12 step, and the
+    // One mouse notch (100px) applies 0.85 of the old fixed 1.12 step, and the
     // zoom stays anchored on the pointer rather than the canvas origin.
-    const factor = Math.exp(Math.log(1.12) * 0.6);
+    const factor = Math.exp(Math.log(1.12) * 0.85);
     expect(vp.scale).toBeCloseTo(0.75 * factor, 10);
     expect(vp.tx).toBeCloseTo(10 - (10 - 12) * factor, 10);
     expect(vp.ty).toBeCloseTo(100 - (100 - -8) * factor, 10);
@@ -250,7 +250,7 @@ describe("event binding thin layer", () => {
   it("scales the zoom with the wheel delta, so a small trackpad tick barely moves", () => {
     const diagram = createDiagram(host, structuredClone(dump.views.index as DumpView), { viewport: VIEWPORT });
     host.querySelector("svg")?.dispatchEvent(new WheelEvent("wheel", { deltaY: -8, cancelable: true }));
-    expect(diagram.viewport().scale).toBeCloseTo(0.75 * Math.exp((-(-8) / 100) * Math.log(1.12) * 0.6), 10);
+    expect(diagram.viewport().scale).toBeCloseTo(0.75 * Math.exp((-(-8) / 100) * Math.log(1.12) * 0.85), 10);
   });
 
   it("selects and drags a node through pointer events", () => {
