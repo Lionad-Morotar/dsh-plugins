@@ -15,12 +15,13 @@ import type {
   GitExplorerRemote,
   GitQueryOutcome,
   HostShutdownRemote,
+  NativeOpenFace,
   PathExplorerRemote,
   RemoteResult,
   SessionOpenFace,
 } from "./dsh.ts";
-import type { PathResolveResult, ShutdownRequestResult } from "../shared.ts";
-import { PATH_SERVICE, SHUTDOWN_SERVICE } from "../shared.ts";
+import type { NativeOpenResult, PathResolveResult, ShutdownRequestResult } from "../shared.ts";
+import { OPEN_SERVICE, PATH_SERVICE, SHUTDOWN_SERVICE } from "../shared.ts";
 
 /** The gateway's unary caller, as the connection service exposes it. */
 export interface GatewayRpc {
@@ -102,6 +103,14 @@ export function createHostShutdownFace(rpc: GatewayRpc): HostShutdownRemote {
   return {
     request: signal =>
       invoke(rpc, SHUTDOWN_SERVICE, "request", {}, signal) as Promise<RemoteResult<ShutdownRequestResult>>,
+  };
+}
+
+/** The nativeOpen face over the raw channel. */
+export function createNativeOpenFace(rpc: GatewayRpc): NativeOpenFace {
+  return {
+    open: (request, signal) =>
+      invoke(rpc, OPEN_SERVICE, "open", { request }, signal) as Promise<RemoteResult<NativeOpenResult>>,
   };
 }
 

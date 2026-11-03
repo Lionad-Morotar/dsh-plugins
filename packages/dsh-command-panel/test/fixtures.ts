@@ -17,6 +17,7 @@ import type {
   PathExplorerRemote,
   ProjectionSnapshotWire,
   SessionListState,
+  NativeOpenFace,
   SessionOpenFace,
   SessionSummary,
   SessionsService,
@@ -216,6 +217,26 @@ export function fakePathExplorer(script: PathScript = {}): PathExplorerRemote {
 export interface SessionOpenScript {
   readonly canOpen?: boolean;
   readonly openError?: string;
+}
+
+export interface NativeOpenScript {
+  /** What the host half answers; defaults to a successful open. */
+  readonly result?: "opened" | "unavailable" | "failed";
+  /**
+   * Carrier failure code. Set when the gateway never delivered a verdict
+   * (`ok: false`), which is not the same as the host half answering `"failed"`.
+   */
+  readonly error?: string;
+}
+
+/** The `remote.nativeOpen` face this package's own host half publishes. */
+export function fakeNativeOpen(script: NativeOpenScript = {}): NativeOpenFace {
+  return {
+    open: async () =>
+      script.error === undefined
+        ? { ok: true as const, value: script.result ?? "opened" }
+        : { ok: false as const, error: { code: script.error } },
+  };
 }
 
 /** The `remote.session` pair the reveal fallback asks for. */

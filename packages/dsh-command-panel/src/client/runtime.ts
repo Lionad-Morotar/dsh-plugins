@@ -27,6 +27,7 @@ import type {
   InputActions,
   LayoutService,
   LocaleService,
+  NativeOpenFace,
   PathExplorerRemote,
   PluginNavigationService,
   SessionInput,
@@ -41,7 +42,7 @@ import type {
   Unsubscribe,
   WorkspacesService,
 } from "./dsh.ts";
-import { isGitExplorerFace, isHostShutdownFace, isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
+import { isGitExplorerFace, isHostShutdownFace, isNativeOpenFace, isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
 import { runCatalogAction, type ActionDeps } from "./actions.ts";
 import { createBridgeView, type BridgeState } from "./bridge.ts";
 import { planClaim, type ClaimProbe, type ClaimTarget } from "./claims.ts";
@@ -77,7 +78,7 @@ import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from ".
 import { statusStamp } from "./status.ts";
 import { createPanelStore } from "./store.ts";
 import { directoryQuery, focusPath, parentQuery } from "./tree.ts";
-import { createPathExplorerFace, createGitExplorerFace, createHostShutdownFace, createSessionOpenFace, gatewayRpcOf } from "./wire.ts";
+import { createPathExplorerFace, createGitExplorerFace, createHostShutdownFace, createNativeOpenFace, createSessionOpenFace, gatewayRpcOf } from "./wire.ts";
 import { insertPanelStyles } from "./styles.ts";
 
 /** The three command ids; also the settings rows the reader can rebind. */
@@ -196,6 +197,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     fileReferences?: FileReferencesRemote;
     commands?: CommandsRemote;
     pathExplorer?: PathExplorerRemote;
+    nativeOpen?: NativeOpenFace;
     gitExplorer?: GitExplorerRemote;
     hostShutdown?: HostShutdownRemote;
     sessionOpen?: SessionOpenFace;
@@ -223,6 +225,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
    * half (and the session open pair) through the same `/api` routes instead.
    */
   let rpcPathExplorer: PathExplorerRemote | null | undefined;
+  let rpcNativeOpen: NativeOpenFace | null | undefined;
   let rpcSessionOpen: SessionOpenFace | null | undefined;
   let rpcGitExplorer: GitExplorerRemote | null | undefined;
   let rpcHostShutdown: HostShutdownRemote | null | undefined;
@@ -262,6 +265,21 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       rpcGitExplorer = face ?? null;
     }
     return rpcGitExplorer ?? undefined;
+  }
+
+  /**
+   * This package's own system-open face, injected first and raw-RPC after.
+   *
+   * A missing face is cached as absent exactly once: the namespace arrives
+   * through the injection when it exists, so a later lookup does not retry.
+   */
+  function nativeOpenFace(): NativeOpenFace | undefined {
+    if (isNativeOpenFace(refs.nativeOpen)) return refs.nativeOpen;
+    if (rpcNativeOpen === undefined) {
+      const rpc = gatewayRpcOf(deps.ctx);
+      rpcNativeOpen = rpc === undefined ? null : createNativeOpenFace(rpc);
+    }
+    return rpcNativeOpen ?? undefined;
   }
 
   function sessionOpenFace(): SessionOpenFace | undefined {
@@ -936,12 +954,36 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   /**
    * Open a path with the system default application.
    *
-   * The desktop host answers the session namespace's open pair; a probe that
-   * says no (web) or a host without the face at all lands on the explanatory
-   * notice, because a reveal that silently does nothing is the one failure a
-   * reader cannot diagnose.
+   * This package's own host half goes first: it runs in the reader's host
+   * process on both deployments, where the session namespace's open pair is
+   * deliberately off for web. `"unavailable"`, no face, a thrown face, and a
+   * carrier rejection (`ok: false`) all fall through to that pair, which still
+   * serves a desktop host. A carrier rejection is not the host half's verdict:
+   * the gateway refused, the transport died, or the response was malformed, so
+   * the host half never said the open failed. Only a business `"failed"`, or
+   * both openers missing, reaches the notice. A reveal that silently does
+   * nothing is the one failure a reader cannot diagnose.
    */
   async function revealWithSystemApp(absolutePath: string): Promise<void> {
+    const native = nativeOpenFace();
+    if (native !== undefined) {
+      try {
+        const opened = await native.open({ path: absolutePath });
+        if (opened.ok && opened.value === "opened") {
+          close();
+          notifyComposer(copy().noticeOpenedBySystem, "info");
+          return;
+        }
+        if (opened.ok && opened.value === "failed") {
+          notice(copy().noticeOpenUnavailable, "error");
+          return;
+        }
+        // Short of a business "failed", including ok: false, the host half
+        // has not ruled the open out, so the session channel still gets a turn.
+      } catch {
+        // A face that throws is an unavailable opener, same as a missing one.
+      }
+    }
     const face = sessionOpenFace();
     if (face !== undefined) {
       try {
@@ -1366,6 +1408,15 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   // This package's own host half publishes the pathExplorer namespace; waiting
   // for it through the runtime (not the entry's inject list) keeps a failed
   // host activation from taking the whole panel down with it.
+  disposers.push(
+    deps.ctx.inject(["remote.nativeOpen"], scope => {
+      const face = scope.get("remote.nativeOpen");
+      if (isNativeOpenFace(face)) refs.nativeOpen = face;
+      return () => {
+        refs.nativeOpen = undefined;
+      };
+    }),
+  );
   disposers.push(
     deps.ctx.inject(["remote.pathExplorer"], scope => {
       const face = scope.get("remote.pathExplorer");

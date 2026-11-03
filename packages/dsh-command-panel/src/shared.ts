@@ -12,8 +12,26 @@ export const PATH_SERVICE = "pathExplorer";
 /** Cordis service key and Typert wire namespace of the shutdown host half. */
 export const SHUTDOWN_SERVICE = "hostShutdown";
 
+/**
+ * Cordis service key and Typert wire namespace of the system-open host half.
+ *
+ * The reveal fallback asks this one before the session namespace: a web
+ * deployment disables `session/openWorkspacePath` on purpose, while this half
+ * runs in the reader's own host process either way.
+ */
+export const OPEN_SERVICE = "nativeOpen";
+
 /** Answer of one remote shutdown request; never a throw, never more. */
 export type ShutdownRequestResult = "requested" | "unavailable";
+
+/**
+ * Answer of one system-open request; never a throw.
+ *
+ * `"unavailable"` means there was nothing to open (no such path, or this
+ * platform has no default-application command); `"failed"` means the command
+ * ran and did not succeed.
+ */
+export type NativeOpenResult = "opened" | "unavailable" | "failed";
 
 /** One filesystem location the explorer can name. */
 export interface PathEntry {

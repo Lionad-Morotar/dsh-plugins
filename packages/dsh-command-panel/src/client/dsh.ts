@@ -13,7 +13,7 @@
  * fallback somewhere in the panel.
  */
 
-import type { PathResolveResult, ShutdownRequestResult } from "../shared.ts";
+import type { NativeOpenResult, PathResolveResult, ShutdownRequestResult } from "../shared.ts";
 
 export type Unsubscribe = () => void;
 
@@ -100,6 +100,24 @@ export interface PathExplorerRemote {
     request: { readonly query: string; readonly limit?: number },
     signal?: AbortSignal,
   ): Promise<RemoteResult<PathResolveResult>>;
+}
+
+// ── System default application (this package's host half) ─────────────────
+
+/**
+ * The one endpoint the reveal fallback asks before the session namespace.
+ *
+ * It runs in the reader's own host process on both deployments, so a web host
+ * that refuses `session/openWorkspacePath` can still open the path here.
+ */
+export interface NativeOpenFace {
+  open(request: { readonly path: string }, signal?: AbortSignal): Promise<RemoteResult<NativeOpenResult>>;
+}
+
+/** Whether a value structurally answers the nativeOpen face. */
+export function isNativeOpenFace(value: unknown): value is NativeOpenFace {
+  if (value === null || typeof value !== "object") return false;
+  return typeof (value as Record<string, unknown>).open === "function";
 }
 
 /** Whether a value structurally answers the pathExplorer face. */

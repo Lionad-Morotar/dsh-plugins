@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import type { GatewayRpc } from "../src/client/wire.ts";
 import {
   createGitExplorerFace,
+  createNativeOpenFace,
   createPathExplorerFace,
   createSessionOpenFace,
   foldTransport,
@@ -109,6 +110,26 @@ describe("createGitExplorerFace", () => {
       ok: false,
       error: { code: "gateway/not-found" },
     });
+  });
+});
+
+describe("createNativeOpenFace", () => {
+  it("routes open onto the nativeOpen namespace with the request envelope", async () => {
+    const calls: Array<{ scope: string; endpoint: string; payload: unknown }> = [];
+    const rpc: GatewayRpc = {
+      call: async (scope, endpoint, payload) => {
+        calls.push({ scope, endpoint, payload });
+        return { ok: true, value: "opened" };
+      },
+    };
+
+    await expect(createNativeOpenFace(rpc).open({ path: "/h/x.md" })).resolves.toEqual({
+      ok: true,
+      value: "opened",
+    });
+    expect(calls).toEqual([
+      { scope: "/api", endpoint: "nativeOpen/open", payload: { args: { request: { path: "/h/x.md" } } } },
+    ]);
   });
 });
 
