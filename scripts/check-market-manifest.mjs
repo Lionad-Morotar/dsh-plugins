@@ -34,6 +34,7 @@ const UNPUBLISHED = [
   "dsh-slash-commands",
   "dsh-session-timing",
   "dsh-session-interruption",
+  "dsh-workspace-open-local",
   "dsh-better",
   "dsh-more-config",
   "dsh-repo-harness",

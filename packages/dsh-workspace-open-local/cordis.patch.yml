@@ -1,0 +1,5 @@
+# Mount dsh-workspace-open-local: the client half adds an "open locally" row to
+# the workspace menu. The host half is empty; there is no host-side service.
+- insert:
+    - id: workspace-open-local
+      name: 'dsh-workspace-open-local'
