@@ -183,6 +183,15 @@ export interface TokenBox {
   readonly bottom: number;
 }
 
+/** Where the panel should sit for one token box: above it by default. */
+export interface PanelPlacement {
+  readonly left: number;
+  /** Distance from the viewport top to the panel's top edge. */
+  readonly top: number;
+  /** How the panel is anchored vertically; `above` pins its bottom edge to the token. */
+  readonly anchor: "above" | "below";
+}
+
 /** Read the box of the first composer text node that opens with `name`. */
 function tokenBox(doc: Document, name: string): TokenBox | undefined {
   const nodes = doc.querySelectorAll("[data-composer-text-ref]");
@@ -197,6 +206,44 @@ function tokenBox(doc: Document, name: string): TokenBox | undefined {
 /** The viewport width, tolerating a document without a window. */
 function viewportWidth(doc: Document): number {
   return doc.defaultView?.innerWidth ?? 0;
+}
+
+/**
+ * Decide where the panel goes: above the token, or below it when there is not
+ * enough room above.
+ *
+ * Above is the default because the composer sits at the bottom of the window —
+ * a panel opening downward would cover the transcript the user is reading and,
+ * on a short window, run off the screen. The flip is driven by the measured
+ * room, not by a guessed constant, so it holds on any window size.
+ * @param box - the token's viewport box.
+ * @param viewportHeight - current window height; 0 when unknown.
+ * @param panelHeight - the panel's own height, or 0 before it has been measured.
+ * @param margin - minimum gap between the panel and the token.
+ * @returns the placement; `top` is only meaningful for the `below` anchor.
+ */
+export function panelPlacement(
+  box: TokenBox,
+  viewportHeight: number,
+  panelHeight: number,
+  margin: number,
+): PanelPlacement {
+  const roomAbove = box.top - margin;
+  // The first paint happens before the panel has a height; the caller re-runs the
+  // measurement once it does, so treating "unknown" as "fits" keeps that first
+  // paint from flickering to the wrong side.
+  // A non-finite height is "not measured yet" (a detached node, a stub document),
+  // and must be treated like the first paint rather than as an oversized panel.
+  const measured = Number.isFinite(panelHeight) && panelHeight > 0 ? panelHeight : 0;
+  const fitsAbove = measured === 0 || measured <= roomAbove;
+  return fitsAbove
+    ? { left: box.left, top: 0, anchor: "above" }
+    : { left: box.left, top: box.bottom + margin, anchor: "below" };
+}
+
+/** The viewport height, tolerating a document without a window. */
+function viewportHeight(doc: Document): number {
+  return doc.defaultView?.innerHeight ?? 0;
 }
 
 /**
@@ -492,8 +539,21 @@ export function renderPanel(doc: Document, deps: SkillEnhancerDeps, input: Panel
   }
 
   if (input.box !== undefined) {
-    panel.style.left = `${input.box.left}px`;
-    panel.style.top = `${input.box.bottom + 4}px`;
+    const margin = 4;
+    // Measured from the element itself so the flip above/below uses the real
+    // height of this skill's content rather than a worst-case constant.
+    const place = panelPlacement(input.box, viewportHeight(doc), panel.offsetHeight, margin);
+    panel.style.left = `${place.left}px`;
+    if (place.anchor === "above") {
+      // Anchor the bottom edge to the token's top: `bottom` is resolved against
+      // the viewport for a fixed element, so the panel grows upward as the list
+      // of parameters gets longer.
+      panel.style.bottom = `${viewportHeight(doc) - input.box.top + margin}px`;
+      panel.style.top = "";
+    } else {
+      panel.style.top = `${place.top}px`;
+      panel.style.bottom = "";
+    }
   }
   return panel;
 }

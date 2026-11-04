@@ -35,13 +35,18 @@ export const SKILL_ENHANCER_SHEET = `
   z-index: 60;
   min-width: 240px;
   max-width: 380px;
-  max-height: 420px;
+  max-height: min(420px, 60vh);
   overflow: auto;
   box-sizing: border-box;
   padding: 10px 12px;
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-elevated);
-  box-shadow: var(--dsw-shadow-elevated);
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
+  border-radius: var(--dsw-radius-md, 12px);
+  /* Opaque on purpose: the panel floats over arbitrary page content and must not
+     pick it up through a translucent fill. bg-layer-2 is the host's solid layer
+     token (the command palette uses it); menu-surface-fill is its translucent
+     counterpart and is deliberately not used here. */
+  background: var(--dsw-alias-bg-layer-2, #ffffff);
+  box-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0, 0, 0, 0.16));
   color: var(--dsw-alias-label-primary);
   font-size: 12px;
   line-height: 18px;
@@ -80,7 +85,7 @@ export const SKILL_ENHANCER_SHEET = `
   cursor: pointer;
 }
 .dsh-better-skill-panel-param:hover {
-  background: var(--dsw-alias-bg-hover);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 .dsh-better-skill-panel-param:focus-visible {
   outline: 2px solid var(--dsw-alias-state-business-primary);

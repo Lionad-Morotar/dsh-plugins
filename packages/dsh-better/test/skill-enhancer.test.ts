@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendParam,
   hintLinesFor,
+  panelPlacement,
   panelVisibleFor,
   paramInsertionText,
   renderGhost,
@@ -177,7 +178,7 @@ function stubDocument(): { doc: Document; created: StubNode[] } {
     body: { append() {} },
     addEventListener() {},
     removeEventListener() {},
-    defaultView: { addEventListener() {}, removeEventListener() {}, innerWidth: 1200 },
+    defaultView: { addEventListener() {}, removeEventListener() {}, innerWidth: 1200, innerHeight: 800 },
   } as unknown as Document;
   return { doc, created };
 }
@@ -233,6 +234,49 @@ const PROFILE: SkillProfileWire = {
   ],
 };
 
+describe("panelPlacement", () => {
+  /** A token sitting 600px down a 800px-tall window. */
+  const box = { left: 120, right: 260, top: 600, bottom: 618 };
+
+  it("opens above the token when there is room", () => {
+    // 596px of room above, a 300px panel fits.
+    expect(panelPlacement(box, 800, 300, 4)).toEqual({ left: 120, top: 0, anchor: "above" });
+  });
+
+  it("flips below when the panel is taller than the room above", () => {
+    // 596px of room above the margin; a 700px panel cannot fit going up, and the
+    // flip anchors to the token's bottom so the top edge lands at 618 + 4.
+    expect(panelPlacement(box, 800, 700, 4)).toEqual({ left: 120, top: 622, anchor: "below" });
+  });
+
+  it("keeps the token's left edge in both directions", () => {
+    expect(panelPlacement({ ...box, left: 7 }, 800, 300, 4).left).toBe(7);
+    expect(panelPlacement({ ...box, left: 7 }, 800, 900, 4).left).toBe(7);
+  });
+
+  it("prefers above before the panel has been measured", () => {
+    // The first paint has no height yet; choosing by a guessed size would flicker.
+    expect(panelPlacement(box, 800, 0, 4).anchor).toBe("above");
+  });
+
+  it("flips below for a token near the top of a short window", () => {
+    const nearTop = { left: 10, right: 80, top: 8, bottom: 26 };
+    expect(panelPlacement(nearTop, 400, 200, 4)).toEqual({ left: 10, top: 30, anchor: "below" });
+  });
+
+  it("treats a non-finite panel height as not yet measured", () => {
+    // A detached or stubbed node reports no offsetHeight; reading that as
+    // "taller than the room" would open the panel downward on the first paint.
+    expect(panelPlacement(box, 800, Number.NaN, 4).anchor).toBe("above");
+    expect(panelPlacement(box, 800, Number.POSITIVE_INFINITY, 4).anchor).toBe("above");
+  });
+
+  it("treats an unknown viewport height as room-above", () => {
+    // The height is not consulted for the above branch; the room comes from the box.
+    expect(panelPlacement(box, 0, 300, 4).anchor).toBe("above");
+  });
+});
+
 describe("renderPanel", () => {
   it("renders the blocks in order: title, metadata, path, counts, params", () => {
     const { doc } = stubDocument();
@@ -258,6 +302,28 @@ describe("renderPanel", () => {
     ].map(name => classes.indexOf(name));
     expect(order.every(index => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("anchors the panel above the token when the composer sits low", () => {
+    // The stub window is 800px tall and the token sits 600px down, so 596px of
+    // room remains above it: the panel pins its bottom edge rather than its top.
+    const { doc } = stubDocument();
+    const panel = asStub(renderPanel(doc, panelDeps(), {
+      name: "flow-workflow",
+      profile: PROFILE,
+      usage: { session: 3 },
+      box: { left: 120, right: 260, top: 600, bottom: 618 },
+      sessionId: "s1",
+      getActions: () => undefined,
+      getDraft: () => "/flow-workflow ",
+      onEnter: () => {},
+      onLeave: () => {},
+    }));
+
+    expect(panel.style.left).toBe("120px");
+    // The bottom offset is computed from the token's top edge and the margin.
+    expect(panel.style.bottom).toBe("204px");
+    expect(panel.style.top).toBe("");
   });
 
   it("omits the path block when the skill has no path", () => {
