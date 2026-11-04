@@ -140,6 +140,28 @@ fork 会话只算自己的：seeded 会话的日志前缀是父会话的事件�
 
 配置存在 `localStorage` 的 `dsh-better.skill-aliases`，形如 `{"v":1,"prefix":true,"rows":[{"id":"…","keyword":"wf","target":"flow-workflow","params":"run"}]}`。坏文档当成空配置，坏行按类型丢弃，读取不会因为一条损坏记录丢掉整张表。
 
+## 技能增强
+
+从斜杠菜单选中技能后，输入框里那个 `/flow-workflow` 会带上两样东西：它后面浮现的灰色参数提示，以及鼠标停在它上面时弹出的详情面板。
+
+灰字取该技能 `SKILL.md` frontmatter 里的 `argument-hint`，也就是技能作者写给人看的那串参数说明。它只在「草稿以这个技能 token 开头、且 token 之后只剩空白」时出现；键入任何非空格字符立即消失，删回只剩空格又回来。它不占用宿主的 `--dsh-composer-hint` 变量——那条通路只在命令被认领（claim）后由宿主写入，而技能是纯文本 token，够不着，本包改为在编辑器之外自绘一层。代价是光标位置拿不到精确值（宿主的输入状态不发布 caret），判据用「草稿尾部是否只剩空白」近似，把光标移回 token 内部但不改文本时灰字会残留到下一次击键。
+
+详情面板列出六项：技能名、frontmatter 的 `metadata:` 块逐项、`SKILL.md` 的绝对路径、本会话调用次数、本工作区调用次数，以及从 `argument-hint` 解析出的参数列表。参数是可点的：点一下就把该参数追加到光标处并补一个空格，面板不关、焦点不回编辑器，所以可以连着点几个。参数只插入 flag 本身，`<a|b>` 这类值是提示不是草稿内容。
+
+参数解析面对的是真实 world 的脏输入：方括号可嵌套（`[--create [--scope <a|b>]]`）、`|` 在尖括号内是值枚举而在外是互斥分隔、`·` 也被作者用来分组、尖括号占位符里可以有空格（`<URL or browser task>`）。解析成平铺的 `{flag, detail}` 列表，任何输入都不抛错——完全无法结构化时整段作为一条，保证面板不为空。
+
+三样数据各有来源，不能混：
+
+- **参数提示与元数据**：宿主 `ctx.skills.get()` 拿到的 `metadata` 只含 `metadata:` 嵌套块，顶层 `argument-hint` 被 frontmatter 解析器丢弃，任何宿主 API 都取不到。所以本包宿主半新增只读路由 `GET /better/api/skill-profile?sessionId=&name=`，按 `path` 重读一次 `SKILL.md` 取那个键。
+- **本会话调用次数**：宿主半注册 `skillUsage` 投影，折叠会话日志里 `user/message` 且 `source.kind === 'skill-invocation'` 的事件。这类事件是宿主在用户显式调用技能时注入的，name 字段就是权威技能名。fork 出来的会话带祖先前缀，按 `fromSeq` 跳过（与 `sessionCompaction` 同一套判据）。
+- **本工作区调用次数**：客户端从 `sessions.list` 快照里按 `byId[id].cwd` 严格相等筛出同工作区会话，把各自 `projectionsBySession[id].values.skillUsage.counts[name]` 求和。纯内存读，零 IO。它只覆盖宿主已加载投影的会话，所以刚打开的旧会话可能短暂低估，随投影加载自行收敛。
+
+「总次数」按本工作区解释，不是整机全局：跨工作区总计需要枚举全部会话日志并逐个解析，实测规模是每会话一次完整读取，在悬浮面板这个交互里付不起。面板因此只显示两个数字，不显示一个看起来像全局的假数字。
+
+三处降级都是有意的：宿主没有 `webServer` 时路由不挂载，面板只显示名称与路径；`skills` 远程不可用时拿不到技能集合，灰字与面板都不出现，本包其余能力不受影响；`sessions.list` 形状不符时退化为只显示本会话数字。降级一律静默、不抛错，因为这条链路跑在输入框的渲染路径上。
+
+命令不参与增强：`/placeholder` 这类命令有自己的 claim 提示与参数弹窗，宿主已经做了，重复实现只会两边打架。增强只对技能生效。
+
 ## 开发
 
 ```sh
