@@ -6,6 +6,7 @@
  * the one field that matters to the assertion.
  */
 
+import type { PathInspectAnswer } from "../src/shared.ts";
 import type {
   CommandDescriptor,
   SessionFace,
@@ -197,6 +198,10 @@ export interface PathScript {
   readonly error?: string;
   /** Observed request, for specs that pin what the loader sent. */
   readonly onResolve?: (request: { readonly query: string; readonly base?: string }) => void;
+  /** Answers `inspect`; absent leaves the endpoint off the face, like an older host half. */
+  readonly inspect?: (request: { readonly path: string }) => PathInspectAnswer;
+  /** Observed inspections, for specs that pin which path was asked about. */
+  readonly onInspect?: (request: { readonly path: string }) => void;
 }
 
 /** The filesystem exploration service this package's own host half publishes. */
@@ -211,6 +216,14 @@ export function fakePathExplorer(script: PathScript = {}): PathExplorerRemote {
           }
         : { ok: false as const, error: { code: script.error } };
     },
+    ...(script.inspect === undefined
+      ? {}
+      : {
+          inspect: async (request: { readonly path: string }) => {
+            script.onInspect?.(request);
+            return { ok: true as const, value: script.inspect!(request) };
+          },
+        }),
   };
 }
 

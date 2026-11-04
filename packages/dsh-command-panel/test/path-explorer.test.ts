@@ -6,7 +6,7 @@
  * decision the panel's absolute-path branch stands on.
  */
 
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -31,8 +31,61 @@ describe("PathExplorerService activation", () => {
   it("publishes one resolve endpoint and waits on no host service", () => {
     expect(PathExplorerService.inject).toEqual([]);
     const markers = remoteMethods(new PathExplorerService(new Context()));
-    expect(markers.map(marker => marker.exportName ?? marker.method)).toEqual(["resolve"]);
+    expect(markers.map(marker => marker.exportName ?? marker.method)).toEqual(["resolve", "inspect"]);
     expect(PATH_SERVICE).toBe("pathExplorer");
+  });
+});
+
+describe("inspect", () => {
+  /** The temporary root with its links resolved, which is what the answer reports. */
+  async function canonical(): Promise<string> {
+    return await realpath(root);
+  }
+
+  it("names what a plain path is, including a path that is gone", async () => {
+    await writeFile(join(root, "a.md"), "x");
+    await mkdir(join(root, "notes"));
+
+    expect(await explorer.inspect({ path: join(root, "a.md") })).toEqual({ kind: "file" });
+    expect(await explorer.inspect({ path: join(root, "notes") })).toEqual({ kind: "directory" });
+    expect(await explorer.inspect({ path: join(root, "nothing.md") })).toEqual({ kind: "missing" });
+  });
+
+  it("resolves one link and reports what it points at", async () => {
+    // The host's file reads refuse a final symlink, so this answer is the only
+    // way a surface can show the file behind one.
+    const target = join(root, "AGENTS.md");
+    await writeFile(target, "x");
+    await symlink(target, join(root, "CLAUDE.md"));
+
+    expect(await explorer.inspect({ path: join(root, "CLAUDE.md") })).toEqual({
+      kind: "symlink",
+      target: await canonical().then(base => join(base, "AGENTS.md")),
+      targetKind: "file",
+    });
+  });
+
+  it("keeps a dangling link a link, with nowhere to send the reader", async () => {
+    await symlink(join(root, "nothing.md"), join(root, "gone.md"));
+
+    const answer = await explorer.inspect({ path: join(root, "gone.md") });
+
+    expect(answer.kind).toBe("symlink");
+    expect(answer.target).toBeUndefined();
+  });
+
+  it("reports a directory link as a link, not as a walkable directory", async () => {
+    await mkdir(join(root, "real-dir"));
+    await symlink(join(root, "real-dir"), join(root, "dir-link"));
+
+    const answer = await explorer.inspect({ path: join(root, "dir-link") });
+
+    expect(answer.kind).toBe("symlink");
+    expect(answer.targetKind).toBe("directory");
+  });
+
+  it("refuses a relative path as a contract breach", async () => {
+    await expect(explorer.inspect({ path: "a.md" })).rejects.toThrow(/absolute/);
   });
 });
 

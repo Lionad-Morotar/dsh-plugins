@@ -140,7 +140,7 @@ __decoratorMetadata(_init, NativeOpenService);
 __publicField(NativeOpenService, "inject", []);
 
 // src/host/path-explorer.ts
-import { readdir, stat } from "node:fs/promises";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, normalize, resolve } from "node:path";
 import { Remote as Remote2, TypertRemoteService as TypertRemoteService2 } from "@deepseek-ai/dsh-typert-protocol";
@@ -183,8 +183,8 @@ async function childrenOf(directory) {
   });
   return entries;
 }
-var _resolve_dec, _a2, _init2;
-var PathExplorerService = class extends (_a2 = TypertRemoteService2, _resolve_dec = [Remote2("resolve")], _a2) {
+var _inspect_dec, _resolve_dec, _a2, _init2;
+var PathExplorerService = class extends (_a2 = TypertRemoteService2, _resolve_dec = [Remote2("resolve")], _inspect_dec = [Remote2("inspect")], _a2) {
   constructor(ctx) {
     super(ctx, PATH_SERVICE);
     __runInitializers(_init2, 5, this);
@@ -232,9 +232,36 @@ var PathExplorerService = class extends (_a2 = TypertRemoteService2, _resolve_de
     }
     return { ok: true, home, entries: entries.slice(0, clampLimit(request.limit)) };
   }
+  async inspect(request, signal) {
+    void signal;
+    const raw = request?.path;
+    if (typeof raw !== "string" || !isAbsolute(raw)) throw new Error("path must be an absolute path");
+    const path2 = resolve(raw);
+    let entry;
+    try {
+      entry = await lstat(path2);
+    } catch {
+      return { kind: "missing" };
+    }
+    if (!entry.isSymbolicLink()) {
+      return { kind: entry.isFile() ? "file" : entry.isDirectory() ? "directory" : "other" };
+    }
+    try {
+      const target = await realpath(path2);
+      const info = await stat(target);
+      return {
+        kind: "symlink",
+        target,
+        targetKind: info.isFile() ? "file" : info.isDirectory() ? "directory" : "other"
+      };
+    } catch {
+      return { kind: "symlink" };
+    }
+  }
 };
 _init2 = __decoratorStart(_a2);
 __decorateElement(_init2, 1, "resolve", _resolve_dec, PathExplorerService);
+__decorateElement(_init2, 1, "inspect", _inspect_dec, PathExplorerService);
 __decoratorMetadata(_init2, PathExplorerService);
 __publicField(PathExplorerService, "inject", []);
 

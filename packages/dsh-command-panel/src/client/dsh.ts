@@ -13,7 +13,7 @@
  * fallback somewhere in the panel.
  */
 
-import type { NativeOpenResult, PathResolveResult, ShutdownRequestResult } from "../shared.ts";
+import type { NativeOpenResult, PathInspectAnswer, PathResolveResult, ShutdownRequestResult } from "../shared.ts";
 
 export type Unsubscribe = () => void;
 
@@ -110,6 +110,17 @@ export interface PathExplorerRemote {
     request: { readonly query: string; readonly limit?: number },
     signal?: AbortSignal,
   ): Promise<RemoteResult<PathResolveResult>>;
+  /**
+   * Ask what one absolute path is, and where a symlink points.
+   *
+   * The host's file reads refuse a final symlink, so the sidebar branch has to
+   * resolve one before it opens anything; this is the only side that can ask.
+   * Absent on a host half that predates it.
+   */
+  inspect?(
+    request: { readonly path: string },
+    signal?: AbortSignal,
+  ): Promise<RemoteResult<PathInspectAnswer>>;
 }
 
 // ── System default application (this package's host half) ─────────────────

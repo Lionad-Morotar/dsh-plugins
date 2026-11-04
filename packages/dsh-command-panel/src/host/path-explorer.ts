@@ -12,18 +12,25 @@
  * No host service is required, so `inject` stays empty: an entry the host does
  * not define would keep the whole plugin waiting forever, silently.
  */
-import { readdir, stat } from "node:fs/promises";
-import type { Dirent } from "node:fs";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
+import type { Dirent, Stats } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, normalize, resolve } from "node:path";
 
 import type { Context } from "@deepseek-ai/cordis";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
-import { PATH_SERVICE, type PathEntry, type PathResolveRequest, type PathResolveResult } from "../shared.ts";
+import {
+  PATH_SERVICE,
+  type PathEntry,
+  type PathInspectAnswer,
+  type PathInspectRequest,
+  type PathResolveRequest,
+  type PathResolveResult,
+} from "../shared.ts";
 
 export { PATH_SERVICE };
-export type { PathEntry, PathResolveRequest, PathResolveResult };
+export type { PathEntry, PathInspectAnswer, PathInspectRequest, PathResolveRequest, PathResolveResult };
 
 /** Answer length when the caller says nothing; also the floor of the clamp. */
 export const DEFAULT_LIMIT = 20;
@@ -162,6 +169,45 @@ export class PathExplorerService extends TypertRemoteService {
     }
 
     return { ok: true, home, entries: entries.slice(0, clampLimit(request.limit)) };
+  }
+
+  /**
+   * Say what one path is, and where a symlink points.
+   *
+   * The reason this exists at all: the host's file service refuses a final
+   * symlink for every read, even one pointing inside the workspace, so a
+   * surface that means to show the file behind a link must resolve it first.
+   * Only the final component is followed, and only when it is itself a link,
+   * which is the same depth the read gate refuses.
+   */
+  @Remote("inspect")
+  async inspect(request: PathInspectRequest, signal?: AbortSignal): Promise<PathInspectAnswer> {
+    void signal;
+    const raw = request?.path;
+    if (typeof raw !== "string" || !isAbsolute(raw)) throw new Error("path must be an absolute path");
+    const path = resolve(raw);
+    let entry: Stats;
+    try {
+      entry = await lstat(path);
+    } catch {
+      return { kind: "missing" };
+    }
+    if (!entry.isSymbolicLink()) {
+      return { kind: entry.isFile() ? "file" : entry.isDirectory() ? "directory" : "other" };
+    }
+    try {
+      const target = await realpath(path);
+      const info = await stat(target);
+      return {
+        kind: "symlink",
+        target,
+        targetKind: info.isFile() ? "file" : info.isDirectory() ? "directory" : "other",
+      };
+    } catch {
+      // A dangling or unreadable link: it is still a link, and there is nowhere
+      // to send the reader.
+      return { kind: "symlink" };
+    }
   }
 }
 

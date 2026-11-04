@@ -85,6 +85,53 @@ async function call(
   return read();
 }
 
+describe("path branch", () => {
+  it("prefers the client-supplied path over the host registry", async () => {
+    // The registry path only ever sees bundled skills, so a user skill must be
+    // served by reading the file the client already pointed at.
+    const calls: string[] = [];
+    const handler = createSkillProfileHandler(deps({
+      readSkillAt: async (name, path) => {
+        calls.push(`path:${name}:${path}`);
+        return { name, path, argumentHint: "[--create]", metadata: { version: "1" } };
+      },
+      loadSkill: async name => {
+        calls.push(`registry:${name}`);
+        return undefined;
+      },
+    }));
+
+    const { res, read } = stubResponse();
+    await handler(stubRequest("/better/api/skill-profile?name=flow-agent&path=%2Fhome%2Fme%2FSKILL.md"), res);
+
+    const recorded = read();
+    expect(recorded.status).toBe(200);
+    expect((recorded.body as { params: unknown[] }).params).toHaveLength(1);
+    expect(calls).toEqual(["path:flow-agent:/home/me/SKILL.md"]);
+  });
+
+  it("falls back to the registry when the path read yields nothing", async () => {
+    const handler = createSkillProfileHandler(deps({
+      readSkillAt: async () => undefined,
+      loadSkill: async name => ({ name, path: "/bundled/SKILL.md", argumentHint: "[--x]" }),
+    }));
+
+    const { res, read } = stubResponse();
+    await handler(stubRequest("/better/api/skill-profile?name=flow-workflow&path=%2Fgone%2FSKILL.md"), res);
+
+    const recorded = read();
+    expect(recorded.status).toBe(200);
+    expect((recorded.body as { name: string }).name).toBe("flow-workflow");
+  });
+
+  it("uses the registry when no path is supplied", async () => {
+    const handler = createSkillProfileHandler(deps());
+    const { res, read } = stubResponse();
+    await handler(stubRequest("/better/api/skill-profile?name=flow-workflow"), res);
+    expect(read().status).toBe(200);
+  });
+});
+
 describe("createSkillProfileHandler", () => {
   it("answers 200 with the skill profile", async () => {
     const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`);
