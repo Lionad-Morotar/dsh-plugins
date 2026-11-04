@@ -33,6 +33,8 @@ export interface SkillParam {
 /** What the browser reads for one skill. */
 export interface SkillProfileWire {
   readonly name: string;
+  /** Routing description from the skill's frontmatter; shown under the name. */
+  readonly description?: string;
   /** Absolute path of the skill's SKILL.md, when the provider exposes one. */
   readonly path?: string;
   /** The raw hint, so the client can fall back to showing it verbatim. */
@@ -395,12 +397,14 @@ export function readFrontmatterArgumentHint(source: string): string | undefined 
  */
 export function skillProfileOf(input: {
   name: string;
+  description?: string;
   path?: string;
   argumentHint?: string;
   metadata?: unknown;
 }): SkillProfileWire {
   const profile: {
     name: string;
+    description?: string;
     path?: string;
     argumentHint?: string;
     metadata: Record<string, string>;
@@ -410,6 +414,9 @@ export function skillProfileOf(input: {
     metadata: normalizeMetadata(input.metadata),
     params: parseArgumentHint(input.argumentHint),
   };
+  if (input.description !== undefined && input.description !== "") {
+    profile.description = input.description;
+  }
   if (input.path !== undefined) profile.path = input.path;
   if (input.argumentHint !== undefined) profile.argumentHint = input.argumentHint;
   return profile;

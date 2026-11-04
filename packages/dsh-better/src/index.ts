@@ -92,7 +92,12 @@ interface SkillsFace {
   get(
     name: string,
     options?: { readonly cwd?: string },
-  ): Promise<{ readonly name: string; readonly path?: string; readonly metadata?: unknown } | undefined>;
+  ): Promise<{
+    readonly name: string;
+    readonly description?: string;
+    readonly path?: string;
+    readonly metadata?: unknown;
+  } | undefined>;
 }
 
 /** Structural slice of the `sessions` store (live session objects). */
@@ -214,7 +219,7 @@ async function loadSkillProfile(
   ctx: HostContextLike,
   name: string,
   cwd: string | undefined,
-): Promise<{ name: string; path?: string; argumentHint?: string; metadata?: unknown } | undefined> {
+): Promise<{ name: string; description?: string; path?: string; argumentHint?: string; metadata?: unknown } | undefined> {
   const skills = readService(ctx, "skills") as SkillsFace | undefined;
   if (skills === undefined) return undefined;
   const definition = await skills.get(name, cwd === undefined ? undefined : { cwd });
@@ -229,7 +234,10 @@ async function loadSkillProfile(
     }
   }
 
-  const profile: { name: string; path?: string; argumentHint?: string; metadata?: unknown } = { name: definition.name };
+  const profile: { name: string; description?: string; path?: string; argumentHint?: string; metadata?: unknown } = { name: definition.name };
+  if (typeof definition.description === "string" && definition.description !== "") {
+    profile.description = definition.description;
+  }
   if (definition.path !== undefined) profile.path = definition.path;
   if (argumentHint !== undefined) profile.argumentHint = argumentHint;
   if (definition.metadata !== undefined) profile.metadata = definition.metadata;

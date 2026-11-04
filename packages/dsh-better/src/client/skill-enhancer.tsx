@@ -185,11 +185,78 @@ export interface TokenBox {
 
 /** Where the panel should sit for one token box: above it by default. */
 export interface PanelPlacement {
+  /** Already clamped: the panel's left edge never leaves the viewport. */
   readonly left: number;
   /** Distance from the viewport top to the panel's top edge. */
   readonly top: number;
   /** How the panel is anchored vertically; `above` pins its bottom edge to the token. */
   readonly anchor: "above" | "below";
+}
+
+/** Narrowest and widest a panel may be, matching the stylesheet's bounds. */
+export const PANEL_MIN_WIDTH = 240;
+export const PANEL_MAX_WIDTH = 640;
+
+/** Widest the panel may grow on a given viewport, leaving a margin on both sides. */
+export function panelMaxWidth(viewportWidth: number): number {
+  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) return PANEL_MAX_WIDTH;
+  return Math.max(PANEL_MIN_WIDTH, Math.min(PANEL_MAX_WIDTH, viewportWidth - 24));
+}
+
+/**
+ * Choose a width from the description's length.
+ *
+ * The panel is a tooltip first: a skill with a one-line description should not
+ * open a 640px slab. Width therefore tracks how much text there is, in three
+ * steps rather than a continuous ramp — a smoothly varying width would make two
+ * neighbouring skills open differently sized panels for no readable benefit.
+ *
+ * The thresholds come from the installed catalog (180 skills): the median
+ * description is 175 characters, 81 exceed 200, and the longest is 895. 200
+ * characters land on ~4 lines at the wide step, which is the budget the
+ * stylesheet's line clamp enforces; past that the extra width stops paying for
+ * itself because the panel then covers the transcript it is anchored over.
+ * @param descriptionLength - length of the description in characters; 0 when absent.
+ * @param viewportWidth - viewport width, used to keep the panel inside the window.
+ * @returns the width in pixels.
+ */
+export function panelWidthFor(descriptionLength: number, viewportWidth: number): number {
+  const cap = panelMaxWidth(viewportWidth);
+  const length = Number.isFinite(descriptionLength) && descriptionLength > 0 ? descriptionLength : 0;
+  const wanted = length === 0
+    ? PANEL_MIN_WIDTH
+    : length <= 80
+      ? 320
+      : length < 200
+        ? 480
+        : PANEL_MAX_WIDTH;
+  return Math.min(Math.max(wanted, PANEL_MIN_WIDTH), cap);
+}
+
+/**
+ * Keep the panel inside the viewport horizontally.
+ *
+ * Without this the panel's left edge follows the token, so a `/skill` near the
+ * right edge would push most of a 640px panel off-screen. Clamping the left edge
+ * (rather than the right) keeps the panel's own content start aligned with the
+ * token for as long as it fits.
+ * @param wanted - the preferred left edge, from the token's box.
+ * @param width - the panel's resolved width.
+ * @param viewportWidth - viewport width; 0 disables the clamp.
+ * @param margin - minimum distance from either viewport edge.
+ * @returns the clamped left edge.
+ */
+export function clampPanelLeft(
+  wanted: number,
+  width: number,
+  viewportWidth: number,
+  margin: number,
+): number {
+  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) return wanted;
+  const maxLeft = viewportWidth - width - margin;
+  // A panel wider than the window cannot satisfy both edges; the left margin wins
+  // so the title stays readable.
+  return Math.max(margin, Math.min(wanted, Math.max(margin, maxLeft)));
 }
 
 /** Read the box of the first composer text node that opens with `name`. */
@@ -495,6 +562,19 @@ export function renderPanel(doc: Document, deps: SkillEnhancerDeps, input: Panel
   title.textContent = `/${input.name}`;
   panel.append(title);
 
+  // Directly under the name: it is the human answer to "what is this skill", and
+  // the metadata block below is reference material.
+  const description = input.profile?.description;
+  if (description !== undefined && description !== "") {
+    const descNode = doc.createElement("div");
+    descNode.className = "dsh-better-skill-panel-desc";
+    descNode.textContent = description;
+    // The clamp keeps the panel readable but hides the tail; the full string stays
+    // reachable without widening the panel.
+    descNode.title = description;
+    panel.append(descNode);
+  }
+
   const metadata = input.profile?.metadata ?? {};
   const metadataKeys = Object.keys(metadata);
   if (metadataKeys.length > 0) {
@@ -538,21 +618,27 @@ export function renderPanel(doc: Document, deps: SkillEnhancerDeps, input: Panel
     }
   }
 
-  if (input.box !== undefined) {
+  {
     const margin = 4;
-    // Measured from the element itself so the flip above/below uses the real
-    // height of this skill's content rather than a worst-case constant.
-    const place = panelPlacement(input.box, viewportHeight(doc), panel.offsetHeight, margin);
-    panel.style.left = `${place.left}px`;
-    if (place.anchor === "above") {
-      // Anchor the bottom edge to the token's top: `bottom` is resolved against
-      // the viewport for a fixed element, so the panel grows upward as the list
-      // of parameters gets longer.
-      panel.style.bottom = `${viewportHeight(doc) - input.box.top + margin}px`;
-      panel.style.top = "";
-    } else {
-      panel.style.top = `${place.top}px`;
-      panel.style.bottom = "";
+    // Width first: the horizontal clamp and the wrap measurement both depend on it.
+    const viewportW = viewportWidth(doc);
+    const width = panelWidthFor(description?.length ?? 0, viewportW);
+    panel.style.width = `${width}px`;
+    if (input.box !== undefined) {
+      // Measured from the element itself so the flip above/below uses the real
+      // height of this skill's content rather than a worst-case constant.
+      const place = panelPlacement(input.box, viewportHeight(doc), panel.offsetHeight, margin);
+      panel.style.left = `${clampPanelLeft(place.left, width, viewportW, 12)}px`;
+      if (place.anchor === "above") {
+        // Anchor the bottom edge to the token's top: `bottom` is resolved against
+        // the viewport for a fixed element, so the panel grows upward as the list
+        // of parameters gets longer.
+        panel.style.bottom = `${viewportHeight(doc) - input.box.top + margin}px`;
+        panel.style.top = "";
+      } else {
+        panel.style.top = `${place.top}px`;
+        panel.style.bottom = "";
+      }
     }
   }
   return panel;
