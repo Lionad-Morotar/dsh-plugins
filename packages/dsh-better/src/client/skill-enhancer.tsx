@@ -259,11 +259,57 @@ export function clampPanelLeft(
   return Math.max(margin, Math.min(wanted, Math.max(margin, maxLeft)));
 }
 
-/** Read the box of the first composer text node that opens with `name`. */
+/**
+ * Measure the first `length` characters of a node's text, not the whole node.
+ *
+ * The composer's `[data-composer-text-ref]` node wraps the entire first line, so
+ * its own rect is the line's — anchoring a hint to `rect.right` would place it
+ * after everything the user has typed, at the far edge of the editor. A `Range`
+ * over the leading characters gives the token's real right edge, which is where
+ * the hint belongs.
+ * @param doc - owning document.
+ * @param node - the text-ref element.
+ * @param length - how many characters from the start to measure.
+ * @returns the measured box, or undefined when the range cannot be built.
+ */
+function prefixBox(doc: Document, node: Element, length: number): TokenBox | undefined {
+  if (length <= 0 || typeof doc.createRange !== "function") return undefined;
+  const range = doc.createRange();
+  let remaining = length;
+  let started = false;
+  const walk = (parent: Node): boolean => {
+    for (const child of Array.from(parent.childNodes)) {
+      if (child.nodeType === 3) {
+        const text = child.textContent ?? "";
+        const take = Math.min(remaining, text.length);
+        if (take <= 0) continue;
+        if (!started) {
+          range.setStart(child, 0);
+          started = true;
+        }
+        range.setEnd(child, take);
+        remaining -= take;
+        if (remaining <= 0) return true;
+        continue;
+      }
+      if (walk(child)) return true;
+    }
+    return false;
+  };
+  if (!walk(node) || remaining > 0) return undefined;
+  const rect = range.getBoundingClientRect();
+  // A zero-width range (a detached node, a stub document) tells us nothing.
+  if (rect.width === 0 && rect.height === 0) return undefined;
+  return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+}
+
+/** Read the box of the leading `/name` token in the composer's first line. */
 function tokenBox(doc: Document, name: string): TokenBox | undefined {
   const nodes = doc.querySelectorAll("[data-composer-text-ref]");
   for (const node of nodes) {
     if (panelVisibleFor(node.textContent ?? "") !== name) continue;
+    const precise = prefixBox(doc, node, name.length + 1);
+    if (precise !== undefined) return precise;
     const rect = node.getBoundingClientRect();
     return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
   }

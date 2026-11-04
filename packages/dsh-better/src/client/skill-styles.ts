@@ -20,6 +20,11 @@ export const SKILL_ENHANCER_SHEET = `
 .dsh-better-skill-hint {
   position: absolute;
   z-index: 5;
+  /* Bounded so a long hint wraps instead of running off the composer: some
+     skills carry a one-line 349-character argument-hint, which would otherwise
+     extend past the window edge and get clipped. The ch unit keeps the bound
+     readable rather than tied to a pixel width that ignores font size. */
+  max-width: min(52ch, calc(100vw - 40px));
   pointer-events: none;
   user-select: none;
   white-space: pre-wrap;
