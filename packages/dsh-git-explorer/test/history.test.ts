@@ -17,7 +17,7 @@ const STATUS = [
 
 const LOG = ["aaa|bbb|Alice|1700000002|third", "bbb|ccc|Bob|1700000001|second", "ccc||Carol|1700000000|first"].join("\n");
 
-function fakeRunner(options: { log?: string } = {}): GitRunner {
+function fakeRunner(options: { log?: string; remotes?: string } = {}): GitRunner {
   return {
     async run(args) {
       const argv = ["git", ...args];
@@ -34,6 +34,8 @@ function fakeRunner(options: { log?: string } = {}): GitRunner {
           return ok(argv, options.log ?? LOG);
         case "rev-list":
           return ok(argv, "3\n");
+        case "remote":
+          return ok(argv, options.remotes ?? "");
         default:
           throw new Error(`unexpected command ${args[0]}`);
       }
@@ -71,7 +73,7 @@ describe("collectSnapshot", () => {
             : ok(argv, "/repo\n");
         }
         if (args[0] === "status") return ok(argv, "# branch.oid (initial)\0# branch.head main\0? a.txt\0");
-        if (args[0] === "for-each-ref" || args[0] === "diff") return ok(argv, "");
+        if (args[0] === "for-each-ref" || args[0] === "diff" || args[0] === "remote") return ok(argv, "");
         throw new Error(`unexpected command ${args[0]}`);
       },
     };
@@ -83,6 +85,8 @@ describe("collectSnapshot", () => {
     expect(result.snapshot.counts).toEqual({ commits: 0, branches: 0, changes: 1 });
     expect(result.snapshot.head?.branch).toBe("main");
     expect(result.snapshot.status).toContain("? a.txt");
+    // An empty repository is still a repository: it just has no remotes yet.
+    expect(result.snapshot.remotes).toEqual([]);
   });
 
   it("treats a non-repository directory as an empty snapshot", async () => {
@@ -105,8 +109,105 @@ describe("collectSnapshot", () => {
         counts: { commits: 0, branches: 0, changes: 0 },
         status: "",
         stats: [],
+        remotes: [],
       },
     });
+  });
+
+  it("collects one entry per remote, preferring the fetch URL", async () => {
+    // `git remote -v` prints one line per URL per direction, so a remote with a
+    // distinct push URL appears twice. The snapshot wants one row per remote:
+    // the fetch URL is the one a browser link should point at.
+    const remotes = [
+      "origin\thttps://github.com/acme/app.git (fetch)",
+      "origin\thttps://github.com/acme/app.git (push)",
+      "upstream\tgit@github.com:acme/upstream.git (fetch)",
+      "upstream\tgit@github.com:acme/upstream.git (push)",
+      "zeta\thttps://example.com/zeta.git (fetch)",
+    ].join("\n");
+    const result = await collectSnapshot({ runner: fakeRunner({ remotes }), cwd: "/repo", maxCommits: 100 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.snapshot.remotes).toEqual([
+      { name: "origin", url: "https://github.com/acme/app.git" },
+      { name: "upstream", url: "git@github.com:acme/upstream.git" },
+      { name: "zeta", url: "https://example.com/zeta.git" },
+    ]);
+  });
+
+  it("keeps the fetch URL when a remote pushes somewhere else", async () => {
+    const remotes = [
+      "fork\thttps://github.com/me/app.git (fetch)",
+      "fork\tgit@github.com:acme/app.git (push)",
+    ].join("\n");
+    const result = await collectSnapshot({ runner: fakeRunner({ remotes }), cwd: "/repo", maxCommits: 100 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.snapshot.remotes).toEqual([{ name: "fork", url: "https://github.com/me/app.git" }]);
+  });
+
+  it("falls back to the push URL for a push-only remote", async () => {
+    const remotes = "mirror\thttps://gitlab.com/acme/mirror.git (push)";
+    const result = await collectSnapshot({ runner: fakeRunner({ remotes }), cwd: "/repo", maxCommits: 100 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.snapshot.remotes).toEqual([{ name: "mirror", url: "https://gitlab.com/acme/mirror.git" }]);
+  });
+
+  it("keeps the URL exactly as git printed it", async () => {
+    // Normalization is the client's job: the host reports what the repository
+    // says, so an scp-style and an https URL stay distinguishable here.
+    const remotes = [
+      "scp\tgit@github.com:acme/app.git (fetch)",
+      "https\thttps://github.com/acme/app (fetch)",
+    ].join("\n");
+    const result = await collectSnapshot({ runner: fakeRunner({ remotes }), cwd: "/repo", maxCommits: 100 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.snapshot.remotes.map(remote => remote.url)).toEqual([
+      "https://github.com/acme/app",
+      "git@github.com:acme/app.git",
+    ]);
+  });
+
+  it("ignores lines that are not a remote listing", async () => {
+    const remotes = ["", "garbage without a tab", "origin\thttps://example.com/a.git (fetch)", "  "].join("\n");
+    const result = await collectSnapshot({ runner: fakeRunner({ remotes }), cwd: "/repo", maxCommits: 100 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.snapshot.remotes).toEqual([{ name: "origin", url: "https://example.com/a.git" }]);
+  });
+
+  it("answers no remotes when the repository has none", async () => {
+    const result = await collectSnapshot({ runner: fakeRunner({ remotes: "" }), cwd: "/repo", maxCommits: 100 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.snapshot.remotes).toEqual([]);
+  });
+
+  it("fails the snapshot when the remote listing fails", async () => {
+    // A repository whose remote listing cannot be read is a broken snapshot, not
+    // a repository without remotes: the panel would otherwise offer a link that
+    // silently does not exist.
+    const base = fakeRunner();
+    const runner: GitRunner = {
+      async run(args) {
+        if (args[0] === "remote") {
+          return {
+            argv: ["git", ...args],
+            exitCode: 1,
+            stdout: "",
+            stderr: "fatal: bad config",
+            timedOut: false,
+            cancelled: false,
+            stdoutLossy: false,
+          };
+        }
+        return base.run(args);
+      },
+    };
+    const result = await collectSnapshot({ runner, cwd: "/repo", maxCommits: 100 });
+    expect(result).toMatchObject({ ok: false, error: { code: "git-failed" } });
   });
 });
 

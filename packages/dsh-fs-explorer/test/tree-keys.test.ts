@@ -55,6 +55,7 @@ function props(rows: TreeRow[], overrides: Partial<TreeBodyProps> = {}): TreeBod
     onSelect: () => undefined,
     onRetry: () => undefined,
     onEntryFocusSettled: undefined,
+    onContextMenu: () => undefined,
     ...overrides,
   };
 }

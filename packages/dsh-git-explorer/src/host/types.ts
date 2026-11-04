@@ -97,6 +97,18 @@ export interface GitCounts {
  * Everything the Git view needs for its first paint: where the repository is,
  * which branch is checked out, the working tree, and the newest history page.
  */
+/**
+ * One configured remote, as `git remote -v` reports it.
+ *
+ * The URL is kept exactly as git printed it, scp-style and https alike:
+ * normalizing it is the client's job, because only the client knows which
+ * provider's URL shape it is building.
+ */
+export interface GitRemote {
+  readonly name: string;
+  readonly url: string;
+}
+
 export interface GitSnapshot {
   /** Absolute worktree root reported by `git rev-parse --show-toplevel`. */
   readonly root: string;
@@ -111,6 +123,13 @@ export interface GitSnapshot {
   readonly status: string;
   /** Per-path line counts for tracked changes; untracked paths are absent. */
   readonly stats: readonly GitChangeStat[];
+  /**
+   * Configured remotes, one entry per name, sorted by name.
+   *
+   * A remote with distinct fetch and push URLs appears once, carrying its fetch
+   * URL: that is the one a link to the code should name.
+   */
+  readonly remotes: readonly GitRemote[];
 }
 
 export type GitFailureCode =

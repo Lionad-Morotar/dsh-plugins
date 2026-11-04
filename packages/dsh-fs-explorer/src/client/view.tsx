@@ -21,6 +21,29 @@ import {
 } from "react";
 
 import type { Translate } from "./copy.ts";
+import {
+  MENU_ACTION,
+  buildContextMenu,
+  parentDirectory,
+  type ContextMenuAnchor,
+  type ContextMenuEntry,
+  type ContextMenuRow,
+} from "./context-menu.ts";
+import { ContextMenu, type MenuAnchor } from "./context-menu-view.tsx";
+import { BookmarkBar } from "./bookmark-bar.tsx";
+import { BookmarkPicker } from "./bookmark-picker.tsx";
+import { createBookmarkStore } from "./bookmarks-store.ts";
+import {
+  emptyBookmarkTree,
+  insertNode,
+  makeNode,
+  removeNode,
+  renameNode,
+  reorderChildren,
+} from "./bookmarks-model.ts";
+import type { BookmarkNode, BookmarkTree } from "../bookmarks.ts";
+import { writeClipboard } from "./clipboard.ts";
+import { NamePrompt } from "./name-prompt.tsx";
 import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap } from "./keyboard.ts";
 import type { DocumentStore } from "./document-session.ts";
 import type { SymlinkLocator } from "./preview.ts";
@@ -73,11 +96,15 @@ import {
   type SearchOrigin,
 } from "./tree-search.ts";
 import { buildWorkspaceMap, MANIFEST_FILES, type WorkspaceTag } from "./workspace-map.ts";
+import { createWorkspaceClient, type WorkspaceClient, type WorkspaceError } from "./workspace-face.ts";
+import type { WorkspaceCapabilities } from "../host/types.ts";
+import { buildRemoteLinks, type RemoteLink } from "./remote-url.ts";
 import {
   describeFailure,
   normalizeListing,
   normalizeStatusSnapshot,
   type FilesResolver,
+  type FsGitRemote,
   type GitShowFace,
   type GitShowResolver,
   type StatusResolver,
@@ -140,6 +167,14 @@ export interface ViewWiring {
    */
   readonly locate?: (sessionId: string) => SymlinkLocator;
   /**
+   * The workspace channel behind the tree's context menu.
+   *
+   * Absent leaves the menu's reveal row disabled with a reason and the absolute
+   * copy unavailable, which is what a host without the channel can honestly
+   * offer. A test injects a fake here.
+   */
+  readonly workspace?: (sessionId: string) => WorkspaceClient;
+  /**
    * Resolve the host's workspace-wide fuzzy file index, read per search.
    *
    * Absent — or answering undefined — is a legal deployment: the search then
@@ -162,6 +197,13 @@ export type InitialViewState = "idle" | "no-service" | "loading";
 export function initialViewState(sessionId: string | undefined, hasFiles: boolean): InitialViewState {
   if (sessionId === undefined) return "idle";
   return hasFiles ? "loading" : "no-service";
+}
+
+/** One bookmark id nothing else will collide with. */
+function newBookmarkId(): string {
+  const uuid = globalThis.crypto?.randomUUID;
+  if (typeof uuid === "function") return uuid.call(globalThis.crypto);
+  return `bm-${String(Date.now())}-${Math.random().toString(36).slice(2)}`;
 }
 
 const loadingLevel = (): TreeLevel => ({ status: "loading", nodes: [], truncated: false, total: 0 });
@@ -274,6 +316,7 @@ export function createFsExplorerView({
   renderers,
   documents,
   locate,
+  workspace: resolveWorkspace,
   fileReferences: resolveReferences,
 }: ViewWiring) {
   // One registry per registered view: the host mounts and unmounts this
@@ -298,10 +341,85 @@ export function createFsExplorerView({
       [locate, sessionId],
     );
 
+    // The context menu's channel. Resolved once per session, like the locator:
+    // a fresh client identity on every render would restart the capability probe.
+    const workspace = useMemo<WorkspaceClient | undefined>(
+      () => (sessionId === undefined || resolveWorkspace === undefined ? undefined : resolveWorkspace(sessionId)),
+      [resolveWorkspace, sessionId],
+    );
+
+    // The bookmark store and the tree it serves. The store is rebuilt only when
+    // the channel changes; the tree starts empty so the bar renders on the first
+    // paint instead of waiting for a round trip.
+    const bookmarkStore = useMemo(() => createBookmarkStore(workspace), [workspace]);
+    const [bookmarks, setBookmarks] = useState<BookmarkTree>(() =>
+      emptyBookmarkTree(new Date().toISOString()),
+    );
+    // Set by the first edit, read by the load that may still be in flight.
+    const bookmarksDirty = useRef(false);
+
+    // The two bookmark editors. One picker for "which group", one name card for
+    // "what to call it"; both are transient, and neither owns the tree.
+    const [bookmarkPicker, setBookmarkPicker] = useState<
+      | {
+          readonly mode: "add";
+          readonly target: { readonly name: string; readonly path: string; readonly kind: "file" | "directory" };
+        }
+      | { readonly mode: "move"; readonly node: BookmarkNode }
+      | null
+    >(null);
+    const [bookmarkPrompt, setBookmarkPrompt] = useState<
+      | { readonly mode: "group"; readonly parentId: string | null }
+      | { readonly mode: "rename"; readonly node: BookmarkNode }
+      | null
+    >(null);
+
+    // Read by the Escape handler, which is registered once and must not be
+    // rebuilt every time the menu opens.
+    const contextMenuOpen = useRef(false);
+
+    // The open context menu: which row it addresses (undefined for the blank
+    // area), where it opened, and the absolute path `info` answered for it.
+    const [contextMenu, setContextMenu] = useState<
+      | {
+          readonly row: ContextMenuRow | undefined;
+          readonly anchor: MenuAnchor;
+          readonly absolutePath: string | undefined;
+          /** The directory a create lands in; `""` is the workspace root. */
+          readonly createParent: string | undefined;
+          /** Where the keyboard goes when the menu closes. */
+          readonly trigger: HTMLElement | undefined;
+        }
+      | null
+    >(null);
+    // What the host's desktop can do. Probed once per session, not per menu: the
+    // answer is a property of the host, not of the click.
+    const [capabilities, setCapabilities] = useState<WorkspaceCapabilities | undefined>(undefined);
+    // One transient sentence under the header: what the last action did.
+    const [notice, setNotice] = useState<{ readonly text: string; readonly tone: "ok" | "error" } | null>(null);
+    const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // The name card, while it is up: what is being created, where, and what the
+    // host said about the last attempt. A refusal keeps the card open, so the
+    // error lives here rather than in the notice bar.
+    const [namePrompt, setNamePrompt] = useState<
+      | {
+          readonly kind: "file" | "directory";
+          readonly parent: string;
+          readonly error: string | undefined;
+          readonly busy: boolean;
+        }
+      | null
+    >(null);
+
     const [levels, setLevels] = useState<ReadonlyMap<string, TreeLevel>>(() => new Map());
     const [statuses, setStatuses] = useState<StatusMap | undefined>(undefined);
     const [head, setHead] = useState<FsGitHead | undefined>(undefined);
     const [gitRoot, setGitRoot] = useState<string | undefined>(undefined);
+    // Configured remotes, for the remote-address rows. Undefined means the host
+    // never reported the field, which is a different answer from a repository
+    // that simply has no remote.
+    const [remotes, setRemotes] = useState<readonly FsGitRemote[] | undefined>(undefined);
     const [workspaceTags, setWorkspaceTags] = useState<ReadonlyMap<string, WorkspaceTag>>(EMPTY_TAGS);
     const levelsRef = useRef(levels);
     levelsRef.current = levels;
@@ -513,6 +631,7 @@ export function createFsExplorerView({
         setStatuses(undefined);
         setHead(undefined);
         setGitRoot(undefined);
+        setRemotes(undefined);
         return;
       }
       let alive = true;
@@ -520,6 +639,7 @@ export function createFsExplorerView({
       setStatuses(undefined);
       setHead(undefined);
       setGitRoot(undefined);
+      setRemotes(undefined);
       Promise.resolve()
         .then(() => statusFace.snapshot({ sessionId, maxCommits: 1 }, controller.signal))
         .then(response => {
@@ -529,17 +649,20 @@ export function createFsExplorerView({
             setStatuses(undefined);
             setHead(undefined);
             setGitRoot(undefined);
+            setRemotes(undefined);
             return;
           }
           setStatuses(joinChangeStats(parseStatusZ(normalized.status), normalized.stats));
           setHead(normalized.head);
           setGitRoot(normalized.root);
+          setRemotes(normalized.remotes);
         })
         .catch(() => {
           if (alive) {
             setStatuses(undefined);
             setHead(undefined);
             setGitRoot(undefined);
+            setRemotes(undefined);
           }
         });
       return () => {
@@ -793,7 +916,7 @@ export function createFsExplorerView({
       if (typeof document === "undefined") return;
       const handler = createEscapeHandler({
         focusComposer,
-        hasModal: () => pendingCloseRef.current !== null || hasOpenModal(document),
+        hasModal: () => pendingCloseRef.current !== null || contextMenuOpen.current || hasOpenModal(document),
       });
       const listener = (event: KeyboardEvent): void => handler(event);
       document.addEventListener("keydown", listener, true);
@@ -956,6 +1079,394 @@ export function createFsExplorerView({
       [sessionId, files, loadLevel],
     );
 
+    // Load this session's bookmarks. The store never rejects, but the guard and
+    // the catch are both here anyway: a bookmark bar that throws on mount would
+    // take the tree down with it, and the tree is the reader's actual work.
+    //
+    // `bookmarksDirty` is what keeps a slow load from overwriting an edit the
+    // reader made while it was in flight: the first paint is an empty tree, so
+    // "add a bookmark" is available immediately, and a load that lands afterwards
+    // would otherwise replace that bookmark with whatever the host had.
+    useEffect(() => {
+      let alive = true;
+      bookmarksDirty.current = false;
+      // No session means no workspace to key a record by: ask nobody, show an
+      // empty bar.
+      if (sessionId === undefined) {
+        setBookmarks(emptyBookmarkTree(new Date().toISOString()));
+        return;
+      }
+      void bookmarkStore
+        .load(sessionId)
+        .then(tree => {
+          if (alive && !bookmarksDirty.current) setBookmarks(tree);
+        })
+        .catch(() => {
+          // Keep the empty tree the first paint already rendered.
+        });
+      return () => {
+        alive = false;
+      };
+    }, [bookmarkStore, sessionId]);
+
+    /**
+     * Expand and locate one bookmarked directory.
+     *
+     * The same two steps the active-panel reveal takes: put the directory and
+     * its ancestors in the expanded set, then read every level that is not
+     * already loaded. The cursor then lands on the directory itself, which is
+     * what makes a bookmark feel like a jump rather than a scroll.
+     */
+    const openBookmarkFolder = useCallback(
+      (path: string): void => {
+        const chain = [...ancestorChain(path), path];
+        setExpanded(previous => {
+          const next = new Set(previous);
+          for (const directory of chain) next.add(directory);
+          return next;
+        });
+        if (sessionId !== undefined && files !== undefined) {
+          const missing = chain.filter(directory => levelsRef.current.get(directory)?.status !== "ready");
+          if (missing.length > 0) {
+            void Promise.all(missing.map(directory => loadLevel(directory, sessionId, files)));
+          }
+        }
+        setEntryFocus({ path });
+      },
+      [sessionId, files, loadLevel],
+    );
+
+    /**
+     * Open one bookmarked file.
+     *
+     * Through the panel stack, not a private "temporary" state: `activePath` is
+     * the single source of reveal, so the tree expands to the file and the tab
+     * strip agrees about what is open.
+     */
+    const openBookmarkFile = useCallback(
+      (path: string): void => {
+        stack.open(path);
+      },
+      [stack],
+    );
+
+    /**
+     * Show one sentence under the header for a few seconds.
+     *
+     * One timer for the whole view: a second action replaces the first notice
+     * rather than stacking, and the timer is cleared on unmount so a notice
+     * cannot land on a view that is gone.
+     * @param text - the sentence, already translated.
+     * @param tone - whether it reports success or a refusal.
+     */
+    const announce = useCallback((text: string, tone: "ok" | "error"): void => {
+      if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
+      setNotice({ text, tone });
+      noticeTimer.current = setTimeout(() => {
+        noticeTimer.current = null;
+        setNotice(null);
+      }, 4000);
+    }, []);
+
+    useEffect(
+      () => () => {
+        if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
+      },
+      [],
+    );
+
+    /**
+     * Publish one bookmark tree and write it through.
+     *
+     * The in-memory tree moves first: the bar is the reader's feedback, and
+     * waiting for a round trip would make every bookmark action feel laggy. A
+     * failed write says so and leaves the tree as it is, because the reader's
+     * change is still the best copy of their intent until they reload.
+     * @param next - the tree to publish.
+     */
+    const persistBookmarks = useCallback(
+      (next: BookmarkTree): void => {
+        // An edit outranks a load that has not landed yet.
+        bookmarksDirty.current = true;
+        setBookmarks(next);
+        // No session means no record to key: the tree stays in memory rather
+        // than landing under an empty key that no later session would read.
+        if (sessionId === undefined) return;
+        void bookmarkStore.save(sessionId, next).catch(() => {
+          announce(t("bookmarks.saveFailed"), "error");
+        });
+      },
+      [announce, bookmarkStore, sessionId, t],
+    );
+
+    /** Remove one bookmark, or one group with everything under it. */
+    const removeBookmark = useCallback(
+      (node: BookmarkNode): void => {
+        try {
+          persistBookmarks(removeNode(bookmarks, node.id).tree);
+          announce(t("bookmarks.removed"), "ok");
+        } catch {
+          // A node that vanished under the click is already gone; nothing to say.
+        }
+      },
+      [announce, bookmarks, persistBookmarks, t],
+    );
+
+    /** Replace one parent's child order, from a drag or an up/down row. */
+    const reorderBookmarks = useCallback(
+      (parentId: string | null, orderedIds: readonly string[]): void => {
+        try {
+          persistBookmarks(reorderChildren(bookmarks, parentId, orderedIds));
+        } catch {
+          // A stale order (the tree moved under the drag) is dropped rather than
+          // applied to the wrong list.
+        }
+      },
+      [bookmarks, persistBookmarks],
+    );
+
+    // The capability probe. A host without the channel, or one whose probe
+    // failed, leaves the reveal row disabled with a reason: an action that
+    // cannot run must say so rather than disappear.
+    useEffect(() => {
+      if (workspace === undefined) {
+        setCapabilities(undefined);
+        return;
+      }
+      let alive = true;
+      void workspace.capabilities(sessionId ?? "").then(outcome => {
+        if (!alive) return;
+        setCapabilities(outcome.ok ? outcome.capabilities : undefined);
+      });
+      return () => {
+        alive = false;
+      };
+    }, [workspace, sessionId]);
+
+    /**
+     * Open the context menu for one row, or for the tree's blank area.
+     *
+     * The absolute path is asked for here rather than when the row is copied:
+     * the menu has to know whether that action can run before it paints, and a
+     * menu that offers a row which then fails is worse than one that says why.
+     * The answer is allowed to arrive late; the menu opens immediately and the
+     * row enables itself when it lands.
+     */
+    const openContextMenu = useCallback(
+      (row: ContextMenuRow | undefined, anchor: ContextMenuAnchor, trigger?: HTMLElement): void => {
+        // A create lands beside the row that was right-clicked: a directory row
+        // names itself, a file row names its own directory, and the blank area
+        // names the workspace root. The root is `""`, which is a real answer.
+        const createParent = row === undefined ? "" : row.kind === "directory" ? row.path : parentDirectory(row.path);
+        setContextMenu({ row, anchor, absolutePath: undefined, trigger, createParent });
+        if (row === undefined || workspace === undefined) return;
+        const target = row.path;
+        void workspace.info(sessionId ?? "", target).then(outcome => {
+          setContextMenu(current => {
+            // A menu that closed, or moved to another row, must not adopt this
+            // answer: the absolute path belongs to the row that asked.
+            if (current === null || current.row?.path !== target) return current;
+            return { ...current, absolutePath: outcome.ok ? outcome.info.absolutePath : undefined };
+          });
+        });
+      },
+      [sessionId, workspace],
+    );
+
+    const closeContextMenu = useCallback((): void => setContextMenu(null), []);
+
+    // The Escape handler reads this flag rather than the state, so the menu
+    // closing never re-registers the document listener.
+    contextMenuOpen.current = contextMenu !== null;
+
+    // The remote rows, rebuilt whenever the snapshot, the row or the absolute
+    // path changes. `absolutePath` arrives asynchronously from `info`, so this
+    // is what turns the row from disabled to enabled a beat after the menu
+    // opens, without reopening it.
+    const remoteLinks: readonly RemoteLink[] = useMemo(
+      () =>
+        buildRemoteLinks({
+          remotes,
+          root: gitRoot,
+          absolutePath: contextMenu?.absolutePath,
+          kind: contextMenu?.row?.kind ?? "file",
+          head,
+        }),
+      [contextMenu?.absolutePath, contextMenu?.row?.kind, gitRoot, head, remotes],
+    );
+
+    /** The sentence one reveal failure paints. */
+    const revealFailureText = useCallback(
+      (error: WorkspaceError): string =>
+        t("notice.revealFailed").replace("{reason}", t(`notice.reveal.${error.code}`)),
+      [t],
+    );
+
+    /**
+     * Run one menu action.
+     *
+     * The menu closes first: every action here is a one-shot, and leaving the
+     * card up while a clipboard write or a spawn settles would make the reader
+     * wonder whether the click landed.
+     */
+    const runMenuAction = useCallback(
+      (id: string): void => {
+        const menu = contextMenu;
+        setContextMenu(null);
+        if (menu === null) return;
+
+        // The two create rows are the only actions the blank area offers, and
+        // the only ones that do not need a row: their target is the directory
+        // the menu was built for.
+        if (id === MENU_ACTION.createFile || id === MENU_ACTION.createFolder) {
+          const parent = menu.createParent;
+          if (parent === undefined) return;
+          setNamePrompt({
+            kind: id === MENU_ACTION.createFolder ? "directory" : "file",
+            parent,
+            error: undefined,
+            busy: false,
+          });
+          return;
+        }
+
+        const row = menu.row;
+        if (row === undefined) return;
+
+        // Every remote row shares one prefix; the URL is looked up in the list
+        // this menu was built from, so a remote renamed between the open and the
+        // click simply finds nothing and does nothing.
+        if (id.startsWith(`${MENU_ACTION.copyRemote}.`)) {
+          const link = remoteLinks.find(candidate => candidate.id === id);
+          if (link === undefined) return;
+          void writeClipboard(link.url).then(ok => {
+            announce(
+              ok ? t("notice.copiedRemote").replace("{remote}", link.label) : t("notice.copyFailed"),
+              ok ? "ok" : "error",
+            );
+          });
+          return;
+        }
+
+        if (id === MENU_ACTION.copyRelative) {
+          void writeClipboard(row.path).then(ok => {
+            announce(ok ? t("notice.copiedRelative") : t("notice.copyFailed"), ok ? "ok" : "error");
+          });
+          return;
+        }
+        if (id === MENU_ACTION.copyAbsolute) {
+          const absolute = menu.absolutePath;
+          if (absolute === undefined) return;
+          void writeClipboard(absolute).then(ok => {
+            announce(ok ? t("notice.copiedAbsolute") : t("notice.copyFailed"), ok ? "ok" : "error");
+          });
+          return;
+        }
+        if (id === MENU_ACTION.addBookmark) {
+          setBookmarkPicker({
+            mode: "add",
+            target: { name: row.name, path: row.path, kind: row.kind },
+          });
+          return;
+        }
+        if (id !== MENU_ACTION.reveal) return;
+        if (workspace === undefined) {
+          announce(revealFailureText({ code: "unsupported", message: "" }), "error");
+          return;
+        }
+        void workspace.reveal(sessionId ?? "", row.path).then(outcome => {
+          if (!outcome.ok) {
+            announce(revealFailureText(outcome.error), "error");
+            return;
+          }
+          const manager = t(`menu.manager.${capabilities?.fileManager ?? "directory"}`);
+          announce(t("notice.revealed").replace("{manager}", manager), "ok");
+        });
+      },
+      [announce, capabilities, contextMenu, remoteLinks, revealFailureText, sessionId, t, workspace],
+    );
+
+    /**
+     * Create one entry and show it.
+     *
+     * The parent is re-read rather than patched into the level ledger: the levels
+     * are the host's answer, and a locally spliced row would disagree with the
+     * next refresh about order and status. A file then opens, because creating one
+     * is a request to write in it; a folder expands and takes the cursor, because
+     * the reader's next move is to put something in it.
+     * @param name - the validated name from the card.
+     */
+    const submitCreate = useCallback(
+      (name: string): void => {
+        const prompt = namePrompt;
+        if (prompt === null) return;
+        if (workspace === undefined || workspace.create === undefined) {
+          setNamePrompt({ ...prompt, error: t("prompt.error.unsupported"), busy: false });
+          return;
+        }
+        const sid = sessionId;
+        if (sid === undefined) {
+          setNamePrompt({ ...prompt, error: t("prompt.error.no-workspace"), busy: false });
+          return;
+        }
+        setNamePrompt({ ...prompt, busy: true, error: undefined });
+        void workspace.create(sid, prompt.parent, name, prompt.kind).then(outcome => {
+          if (!outcome.ok) {
+            setNamePrompt(current =>
+              current === null ? current : { ...current, busy: false, error: t(`prompt.error.${outcome.error.code}`) },
+            );
+            return;
+          }
+          setNamePrompt(null);
+          const created = outcome.path;
+          if (files !== undefined) void loadLevel(prompt.parent, sid, files);
+          if (prompt.kind === "file") {
+            stack.open(created);
+            announce(t("notice.createdFile"), "ok");
+            return;
+          }
+          // A folder is a place to put things: expand it, list it, and leave the
+          // cursor on it so the next keystroke acts on what was just made.
+          setExpanded(previous => new Set(previous).add(created));
+          if (files !== undefined) void loadLevel(created, sid, files);
+          setEntryFocus({ path: created });
+          announce(t("notice.createdFolder"), "ok");
+        });
+      },
+      [announce, files, loadLevel, namePrompt, sessionId, stack, t, workspace],
+    );
+
+    const cancelCreate = useCallback((): void => setNamePrompt(null), []);
+
+    // The menu's rows, rebuilt from the state it opened with. A blank-area menu
+    // has no row, so this is also where its create targets come from.
+    const menuEntries: readonly ContextMenuEntry[] = useMemo(
+      () =>
+        contextMenu === null
+          ? []
+          : buildContextMenu(
+              {
+                row: contextMenu.row,
+                notices: { workspace: workspace !== undefined },
+                capabilities,
+                absolutePath: contextMenu.absolutePath,
+                createParent: contextMenu.createParent,
+                // A row is the only thing a remote link can address, so the
+                // blank area gets no links at all rather than a stale list.
+                remoteLinks: contextMenu.row === undefined ? undefined : remoteLinks,
+                bookmarkTarget:
+                  contextMenu.row === undefined
+                    ? undefined
+                    : {
+                        name: contextMenu.row.name,
+                        path: contextMenu.row.path,
+                        kind: contextMenu.row.kind,
+                      },
+              },
+              t,
+            ),
+      [capabilities, contextMenu, remoteLinks, t, workspace],
+    );
     // Opening a result does what opening a row in the tree does, plus the
     // reveal the tree would already have: the ancestors open so the file keeps
     // a row once the search ends.
@@ -1050,6 +1561,17 @@ export function createFsExplorerView({
           </span>
           <h2 className="fx-title">{t("view.title")}</h2>
           <span className="fx-scope">{t("view.scope")}</span>
+          <BookmarkBar
+            tree={bookmarks}
+            t={t}
+            onOpenFile={openBookmarkFile}
+            onOpenFolder={openBookmarkFolder}
+            onCreateGroup={parentId => setBookmarkPrompt({ mode: "group", parentId })}
+            onRename={node => setBookmarkPrompt({ mode: "rename", node })}
+            onRemove={removeBookmark}
+            onMove={node => setBookmarkPicker({ mode: "move", node })}
+            onReorder={reorderBookmarks}
+          />
           <div className="fx-head-meta">
             {rootLevel?.status === "ready" ? (
               <span>
@@ -1093,6 +1615,12 @@ export function createFsExplorerView({
             </button>
           </div>
         </header>
+
+        {notice === null ? null : (
+          <div className="fx-notice" role="status" data-tone={notice.tone} data-testid="fx-notice">
+            {notice.text}
+          </div>
+        )}
 
         <div className="fx-main">
           {sessionId === undefined ? (
@@ -1154,6 +1682,7 @@ export function createFsExplorerView({
                   onSelect={path => (searching ? openSearchResult(path) : stack.open(path))}
                   onRetry={retryDirectory}
                   onEntryFocusSettled={releaseEntryFocus}
+                  onContextMenu={openContextMenu}
                   cursorRequest={cursorRequest}
                   onCursorMove={path => {
                     cursorPath.current = path;
@@ -1243,6 +1772,78 @@ export function createFsExplorerView({
             </>
           )}
         </div>
+
+        {contextMenu === null ? null : (
+          <ContextMenu
+            entries={menuEntries}
+            anchor={contextMenu.anchor}
+            onSelect={runMenuAction}
+            onClose={closeContextMenu}
+            {...(contextMenu.trigger === undefined
+              ? {}
+              : { returnFocus: () => contextMenu.trigger ?? null })}
+          />
+        )}
+
+        {namePrompt === null ? null : (
+          <NamePrompt
+            kind={namePrompt.kind}
+            parent={namePrompt.parent}
+            t={t}
+            error={namePrompt.error}
+            busy={namePrompt.busy}
+            onSubmit={submitCreate}
+            onCancel={cancelCreate}
+          />
+        )}
+
+        {bookmarkPicker === null ? null : (
+          <BookmarkPicker
+            tree={bookmarks}
+            target={bookmarkPicker.mode === "add" ? bookmarkPicker.target : undefined}
+            t={t}
+            mode={bookmarkPicker.mode}
+            {...(bookmarkPicker.mode === "move" ? { node: bookmarkPicker.node } : {})}
+            onCommit={next => {
+              const mode = bookmarkPicker.mode;
+              persistBookmarks(next);
+              setBookmarkPicker(null);
+              announce(t(mode === "move" ? "bookmarks.moved" : "bookmarks.added"), "ok");
+            }}
+            onClose={() => setBookmarkPicker(null)}
+          />
+        )}
+
+        {bookmarkPrompt === null ? null : (
+          <NamePrompt
+            kind="directory"
+            parent=""
+            t={t}
+            initialName={bookmarkPrompt.mode === "rename" ? bookmarkPrompt.node.name : t("bookmarks.newGroup")}
+            titleKey={bookmarkPrompt.mode === "rename" ? "bookmarks.rename" : "bookmarks.newGroup"}
+            onSubmit={name => {
+              const prompt = bookmarkPrompt;
+              setBookmarkPrompt(null);
+              try {
+                if (prompt.mode === "rename") {
+                  persistBookmarks(renameNode(bookmarks, prompt.node.id, name));
+                  announce(t("bookmarks.renamed"), "ok");
+                  return;
+                }
+                const created = makeNode("group", {
+                  id: newBookmarkId(),
+                  name,
+                  createdAt: Date.now(),
+                });
+                persistBookmarks(insertNode(bookmarks, prompt.parentId, created));
+                announce(t("bookmarks.groupCreated"), "ok");
+              } catch {
+                announce(t("bookmarks.saveFailed"), "error");
+              }
+            }}
+            onCancel={() => setBookmarkPrompt(null)}
+          />
+        )}
 
         {rootLevel?.status === "ready" ? (
           <footer className="fx-foot" data-testid="fs-foot">

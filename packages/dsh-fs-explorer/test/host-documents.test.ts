@@ -20,7 +20,7 @@ import {
   type DocumentDeps,
 } from "../src/host/documents.ts";
 import type { FsFileInfo, FsPathInfo, FsTargetFace, FsWriteOutcome } from "../src/host/types.ts";
-import FsExplorerDocumentsService from "../src/index.ts";
+import { FsExplorerDocumentsService } from "../src/index.ts";
 
 /** A target as `resolve` hands it back: the display path is not necessarily absolute. */
 const FILE_TARGET: FsTargetFace = { targetKey: "tk-a", displayPath: "notes/a.md" };

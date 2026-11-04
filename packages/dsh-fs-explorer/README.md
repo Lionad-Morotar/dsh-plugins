@@ -29,6 +29,7 @@
 ## 核心能力
 
 - 目录树：每层按需调用 `workspaceFiles.list(sessionId, path)`，根节点用 `"."`。目录优先、同类按名称自然排序（`file2` 在 `file10` 前），`node_modules` / `.git` / `dist` / `__pycache__` 在任何层级都不出现。
+- 右键菜单：文件行、目录行与树空白处都能右键（`Shift+F10` / ContextMenu 键在光标行上同效）。菜单顶部是「新建文件」「新建文件夹」，落在被右击的目录里（文件行落到它所在的目录，空白处落到工作区根）；名称卡片校验后提交，新建文件随即打开，新建文件夹随即展开并把光标放上去。行上还有「在 Finder / 资源管理器中显示」、「复制路径 → 绝对路径 / 相对路径（工作区）」与「复制远端地址」。远端地址按 provider 生成 GitHub / GitLab / Gitee / Bitbucket / Codeberg 的文件与目录链接（GitLab 走 `/-/`，Bitbucket 与 Codeberg 走 `src`），未知 host 回退到 `/blob/`；remote URL 在这里归一化成 https 基址，ref 取当前分支、游离 HEAD 取提交哈希，路径段逐段编码但保留 `/`。仓库没有可用远端时该项禁用并说明原因。reveal 由本包 host 半按平台 spawn（darwin `open -R`、win32 `explorer.exe /select,`、linux `xdg-open <父目录>`、WSL 先 `wslpath -w`），路径先 `fs.resolve` + `fs.stat` + `fs.contains` 校验，工作区外与不存在的路径直接拒绝。宿主没装 UI 原语时菜单退化为本包自有的按钮卡片，不崩。动作结果用头部下的一条提示条反馈，4 秒自动消失。
 - 虚拟化：只挂视口内的行加少量 overscan，展开一个几千项的大目录不会把整棵树塞进 DOM。
 - 截断提示：宿主返回 `truncated` 时，目录下多一行"目录过大，仅显示前 N 项"。`workspaceFiles.list` 没有分页参数，所以这里只陈述事实，不画一个点了没用的"继续加载"。
 - 状态着色：从 Git 面板的 `remote.gitExplorer.snapshot` 里取原始 `git status --porcelain=v2 -z`，折叠成六类（修改 / 新增 / 删除 / 重命名 / 未跟踪 / 冲突），文件行给字母徽标，目录行给变更计数，头部给总数。Git 面板没装时降级为无色，不是错误态。
@@ -80,6 +81,9 @@ const off = ctx.fsExplorer.registerRenderer({
 
 ## 已知边界
 
+- 右键「添加书签」支持多级组：选择器从根目录开始逐层进入，每层都能「添加到这里」或「新建组…」，空组同样可用。书签行右侧的 `⋯` 提供重命名、移除、上移 / 下移与「移到组…」；顶层 chip 可拖拽重排，数组顺序即显示顺序。
+- 书签栏在文件面板头部的中段（`.fx-scope` 与项数之间）：顶层按 `tree.roots` 的数组顺序渲染，不按创建时间重排。点文件书签打开它，点目录书签展开祖先链、读取缺失层并把光标落到该目录。书签组悬浮或聚焦弹出浮层，组可以任意嵌套（宿主 `Menu` 只展开一级，所以这里自绘浮层）；浮层用 `position: fixed` 按 chip 的 rect 定位，避开 `.fx-root` 的 `overflow: hidden`，关闭有 120ms 宽限，指针从 chip 移到卡片不会闪断。
+- 书签走宿主 `storageDomain`（领域 `dsh_fs_explorer`，表 `bookmarks`，键是工作区 realpath），所以同一工作区的多个会话共享一份，不同工作区互不污染，也不会脏 `git status`。宿主没有这个服务时（或调用失败时）回退到 `localStorage` 的 `dsh-fs-explorer.bookmarks.<sessionId>`，不报错也不丢内存里的书签；两者都不可用时静默降级为空树。
 - 目录列表由宿主按 `maxEntries` 截断，DSH 默认 2000 项（profile 可调，调到 4000 就按 4000 截断）。面板显示宿主回报的实际截断数，不写死数字，也不提供"继续加载"。
 - 标签栈没有淘汰、也没有上限：打开过的文件会一直留在标签栏，直到手动关闭或换会话。
 - 文本按页读，家族文件整份读。家族文件超过宿主的 `maxFileBytes` 时按"超上限"失败，不会拿到半份字节去解码；不属于三个家族、又不是 UTF-8 文本的文件仍落到"不是文本文件"，无权限、文件已删除同样落到对应错误态。宿主的 `workspaceFiles.read` 拒绝末端符号链接，预览改走本包的 `locate`：链接解析成普通文件时按真实路径重读，挂链或指向目录的链接仍显示符号链接错误态。
@@ -90,6 +94,11 @@ const off = ctx.fsExplorer.registerRenderer({
 - 预览查找只在当前页内，命中计数写「本页 n/m」。翻到新的一页后计数重算，原来第几个命中不跨页保留。二进制家族（`scene3d` / `raster` / `cad`）没有文本面，不显示查找按钮。
 - 每个打开的 3D / CAD 面板各持有一个 WebGL 上下文，隐藏只暂停绘制、不释放上下文。浏览器对同时存在的上下文有上限（常见约 16 个，超了丢最旧的），本包不做淘汰，所以同时开很多模型面板仍可能把更早的面板顶掉。
 - `workbench.viewFocus` 队列按视图 id 存一条请求，没有会话维度：请求入队后、目标视图挂载前若切换了会话，这条 focus 会被新会话的视图取走。目前只在切视图与切会话几乎同时发生时可见。
+- 右键菜单的「在 Finder 中显示」只在 host 半能 spawn 时可用：headless Linux（没有 `DISPLAY` / `WAYLAND_DISPLAY` 且不是 WSL）没有文件管理器，该项禁用并给出原因。web 部署同样走本包 host 半，因为它在读者自己的机器上；宿主 session 命名空间的 `openWorkspacePath` 在 web 上是关掉的，所以这里不依赖它。
+- 「复制绝对路径」需要 host 半先回答 `info`；通道缺席或 `info` 失败时该项禁用并说明原因，相对路径不受影响（它就是行自己的路径）。
+- 新建文件夹没有 `mkdir` 抽象可用：host 半写一个 `.dsh-mkdir-<uuid>` 哨兵文件（`fs-local` 的原子写会递归建父目录），再把它删掉，目录作为哨兵的父目录留下来。后端没有 `deleteFile` 时整项答 `unsupported` 而不是留一个哨兵在树里。哨兵删不掉时返回 `io-error` 并在 message 里带上它的绝对路径。
+- 名称校验在两侧都做：卡片给即时反馈，host 端再判一次（trim 后非空、不是 `.` / `..`、不含 `/` `\` NUL、≤ 200 字符）。扩展名不参与判断，`Makefile` 与 `a.md` 都是原样创建。
+- 新建只做空文件与空目录，不做重命名、删除或移动已有条目。
 - 需要一个已选择的会话；没有会话时显示"请先选择会话"。
 - "进入即就位"只在挂载后认领一次：之后刷新目录、展开别的目录都不会把光标拽回来。有弹窗开着（`aria-modal` / `dialog[open]` / `data-dsh-modal`）时整个动作让路且不消耗这次认领，但要到行数据或标签栈下一次变化才会重试——弹窗把输入权交还给了它的触发点，那之后焦点归宿主管。认领读的是标签栈的实时快照而不是本次渲染的：宿主经 `viewRequest` 或 `workbench.viewFocus` 交下来的目标已经落栈时，读者要看的就是那个文件，不会被 README 抢走。
 
@@ -104,10 +113,10 @@ node .nsl/chain/accept-s6-fs-preview.mjs  # 分页 offset/limit、Markdown 无 r
 node .nsl/chain/accept-s7-fs-panels.mjs   # 面板状态机、键位表、Esc 交还焦点、viewRequest
 ```
 
-单包：`pnpm --filter dsh-fs-explorer test`（399 用例）、`typecheck`、`build`。
+单包：`pnpm --filter dsh-fs-explorer test`（712 用例）、`typecheck`、`build`。
 
 `lib/` 是提交进仓库的构建产物，profile 安装态不跑构建，所以改源码后必须重跑 `build`。陈旧的 `lib/` 会让插件在宿主里激活失败，而单插件激活失败会连带整个 Web 端启动中断。`pnpm --filter dsh-fs-explorer check:lib` 把这件事变成可自动判定的门（构建到内存后与磁盘 `lib/` 逐文件比对字节，不一致即失败，且不会删除 `lib/`），`test` 已经前置调用它。
 
 ## 结构
 
-`model.ts`（树、排序、图标、行窗口）、`panels.ts`（标签栈与会话注册表）、`preview.ts`（分页、家族判定与失败归类）、`status.ts`（porcelain 解析）都是无 DOM 的纯逻辑，判据脚本直接在 Node 里驱动；`view.tsx` 只做装配与宿主 seam；`wire.ts` 把直接服务与 Remote 载体两种数据面收窄成同一张脸（分页的 `read` 与整份的 `readBytes`）；`find.ts`（页内命中与文本布局）与 `tree-search.ts`（索引解析、结果行与降级过滤）是无 DOM 的纯逻辑，`find-surface.ts` 把编辑器与 DOM 两种 reveal 各自封装成一个 `FindSurface`；`preview-chunk.ts` 是两条懒路由的唯一名字表，`chunks/` 下的三个入口只做共享渲染器的 props 适配。
+`model.ts`（树、排序、图标、行窗口）、`panels.ts`（标签栈与会话注册表）、`preview.ts`（分页、家族判定与失败归类）、`status.ts`（porcelain 解析）都是无 DOM 的纯逻辑，判据脚本直接在 Node 里驱动；`view.tsx` 只做装配与宿主 seam；`wire.ts` 把直接服务与 Remote 载体两种数据面收窄成同一张脸（分页的 `read` 与整份的 `readBytes`）；`find.ts`（页内命中与文本布局）与 `tree-search.ts`（索引解析、结果行与降级过滤）是无 DOM 的纯逻辑，`find-surface.ts` 把编辑器与 DOM 两种 reveal 各自封装成一个 `FindSurface`；`context-menu.ts` 是右键菜单的纯函数（行、空白、能力、绝对路径、新建目标目录、远端链接 → 菜单项），`remote-url.ts` 是远端地址的纯转换（remote URL 归一化、provider 表、ref 与路径编码），`context-menu-view.tsx` 只负责把它画成宿主 `Menu` 或自有卡片，`name-prompt.tsx` 是新建的名称卡片与它的纯校验，`platform.ts` 捕获 loader 的 `require` 并解析 UI 原语，`workspace-face.ts` 是 `fsExplorerWorkspace` 的客户端脸（裸 RPC + 结果折叠）；`preview-chunk.ts` 是两条懒路由的唯一名字表，`chunks/` 下的三个入口只做共享渲染器的 props 适配。

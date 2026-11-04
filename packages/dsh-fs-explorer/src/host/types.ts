@@ -110,6 +110,17 @@ export interface FsWriteIntent {
   readonly version: string;
 }
 
+/**
+ * A write that must not land on an existing path.
+ *
+ * The backend refuses an occupied target with `FS_NOT_OBSERVED`, which is the
+ * only way to create a file without a read-then-write race: a `stat` before the
+ * write would leave a window where another writer wins.
+ */
+export interface FsCreateIntent {
+  readonly kind: "createIfAbsent";
+}
+
 /** The part of a write outcome the channel reports back. */
 export interface FsWriteOutcome {
   readonly version: string;
@@ -129,11 +140,32 @@ export interface FsWriteOutcome {
 export interface FileSystemFace {
   resolve(path: string, opts?: { readonly cwd?: string; readonly signal?: AbortSignal }): Promise<FsTargetFace>;
   stat(target: FsTargetFace, signal?: AbortSignal): Promise<FsFileInfo | undefined>;
+  /**
+   * Canonical containment: whether `child` is `parent` or a descendant of it.
+   *
+   * Optional only so a test fake can omit it; every installed backend
+   * implements it, and it is the one check the workspace channel trusts for
+   * its boundary. A backend without it answers `unsupported` rather than
+   * guessing from string prefixes, which a symlink or a `..` segment defeats.
+   */
+  contains?(parent: FsTargetFace, child: FsTargetFace): boolean;
   readText(target: FsTargetFace, signal?: AbortSignal): Promise<string>;
   writeText(
     target: FsTargetFace,
     content: string,
-    expected?: FsWriteIntent,
+    expected?: FsWriteIntent | FsCreateIntent,
+    signal?: AbortSignal,
+  ): Promise<FsWriteOutcome>;
+  /**
+   * Remove one file.
+   *
+   * Optional because a test fake and a backend older than the probe can omit it;
+   * every installed local backend implements it. The workspace channel reads its
+   * absence as `unsupported` rather than writing a sentinel it cannot clean up.
+   */
+  deleteFile?(
+    target: FsTargetFace,
+    expected?: { readonly version: string },
     signal?: AbortSignal,
   ): Promise<FsWriteOutcome>;
   processPath?(target: FsTargetFace): string;
@@ -152,6 +184,111 @@ export interface FsPathInfo {
   readonly type: "file" | "directory" | "symlink" | "other";
 }
 
+/**
+ * Failure vocabulary of the workspace channel.
+ *
+ * Closed on purpose, like {@link DocumentFailureCode}: the client maps each
+ * code to one sentence, so a code it does not know would render as a silent
+ * no-op. Every backend failure that has no client-facing meaning collapses
+ * into `io-error` with the backend's own message attached.
+ */
+export type WorkspaceFailureCode =
+  | "no-workspace"
+  | "outside-workspace"
+  | "not-found"
+  | "not-directory"
+  | "exists"
+  | "invalid-name"
+  | "unsupported"
+  | "permission"
+  /**
+   * This host has no storage domain.
+   *
+   * Not an error the reader caused, and not one they can fix: it is the signal
+   * that tells the client to keep its own copy in localStorage instead of
+   * showing a message.
+   */
+  | "no-storage"
+  | "io-error";
+
+export interface WorkspaceFailure {
+  readonly code: WorkspaceFailureCode;
+  readonly message: string;
+}
+
+/**
+ * The file manager a host can hand a path to.
+ *
+ * `finder` and `explorer` select the entry; `directory` opens the containing
+ * folder, because the Linux desktop has no portable "select this file" verb.
+ */
+export type WorkspaceFileManager = "finder" | "explorer" | "directory";
+
+/** What the client needs to label and enable the reveal row. */
+export interface WorkspaceCapabilities {
+  readonly fileManager: WorkspaceFileManager | null;
+  readonly canReveal: boolean;
+}
+
+/** One path as the workspace channel describes it. */
+export interface WorkspacePathInfo {
+  /** Canonical absolute path in the session's execution world. */
+  readonly absolutePath: string;
+  readonly type: "file" | "directory" | "other";
+  readonly exists: boolean;
+}
+
+export interface WorkspaceCapabilitiesRequest {
+  readonly sessionId: string;
+}
+
+export interface WorkspaceInfoRequest {
+  readonly sessionId: string;
+  /** Workspace-relative or absolute; resolved against the session's cwd. */
+  readonly path: string;
+}
+
+export interface WorkspaceRevealRequest {
+  readonly sessionId: string;
+  readonly path: string;
+}
+
+/**
+ * One create request.
+ *
+ * `parent` is a workspace-relative directory path, with `""` naming the root.
+ * `name` is a single path segment: the endpoint refuses anything that could
+ * address a different directory, so the client cannot widen its own reach by
+ * sending `../x`.
+ */
+export interface WorkspaceCreateRequest {
+  readonly sessionId: string;
+  readonly parent: string;
+  readonly name: string;
+  readonly kind: "file" | "directory";
+}
+
+export type WorkspaceCapabilitiesResult =
+  | { readonly ok: true; readonly capabilities: WorkspaceCapabilities }
+  | { readonly ok: false; readonly error: WorkspaceFailure };
+
+export type WorkspaceInfoResult =
+  | { readonly ok: true; readonly info: WorkspacePathInfo }
+  | { readonly ok: false; readonly error: WorkspaceFailure };
+
+export type WorkspaceRevealResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: WorkspaceFailure };
+
+/** What `create` returns: the workspace-relative path of the new entry. */
+export interface WorkspaceCreatedEntry {
+  readonly path: string;
+}
+
+export type WorkspaceCreateResult =
+  | { readonly ok: true; readonly path: string }
+  | { readonly ok: false; readonly error: WorkspaceFailure };
+
 /** Structural slice of the live session store: only the header cwd is read. */
 export interface SessionsFace {
   get(id: string): { readonly header?: { readonly cwd?: string } } | undefined;
@@ -161,3 +298,32 @@ export interface SessionsFace {
 export interface SessionPersistenceFace {
   stat(id: string): Promise<{ readonly header?: { readonly cwd?: string } } | undefined>;
 }
+
+/**
+ * One bookmark request: which session's workspace the record belongs to.
+ *
+ * The key is the workspace's canonical path, resolved on the host, so the client
+ * never has to know how a workspace is identified.
+ */
+export interface BookmarkLoadRequest {
+  readonly sessionId: string;
+}
+
+/**
+ * One workspace's bookmarks.
+ *
+ * A null tree is a successful answer: it means this workspace has no bookmarks
+ * yet, which is the ordinary state of a workspace nobody has bookmarked in.
+ */
+export type BookmarkLoadResult =
+  | { readonly ok: true; readonly tree: import("../bookmarks.ts").BookmarkTree | null }
+  | { readonly ok: false; readonly error: WorkspaceFailure };
+
+export interface BookmarkSaveRequest {
+  readonly sessionId: string;
+  readonly tree: import("../bookmarks.ts").BookmarkTree;
+}
+
+export type BookmarkSaveResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: WorkspaceFailure }; 
