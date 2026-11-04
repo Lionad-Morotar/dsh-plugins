@@ -81,6 +81,25 @@ describe("canBridgeFile", () => {
     expect(canBridgeFile("assets/icons/logo.SVG")).toBe(true);
   });
 
+  it("does not treat a leading-dot name as a suffix", () => {
+    // `.png` is a file called "png", not a PNG. The format catalogue reads it
+    // that way, so it has no family and no renderer can draw it; claiming it
+    // would forward it to the workbench and land on the text path, which answers
+    // "this is not a text file". A dotfile whose name is a text suffix is a
+    // different case and stays claimed, which the next test covers.
+    for (const name of [".png", ".jpg", ".pdf", ".glb", ".dxf", "dir/.png"]) {
+      expect(canBridgeFile(name), name).toBe(false);
+    }
+  });
+
+  it("still claims a dotfile whose name is a text suffix", () => {
+    // `.gitignore` and `.env` are dotfiles the editor vocabulary lists by the
+    // word after the dot, and they are text, so they stay with this view.
+    for (const name of [".gitignore", ".env", ".npmrc", ".editorconfig", "project/.gitignore"]) {
+      expect(canBridgeFile(name), name).toBe(true);
+    }
+  });
+
   it("refuses suffixes nothing here can render", () => {
     for (const name of ["a.qqq", "movie.mp4", "bundle.zip", "db.sqlite", "font.woff2", "src", "a."]) {
       expect(canBridgeFile(name)).toBe(false);

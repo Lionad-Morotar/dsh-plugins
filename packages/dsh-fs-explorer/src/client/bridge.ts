@@ -94,22 +94,42 @@ const HOST_STRONG_SUFFIXES: ReadonlySet<string> = new Set([
   "docx", "pptx", "xlsx", "xls", "fods", "csv", "tsv", "doc", "ppt",
 ]);
 
-/** Suffix-less basenames this view still previews as text. */
-const TEXT_NAMES: ReadonlySet<string> = new Set(["makefile", "dockerfile", "license", "readme", "changelog"]);
+/**
+ * Basenames this view previews as text even though they carry no suffix.
+ *
+ * Two kinds live here. The first is the suffix-less names an editor opens, which
+ * have no dot at all. The second is the dotfiles the editor vocabulary lists by
+ * the word after the dot: since a leading dot now names the file rather than an
+ * extension, `.gitignore` has to be matched as a whole name or it would be lost
+ * by the same rule that stops `.png` from being read as a picture.
+ */
+const TEXT_NAMES: ReadonlySet<string> = new Set([
+  "makefile", "dockerfile", "license", "readme", "changelog",
+  ".gitignore", ".gitattributes", ".gitmodules", ".npmrc", ".nvmrc", ".editorconfig",
+  ".prettierrc", ".eslintrc", ".browserslistrc", ".env",
+]);
 
 /** Every suffix this view can render, from the two catalogues it owns. */
 const BRIDGE_SUFFIXES: ReadonlySet<string> = new Set([...claimedExtensions(), ...TEXT_SUFFIXES]);
 
 /**
- * The suffix of one basename.
+ * The suffix of one basename, without the dot.
  *
- * A leading dot is the whole name rather than an extension, so `.gitignore`
- * answers `gitignore`: that is the spelling the editor vocabulary lists, and
- * treating it as extensionless would send every dotfile to the name whitelist.
+ * A leading dot is the whole name rather than an extension, which is the rule the
+ * shared format catalogue and the renderer registry both apply: `.png` is a file
+ * called "png", not a PNG, and `familyOf` answers null for it. Reading it as a
+ * suffix here would forward it to the workbench, where no family claims it and it
+ * would land on the text path and be refused as "not a text file".
+ *
+ * The dotfile names the editor vocabulary does list (`.gitignore`, `.env`) are
+ * handled by {@link TEXT_NAMES} instead, which is why this function can answer
+ * empty for them without losing them.
+ * @param name - lowercased basename.
+ * @returns the suffix without its dot, or an empty string when there is none.
  */
 function suffixOf(name: string): string {
   const dot = name.lastIndexOf(".");
-  return dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
+  return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase();
 }
 
 /**
