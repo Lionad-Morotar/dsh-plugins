@@ -26,6 +26,8 @@ export interface DiagramNode {
   readonly shape?: string;
   readonly technology?: string | null;
   readonly description?: { txt: string } | string | null;
+  /** Target view id when the model marked this element navigable. */
+  readonly navigateTo?: string | null;
 }
 
 export interface DiagramEdge {
@@ -98,7 +100,16 @@ export interface DiagramOptions {
    * in host-client pixels.
    */
   readonly onEdgeClick?: (id: string, anchor: DiagramAnchor) => void;
+  /**
+   * Fired when the user presses one of the selected node's action buttons.
+   * `navigate` carries the node's target view id; `relationships` asks for the
+   * node's relationship pane.
+   */
+  readonly onNodeAction?: (action: NodeAction, id: string, anchor: DiagramAnchor) => void;
 }
+
+/** The two buttons the selected node's action bar offers. */
+export type NodeAction = "navigate" | "relationships";
 
 export interface DiagramHandle {
   viewport(): DiagramViewport;
@@ -126,6 +137,7 @@ export interface DiagramInteractions {
   onSelect?(id: string | null): void;
   onNodeMove?(id: string, x: number, y: number): void;
   onEdgeClick?(id: string, anchor: DiagramAnchor): void;
+  onNodeAction?(action: NodeAction, id: string, anchor: DiagramAnchor): void;
 }
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -413,6 +425,23 @@ const edgeAnchorOf = (edge: DiagramEdge, viewport: DiagramViewport): DiagramAnch
   return { x: mid.x * scale + tx, y: mid.y * scale + ty, width: 0, height: 0 };
 };
 
+/**
+ * Anchor rectangle for one node, in host-client pixels.
+ *
+ * The node's own rectangle is the anchor: a relationship pane opened from the
+ * action bar belongs beside the element it describes, not beside the button.
+ *
+ * @param node - the node whose action bar was pressed.
+ * @param viewport - the live viewport.
+ * @returns the anchor rectangle, relative to the host's top-left corner.
+ */
+const nodeAnchorOf = (node: DiagramNode, viewport: DiagramViewport): DiagramAnchor => ({
+  x: node.x * viewport.scale + viewport.tx,
+  y: node.y * viewport.scale + viewport.ty,
+  width: node.width * viewport.scale,
+  height: node.height * viewport.scale,
+});
+
 export function createDiagram(host: HTMLElement, view: DiagramView, opts: DiagramOptions): DiagramHandle {
   host.replaceChildren();
   const svg = el("svg", { width: "100%", height: "100%", style: "display:block;touch-action:none;cursor:grab" });
@@ -645,6 +674,101 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     nodeRings.set(node.id, ring);
   }
 
+  /**
+   * The selected node's action bar: a small pill row hanging off the node's
+   * bottom edge, drawn in SVG so it needs no coordinate conversion.
+   *
+   * It lives in its own layer above the nodes rather than inside the node's
+   * group: a node group carries `cursor:move` and is the drag target, so a
+   * button nested in it would inherit the drag affordance and the press would
+   * reach the drag handler no matter what the button did.
+   *
+   * Only the selected node shows one, so a single reusable bar is enough; it
+   * is rebuilt on selection rather than kept per node.
+   */
+  const actionLayer = el("g", { display: "none" });
+  root.append(actionLayer);
+
+  const ACTION_BUTTON = 26;
+  const ACTION_GAP = 6;
+
+  /** One icon glyph per action, drawn as a path so no font or sprite is needed. */
+  const ACTION_ICONS: Readonly<Record<NodeAction, string>> = {
+    // A magnifier over a frame: the official IconZoomScan reads as "focus here".
+    navigate:
+      "M4 8 V5 A1 1 0 0 1 5 4 H8 M16 4 H19 A1 1 0 0 1 20 5 V8 M20 16 V19 A1 1 0 0 1 19 20 H16 M8 20 H5 A1 1 0 0 1 4 19 V16 M9 12 H15 M12 9 V15",
+    // Two endpoints joined by a line: the relationship-browse affordance.
+    relationships:
+      "M6 6 m-2.5 0 a2.5 2.5 0 1 0 5 0 a2.5 2.5 0 1 0 -5 0 M18 18 m-2.5 0 a2.5 2.5 0 1 0 5 0 a2.5 2.5 0 1 0 -5 0 M8 8 L16 16",
+  };
+
+  const ACTION_LABELS: Readonly<Record<NodeAction, string>> = {
+    navigate: "Navigate to view",
+    relationships: "Browse relationships",
+  };
+
+  /**
+   * Rebuild the action bar for the current selection.
+   *
+   * @param node - the selected node, or null to hide the bar.
+   */
+  const paintActions = (node: DiagramNode | null): void => {
+    actionLayer.replaceChildren();
+    if (node === null) {
+      actionLayer.setAttribute("display", "none");
+      return;
+    }
+    // `navigate` only exists when the model marked a target; the browse button
+    // is always there because every element has relationships.
+    const actions: NodeAction[] = [];
+    if (typeof node.navigateTo === "string" && node.navigateTo !== "") actions.push("navigate");
+    actions.push("relationships");
+
+    const totalWidth = actions.length * ACTION_BUTTON + (actions.length - 1) * ACTION_GAP;
+    // Centred on the node's bottom edge, nudged down so the pill straddles it
+    // the way the official centre-bottom bar does.
+    const originX = node.x + node.width / 2 - totalWidth / 2;
+    const originY = node.y + node.height + 2;
+    actionLayer.setAttribute("transform", `translate(${originX} ${originY})`);
+    actionLayer.setAttribute("display", "inline");
+    actionLayer.setAttribute("data-arch-actions", node.id);
+
+    for (const [index, action] of actions.entries()) {
+      const x = index * (ACTION_BUTTON + ACTION_GAP);
+      const button = el("g", { "data-arch-action": action });
+      button.setAttribute("data-arch-action-node", node.id);
+      button.setAttribute("role", "button");
+      button.setAttribute("aria-label", ACTION_LABELS[action]);
+      button.setAttribute("tabindex", "0");
+      button.style.cursor = "pointer";
+      button.append(
+        el("rect", {
+          x,
+          y: 0,
+          width: ACTION_BUTTON,
+          height: ACTION_BUTTON,
+          rx: 7,
+          fill: "#1a1d23",
+          stroke: "color-mix(in srgb, #60a5fa 55%, transparent)",
+          "stroke-width": 1,
+        }),
+      );
+      const icon = el("path", {
+        d: ACTION_ICONS[action],
+        transform: `translate(${x + 4} 4)`,
+        fill: "none",
+        stroke: "#cbd5e1",
+        "stroke-width": 1.6,
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+        // The icon must not swallow the press: the handler sits on the group.
+        "pointer-events": "none",
+      });
+      button.append(icon);
+      actionLayer.append(button);
+    }
+  };
+
   // Selection is a ring, not a fade: dimming every other node to 40% washed
   // their labels into the canvas and made a two-step read of a view the user
   // opened precisely to read. The ring keeps the whole drawing legible.
@@ -652,6 +776,8 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     for (const [id, ring] of nodeRings) {
       ring.setAttribute("display", selected === id ? "inline" : "none");
     }
+    // The action bar follows the selection, so it repaints on the same edge.
+    paintActions(selected === null ? null : (nodeById.get(selected) ?? null));
   };
 
   /**
@@ -792,6 +918,24 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
 
   svg.addEventListener("pointerdown", event => {
     const element = event.target as Element;
+    // An action button is checked first, before anything that could start a
+    // drag: the bar sits on the node's bottom edge, so a press that fell
+    // through would both fire the action and begin dragging the node.
+    const actionButton = element.closest("[data-arch-action]") as SVGGElement | null;
+    if (actionButton !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (document.activeElement !== host) host.focus({ preventScroll: true });
+      const action = actionButton.getAttribute("data-arch-action") as NodeAction | null;
+      const nodeId = actionButton.getAttribute("data-arch-action-node") ?? "";
+      const node = nodeById.get(nodeId);
+      if (action === null || node === undefined) return;
+      drag = null;
+      panFrom = null;
+      opts.onNodeAction?.(action, nodeId, nodeAnchorOf(node, { scale, tx, ty }));
+      return;
+    }
+
     // An edge hit path is checked before the node lookup: it is a bare <path>
     // with no `g[data-id]` ancestor, so without this branch every edge press
     // would fall through to the blank-canvas path and start a pan.

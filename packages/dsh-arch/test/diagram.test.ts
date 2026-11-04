@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDiagram } from "../src/client/chunk/diagram.ts";
-import type { DiagramView } from "../src/client/chunk/diagram.ts";
+import type { DiagramAnchor, DiagramNode, DiagramView } from "../src/client/chunk/diagram.ts";
 
 interface DumpNode {
   id: string;
@@ -600,5 +600,102 @@ describe("edge motion and hit area", () => {
     svg.dispatchEvent(new PointerEvent("pointerup", {}));
     expect(onViewportChange).not.toHaveBeenCalled();
     expect(diagram.viewport()).toEqual(VIEWPORT);
+  });
+});
+
+describe("node action bar", () => {
+  /** The index view with `navigateTo` set on one node, as the model would. */
+  function viewWithNavigate(): DiagramView {
+    const view = structuredClone(dump.views.index as DumpView) as unknown as DiagramView;
+    const node = view.nodes.find(candidate => candidate.id === "dshPlugins") as unknown as Record<string, unknown>;
+    expect(node).toBeDefined();
+    node.navigateTo = "skin";
+    return view;
+  }
+
+  const actionOf = (action: string): SVGGElement | null =>
+    host.querySelector(`[data-arch-action="${action}"]`);
+
+  it("shows both buttons for a node that carries navigateTo", () => {
+    const diagram = createDiagram(host, viewWithNavigate(), { viewport: VIEWPORT });
+    diagram.select("dshPlugins");
+    expect(actionOf("navigate")).not.toBeNull();
+    expect(actionOf("relationships")).not.toBeNull();
+    expect(host.querySelectorAll("[data-arch-action]")).toHaveLength(2);
+  });
+
+  it("shows only the browse button for a node without navigateTo", () => {
+    const diagram = createDiagram(host, structuredClone(dump.views.index as DumpView) as unknown as DiagramView, {
+      viewport: VIEWPORT,
+    });
+    diagram.select("user");
+    expect(actionOf("navigate")).toBeNull();
+    expect(actionOf("relationships")).not.toBeNull();
+    expect(host.querySelectorAll("[data-arch-action]")).toHaveLength(1);
+  });
+
+  it("hides the bar again when the selection clears", () => {
+    const diagram = createDiagram(host, viewWithNavigate(), { viewport: VIEWPORT });
+    diagram.select("dshPlugins");
+    expect(host.querySelectorAll("[data-arch-action]")).toHaveLength(2);
+    diagram.select(null);
+    expect(host.querySelectorAll("[data-arch-action]")).toHaveLength(0);
+    const layer = host.querySelector("[data-arch-actions]");
+    expect(layer === null || layer.getAttribute("display") === "none").toBe(true);
+  });
+
+  it("hangs the bar off the node's bottom edge, centred", () => {
+    const view = viewWithNavigate();
+    const diagram = createDiagram(host, view, { viewport: VIEWPORT });
+    diagram.select("dshPlugins");
+    const node = view.nodes.find(candidate => candidate.id === "dshPlugins") as DiagramNode;
+    const layer = host.querySelector("[data-arch-actions]") as SVGGElement;
+    const transform = layer.getAttribute("transform") ?? "";
+    const match = /translate\(([-\d.]+) ([-\d.]+)\)/u.exec(transform);
+    expect(match).not.toBeNull();
+    const [, tx, ty] = match as unknown as [string, string, string];
+    // Two 26px buttons with a 6px gap: 58 wide, so the row starts 29 left of centre.
+    expect(Number(tx)).toBeCloseTo(node.x + node.width / 2 - 29, 6);
+    expect(Number(ty)).toBeCloseTo(node.y + node.height + 2, 6);
+  });
+
+  it("reports the action with the node anchor and never starts a drag", () => {
+    const onNodeAction = vi.fn();
+    const onMove = vi.fn();
+    const onViewportChange = vi.fn();
+    const view = viewWithNavigate();
+    const diagram = createDiagram(host, view, { viewport: VIEWPORT, onNodeAction, onMove, onViewportChange });
+    diagram.select("dshPlugins");
+    const svg = host.querySelector("svg") as SVGSVGElement;
+    const node = view.nodes.find(candidate => candidate.id === "dshPlugins") as DiagramNode;
+
+    const button = actionOf("relationships") as SVGGElement;
+    button.dispatchEvent(
+      new PointerEvent("pointerdown", { clientX: 300, clientY: 300, cancelable: true, bubbles: true }),
+    );
+    // A press that leaked into the drag path would move the node on the next
+    // pointermove; this proves the button swallowed it.
+    svg.dispatchEvent(new PointerEvent("pointermove", { clientX: 400, clientY: 400 }));
+    svg.dispatchEvent(new PointerEvent("pointerup", {}));
+
+    expect(onNodeAction).toHaveBeenCalledTimes(1);
+    const [action, id, anchor] = onNodeAction.mock.calls[0] as [string, string, DiagramAnchor];
+    expect(action).toBe("relationships");
+    expect(id).toBe("dshPlugins");
+    expect(anchor.x).toBeCloseTo(node.x * VIEWPORT.scale + VIEWPORT.tx, 6);
+    expect(anchor.width).toBeCloseTo(node.width * VIEWPORT.scale, 6);
+    expect(onMove).not.toHaveBeenCalled();
+    expect(onViewportChange).not.toHaveBeenCalled();
+  });
+
+  it("reports navigate with the same node anchor", () => {
+    const onNodeAction = vi.fn();
+    const diagram = createDiagram(host, viewWithNavigate(), { viewport: VIEWPORT, onNodeAction });
+    diagram.select("dshPlugins");
+    (actionOf("navigate") as SVGGElement).dispatchEvent(
+      new PointerEvent("pointerdown", { clientX: 300, clientY: 300, cancelable: true, bubbles: true }),
+    );
+    expect(onNodeAction).toHaveBeenCalledTimes(1);
+    expect((onNodeAction.mock.calls[0] as [string])[0]).toBe("navigate");
   });
 });
