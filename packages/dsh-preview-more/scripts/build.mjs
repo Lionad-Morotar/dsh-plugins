@@ -38,6 +38,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { dracoDefines, dracoPlugin, loadDracoPayloads } from "dsh-preview-viewers/build/draco-plugin.mjs";
+import { loadPdfWorkerPayload, pdfDefines, pdfWorkerPlugin } from "dsh-preview-viewers/build/pdf-worker-plugin.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "..");
@@ -156,10 +157,11 @@ ${code}${handover}
  * @param format - `esm` for the Node host half, `cjs` for the browser halves.
  * @param external - specifiers left to the platform (React, virtual modules).
  * @param loader - esbuild loader overrides, e.g. text files.
- * @param plugins - esbuild plugins, e.g. the Draco virtual module.
+ * @param plugins - esbuild plugins, e.g. the Draco or pdf.js worker virtual module.
+ * @param define - extra compile-time overrides for one family's engine.
  * @returns minified bundle text.
  */
-async function bundle(entry, format, { external = [], loader = {}, plugins = [] } = {}) {
+async function bundle(entry, format, { external = [], loader = {}, plugins = [], define = {} } = {}) {
   const result = await build({
     entryPoints: [entry],
     bundle: true,
@@ -188,6 +190,7 @@ async function bundle(entry, format, { external = [], loader = {}, plugins = [] 
     define: {
       "process.env.NODE_ENV": JSON.stringify("production"),
       ...dracoDefines(DRACO_RESERVED_URL),
+      ...define,
     },
     logLevel: "silent",
   });
@@ -243,10 +246,18 @@ async function main(checkOnly) {
   // loader calling it the first time they drift.
   const viewersRequire = createRequire(require.resolve("dsh-preview-viewers/package.json"));
   const payloads = await loadDracoPayloads((specifier) => viewersRequire.resolve(specifier));
+  // The worker has to come from the same pdfjs-dist the main library is bundled
+  // from, for the same reason the Draco payload does: two halves of one message
+  // protocol cannot be allowed to drift apart at the next upgrade.
+  const pdfWorker = await loadPdfWorkerPayload((specifier) => viewersRequire.resolve(specifier));
   for (const family of CHUNKS) {
     const code = await bundle(join(packageRoot, "src", "client", "chunks", `${family}.tsx`), "cjs", {
       external: ["react", "react/jsx-runtime"],
-      plugins: family === "scene3d" ? [dracoPlugin(payloads)] : [],
+      plugins: [
+        ...(family === "scene3d" ? [dracoPlugin(payloads)] : []),
+        ...(family === "pdf" ? [pdfWorkerPlugin(pdfWorker)] : []),
+      ],
+      define: family === "pdf" ? pdfDefines() : {},
     });
     const file = `client.${family}.js`;
     await emit(file, wrap(`${manifest.name}/${file}`, code));

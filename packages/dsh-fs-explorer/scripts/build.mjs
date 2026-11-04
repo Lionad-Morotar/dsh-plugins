@@ -46,6 +46,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { dracoDefines, dracoPlugin, loadDracoPayloads } from "dsh-preview-viewers/build/draco-plugin.mjs";
+import { loadPdfWorkerPayload, pdfDefines, pdfWorkerPlugin } from "dsh-preview-viewers/build/pdf-worker-plugin.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "..");
@@ -253,6 +254,19 @@ async function bundle(entry, options = {}) {
 }
 
 /**
+ * Relative paths a family chunk may not carry.
+ *
+ * The pdf chunk inlines its worker and hands pdf.js an explicit port, so a
+ * relative worker URL in the artifact would mean the inlining silently stopped
+ * working: pdf.js would try to fetch a file this host has no route for, and the
+ * preview would fail at runtime with a 404 nobody sees in a build log. The
+ * engine marker alone cannot catch that, because the marker survives either way.
+ */
+const FORBIDDEN_CHUNK_PATHS = {
+  "client.pdf.js": ["pdf.worker.mjs"],
+};
+
+/**
  * Fail the build when the artifacts drift apart.
  *
  * Every chunk name has to agree across three files that cannot import each
@@ -286,6 +300,11 @@ function assertArtifacts(entryText, texts) {
     const marker = ENGINE_MARKERS[family];
     if (!(texts[file] ?? "").includes(marker)) {
       throw new Error(`${file} does not carry ${marker}; it is not the ${family} renderer`);
+    }
+    for (const forbidden of FORBIDDEN_CHUNK_PATHS[file] ?? []) {
+      if ((texts[file] ?? "").includes(forbidden)) {
+        throw new Error(`${file} contains ${forbidden}; that path has no route here, so the engine must be inlined`);
+      }
     }
   }
 }
@@ -346,6 +365,10 @@ async function main(checkOnly) {
   // them at the next three upgrade.
   const viewersRequire = createRequire(require.resolve("dsh-preview-viewers/package.json"));
   const dracoPayloads = await loadDracoPayloads(specifier => viewersRequire.resolve(specifier));
+  // The worker has to come from the same pdfjs-dist the main library is bundled
+  // from, for the same reason the Draco payload does: two halves of one message
+  // protocol cannot be allowed to drift apart at the next upgrade.
+  const pdfWorker = await loadPdfWorkerPayload(specifier => viewersRequire.resolve(specifier));
 
   const texts = { [PREVIEW_CHUNK]: chunkText };
   const written = ["index.js", "client.js", PREVIEW_CHUNK];
@@ -355,8 +378,11 @@ async function main(checkOnly) {
       minify: true,
       legalComments: "eof",
       banner: ENGINE_BANNER,
-      plugins: family === "scene3d" ? [dracoPlugin(dracoPayloads)] : [],
-      define: dracoDefines(DRACO_RESERVED_URL),
+      plugins: [
+        ...(family === "scene3d" ? [dracoPlugin(dracoPayloads)] : []),
+        ...(family === "pdf" ? [pdfWorkerPlugin(pdfWorker)] : []),
+      ],
+      define: { ...dracoDefines(DRACO_RESERVED_URL), ...(family === "pdf" ? pdfDefines() : {}) },
     });
     const text = wrap(manifest.name, code, { chunk: file });
     texts[file] = text;
