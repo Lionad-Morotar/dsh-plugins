@@ -30,7 +30,12 @@ import { sessionTier, workspaceTier, type StatusTier } from "./status.ts";
 
 /** What picking a row does; the runtime maps each variant onto host services. */
 export type RowAction =
-  | { readonly kind: "insert-path"; readonly absolutePath: string }
+  | {
+      readonly kind: "insert-path";
+      readonly absolutePath: string;
+      /** Where a symlinked entry really lives, when the listing already knew. */
+      readonly link?: string;
+    }
   | { readonly kind: "execute-command"; readonly name: string; readonly needsInput: boolean }
   | { readonly kind: "open-mode"; readonly mode: PanelMode }
   | { readonly kind: "drill"; readonly scope: SessionScope; readonly title: string }
@@ -151,7 +156,11 @@ export function filesystemRows(input: FilesystemRowInput, copy: Copy): PanelRow[
       kind: entry.kind,
       group: copy.groupFilesystem,
       origin: "filesystem",
-      action: { kind: "insert-path", absolutePath: label },
+      action: {
+        kind: "insert-path",
+        absolutePath: label,
+        ...(entry.link === undefined ? {} : { link: entry.link }),
+      },
     };
   });
 }

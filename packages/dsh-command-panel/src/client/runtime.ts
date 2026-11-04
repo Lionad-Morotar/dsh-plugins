@@ -90,6 +90,18 @@ import { directoryQuery, focusPath, parentQuery } from "./tree.ts";
 import { createPathExplorerFace, createGitExplorerFace, createHostShutdownFace, createNativeOpenFace, createSessionOpenFace, createWorkspaceFilesFace, gatewayRpcOf } from "./wire.ts";
 import { insertPanelStyles } from "./styles.ts";
 
+/** One row's file, in every spelling the destinations need. */
+interface RevealTarget {
+  /** The workbench's focus protocol string. */
+  readonly focus: string;
+  /** Absolute path, for the system opener and for asking about the entry. */
+  readonly absolutePath: string;
+  /** The spelling the right column's address takes. */
+  readonly addressPath: string;
+  /** Where a symlinked entry really lives, when it is already known. */
+  readonly link?: string;
+}
+
 /** The three command ids; also the settings rows the reader can rebind. */
 export const COMMAND_IDS = PANEL_COMMAND_IDS;
 
@@ -1087,11 +1099,12 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
    * file links are spelt and one file must not become two tabs, and the
    * absolute one for filesystem rows.
    */
-  function revealTarget(row: PanelRow | undefined): { focus: string; absolutePath: string; addressPath: string } | undefined {
+  function revealTarget(row: PanelRow | undefined): RevealTarget | undefined {
     if (row === undefined || row.kind === "directory") return undefined;
+    const link = row.action.kind === "insert-path" ? row.action.link : undefined;
     if (row.origin === "filesystem" && row.action.kind === "insert-path") {
       const absolute = row.action.absolutePath;
-      return { focus: `abs:${absolute}`, absolutePath: absolute, addressPath: absolute };
+      return { focus: `abs:${absolute}`, absolutePath: absolute, addressPath: absolute, link };
     }
     const path = focusPath(row);
     if (path === undefined) return undefined;
@@ -1099,6 +1112,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       focus: `path:${path}`,
       absolutePath: row.action.kind === "insert-path" ? row.action.absolutePath : path,
       addressPath: path,
+      link,
     };
   }
 
@@ -1258,7 +1272,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
    */
   async function placeInSidebar(
     sessionId: string,
-    target: { readonly absolutePath: string; readonly addressPath: string },
+    target: RevealTarget,
     sidebar: SidebarRightService,
   ): Promise<void> {
     const resolved = await resolveLink(target);
@@ -1288,8 +1302,11 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
    * at a directory would trade one refusal for another.
    */
   async function resolveLink(
-    target: { readonly absolutePath: string; readonly addressPath: string },
+    target: RevealTarget,
   ): Promise<{ readonly path: string; readonly link?: string }> {
+    // The listing already resolved this one, so the common case costs no round
+    // trip and cannot fall back.
+    if (target.link !== undefined) return { path: target.link, link: target.absolutePath };
     const explorer = pathExplorerFace();
     if (explorer?.inspect === undefined) return { path: target.addressPath };
     try {

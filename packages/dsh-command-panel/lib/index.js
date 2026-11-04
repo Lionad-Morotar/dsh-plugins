@@ -165,6 +165,25 @@ async function statOf(target) {
     return void 0;
   }
 }
+async function inspectPath(path2) {
+  let entry;
+  try {
+    entry = await lstat(path2);
+  } catch {
+    return void 0;
+  }
+  if (!entry.isSymbolicLink()) {
+    return { path: path2, kind: entry.isDirectory() ? "directory" : "file", exists: true };
+  }
+  const link = await realpath(path2).catch(() => void 0);
+  const info = link === void 0 ? void 0 : await stat(link).catch(() => void 0);
+  return {
+    path: path2,
+    kind: info?.isDirectory() === true ? "directory" : "file",
+    exists: true,
+    ...link === void 0 ? {} : { link }
+  };
+}
 async function childrenOf(directory) {
   let dirents;
   try {
@@ -172,11 +191,22 @@ async function childrenOf(directory) {
   } catch {
     return [];
   }
-  const entries = dirents.map((dirent) => ({
-    path: `${directory}${dirent.name}`,
-    kind: dirent.isDirectory() ? "directory" : "file",
-    exists: true
-  }));
+  const entries = [];
+  for (const dirent of dirents) {
+    const path2 = `${directory}${dirent.name}`;
+    if (!dirent.isSymbolicLink()) {
+      entries.push({ path: path2, kind: dirent.isDirectory() ? "directory" : "file", exists: true });
+      continue;
+    }
+    const link = await realpath(path2).catch(() => void 0);
+    const info = link === void 0 ? void 0 : await stat(link).catch(() => void 0);
+    entries.push({
+      path: path2,
+      kind: info?.isDirectory() === true ? "directory" : "file",
+      exists: true,
+      ...link === void 0 ? {} : { link }
+    });
+  }
   entries.sort((left, right) => {
     if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
     return left.path.toLowerCase() < right.path.toLowerCase() ? -1 : 1;
@@ -225,10 +255,8 @@ var PathExplorerService = class extends (_a2 = TypertRemoteService2, _resolve_de
       }
     }
     if (!namesDirectory) {
-      const self = await statOf(target);
-      if (self !== void 0) {
-        entries.unshift({ path: target, kind: self.isDirectory() ? "directory" : "file", exists: true });
-      }
+      const entry = await inspectPath(target);
+      if (entry !== void 0) entries.unshift(entry);
     }
     return { ok: true, home, entries: entries.slice(0, clampLimit(request.limit)) };
   }

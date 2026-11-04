@@ -36,6 +36,42 @@ describe("PathExplorerService activation", () => {
   });
 });
 
+describe("listing symlinks", () => {
+  it("reports a link as what it points at and carries the target", async () => {
+    const base = await realpath(root);
+    await mkdir(join(root, "real-dir"));
+    await writeFile(join(root, "real.md"), "x");
+    await symlink(join(root, "real-dir"), join(root, "dir-link"));
+    await symlink(join(root, "real.md"), join(root, "file-link"));
+
+    const result = await explorer.resolve({ query: `${root}/` });
+    if (!result.ok) throw new Error("unreachable");
+    const byPath = new Map(result.entries.map(entry => [entry.path, entry]));
+
+    // A directory link lists as a directory, or the tree cursor could never
+    // enter it; the target is what both the cursor and the sidebar follow.
+    expect(byPath.get(join(root, "dir-link"))).toMatchObject({
+      kind: "directory",
+      link: join(base, "real-dir"),
+    });
+    expect(byPath.get(join(root, "file-link"))).toMatchObject({
+      kind: "file",
+      link: join(base, "real.md"),
+    });
+  });
+
+  it("answers the typed path itself the same way", async () => {
+    const base = await realpath(root);
+    await writeFile(join(root, "real.md"), "x");
+    await symlink(join(root, "real.md"), join(root, "link.md"));
+
+    const result = await explorer.resolve({ query: join(root, "link.md") });
+    if (!result.ok) throw new Error("unreachable");
+
+    expect(result.entries[0]).toMatchObject({ path: join(root, "link.md"), kind: "file", link: join(base, "real.md") });
+  });
+});
+
 describe("inspect", () => {
   /** The temporary root with its links resolved, which is what the answer reports. */
   async function canonical(): Promise<string> {

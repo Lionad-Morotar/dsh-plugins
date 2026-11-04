@@ -194,7 +194,7 @@ export function fakeFileReferences(script: RemoteScript = {}): FileReferencesRem
 
 export interface PathScript {
   readonly home?: string;
-  readonly entries?: ReadonlyArray<{ readonly path: string; readonly kind: "file" | "directory"; readonly exists: boolean }>;
+  readonly entries?: ReadonlyArray<{ readonly path: string; readonly kind: "file" | "directory"; readonly exists: boolean; readonly link?: string }>;
   readonly error?: string;
   /** Observed request, for specs that pin what the loader sent. */
   readonly onResolve?: (request: { readonly query: string; readonly base?: string }) => void;

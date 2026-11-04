@@ -69,6 +69,34 @@ async function statOf(target: string): Promise<{ isDirectory(): boolean } | unde
   }
 }
 
+/**
+ * One path as a row: what it is, and where a link goes.
+ *
+ * `lstat` first, because the query is about the entry the reader named; only a
+ * link is followed, and only to report what it points at.
+ * @param path - absolute path.
+ * @returns the entry, or undefined when there is nothing there.
+ */
+async function inspectPath(path: string): Promise<PathEntry | undefined> {
+  let entry: Stats;
+  try {
+    entry = await lstat(path);
+  } catch {
+    return undefined;
+  }
+  if (!entry.isSymbolicLink()) {
+    return { path, kind: entry.isDirectory() ? "directory" : "file", exists: true };
+  }
+  const link = await realpath(path).catch(() => undefined);
+  const info = link === undefined ? undefined : await stat(link).catch(() => undefined);
+  return {
+    path,
+    kind: info?.isDirectory() === true ? "directory" : "file",
+    exists: true,
+    ...(link === undefined ? {} : { link }),
+  };
+}
+
 /** Direct children of one directory, directories first, base-insensitive. */
 async function childrenOf(directory: string): Promise<PathEntry[]> {
   let dirents: readonly Dirent[];
@@ -79,11 +107,24 @@ async function childrenOf(directory: string): Promise<PathEntry[]> {
     // failed": an unreadable folder stays explorable one level up.
     return [];
   }
-  const entries: PathEntry[] = dirents.map(dirent => ({
-    path: `${directory}${dirent.name}`,
-    kind: dirent.isDirectory() ? ("directory" as const) : ("file" as const),
-    exists: true,
-  }));
+  const entries: PathEntry[] = [];
+  for (const dirent of dirents) {
+    const path = `${directory}${dirent.name}`;
+    if (!dirent.isSymbolicLink()) {
+      entries.push({ path, kind: dirent.isDirectory() ? "directory" : "file", exists: true });
+      continue;
+    }
+    // A link is reported as whatever it points at, and the target rides along:
+    // the panel's sidebar branch then follows it without asking again.
+    const link = await realpath(path).catch(() => undefined);
+    const info = link === undefined ? undefined : await stat(link).catch(() => undefined);
+    entries.push({
+      path,
+      kind: info?.isDirectory() === true ? "directory" : "file",
+      exists: true,
+      ...(link === undefined ? {} : { link }),
+    });
+  }
   entries.sort((left, right) => {
     if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
     return left.path.toLowerCase() < right.path.toLowerCase() ? -1 : 1;
@@ -162,10 +203,10 @@ export class PathExplorerService extends TypertRemoteService {
       }
     }
     if (!namesDirectory) {
-      const self = await statOf(target);
-      if (self !== undefined) {
-        entries.unshift({ path: target, kind: self.isDirectory() ? "directory" : "file", exists: true });
-      }
+      // The typed path itself, answered the same way a child row is: a link
+      // reports what it points at and carries the target.
+      const entry = await inspectPath(target);
+      if (entry !== undefined) entries.unshift(entry);
     }
 
     return { ok: true, home, entries: entries.slice(0, clampLimit(request.limit)) };

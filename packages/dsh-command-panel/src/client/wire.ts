@@ -21,7 +21,7 @@ import type {
   SessionOpenFace,
   WorkspaceFilesFace,
 } from "./dsh.ts";
-import type { NativeOpenResult, PathResolveResult, ShutdownRequestResult } from "../shared.ts";
+import type { NativeOpenResult, PathInspectAnswer, PathResolveResult, ShutdownRequestResult } from "../shared.ts";
 import { OPEN_SERVICE, PATH_SERVICE, SHUTDOWN_SERVICE } from "../shared.ts";
 
 /** The gateway's unary caller, as the connection service exposes it. */
@@ -120,6 +120,10 @@ export function createPathExplorerFace(rpc: GatewayRpc): PathExplorerRemote {
   return {
     resolve: (request, signal) =>
       invoke(rpc, PATH_SERVICE, "resolve", { request }, signal) as Promise<RemoteResult<PathResolveResult>>,
+    // Same shape as the injected namespace: the sidebar branch must be able to
+    // ask what a path is even when only the raw channel answered.
+    inspect: (request, signal) =>
+      invoke(rpc, PATH_SERVICE, "inspect", { request }, signal) as Promise<RemoteResult<PathInspectAnswer>>,
   };
 }
 

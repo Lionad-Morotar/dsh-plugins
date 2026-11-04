@@ -798,6 +798,39 @@ describe("sidebar open", () => {
     expect(h.input.notify).toHaveBeenCalledWith("info", expect.stringContaining("/Users/lionad/.dsh/AGENTS.md"));
   });
 
+  it("opens the target a listing already resolved, without asking again", async () => {
+    forgetLinked();
+    const onInspect = vi.fn();
+    const h = harness({
+      pathExplorer: fakePathExplorer({
+        home: "/Users/lionad",
+        entries: [
+          { path: "/Users/lionad/notes/link.md", kind: "file", exists: true, link: "/Users/lionad/notes/real.md" },
+        ],
+        onInspect,
+      }),
+    });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    h.verbs.setQuery("/Users/lionad/notes/link");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label === "/Users/lionad/notes/link.md")).toBe(true),
+    );
+    h.verbs.highlight(0);
+    h.verbs.openInSidebar();
+
+    await vi.waitFor(() =>
+      expect(h.sidebar.openResource).toHaveBeenCalledWith(
+        `dsh-resource://file/session/${SESSION_A.id}//Users/lionad/notes/real.md`,
+        { kind: "text" },
+      ),
+    );
+    // The listing already said where the link goes; a second question would be
+    // a round trip that can fail for no reason.
+    expect(onInspect).not.toHaveBeenCalled();
+    expect(linkOfTarget("/Users/lionad/notes/real.md")).toBe("/Users/lionad/notes/link.md");
+  });
+
   it("leaves a regular file at the path the row named", async () => {
     forgetLinked();
     const h = harness({

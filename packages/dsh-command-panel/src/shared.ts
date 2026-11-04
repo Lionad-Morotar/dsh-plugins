@@ -39,6 +39,13 @@ export interface PathEntry {
   readonly kind: "file" | "directory";
   /** Always true for emitted rows today; the field pins the wire contract. */
   readonly exists: boolean;
+  /**
+   * Absolute path with every link resolved, for an entry that is a symlink.
+   *
+   * Carried on the row so a surface that means to open the file behind a link
+   * does not need a second round trip to find out where it goes.
+   */
+  readonly link?: string;
 }
 
 /** Resolve request; the query is the reader's typed text, tilde included. */
