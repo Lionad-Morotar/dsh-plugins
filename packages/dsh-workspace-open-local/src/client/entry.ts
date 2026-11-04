@@ -22,6 +22,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createRowController, type RowView } from "./controller.ts";
 import { createOpenInAppHost, readRememberedApplication, type OpenInAppHost, type StorageLike } from "./host-api.ts";
 import { attachWorkspaceMenuAnchor, type WorkspaceMenuOpen } from "./menu-anchor.ts";
+import { installHostMenuShield } from "./menu-shield.ts";
 import { OpenLocalRow, type OpenLocalApplication } from "./OpenLocalRow.tsx";
 import { insertOpenLocalRowStyles } from "./styles.ts";
 import { createProbeComponent, createWorkspacePathStore } from "./workspaces-probe.ts";
@@ -102,9 +103,11 @@ export function mountRow(open: WorkspaceMenuOpen, host: OpenInAppHost, storage: 
   };
   const controller = createRowController({ host, storage, path: open.path, remembered: readRememberedApplication(storage), onChange: render });
   controller.load();
+  const releaseShield = installHostMenuShield({ container: open.container, trigger: open.trigger });
   const mounted: MountedRow = { reactRoot, release: () => controller.dispose() };
   return () => {
     mounted.release();
+    releaseShield();
     reactRoot.unmount();
   };
 }

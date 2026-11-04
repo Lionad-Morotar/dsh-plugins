@@ -27,6 +27,12 @@ export interface WorkspaceMenuOpen {
   readonly host: HTMLElement;
   /** The node appended for the caller to render into. */
   readonly container: HTMLElement;
+  /**
+   * The row's menu button, or null when the click that opened the menu was not
+   * one this anchor could name. The row re-asserts the menu's open state through
+   * it, because the row is a React root the host's tree cannot see.
+   */
+  readonly trigger: HTMLElement | null;
 }
 
 export interface WorkspaceMenuAnchorOptions {
@@ -130,6 +136,7 @@ export function attachWorkspaceMenuAnchor(options: WorkspaceMenuAnchorOptions): 
   const root = doc.body ?? doc.documentElement;
 
   let pendingWorkspaceId: string | null = null;
+  let pendingTrigger: HTMLElement | null = null;
   let injection: Injection | null = null;
   let disposed = false;
 
@@ -173,7 +180,7 @@ export function attachWorkspaceMenuAnchor(options: WorkspaceMenuAnchorOptions): 
     container.setAttribute(ANCHOR_MARK, "");
     container.setAttribute("role", "none");
     host.append(container);
-    const open: WorkspaceMenuOpen = { workspaceId, path, host, container };
+    const open: WorkspaceMenuOpen = { workspaceId, path, host, container, trigger: pendingTrigger };
     injection = { menu, container, cleanup: options.onOpen(open) };
   };
 
@@ -181,7 +188,10 @@ export function attachWorkspaceMenuAnchor(options: WorkspaceMenuAnchorOptions): 
     const trigger = menuTrigger(event.target);
     if (trigger !== null) {
       const workspaceId = workspaceIdFrom(trigger.row);
-      if (workspaceId !== null && isMenuButton(trigger.row, trigger.button)) pendingWorkspaceId = workspaceId;
+      if (workspaceId !== null && isMenuButton(trigger.row, trigger.button)) {
+        pendingWorkspaceId = workspaceId;
+        pendingTrigger = trigger.button;
+      }
       return;
     }
     // A pointer down anywhere but the open menu is the host's cue to close it,

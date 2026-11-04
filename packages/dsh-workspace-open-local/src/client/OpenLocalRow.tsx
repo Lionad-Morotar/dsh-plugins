@@ -1,4 +1,4 @@
-import { createElement, type ReactElement } from "react";
+import { createElement, useLayoutEffect, useRef, useState, type CSSProperties, type ReactElement } from "react";
 
 /** One application the host can open a directory with. */
 export interface OpenLocalApplication {
@@ -100,23 +100,60 @@ function OpenIcon(): ReactElement {
   );
 }
 
-/** A downward chevron, the menu affordance. */
+/** A downward chevron, the submenu affordance, drawn at the host's menu-icon size. */
 function ChevronIcon(): ReactElement {
   return createElement(
     "svg",
-    { width: 10, height: 10, viewBox: "0 0 10 10", fill: "none", "aria-hidden": true },
+    { width: 12, height: 12, viewBox: "0 0 12 12", fill: "none", "aria-hidden": true },
     createElement("path", {
-      d: "M2.5 4 5 6.5 7.5 4",
+      d: "M3 4.75 6 7.75 9 4.75",
       stroke: "currentColor",
-      strokeWidth: 1,
+      strokeWidth: 1.2,
       strokeLinecap: "round",
       strokeLinejoin: "round",
     }),
   );
 }
 
+/** Gap between the row and its application list, matching the host's own submenu offset. */
+const PICKER_GAP = 4;
+
+/** Room the list needs before it is worth flipping to the other side of the row. */
+const PICKER_WIDTH = 196;
+
+/** Smallest distance the list keeps from the window edge. */
+const PICKER_MARGIN = 8;
+
 /**
- * The "open locally" split row.
+ * Where the application list goes, in viewport coordinates.
+ *
+ * The list is `position: fixed` on purpose: the row lives inside the host menu's
+ * scrolling viewport, and an absolutely positioned child would be clipped by it.
+ * Fixed positioning escapes that clip, so the coordinates are measured from the
+ * row instead of being expressed in CSS.
+ *
+ * @param row - the row element the list belongs to.
+ * @returns the viewport offset, or null where the window cannot be measured.
+ */
+function placePicker(row: HTMLElement | null): CSSProperties | null {
+  if (row === null) return null;
+  const view = row.ownerDocument.defaultView;
+  if (view === null) return null;
+  const rect = row.getBoundingClientRect();
+  const right = rect.right + PICKER_GAP;
+  const left = right + PICKER_WIDTH + PICKER_MARGIN <= view.innerWidth ? right : Math.max(PICKER_MARGIN, rect.left - PICKER_GAP - PICKER_WIDTH);
+  const top = Math.max(PICKER_MARGIN, rect.top - PICKER_GAP);
+  return { position: "fixed", top, left };
+}
+
+/**
+ * The "open locally" row.
+ *
+ * Laid out as a menu row rather than as the host's split button: inside a menu
+ * every row is one 34px line with its icon in the host's menu-icon slot, and a
+ * stroked box with its own border reads as a foreign control. The row keeps both
+ * hit areas — the label opens with the remembered application, the chevron
+ * expands the list — without drawing a second border around them.
  *
  * Returns nothing when the catalog is empty: a disabled row would promise an
  * action the host cannot perform (no local app, or an SSH session whose probe
@@ -124,6 +161,20 @@ function ChevronIcon(): ReactElement {
  */
 export function OpenLocalRow(props: OpenLocalRowProps): ReactElement | null {
   const applications = props.applications;
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const menuOpen = props.menuOpen === true;
+  const [pickerStyle, setPickerStyle] = useState<CSSProperties | null>(null);
+
+  // Measured after layout because the host may have scrolled or repositioned the
+  // menu since the click; a stale offset would put the list over the wrong row.
+  useLayoutEffect(() => {
+    if (!menuOpen) {
+      setPickerStyle(null);
+      return;
+    }
+    setPickerStyle(placePicker(rowRef.current));
+  }, [menuOpen]);
+
   if (applications.length === 0) return null;
 
   const labels = { ...OPEN_LOCAL_ROW_DEFAULT_LABELS, ...props.labels };
@@ -132,7 +183,6 @@ export function OpenLocalRow(props: OpenLocalRowProps): ReactElement | null {
   // under noUncheckedIndexedAccess, so the fallback is named rather than asserted.
   if (preferred === undefined) return null;
   const launching = props.phase === "launching";
-  const menuOpen = props.menuOpen === true;
 
   // The list stays out of the document while closed. Hiding it with
   // `display: none` would leave a role="menu" in the accessibility tree and in
@@ -145,6 +195,7 @@ export function OpenLocalRow(props: OpenLocalRowProps): ReactElement | null {
           className: "olr-menu",
           role: "menu",
           "aria-label": labels.choose,
+          style: pickerStyle ?? undefined,
           onKeyDown: (event: { key: string }) => {
             if (event.key === "Escape") props.onDismissMenu?.();
           },
@@ -168,8 +219,8 @@ export function OpenLocalRow(props: OpenLocalRowProps): ReactElement | null {
               className: "olr-app-icon",
               src: application.iconUrl,
               alt: "",
-              width: 16,
-              height: 16,
+              width: 14,
+              height: 14,
               draggable: false,
             }),
             createElement("span", { className: "olr-app-label" }, application.label),
@@ -181,10 +232,16 @@ export function OpenLocalRow(props: OpenLocalRowProps): ReactElement | null {
 
   return createElement(
     "div",
-    { className: "olr", "data-open-local-path": props.path },
+    { className: "olr", "data-open-local-path": props.path, "data-phase": launching ? "launching" : "idle" },
     createElement(
       "div",
-      { className: "olr-split", "data-phase": launching ? "launching" : "idle" },
+      {
+        className: "olr-row",
+        ref: rowRef,
+        // The row is not the host's menuitem and must not claim to be one: the
+        // host walks menuitem buttons to move focus, and this one has two halves.
+        "data-open-local-row": "",
+      },
       createElement(
         "button",
         {
@@ -196,8 +253,8 @@ export function OpenLocalRow(props: OpenLocalRowProps): ReactElement | null {
           title: labels.openTooltip.replace("<app>", preferred.label).replace("<path>", props.path),
           onClick: () => props.onOpen?.(),
         },
-        createElement(OpenIcon),
-        labels.open,
+        createElement("span", { className: "olr-icon" }, createElement(OpenIcon)),
+        createElement("span", { className: "olr-label" }, labels.open),
       ),
       createElement(
         "button",

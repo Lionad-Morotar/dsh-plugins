@@ -147,4 +147,26 @@ describe("open local row gestures", () => {
     expect(onPickApplication).toHaveBeenCalledExactlyOnceWith("finder");
     expect(onDismissMenu).toHaveBeenCalledOnce();
   });
+
+  it("lays the row out as one menu line, not as the host's split button", () => {
+    const html = markup({ defaultApplication: "finder" });
+    // The row sits between two shipped menu rows. A bordered split control reads as a
+    // foreign box there, so the row is one line: an icon slot, a label half, a chevron
+    // half, and no second cell with its own left border.
+    expect(html).toContain('class="olr-row"');
+    expect(html).toContain('class="olr-icon"');
+    expect(html).toContain('class="olr-label"');
+    expect(html).not.toContain("olr-split");
+    expect(html).not.toContain("border-left");
+  });
+
+  it("gives the application list viewport coordinates so the host menu cannot clip it", () => {
+    // The list is `position: fixed` and measured from the row, because the row lives
+    // inside the host menu's scrolling viewport where an absolute child would be cut.
+    // The offset is a layout effect, so it only exists once the row is mounted.
+    const host = mount(createElement(OpenLocalRow, { path: "/tmp/demo", applications: apps, menuOpen: true }));
+    const menu = host.querySelector<HTMLElement>('[data-testid="open-local-menu"]');
+    expect(menu?.style.position).toBe("fixed");
+    expect(menu?.style.top).not.toBe("");
+  });
 });
