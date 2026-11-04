@@ -18,9 +18,15 @@
  * wrong file is worse than a visible tab.
  *
  * What this file may claim is an allow-list, never a block-list: a suffix is
- * forwarded only when this view renders it at least as well as the host, and
- * the host's stronger previews are excluded even when they are text. A block
- * list would silently claim every future format.
+ * forwarded only when this view renders it at least as well as the host, and the
+ * host's stronger previews are excluded even when they are text. A block list
+ * would silently claim every future format.
+ *
+ * The allow-list is derived from the shared format catalogue, so a family added
+ * there is claimed here without a second table to keep in step. What stays local
+ * is the exclusion, and it is the only part that has to be re-argued whenever the
+ * catalogue grows: a suffix leaves it when this view becomes the better place to
+ * open that file.
  */
 import { createElement, useEffect, useRef } from "react";
 
@@ -46,9 +52,11 @@ const SIDEBAR_TAB_SLOT = "sidebar.right.pane.tab";
  * Suffixes this view previews as text, unioned from the package's own language
  * table and the host's editor vocabulary.
  *
- * `csv`, `tsv` and `svg` are text and appear here on purpose: they are also in
- * {@link HOST_STRONG_SUFFIXES}, so they exercise the rule that the exclusion
- * wins over this list instead of hiding it behind an omission.
+ * `csv`, `tsv` and `svg` are text and appear here on purpose: `csv` and `tsv` are
+ * also in {@link HOST_STRONG_SUFFIXES}, so they exercise the rule that the
+ * exclusion wins over this list instead of hiding it behind an omission. `svg`
+ * is in the image family as well, and there the family wins, because the
+ * workbench draws it as a picture rather than reading its markup.
  */
 const TEXT_SUFFIXES: ReadonlySet<string> = new Set([
   // Documents
@@ -72,11 +80,18 @@ const TEXT_SUFFIXES: ReadonlySet<string> = new Set([
   "lock", "diff", "patch",
 ]);
 
-/** Suffixes the host renders better than this view, whatever else says. */
+/**
+ * Suffixes the host renders better than this view, whatever else says.
+ *
+ * The list is now only the formats this view cannot draw at all: Office
+ * documents and the two table suffixes. Images and PDF were here until the
+ * workbench took them over, and they left with the catalogue entry that claims
+ * them, because the bridge follows the catalogue rather than keeping a second
+ * copy of it. A suffix belongs here only while the built-in preview is the
+ * better answer for it.
+ */
 const HOST_STRONG_SUFFIXES: ReadonlySet<string> = new Set([
-  "pdf", "docx", "pptx", "xlsx", "xls", "fods", "csv", "tsv",
-  "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico",
-  "doc", "ppt",
+  "docx", "pptx", "xlsx", "xls", "fods", "csv", "tsv", "doc", "ppt",
 ]);
 
 /** Suffix-less basenames this view still previews as text. */

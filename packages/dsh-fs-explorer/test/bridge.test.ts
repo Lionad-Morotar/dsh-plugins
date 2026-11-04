@@ -55,18 +55,30 @@ describe("canBridgeFile", () => {
     expect(canBridgeFile("docs/README")).toBe(true);
   });
 
-  it("leaves the host's stronger previews alone even when they are text", () => {
-    // csv, tsv and svg are in the text allow-list on purpose: the exclusion is
-    // what refuses them, so this asserts precedence rather than an omission.
-    for (const name of ["report.csv", "table.tsv", "logo.svg"]) {
-      expect(canBridgeFile(name)).toBe(false);
+  it("claims images and PDF, which the workbench now owns", () => {
+    // The workbench is the file's main surface: a picture or a PDF opened from a
+    // chat link should land in the same tree and renderer as one opened from the
+    // tree, not bounce the reader into a sidebar tab. Both families are in the
+    // shared catalogue, so the bridge claims them by following it.
+    for (const name of ["a.pdf", "a.png", "a.jpg", "a.jpeg", "a.gif", "a.webp", "a.bmp", "a.ico", "logo.svg"]) {
+      expect(canBridgeFile(name), name).toBe(true);
     }
-    for (const name of ["a.pdf", "a.docx", "a.pptx", "a.xlsx", "a.xls", "a.fods", "a.doc", "a.ppt"]) {
-      expect(canBridgeFile(name)).toBe(false);
+  });
+
+  it("still leaves Office documents and tables to the host", () => {
+    // These are the suffixes whose built-in renderers are richer than anything
+    // drawn here, so the exclusion has to survive the catalogue growing.
+    for (const name of ["a.docx", "a.pptx", "a.xlsx", "a.xls", "a.fods", "a.doc", "a.ppt", "report.csv", "table.tsv"]) {
+      expect(canBridgeFile(name), name).toBe(false);
     }
-    for (const name of ["a.png", "a.jpg", "a.jpeg", "a.gif", "a.webp", "a.bmp", "a.ico"]) {
-      expect(canBridgeFile(name)).toBe(false);
-    }
+  });
+
+  it("claims svg as a picture rather than reading it as text", () => {
+    // svg is in both catalogues: the text allow-list and the image family. The
+    // family wins, because the workbench draws it, and a reader who clicked a
+    // logo wants the picture rather than its markup.
+    expect(canBridgeFile("logo.svg")).toBe(true);
+    expect(canBridgeFile("assets/icons/logo.SVG")).toBe(true);
   });
 
   it("refuses suffixes nothing here can render", () => {
@@ -136,7 +148,9 @@ describe("decideBridge", () => {
   });
 
   it("keeps the tab for a format the host renders better", () => {
-    expect(decideBridge(address("s1", "docs/a.pdf"), "s1")).toEqual({ action: "keep", reason: "refused" });
+    // Office documents are the reason this refusal exists: the built-in preview
+    // renders them, and forwarding one would open a tab that cannot draw it.
+    expect(decideBridge(address("s1", "docs/a.docx"), "s1")).toEqual({ action: "keep", reason: "refused" });
   });
 });
 
@@ -282,7 +296,7 @@ describe("registerAddressBridge", () => {
     const canOpen = h.types[0]?.canOpen;
     expect(canOpen?.(address("s1", "src/a.ts"))).toBe(true);
     expect(canOpen?.(address("s1", "/Users/x/a.ts"))).toBe(true);
-    expect(canOpen?.(address("s1", "docs/a.pdf"))).toBe(false);
+    expect(canOpen?.(address("s1", "docs/a.docx"))).toBe(false);
     expect(canOpen?.("dsh-resource://file/absolute/Users/x/a.ts")).toBe(false);
     expect(canOpen?.("not-an-address")).toBe(false);
   });
