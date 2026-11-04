@@ -61,6 +61,21 @@ export interface DiagramViewport {
   readonly ty: number;
 }
 
+/**
+ * Where a floating pane should point, in the host element's client box.
+ *
+ * The renderer is the only layer that knows the viewport transform, so it
+ * converts view coordinates to host pixels and hands the rectangle over; the
+ * pane never has to understand pan or zoom.
+ */
+export interface DiagramAnchor {
+  /** Anchor rectangle in host-client pixels, relative to the host's top-left. */
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface DiagramOptions {
   readonly viewport: DiagramViewport;
   /**
@@ -77,6 +92,12 @@ export interface DiagramOptions {
    * so the restore edge does not echo a no-op write-back.
    */
   readonly onViewportChange?: (viewport: DiagramViewport) => void;
+  /**
+   * Fired when the user presses an edge's hit path. The anchor is the edge
+   * label's centre (or the path midpoint when the edge has no label), already
+   * in host-client pixels.
+   */
+  readonly onEdgeClick?: (id: string, anchor: DiagramAnchor) => void;
 }
 
 export interface DiagramHandle {
@@ -86,6 +107,13 @@ export interface DiagramHandle {
   zoomBy(factor: number, anchor?: { x: number; y: number }): void;
   select(id: string | null): void;
   dragNode(id: string, dxScreen: number, dyScreen: number): void;
+  /** Mark one edge as the selected one (thickens it and keeps it flowing). */
+  selectEdge(id: string | null): void;
+  /**
+   * Drive one edge's hover state from outside the pointer, so a pane that the
+   * pointer moved into can keep the edge it belongs to flowing.
+   */
+  setEdgeActive(id: string, active: boolean): void;
 }
 
 /**
@@ -97,6 +125,7 @@ export interface DiagramInteractions {
   onViewportChange?(viewport: DiagramViewport): void;
   onSelect?(id: string | null): void;
   onNodeMove?(id: string, x: number, y: number): void;
+  onEdgeClick?(id: string, anchor: DiagramAnchor): void;
 }
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -255,6 +284,51 @@ const dashArrayOf = (line: string | undefined): string | null => {
 };
 
 /**
+ * Edge motion, ported from the official `styles-min.css`.
+ *
+ * The animation is always declared and always paused; only an edge carrying
+ * `data-arch-edge-active` runs it. That is the official semantic (a hovered or
+ * selected edge flows, everything else holds still) and it also keeps the
+ * compositor idle on a view with a hundred edges.
+ *
+ * A solid edge therefore does not appear to move, and that is the official
+ * behaviour rather than an omission: `arch-edge-flow` animates
+ * `stroke-dashoffset`, and a line with no dash pattern has no offset to shift.
+ * LikeC4 does not force a dash pattern onto solid edges to make them flow, and
+ * neither does this renderer. Do not "fix" it by adding a dasharray here; that
+ * would turn every solid relation into a dashed one.
+ *
+ * `prefers-reduced-motion` drops the animation outright rather than pausing
+ * it: a user who asked for less motion should not get a running animation the
+ * moment they hover an edge. Accessibility, not a nicety.
+ *
+ * The `back` rule matches the attribute on the path itself, not on an
+ * ancestor: `data-edge-dir` is set on the very element that carries
+ * `.arch-edge-path`, so a descendant selector would silently never match and
+ * every reversed edge would flow the wrong way.
+ *
+ * Class names carry the `arch-` prefix because this stylesheet lands in the
+ * host document, where `likec4-` and `react-flow-` names already exist.
+ */
+const EDGE_STYLE = `
+@keyframes arch-edge-flow{0%{stroke-dashoffset:36px}to{stroke-dashoffset:0}}
+.arch-edge-path{fill:none;stroke-dashoffset:0;transition:stroke .13s ease-out,stroke-width .13s ease-out}
+.arch-edge-path{animation-name:arch-edge-flow;animation-duration:.8s;animation-timing-function:linear;animation-iteration-count:infinite;animation-play-state:paused;animation-fill-mode:both}
+.arch-edge-path[data-edge-dir=back]{animation-direction:reverse}
+.arch-edge-path[data-arch-edge-active]{animation-play-state:running}
+.arch-edge-hit{fill:none;stroke:transparent;stroke-width:12;pointer-events:stroke;cursor:pointer}
+@media (prefers-reduced-motion:reduce){.arch-edge-path{animation:none}}
+`;
+
+/** Transparent interaction stroke width, in view units; matches the official 10-12 band. */
+const HIT_STROKE_WIDTH = 12;
+
+/** Selected edges thicken and repaint so the click target stays obvious. */
+const EDGE_STROKE_SELECTED = "#60a5fa";
+const EDGE_STROKE_WIDTH = 1.5;
+const EDGE_STROKE_WIDTH_SELECTED = 2.5;
+
+/**
  * Wheel delta that counts as one zoom step, and how much of that step to
  * apply. A mouse notch is about 100px, so it moves twice the old fixed
  * 1.12; a trackpad gesture is a run of far smaller deltas and scales by the
@@ -311,6 +385,34 @@ const descriptionText = (node: DiagramNode): string | null => {
   return typeof d === "string" ? d : d.txt;
 };
 
+/**
+ * Anchor rectangle for one edge, in host-client pixels.
+ *
+ * The label plate is the natural anchor (it is what the user aimed at), with
+ * the path's midpoint as the fallback for an unlabelled edge. View coordinates
+ * go through the same translate/scale the root group uses, so the rectangle
+ * tracks pan and zoom without the pane knowing either exists.
+ *
+ * @param edge - the edge that was pressed.
+ * @param viewport - the live viewport.
+ * @returns the anchor rectangle, relative to the host's top-left corner.
+ */
+const edgeAnchorOf = (edge: DiagramEdge, viewport: DiagramViewport): DiagramAnchor => {
+  const { scale, tx, ty } = viewport;
+  const box = edge.labelBBox;
+  if (box !== null && box !== undefined) {
+    return {
+      x: box.x * scale + tx,
+      y: box.y * scale + ty,
+      width: box.width * scale,
+      height: box.height * scale,
+    };
+  }
+  const pts = (edge.points ?? []).map(xy);
+  const mid = pts[Math.floor(pts.length / 2)] ?? { x: 0, y: 0 };
+  return { x: mid.x * scale + tx, y: mid.y * scale + ty, width: 0, height: 0 };
+};
+
 export function createDiagram(host: HTMLElement, view: DiagramView, opts: DiagramOptions): DiagramHandle {
   host.replaceChildren();
   const svg = el("svg", { width: "100%", height: "100%", style: "display:block;touch-action:none;cursor:grab" });
@@ -320,6 +422,11 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
   const defs = el("defs");
   const root = el("g");
   svg.append(defs, root);
+  // The edge rules ride inside the SVG so the renderer stays a single
+  // self-contained element: no host stylesheet to install, no cleanup to miss.
+  const style = el("style");
+  style.textContent = EDGE_STYLE;
+  svg.append(style);
   host.append(svg);
 
   // The renderer owns its mutable copy: drags update it, and the caller keeps
@@ -349,6 +456,12 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
   const markerIdOf = (edgeId: string, end: "start" | "end"): string =>
     `arch-marker-${edgeId.replace(/[^\w-]/gu, "-")}-${end}`;
 
+  // The two paths of each edge, by edge id: the visible one carries the paint
+  // and the animation, the hit one carries the pointer. Selection and hover
+  // both repaint through this map instead of re-querying the DOM.
+  const edgeEls = new Map<string, { visible: SVGPathElement; hit: SVGPathElement }>();
+  let selectedEdge: string | null = null;
+
   /** Append one marker to `<defs>` and return the `url(#...)` a path points at. */
   const defineMarker = (name: MarkerName, id: string): string => {
     const spec: MarkerSpec = MARKER_SPECS[name];
@@ -376,7 +489,14 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     let endName = markerNameOf(edge.head ?? "normal");
     if (edge.dir === "back") [startName, endName] = [endName, startName];
 
-    const visible = el("path", { d, class: "arch-edge-path", stroke: EDGE_STROKE, "stroke-width": 1.5 });
+    const visible = el("path", {
+      d,
+      class: "arch-edge-path",
+      "data-edge-id": edge.id,
+      stroke: EDGE_STROKE,
+      "stroke-width": EDGE_STROKE_WIDTH,
+    });
+    if (edge.dir === "back") visible.setAttribute("data-edge-dir", "back");
     const dash = dashArrayOf(edge.line);
     if (dash !== null) visible.setAttribute("stroke-dasharray", dash);
     if (startName !== null) {
@@ -385,7 +505,14 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     if (endName !== null) {
       visible.setAttribute("marker-end", defineMarker(endName, markerIdOf(edge.id, "end")));
     }
-    edgeLayer.append(visible);
+
+    // A 1.5px line at the readable 0.75 zoom is a hairline: the hit path below
+    // it is what the pointer actually meets, so the visible line keeps its
+    // weight instead of being fattened into a clickable band.
+    const hit = el("path", { d, class: "arch-edge-hit", "data-edge-id": edge.id });
+    hit.setAttribute("stroke-width", String(HIT_STROKE_WIDTH));
+    edgeLayer.append(visible, hit);
+    edgeEls.set(edge.id, { visible, hit });
 
     const box = edge.labelBBox;
     if (box !== null && box !== undefined && edge.label) {
@@ -527,6 +654,54 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     }
   };
 
+  /**
+   * Repaint one edge for its current state.
+   *
+   * Two independent inputs decide it: the pointer being over the hit path, and
+   * the edge being the selected one. Either one makes the edge "active", which
+   * is exactly what turns the flow animation on; selection additionally
+   * thickens and recolours the line so the click that opened a panel is still
+   * visible after the pointer leaves.
+   */
+  const paintEdge = (id: string, hovered: boolean): void => {
+    const els = edgeEls.get(id);
+    if (els === undefined) return;
+    const active = hovered || selectedEdge === id;
+    if (active) els.visible.setAttribute("data-arch-edge-active", "");
+    else els.visible.removeAttribute("data-arch-edge-active");
+    const isSelected = selectedEdge === id;
+    els.visible.setAttribute("stroke", isSelected ? EDGE_STROKE_SELECTED : EDGE_STROKE);
+    els.visible.setAttribute(
+      "stroke-width",
+      String(isSelected ? EDGE_STROKE_WIDTH_SELECTED : EDGE_STROKE_WIDTH),
+    );
+  };
+
+  const hovering = new Set<string>();
+
+  /**
+   * Select one edge (or none) and repaint the previous and the new one.
+   *
+   * @param id - the edge to select; null clears.
+   */
+  const applyEdgeSelection = (id: string | null): void => {
+    const previous = selectedEdge;
+    selectedEdge = id;
+    if (previous !== null) paintEdge(previous, hovering.has(previous));
+    if (id !== null) paintEdge(id, hovering.has(id));
+  };
+
+  for (const [id, els] of edgeEls) {
+    els.hit.addEventListener("pointerenter", () => {
+      hovering.add(id);
+      paintEdge(id, true);
+    });
+    els.hit.addEventListener("pointerleave", () => {
+      hovering.delete(id);
+      paintEdge(id, false);
+    });
+  }
+
   const nodeById = new Map(nodes.map(node => [node.id, node] as const));
 
   /**
@@ -596,6 +771,14 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       highlight();
       opts.onSelect?.(selected);
     },
+    selectEdge(id) {
+      applyEdgeSelection(id);
+    },
+    setEdgeActive(id, active) {
+      if (active) hovering.add(id);
+      else hovering.delete(id);
+      paintEdge(id, hovering.has(id));
+    },
     dragNode(id, dxScreen, dyScreen) {
       const moved = moveNodeBy(id, dxScreen / scale, dyScreen / scale);
       // Every moved node reports its own absolute position: the write-back
@@ -608,7 +791,29 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
   let panFrom: { x: number; y: number } | null = null;
 
   svg.addEventListener("pointerdown", event => {
-    const target = (event.target as Element).closest("g[data-id]") as SVGGElement | null;
+    const element = event.target as Element;
+    // An edge hit path is checked before the node lookup: it is a bare <path>
+    // with no `g[data-id]` ancestor, so without this branch every edge press
+    // would fall through to the blank-canvas path and start a pan.
+    const edgeHit = element.closest("path.arch-edge-hit") as SVGPathElement | null;
+    if (edgeHit !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (document.activeElement !== host) host.focus({ preventScroll: true });
+      const edgeId = edgeHit.getAttribute("data-edge-id") ?? "";
+      const edge = view.edges.find(candidate => candidate.id === edgeId);
+      if (edge === undefined) return;
+      applyEdgeSelection(edgeId);
+      // The node selection and its details pane are a different surface; an
+      // edge press must not leave a stale element pane open beside it.
+      if (selected !== null) handle.select(null);
+      drag = null;
+      panFrom = null;
+      opts.onEdgeClick?.(edgeId, edgeAnchorOf(edge, { scale, tx, ty }));
+      return;
+    }
+
+    const target = element.closest("g[data-id]") as SVGGElement | null;
     event.preventDefault();
     // preventDefault suppresses the browser's implicit focus, so a press that
     // starts a pan or a drag would leave the arrow-key handler deaf. Hand the
@@ -619,6 +824,7 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       // Pressing the blank canvas clears the selection (the details pane
       // closes on this edge) before the same press starts a pan.
       if (selected !== null) handle.select(null);
+      applyEdgeSelection(null);
       drag = null;
       panFrom = { x: event.clientX, y: event.clientY };
       svg.style.cursor = "grabbing";
@@ -627,6 +833,8 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     const id = target.getAttribute("data-id") ?? "";
     const node = nodes.find(n => n.id === id);
     if (node === undefined) return;
+    // Picking a node drops any edge selection: the two panes are exclusive.
+    applyEdgeSelection(null);
     handle.select(selected === id ? null : id);
     drag = { id, gx: node.x, gy: node.y, ox: event.clientX, oy: event.clientY };
     svg.style.cursor = "grabbing";

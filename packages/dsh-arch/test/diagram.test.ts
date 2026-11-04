@@ -430,3 +430,175 @@ describe("edge markers and line styles", () => {
     );
   });
 });
+
+describe("edge motion and hit area", () => {
+  const styleText = (): string => host.querySelector("svg > style")?.textContent ?? "";
+
+  const hitOf = (id: string): SVGPathElement => {
+    const hit = host.querySelector(`path.arch-edge-hit[data-edge-id="${id}"]`);
+    expect(hit, `hit path for ${id}`).not.toBeNull();
+    return hit as SVGPathElement;
+  };
+
+  const visibleOf = (id: string): SVGPathElement => {
+    const path = host.querySelector(`path.arch-edge-path[data-edge-id="${id}"]`);
+    expect(path, `visible path for ${id}`).not.toBeNull();
+    return path as SVGPathElement;
+  };
+
+  it("declares the flow animation as paused by default", () => {
+    createDiagram(host, structuredClone(dump.views.index as DumpView) as unknown as DiagramView, {
+      viewport: VIEWPORT,
+    });
+    const css = styleText();
+    expect(css).toContain("@keyframes arch-edge-flow");
+    expect(css).toContain("animation-play-state:paused");
+    // Running is opt-in through the active attribute, never the default.
+    expect(css).toContain("[data-arch-edge-active]{animation-play-state:running}");
+    expect(visibleOf("1icru9q").hasAttribute("data-arch-edge-active")).toBe(false);
+  });
+
+  it("drops the animation entirely under prefers-reduced-motion", () => {
+    createDiagram(host, structuredClone(dump.views.index as DumpView) as unknown as DiagramView, {
+      viewport: VIEWPORT,
+    });
+    const css = styleText();
+    expect(css).toContain("@media (prefers-reduced-motion:reduce)");
+    expect(css).toMatch(/prefers-reduced-motion:reduce\)\{\.arch-edge-path\{animation:none\}/u);
+  });
+
+  it("reverses the animation direction for a back edge", () => {
+    // Built from the index view with one edge flipped rather than read from a
+    // view that happens to contain a back edge: the assertion is about the
+    // renderer's contract, so it must not break when the fixture is re-exported
+    // and its edge directions change.
+    const view = structuredClone(dump.views.index as DumpView) as unknown as DiagramView;
+    const target = view.edges[0] as unknown as Record<string, unknown>;
+    expect(target).toBeDefined();
+    target.dir = "back";
+    createDiagram(host, view, { viewport: VIEWPORT });
+    // The attribute lives on the path itself, so the rule has to be a compound
+    // selector; a descendant selector would never match and the reversed edge
+    // would flow forwards.
+    expect(styleText()).toContain(".arch-edge-path[data-edge-dir=back]{animation-direction:reverse}");
+    expect(styleText()).not.toContain("[data-edge-dir=back] .arch-edge-path");
+    const back = [...host.querySelectorAll("path.arch-edge-path")].filter(
+      path => path.getAttribute("data-edge-dir") === "back",
+    );
+    expect(back).toHaveLength(1);
+    expect(back[0]?.getAttribute("data-edge-id")).toBe(String(target.id));
+  });
+
+  it("leaves a solid edge without a dash pattern, which is why it does not flow", () => {
+    // The official animation moves stroke-dashoffset, so a solid line has no
+    // offset to shift and stays still. That is the upstream semantic, not a
+    // missing feature: forcing a dasharray here would turn every solid
+    // relation into a dashed one.
+    const view = structuredClone(dump.views.index as DumpView) as unknown as DiagramView;
+    const solid = view.edges[0] as unknown as Record<string, unknown>;
+    solid.line = "solid";
+    createDiagram(host, view, { viewport: VIEWPORT });
+    const path = visibleOf(String(solid.id));
+    expect(path.getAttribute("stroke-dasharray")).toBeNull();
+    // Still a normal animated edge: the animation is declared and merely
+    // paused, not special-cased away for solid lines.
+    expect(styleText()).toContain("animation-name:arch-edge-flow");
+    expect(styleText()).toContain("animation-play-state:paused");
+    // Hover goes through the hit path, which is where the pointer listener is.
+    hitOf(String(solid.id)).dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+    expect(path.hasAttribute("data-arch-edge-active")).toBe(true);
+    expect(path.getAttribute("stroke-dasharray")).toBeNull();
+  });
+
+  it("lays a transparent 12px hit path under every visible edge", () => {
+    createDiagram(host, structuredClone(dump.views.index as DumpView) as unknown as DiagramView, {
+      viewport: VIEWPORT,
+    });
+    const visible = [...host.querySelectorAll("path.arch-edge-path")];
+    const hits = [...host.querySelectorAll("path.arch-edge-hit")];
+    expect(hits).toHaveLength(visible.length);
+    for (const hit of hits) {
+      expect(hit.getAttribute("stroke-width")).toBe("12");
+      expect(hit.getAttribute("stroke")).toBeNull();
+      // The stylesheet carries the transparent stroke and the stroke-only
+      // pointer target; the visible line keeps its own weight.
+      expect(styleText()).toContain(".arch-edge-hit{fill:none;stroke:transparent;stroke-width:12;pointer-events:stroke");
+    }
+    // Same geometry as the line it shadows, so the hit band is exactly there.
+    for (const hit of hits) {
+      const id = hit.getAttribute("data-edge-id") ?? "";
+      expect(hit.getAttribute("d")).toBe(visibleOf(id).getAttribute("d"));
+    }
+  });
+
+  it("turns one edge's animation on through setEdgeActive and off again", () => {
+    const diagram = createDiagram(host, structuredClone(dump.views.index as DumpView) as unknown as DiagramView, {
+      viewport: VIEWPORT,
+    });
+    const path = visibleOf("1icru9q");
+    expect(path.hasAttribute("data-arch-edge-active")).toBe(false);
+    diagram.setEdgeActive("1icru9q", true);
+    expect(path.hasAttribute("data-arch-edge-active")).toBe(true);
+    diagram.setEdgeActive("1icru9q", false);
+    expect(path.hasAttribute("data-arch-edge-active")).toBe(false);
+  });
+
+  it("flows an edge while the pointer is on its hit path", () => {
+    createDiagram(host, structuredClone(dump.views.index as DumpView) as unknown as DiagramView, {
+      viewport: VIEWPORT,
+    });
+    const hit = hitOf("1icru9q");
+    hit.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+    expect(visibleOf("1icru9q").hasAttribute("data-arch-edge-active")).toBe(true);
+    hit.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
+    expect(visibleOf("1icru9q").hasAttribute("data-arch-edge-active")).toBe(false);
+  });
+
+  it("thickens and recolours the selected edge and keeps it flowing", () => {
+    const diagram = createDiagram(host, structuredClone(dump.views.index as DumpView) as unknown as DiagramView, {
+      viewport: VIEWPORT,
+    });
+    const path = visibleOf("1icru9q");
+    expect(path.getAttribute("stroke-width")).toBe("1.5");
+    diagram.selectEdge("1icru9q");
+    expect(path.getAttribute("stroke-width")).toBe("2.5");
+    expect(path.getAttribute("stroke")).toBe("#60a5fa");
+    expect(path.hasAttribute("data-arch-edge-active")).toBe(true);
+    diagram.selectEdge(null);
+    expect(path.getAttribute("stroke-width")).toBe("1.5");
+    expect(path.hasAttribute("data-arch-edge-active")).toBe(false);
+  });
+
+  it("reports an edge press with the label anchor in host pixels", () => {
+    const onEdgeClick = vi.fn();
+    const view = structuredClone(dump.views.index as DumpView) as unknown as DiagramView;
+    createDiagram(host, view, { viewport: VIEWPORT, onEdgeClick });
+    const edge = view.edges.find(candidate => candidate.id === "1icru9q");
+    expect(edge?.labelBBox).toBeTruthy();
+    hitOf("1icru9q").dispatchEvent(
+      new PointerEvent("pointerdown", { clientX: 10, clientY: 10, cancelable: true, bubbles: true }),
+    );
+    expect(onEdgeClick).toHaveBeenCalledTimes(1);
+    const [id, anchor] = onEdgeClick.mock.calls[0] as [string, { x: number; y: number; width: number }];
+    expect(id).toBe("1icru9q");
+    const box = edge?.labelBBox as { x: number; y: number; width: number };
+    expect(anchor.x).toBeCloseTo(box.x * VIEWPORT.scale + VIEWPORT.tx, 6);
+    expect(anchor.width).toBeCloseTo(box.width * VIEWPORT.scale, 6);
+  });
+
+  it("does not start a pan when an edge is pressed", () => {
+    const onViewportChange = vi.fn();
+    const diagram = createDiagram(host, structuredClone(dump.views.index as DumpView) as unknown as DiagramView, {
+      viewport: VIEWPORT,
+      onViewportChange,
+    });
+    const svg = host.querySelector("svg") as SVGSVGElement;
+    hitOf("1icru9q").dispatchEvent(
+      new PointerEvent("pointerdown", { clientX: 10, clientY: 10, cancelable: true, bubbles: true }),
+    );
+    svg.dispatchEvent(new PointerEvent("pointermove", { clientX: 90, clientY: 90 }));
+    svg.dispatchEvent(new PointerEvent("pointerup", {}));
+    expect(onViewportChange).not.toHaveBeenCalled();
+    expect(diagram.viewport()).toEqual(VIEWPORT);
+  });
+});
