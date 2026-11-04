@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDiagram } from "../src/client/chunk/diagram.ts";
+import type { DiagramView } from "../src/client/chunk/diagram.ts";
 
 interface DumpNode {
   id: string;
@@ -73,7 +74,7 @@ describe("rendering", () => {
       createDiagram(host, structuredClone(view), { viewport: VIEWPORT });
       expect(host.querySelectorAll("g[data-id]"), `nodes of view ${id}`).toHaveLength(view.nodes.length);
       const shaped = view.edges.filter(edge => Array.isArray(edge.points) && edge.points.length > 0);
-      expect(host.querySelectorAll("path[d]"), `edges of view ${id}`).toHaveLength(shaped.length);
+      expect(host.querySelectorAll("path.arch-edge-path"), `edges of view ${id}`).toHaveLength(shaped.length);
     }
   });
 
@@ -83,15 +84,15 @@ describe("rendering", () => {
     expect(view.edges).toHaveLength(11);
     createDiagram(host, view, { viewport: VIEWPORT });
     expect(host.querySelectorAll("g[data-id]")).toHaveLength(10);
-    expect(host.querySelectorAll("path[d]")).toHaveLength(11);
+    expect(host.querySelectorAll("path.arch-edge-path")).toHaveLength(11);
   });
 
   it("decodes every edge path without undefined or NaN coordinates", () => {
     createDiagram(host, structuredClone(dump.views.index as DumpView), { viewport: VIEWPORT });
-    for (const path of host.querySelectorAll("path[d]")) {
+    for (const path of host.querySelectorAll("path.arch-edge-path")) {
       expect(path.getAttribute("d")).not.toMatch(/undefined|NaN/u);
     }
-    const first = host.querySelector("path[d]")?.getAttribute("d") ?? "";
+    const first = host.querySelector("path.arch-edge-path")?.getAttribute("d") ?? "";
     expect(first).toMatch(/^M-?\d+(\.\d+)?,-?\d+(\.\d+)?/u);
   });
 
@@ -312,5 +313,120 @@ describe("event binding thin layer", () => {
       expect(nodeG(id).getAttribute("transform")).toBe(`translate(${node.x + 100} ${node.y})`);
       expect(onMove).toHaveBeenCalledWith(id, node.x + 100, node.y);
     }
+  });
+});
+
+describe("edge markers and line styles", () => {
+  /** A two-node view with one edge carrying exactly the given arrow fields. */
+  function edgeView(edge: Record<string, unknown>): DiagramView {
+    return {
+      id: "probe",
+      nodes: [
+        { id: "a", x: 0, y: 0, width: 100, height: 50, title: "A" },
+        { id: "b", x: 300, y: 0, width: 100, height: 50, title: "B" },
+      ],
+      edges: [{ id: "e1", source: "a", target: "b", points: [[100, 25], [300, 25]], ...edge }],
+      bounds: { x: 0, y: 0, width: 400, height: 50 },
+    } as unknown as DiagramView;
+  }
+
+  const edgePath = (): SVGPathElement => {
+    const path = host.querySelector("path.arch-edge-path");
+    expect(path).not.toBeNull();
+    return path as SVGPathElement;
+  };
+
+  const markerOf = (id: string): SVGMarkerElement | null => host.querySelector(`defs marker[id="${id}"]`);
+
+  it("maps every LikeC4 arrow type to its official marker geometry", () => {
+    const expected: Record<string, string> = {
+      normal: "M 0 0 L 8 3 L 0 6 L 1 3 z",
+      crow: "M 8 0 L 0 4 L 8 8 M 8 4 L 0 4",
+      onormal: "M 0 0 L 8 3 L 0 6 L 1 3 z",
+      diamond: "M5,0 L10,4 L5,8 L0,4 Z",
+      odiamond: "M5,0 L10,4 L5,8 L0,4 Z",
+      open: "M0,0 L7,4 L0,8 L4,4 Z",
+      vee: "M0,0 L7,4 L0,8 L4,4 Z",
+    };
+    for (const [head, d] of Object.entries(expected)) {
+      document.body.replaceChildren();
+      mount();
+      createDiagram(host, edgeView({ head }), { viewport: VIEWPORT });
+      const marker = markerOf("arch-marker-e1-end");
+      expect(marker, `marker for head=${head}`).not.toBeNull();
+      expect(marker?.querySelector("path")?.getAttribute("d")).toBe(d);
+      expect(edgePath().getAttribute("marker-end")).toBe("url(#arch-marker-e1-end)");
+    }
+  });
+
+  it("renders the dot family as circles rather than paths", () => {
+    for (const head of ["dot", "odot"]) {
+      document.body.replaceChildren();
+      mount();
+      createDiagram(host, edgeView({ head }), { viewport: VIEWPORT });
+      const marker = markerOf("arch-marker-e1-end");
+      expect(marker, `marker for head=${head}`).not.toBeNull();
+      expect(marker?.querySelector("circle")?.getAttribute("r")).toBe("3");
+      expect(marker?.querySelector("path")).toBeNull();
+    }
+  });
+
+  it("draws no marker for an absent or explicitly none arrow", () => {
+    // An absent tail is bare; `none` is the explicit spelling of the same.
+    createDiagram(host, edgeView({ head: "none", tail: "none" }), { viewport: VIEWPORT });
+    expect(host.querySelectorAll("defs marker")).toHaveLength(0);
+    expect(edgePath().getAttribute("marker-start")).toBeNull();
+    expect(edgePath().getAttribute("marker-end")).toBeNull();
+  });
+
+  it("gives an edge with no head field the default arrow LikeC4 draws", () => {
+    createDiagram(host, edgeView({}), { viewport: VIEWPORT });
+    expect(edgePath().getAttribute("marker-end")).toBe("url(#arch-marker-e1-end)");
+    expect(edgePath().getAttribute("marker-start")).toBeNull();
+  });
+
+  it("keeps every marker in defs with an id unique to its edge and end", () => {
+    const view = structuredClone(dump.views.index as DumpView) as unknown as DiagramView;
+    createDiagram(host, view, { viewport: VIEWPORT });
+    const markers = [...host.querySelectorAll("marker")];
+    expect(markers.length).toBeGreaterThan(0);
+    for (const marker of markers) {
+      // Inside <defs>, never inside the transformed root group.
+      expect(marker.closest("defs")).not.toBeNull();
+      expect(marker.closest("g[transform]")).toBeNull();
+      expect(marker.getAttribute("orient")).toBe("auto-start-reverse");
+    }
+    const ids = markers.map(marker => marker.getAttribute("id"));
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("splits the three line styles into their dash patterns", () => {
+    const cases: [string | undefined, string | null][] = [
+      ["dotted", "1 8"],
+      ["dashed", "8 10"],
+      ["solid", null],
+      [undefined, null],
+    ];
+    for (const [line, dash] of cases) {
+      document.body.replaceChildren();
+      mount();
+      createDiagram(host, edgeView({ line }), { viewport: VIEWPORT });
+      expect(edgePath().getAttribute("stroke-dasharray"), `line=${String(line)}`).toBe(dash);
+    }
+  });
+
+  it("swaps the two markers when dir is back", () => {
+    createDiagram(host, edgeView({ head: "normal", tail: "crow", dir: "back" }), { viewport: VIEWPORT });
+    const path = edgePath();
+    // The crow was asked for at the tail, so it lands at the start; the arrow
+    // that would have been the head points back at the source instead.
+    expect(path.getAttribute("marker-start")).toBe("url(#arch-marker-e1-start)");
+    expect(path.getAttribute("marker-end")).toBe("url(#arch-marker-e1-end)");
+    expect(markerOf("arch-marker-e1-start")?.querySelector("path")?.getAttribute("d")).toBe(
+      "M 0 0 L 8 3 L 0 6 L 1 3 z",
+    );
+    expect(markerOf("arch-marker-e1-end")?.querySelector("path")?.getAttribute("d")).toBe(
+      "M 8 0 L 0 4 L 8 8 M 8 4 L 0 4",
+    );
   });
 });

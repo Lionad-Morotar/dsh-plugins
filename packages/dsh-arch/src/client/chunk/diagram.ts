@@ -35,6 +35,14 @@ export interface DiagramEdge {
   readonly label?: string | null;
   readonly points?: readonly Pt[];
   readonly labelBBox?: { x: number; y: number; width: number; height: number } | null;
+  /** LikeC4 line style; solid when absent. */
+  readonly line?: string;
+  /** Arrow at the target end; LikeC4 defaults an absent head to `normal`. */
+  readonly head?: string;
+  /** Arrow at the source end; absent means no marker. */
+  readonly tail?: string;
+  /** `back` swaps the two markers, so the arrow points at the source. */
+  readonly dir?: string;
 }
 
 export interface DiagramView {
@@ -92,6 +100,159 @@ export interface DiagramInteractions {
 }
 
 const SVG = "http://www.w3.org/2000/svg";
+
+/** Default edge ink; the selected state repaints it (see `selectEdge`). */
+const EDGE_STROKE = "#8b93a1";
+
+/**
+ * Marker geometry, copied verbatim from the official `EdgeMarkers`
+ * (`@likec4/diagram` 1.60.0, `base-primitives/edge/EdgeMarkers.mjs`).
+ *
+ * `fill="context-stroke"` is what makes an arrow follow its line's colour
+ * instead of needing one marker per palette entry; the outlined variants fill
+ * with the canvas colour so the shape reads as a hollow head.
+ */
+interface MarkerSpec {
+  readonly viewBox: string;
+  readonly refX: number;
+  readonly refY: number;
+  readonly width: number;
+  readonly height: number;
+  readonly shape: "path" | "circle";
+  readonly attrs: Readonly<Record<string, string | number>>;
+}
+
+const MARKER_SPECS = {
+  Arrow: {
+    viewBox: "-1 -1 12 10",
+    refX: 4,
+    refY: 3,
+    width: 8,
+    height: 6,
+    shape: "path",
+    attrs: { d: "M 0 0 L 8 3 L 0 6 L 1 3 z", fill: "context-stroke", "stroke-width": 0 },
+  },
+  Crow: {
+    viewBox: "-1 -1 12 12",
+    refX: 8,
+    refY: 4,
+    width: 8,
+    height: 8,
+    shape: "path",
+    attrs: { d: "M 8 0 L 0 4 L 8 8 M 8 4 L 0 4", fill: "none", "stroke-width": 1 },
+  },
+  OArrow: {
+    viewBox: "-1 -1 12 10",
+    refX: 4,
+    refY: 3,
+    width: 8,
+    height: 6,
+    shape: "path",
+    attrs: {
+      d: "M 0 0 L 8 3 L 0 6 L 1 3 z",
+      stroke: "context-stroke",
+      fill: "var(--likec4-background-color,#14161d)",
+      "stroke-width": 1.25,
+      "stroke-linejoin": "miter",
+      "stroke-linecap": "square",
+    },
+  },
+  Open: {
+    viewBox: "-4 -4 14 16",
+    refX: 5,
+    refY: 4,
+    width: 7,
+    height: 8,
+    shape: "path",
+    attrs: {
+      d: "M0,0 L7,4 L0,8 L4,4 Z",
+      stroke: "context-stroke",
+      fill: "context-stroke",
+      "stroke-dasharray": 0,
+      "stroke-width": 1,
+      "stroke-linecap": "round",
+    },
+  },
+  Diamond: {
+    viewBox: "-4 -4 16 14",
+    refX: 5,
+    refY: 4,
+    width: 10,
+    height: 8,
+    shape: "path",
+    attrs: { d: "M5,0 L10,4 L5,8 L0,4 Z", fill: "context-stroke", "stroke-width": 0, "stroke-linecap": "round" },
+  },
+  ODiamond: {
+    viewBox: "-4 -4 16 14",
+    refX: 6,
+    refY: 4,
+    width: 10,
+    height: 8,
+    shape: "path",
+    attrs: {
+      d: "M5,0 L10,4 L5,8 L0,4 Z",
+      stroke: "context-stroke",
+      fill: "var(--likec4-background-color,#14161d)",
+      "stroke-width": 1.25,
+      "stroke-linecap": "round",
+    },
+  },
+  Dot: {
+    viewBox: "0 0 10 10",
+    refX: 4,
+    refY: 4,
+    width: 6,
+    height: 6,
+    shape: "circle",
+    attrs: { "stroke-width": 0, fill: "context-stroke", cx: 4, cy: 4, r: 3 },
+  },
+  ODot: {
+    viewBox: "0 0 10 10",
+    refX: 4,
+    refY: 4,
+    width: 6,
+    height: 6,
+    shape: "circle",
+    attrs: {
+      "stroke-width": 1.25,
+      stroke: "context-stroke",
+      fill: "var(--likec4-background-color,#14161d)",
+      cx: 4,
+      cy: 4,
+      r: 3,
+    },
+  },
+} as const satisfies Record<string, MarkerSpec>;
+
+type MarkerName = keyof typeof MARKER_SPECS;
+
+/** The official `arrowTypeToMarker` table, `none`/unknown resolving to no marker. */
+const ARROW_MARKERS: Readonly<Record<string, MarkerName>> = {
+  normal: "Arrow",
+  crow: "Crow",
+  onormal: "OArrow",
+  diamond: "Diamond",
+  odiamond: "ODiamond",
+  open: "Open",
+  vee: "Open",
+  dot: "Dot",
+  odot: "ODot",
+};
+
+const markerNameOf = (arrow: string | undefined): MarkerName | null => {
+  if (arrow === undefined || arrow === "none") return null;
+  return ARROW_MARKERS[arrow] ?? null;
+};
+
+/**
+ * Dash pattern per LikeC4 line style. Solid carries none at all: an empty
+ * `stroke-dasharray` attribute would still be a dash pattern of zero.
+ */
+const dashArrayOf = (line: string | undefined): string | null => {
+  if (line === "dotted") return "1 8";
+  if (line === "dashed") return "8 10";
+  return null;
+};
 
 /**
  * Wheel delta that counts as one zoom step, and how much of that step to
@@ -153,8 +314,12 @@ const descriptionText = (node: DiagramNode): string | null => {
 export function createDiagram(host: HTMLElement, view: DiagramView, opts: DiagramOptions): DiagramHandle {
   host.replaceChildren();
   const svg = el("svg", { width: "100%", height: "100%", style: "display:block;touch-action:none;cursor:grab" });
+  // Markers live in `<defs>` beside the transformed root, never inside it: a
+  // marker inside the scaled group inherits that scale and drifts off its line
+  // at every zoom level but the one it was measured at.
+  const defs = el("defs");
   const root = el("g");
-  svg.append(root);
+  svg.append(defs, root);
   host.append(svg);
 
   // The renderer owns its mutable copy: drags update it, and the caller keeps
@@ -180,10 +345,48 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
   const nodeLayer = el("g");
   root.append(edgeLayer, labelLayer, nodeLayer);
 
+  /** Marker ids are per edge, so two edges never share one arrow definition. */
+  const markerIdOf = (edgeId: string, end: "start" | "end"): string =>
+    `arch-marker-${edgeId.replace(/[^\w-]/gu, "-")}-${end}`;
+
+  /** Append one marker to `<defs>` and return the `url(#...)` a path points at. */
+  const defineMarker = (name: MarkerName, id: string): string => {
+    const spec: MarkerSpec = MARKER_SPECS[name];
+    const marker = el("marker", {
+      id,
+      viewBox: spec.viewBox,
+      refX: spec.refX,
+      refY: spec.refY,
+      markerWidth: spec.width,
+      markerHeight: spec.height,
+      preserveAspectRatio: "xMaxYMid meet",
+      orient: "auto-start-reverse",
+    });
+    marker.append(spec.shape === "circle" ? el("circle", spec.attrs) : el("path", spec.attrs));
+    defs.append(marker);
+    return `url(#${id})`;
+  };
+
   for (const edge of view.edges) {
     const d = pathOf(edge);
     if (d === "") continue;
-    edgeLayer.append(el("path", { d, stroke: "#8b93a1", "stroke-width": 1.5, "stroke-dasharray": "6 4" }));
+    // LikeC4 defaults an absent head to `normal`, so an edge that never named
+    // its arrow still gets one; an absent tail means the line simply starts bare.
+    let startName = markerNameOf(edge.tail);
+    let endName = markerNameOf(edge.head ?? "normal");
+    if (edge.dir === "back") [startName, endName] = [endName, startName];
+
+    const visible = el("path", { d, class: "arch-edge-path", stroke: EDGE_STROKE, "stroke-width": 1.5 });
+    const dash = dashArrayOf(edge.line);
+    if (dash !== null) visible.setAttribute("stroke-dasharray", dash);
+    if (startName !== null) {
+      visible.setAttribute("marker-start", defineMarker(startName, markerIdOf(edge.id, "start")));
+    }
+    if (endName !== null) {
+      visible.setAttribute("marker-end", defineMarker(endName, markerIdOf(edge.id, "end")));
+    }
+    edgeLayer.append(visible);
+
     const box = edge.labelBBox;
     if (box !== null && box !== undefined && edge.label) {
       const g = el("g");
