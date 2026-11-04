@@ -58,6 +58,10 @@ import { readLayoutWidths } from "./layout-widths.ts";
 import { CompactionStat } from "./compaction-stat.tsx";
 import { COMPACTION_ID, COMPACTION_ORDER, COMPACTION_SLOT } from "./compaction-registration.ts";
 import { installCompactionStyles } from "./compaction-styles.ts";
+import { ContinueButton } from "./continue-button.tsx";
+import { CONTINUE_ID, CONTINUE_ORDER, CONTINUE_SLOT } from "./continue-turn.ts";
+import { installContinueStyles } from "./continue-styles.ts";
+import { submitContinue } from "./continue-submit.ts";
 import { createSeat, type SeatDeps, type SeatProps } from "./seat.tsx";
 import { modelPopupSpec, openContext, openSegment, type PopupOpenerLike } from "./trigger.ts";
 import { TabSettingsPage, insertTabPageStyles, type PageReact } from "./tabs-page.tsx";
@@ -168,6 +172,15 @@ export interface LoaderRequire {
  */
 export interface SessionsLike {
   scope?(sessionId: string): unknown;
+  /**
+   * The client Session object behind one id.
+   *
+   * Optional on read: the continue button is the only surface that sends, and a
+   * host without this seam must still get every other feature here. What the
+   * session exposes is the host's business, so the shape stays unknown until the
+   * send action has guarded it.
+   */
+  binding?(sessionId: string): { readonly session?: unknown } | undefined;
   /**
    * The session list snapshot store.
    *
@@ -450,6 +463,9 @@ export const clientPlugin = {
     // The compression count carries its own sheet: it is installed by the dock
     // entry rather than the picker, so the two surfaces stay independent.
     ctx.effect(() => installCompactionStyles(doc), "dsh-better: compaction count stylesheet");
+    // The continue button's sheet, installed for the same reason: its own entry
+    // and its own tag id, so the two surfaces stay independent.
+    ctx.effect(() => installContinueStyles(doc), "dsh-better: continue button stylesheet");
 
     // Skill aliases. One document is shared by three surfaces: the settings page
     // that edits it, the `/` source that lists it in the shipped slash menu, and
@@ -497,6 +513,30 @@ export const clientPlugin = {
           ),
         ),
       "dsh-better: compaction count",
+    );
+
+    // The continue button under an interrupted turn. The send action is injected
+    // rather than imported by the component: the slot hands every entry the
+    // owner's position value and the standard kit, and the one thing it cannot
+    // hand over is a way to send, so that is what `inject` adds. The closure is
+    // built per registration and only closes over `ctx`, so nothing here runs
+    // during a render.
+    ctx.effect(
+      () =>
+        ctx.slots.inject(CONTINUE_SLOT, () =>
+          registerComponent(
+            ctx.slots,
+            {
+              name: CONTINUE_SLOT,
+              id: CONTINUE_ID,
+              order: CONTINUE_ORDER,
+              locale: NS,
+              inject: () => ({ submitContinue: (sessionId: string) => submitContinue(ctx, sessionId) }),
+            },
+            ContinueButton,
+          ),
+        ),
+      "dsh-better: continue button",
     );
 
     /**
