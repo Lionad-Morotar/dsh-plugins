@@ -120,8 +120,15 @@ export type {
 /** Loader row name; must match `package.json#name` and the patch row id. */
 export const name = PACKAGE_NAME;
 
-/** Services the host half needs before it can answer a request. */
-export const inject = ["fs", "sessions", "sessionPersistence"];
+/**
+ * Services the host half needs before it can answer a request.
+ *
+ * Declared here for readers, but the copy the Loader actually reads is
+ * {@link apply.inject}: `unwrapExports` hands Cordis `module.default` and looks
+ * for `inject` on that value, so a module-level binding alone is invisible to
+ * it and the row activates without waiting for `fs`.
+ */
+export const inject: string[] = ["fs", "sessions", "sessionPersistence"];
 
 /** Registration coordinates, useful to host-side diagnostics. */
 export function describe(): { name: string; slot: string; id: string; order: number } {
@@ -419,6 +426,18 @@ export function apply(ctx: Context, config?: Partial<DocumentsConfig>): void {
   new FsExplorerDocumentsService(ctx, config);
   new FsExplorerWorkspaceService(ctx);
 }
+
+/**
+ * The dependency declaration the Loader actually reads.
+ *
+ * It must hang off the default export, not off the module: the Loader unwraps
+ * this namespace to `module.default` and then resolves `plugin.inject` from
+ * that value. With the list on the module only, Cordis saw a plugin that needs
+ * nothing, ran it before `fs` existed, and the whole row failed to activate
+ * with "fs service is unavailable"; the file workbench then surfaced that as
+ * an HTTP 404 on its document endpoint, far from the cause.
+ */
+apply.inject = inject;
 
 /** What the Loader row mounts. */
 export default apply;
