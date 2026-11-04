@@ -404,6 +404,13 @@ export interface FocusTarget {
    * `(revision, path)` so two versions of one file stay two tabs.
    */
   readonly revision?: string;
+  /**
+   * Whether this request only moves the tree cursor without opening a panel.
+   *
+   * The workspace side bars select a directory in the tree; opening it as a
+   * panel would replace what the reader is looking at with an empty tab.
+   */
+  readonly reveal?: boolean;
 }
 
 /** Parse the optional `:<line>` suffix; a missing or bad value reads as line 1. */
@@ -414,7 +421,7 @@ function lineOf(raw: string | undefined): number {
 /**
  * Parse the focus string a caller hands this view.
  *
- * Three spellings travel. `path:<workspace path>[:<line>]` comes from the Git
+ * Four spellings travel. `path:<workspace path>[:<line>]` comes from the Git
  * changes pane and the command palette and stays relative to the session's
  * workspace root. `abs:<filesystem path>[:<line>]` comes from the address
  * bridge, which forwards files that may sit outside that root — its leading `/`
@@ -422,7 +429,9 @@ function lineOf(raw: string | undefined): number {
  * `Users/x/a.ts`, so unlike `path:` it must survive. `git:<hash>:<line>:<path>`
  * comes from commit details and names a file as one commit holds it; its
  * revision is normalized to lowercase and its line segment is mandatory
- * because a git path may itself end in digits.
+ * because a git path may itself end in digits. `reveal:<workspace path>` comes
+ * from the side bars and asks for the row, not the file: it carries no line
+ * because a cursor resting on a row has no position inside it.
  *
  * The line suffix is optional in the first two spellings. Backslashes are
  * normalized because the same jump is produced on Windows hosts.
@@ -439,6 +448,15 @@ export function parseFocus(focus: string | undefined): FocusTarget | undefined {
     const path = (gitMatch[3] ?? "").replace(/\\/gu, "/").replace(/^(?:\.\/)+/u, "").replace(/^\/+/u, "");
     if (path === "" || line < 1) return undefined;
     return { path, line, absolute: false, revision: (gitMatch[1] ?? "").toLowerCase() };
+  }
+
+  // Before `abs:` and `path:` only for reading order: neither pattern can match
+  // a `reveal:` prefix, so the branches cannot shadow each other.
+  const revealMatch = /^reveal:(.+)$/u.exec(trimmed);
+  if (revealMatch !== null) {
+    const path = (revealMatch[1] ?? "").replace(/\\/gu, "/").replace(/^(?:\.\/)+/u, "").replace(/^\/+/u, "");
+    if (path === "") return undefined;
+    return { path, line: 1, absolute: false, reveal: true };
   }
 
   const absoluteMatch = /^abs:(.+?)(?::(\d+))?$/u.exec(trimmed);

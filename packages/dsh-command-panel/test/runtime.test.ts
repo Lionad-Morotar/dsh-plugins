@@ -101,6 +101,13 @@ interface HarnessOptions {
    * a record replaces the whole sessions fake (for cases that need a live one).
    */
   readonly sessions?: readonly SessionSummary[] | Record<string, unknown>;
+  /**
+   * The gateway's unary caller, as the connection service exposes it. Absent
+   * leaves the raw-RPC tier out, which is what a host without one looks like.
+   */
+  readonly rpc?: { readonly call: (scope: string, endpoint: string, payload: unknown) => Promise<unknown> };
+  /** The conversation view ids the slot roster reports; the file workbench is one. */
+  readonly viewIds?: readonly string[];
 }
 
 interface Harness {
@@ -229,7 +236,7 @@ function harness(options: HarnessOptions = {}): Harness {
     slots: {
       inject: (_key: string, callback: () => () => void) => callback(),
       register: () => () => undefined,
-      entries: () => [],
+      entries: () => (options.viewIds ?? []).map(id => ({ options: { id, name: "conversation.view" } })),
     },
     pluginNavigation: { openList: vi.fn(), openBundle: vi.fn() },
     workbench,
@@ -245,6 +252,7 @@ function harness(options: HarnessOptions = {}): Harness {
     ...(options.sessions !== undefined && !Array.isArray(options.sessions)
       ? { sessions: options.sessions }
       : {}),
+    ...(options.rpc === undefined ? {} : { connection: { rpc: options.rpc } }),
   };
 
   const ctx = {
@@ -253,7 +261,9 @@ function harness(options: HarnessOptions = {}): Harness {
       const dispose = callback(scope);
       return () => dispose?.();
     },
-    get: () => undefined,
+    // The raw-RPC tier resolves `connection` through the non-throwing `get`, so
+    // the fake has to answer there too or every gateway call looks absent.
+    get: (name: string) => fakes[name],
   } as unknown as ClientContext;
 
   const runtime = createRuntime({
@@ -1188,5 +1198,239 @@ describe("switch-mode status freshness", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * A gateway caller that answers `workspaceFiles` and nothing else.
+ *
+ * The reference layer asks `stat` first and falls back to `list`, so the fake
+ * has to be able to say "not a file" without failing the call: a business
+ * `ok: false` is exactly what the host returns for a directory.
+ */
+function workspaceRpc(answers: {
+  readonly files?: readonly string[];
+  readonly directories?: readonly string[];
+  readonly broken?: boolean;
+}): { readonly call: ReturnType<typeof vi.fn> } {
+  const files = new Set(answers.files ?? []);
+  const directories = new Set(answers.directories ?? []);
+  return {
+    call: vi.fn(async (_scope: string, endpoint: string, payload: unknown) => {
+      if (answers.broken === true) throw new Error("the gateway is gone");
+      const request = (payload as { readonly args?: { readonly request?: { readonly path?: string } } }).args?.request;
+      const path = request?.path ?? "";
+      if (endpoint === "workspaceFiles/stat") {
+        return files.has(path)
+          ? { ok: true, value: { absolutePath: `/work/${path}`, version: "v1" } }
+          : { ok: false, error: { code: "not-found" } };
+      }
+      if (endpoint === "workspaceFiles/list") {
+        return directories.has(path)
+          ? { ok: true, value: { path, entries: [] } }
+          : { ok: false, error: { code: "not-found" } };
+      }
+      return { ok: false, error: { code: "unknown-endpoint" } };
+    }),
+  };
+}
+
+/** A paragraph holding one inline code span, the shape the prose arrives in. */
+function proseCode(text: string): HTMLElement {
+  const code = document.createElement("code");
+  code.textContent = text;
+  const paragraph = document.createElement("p");
+  paragraph.append(code);
+  document.body.append(paragraph);
+  return code;
+}
+
+describe("prose reference links", () => {
+  it("dots a path the host confirms and opens it in the file workbench", async () => {
+    const rpc = workspaceRpc({ files: ["content/a.md"] });
+    const h = harness({ rpc, viewIds: ["fs-explorer"] });
+    const code = proseCode("content/a.md");
+
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(code.getAttribute("data-dcp-ref")).toBe("file"));
+
+    code.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(h.workbench.viewFocus.request).toHaveBeenCalledWith("fs-explorer", "path:content/a.md"));
+    h.runtime.dispose();
+  });
+
+  it("dots a directory apart and hands it the reveal spelling", async () => {
+    const rpc = workspaceRpc({ directories: ["content/6.maps"] });
+    const h = harness({ rpc, viewIds: ["fs-explorer"] });
+    const code = proseCode("content/6.maps");
+
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(code.getAttribute("data-dcp-ref")).toBe("dir"));
+
+    code.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() =>
+      expect(h.workbench.viewFocus.request).toHaveBeenCalledWith("fs-explorer", "reveal:content/6.maps"),
+    );
+    h.runtime.dispose();
+  });
+
+  it("leaves a path the host cannot place undotted", async () => {
+    const rpc = workspaceRpc({ files: [], directories: [] });
+    const h = harness({ rpc, viewIds: ["fs-explorer"] });
+    const code = proseCode("content/gone.md");
+
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(rpc.call).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(code.hasAttribute("data-dcp-ref")).toBe(false);
+    h.runtime.dispose();
+  });
+
+  it("leaves every path undotted when the gateway itself fails", async () => {
+    const rpc = workspaceRpc({ broken: true });
+    const h = harness({ rpc, viewIds: ["fs-explorer"] });
+    const code = proseCode("content/a.md");
+
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(rpc.call).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(code.hasAttribute("data-dcp-ref")).toBe(false);
+    h.runtime.dispose();
+  });
+
+  it("promises nothing when the file workbench is not registered", async () => {
+    const rpc = workspaceRpc({ files: ["content/a.md"] });
+    const h = harness({ rpc, viewIds: [] });
+    const code = proseCode("content/a.md");
+
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await Promise.resolve();
+    expect(code.hasAttribute("data-dcp-ref")).toBe(false);
+    expect(rpc.call).not.toHaveBeenCalled();
+    h.runtime.dispose();
+  });
+
+  it("stops asking the host once the runtime is disposed", async () => {
+    const rpc = workspaceRpc({ files: ["content/a.md"] });
+    const h = harness({ rpc, viewIds: ["fs-explorer"] });
+    const code = proseCode("content/a.md");
+
+    h.runtime.dispose();
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(rpc.call).not.toHaveBeenCalled();
+    expect(code.hasAttribute("data-dcp-ref")).toBe(false);
+  });
+});
+
+/**
+ * A gateway caller whose answers depend on which session is asking.
+ *
+ * The same workspace path can be a file in one session and absent in another,
+ * which is exactly the case a cache keyed by path alone gets wrong.
+ */
+function perSessionRpc(bySession: Readonly<Record<string, readonly string[]>>): {
+  readonly call: ReturnType<typeof vi.fn>;
+} {
+  return {
+    call: vi.fn(async (_scope: string, endpoint: string, payload: unknown) => {
+      const request = (payload as { readonly args?: { readonly request?: { readonly sessionId?: string; readonly path?: string } } })
+        .args?.request;
+      const known = new Set(bySession[request?.sessionId ?? ""] ?? []);
+      const path = request?.path ?? "";
+      if (endpoint === "workspaceFiles/stat") {
+        return known.has(path)
+          ? { ok: true, value: { absolutePath: `/work/${path}`, version: "v1" } }
+          : { ok: false, error: { code: "not-found" } };
+      }
+      if (endpoint === "workspaceFiles/list") return { ok: false, error: { code: "not-found" } };
+      return { ok: false, error: { code: "unknown-endpoint" } };
+    }),
+  };
+}
+
+/** How many times one endpoint was asked for one path. */
+function callsFor(rpc: { readonly call: ReturnType<typeof vi.fn> }, endpoint: string, path: string): number {
+  return rpc.call.mock.calls.filter(call => {
+    const [scope, name, payload] = call as [string, string, { readonly args?: { readonly request?: { readonly path?: string } } }];
+    return scope === "/api" && name === endpoint && payload.args?.request?.path === path;
+  }).length;
+}
+
+/** A session list whose main-view holder can be swapped, which is what the panel reads. */
+function switchableSessions(): {
+  readonly sessions: Record<string, unknown>;
+  readonly show: (id: string) => void;
+} {
+  let current = SESSION_A.id;
+  const listeners = new Set<() => void>();
+  const row = (id: string): SessionSummary => ({ ...SESSION_A, id, retainedBy: { mainView: id === current ? 1 : 0 } });
+  const list = () => sessionList([row(SESSION_A.id), row(SESSION_B.id)]);
+  return {
+    sessions: {
+      ...fakeSessionsWithScope(),
+      list: {
+        getSnapshot: list,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+      },
+    },
+    show: (id: string) => {
+      current = id;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+describe("prose reference cache scope", () => {
+  it("drops the answers of the previous session when the reader switches", async () => {
+    // `content/a.md` exists in session A only. A cache keyed by path alone would
+    // answer B's hover with A's file and never ask the host again.
+    const rpc = perSessionRpc({ [SESSION_A.id]: ["content/a.md"] });
+    const live = switchableSessions();
+    const h = harness({ rpc, viewIds: ["fs-explorer"], sessions: live.sessions });
+    const code = proseCode("content/a.md");
+
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(code.getAttribute("data-dcp-ref")).toBe("file"));
+    const askedInA = callsFor(rpc, "workspaceFiles/stat", "content/a.md");
+    expect(askedInA).toBeGreaterThan(0);
+
+    // The reader moves to a conversation whose workspace does not hold the file.
+    live.show(SESSION_B.id);
+    await vi.waitFor(() => expect(callsFor(rpc, "workspaceFiles/stat", "content/a.md")).toBe(askedInA));
+
+    // A fresh element, because the dotted one carries its own answer.
+    const second = proseCode("content/a.md");
+    second.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(callsFor(rpc, "workspaceFiles/stat", "content/a.md")).toBeGreaterThan(askedInA));
+    await Promise.resolve();
+    expect(second.hasAttribute("data-dcp-ref")).toBe(false);
+    h.runtime.dispose();
+  });
+
+  it("keeps answering from the cache while the session stays put", async () => {
+    const rpc = perSessionRpc({ [SESSION_A.id]: ["content/a.md"] });
+    const h = harness({ rpc, viewIds: ["fs-explorer"] });
+    const code = proseCode("content/a.md");
+
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(code.getAttribute("data-dcp-ref")).toBe("file"));
+    const afterFirst = callsFor(rpc, "workspaceFiles/stat", "content/a.md");
+
+    for (let index = 0; index < 3; index += 1) {
+      const next = proseCode("content/a.md");
+      next.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+      await vi.waitFor(() => expect(next.getAttribute("data-dcp-ref")).toBe("file"));
+    }
+
+    // The candidate chain is walked once, not once per hover.
+    expect(callsFor(rpc, "workspaceFiles/stat", "content/a.md")).toBe(afterFirst);
+    h.runtime.dispose();
   });
 });

@@ -37,6 +37,8 @@ import type {
   ShortcutsService,
   SidebarRightService,
   WorkbenchService,
+  WorkspaceFilesFace,
+  SlotEntry,
   SlotService,
   ThemeService,
   UiWorkspaceService,
@@ -76,6 +78,7 @@ import {
   type SessionScope,
 } from "./panel-state.ts";
 import { GIT_VIEW_ID, GIT_VIEW_SLOT, gitViewPresent, installCommitLinks } from "./commit-ref.ts";
+import { createReferenceResolver, installReferenceLinks, type ReferenceProbeAnswer, type ResolvedReference } from "./reference-link.ts";
 import { composeInsertion } from "./paths.ts";
 import { rankRows } from "./ranking.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
@@ -84,11 +87,33 @@ import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from ".
 import { statusStamp } from "./status.ts";
 import { createPanelStore } from "./store.ts";
 import { directoryQuery, focusPath, parentQuery } from "./tree.ts";
-import { createPathExplorerFace, createGitExplorerFace, createHostShutdownFace, createNativeOpenFace, createSessionOpenFace, gatewayRpcOf } from "./wire.ts";
+import { createPathExplorerFace, createGitExplorerFace, createHostShutdownFace, createNativeOpenFace, createSessionOpenFace, createWorkspaceFilesFace, gatewayRpcOf } from "./wire.ts";
 import { insertPanelStyles } from "./styles.ts";
 
 /** The three command ids; also the settings rows the reader can rebind. */
 export const COMMAND_IDS = PANEL_COMMAND_IDS;
+
+/**
+ * The file workbench's view id and slot.
+ *
+ * Named here rather than imported from `dsh-fs-explorer`: this package talks to
+ * it through the workbench service's string contract, the same way the reveal
+ * accelerator already does, and must keep working when that package is absent.
+ */
+const FS_VIEW_ID = "fs-explorer";
+const FS_VIEW_SLOT = "conversation.view";
+
+/**
+ * Whether the file workbench has registered its conversation view.
+ *
+ * An unregistered view has nothing to land on, and a dotted underline over a
+ * path that cannot open would be a promise the click cannot keep.
+ * @param entries - the slot's current roster.
+ * @returns true when the file workbench is on screen somewhere.
+ */
+function fsViewPresent(entries: readonly SlotEntry[] | undefined): boolean {
+  return entries?.some(entry => entry.options?.id === FS_VIEW_ID) ?? false;
+}
 
 /** Upper bound on rendered rows; typing narrows past it. */
 export const MAX_ROWS = 200;
@@ -236,6 +261,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   let rpcSessionOpen: SessionOpenFace | null | undefined;
   let rpcGitExplorer: GitExplorerRemote | null | undefined;
   let rpcHostShutdown: HostShutdownRemote | null | undefined;
+  let rpcWorkspaceFiles: WorkspaceFilesFace | null | undefined;
 
   function pathExplorerFace(): PathExplorerRemote | undefined {
     if (isPathExplorerFace(refs.pathExplorer)) return refs.pathExplorer;
@@ -296,6 +322,93 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       rpcSessionOpen = rpc === undefined ? null : createSessionOpenFace(rpc);
     }
     return rpcSessionOpen ?? undefined;
+  }
+
+  /**
+   * The host's file service, reached through the gateway.
+   *
+   * Deliberately not declared in `inject`: `workspaceFiles` belongs to the host
+   * and to the file workbench package, and a profile without either must still
+   * load this plugin. A missing channel is cached as absent once, the same way
+   * the other raw-RPC faces are.
+   */
+  function workspaceFilesFace(): WorkspaceFilesFace | undefined {
+    if (rpcWorkspaceFiles === undefined) {
+      const rpc = gatewayRpcOf(deps.ctx);
+      rpcWorkspaceFiles = rpc === undefined ? null : createWorkspaceFilesFace(rpc);
+    }
+    return rpcWorkspaceFiles ?? undefined;
+  }
+
+  /**
+   * Whether one path is a file, a directory, or absent.
+   *
+   * `stat` answers for files only, so a failed stat is not a miss: the path may
+   * be a directory, and listing it is what says so. Every refusal (a thrown
+   * transport, a business `ok: false`, a missing face) folds into `missing`, so
+   * the caller never has to tell a broken host from an absent path.
+   */
+  async function probeWorkspacePath(sessionId: string, path: string): Promise<ReferenceProbeAnswer> {
+    const face = workspaceFilesFace();
+    if (face === undefined) return "missing";
+    const request = { sessionId, path };
+    try {
+      const stat = await face.stat(request);
+      if (stat.ok) return "file";
+    } catch {
+      // A transport failure reads as "not a file" and the listing decides.
+    }
+    try {
+      const listing = await face.list(request);
+      return listing.ok ? "directory" : "missing";
+    } catch {
+      return "missing";
+    }
+  }
+
+  /**
+   * The prose reference resolver, built once per runtime.
+   *
+   * One instance for the whole document means the cache survives every message
+   * the reader scrolls past, which is the point: the same handful of paths is
+   * hovered over and over. It is dropped with the runtime so a disposed plugin
+   * holds no answers.
+   */
+  const referenceResolver = createReferenceResolver({
+    probe: async path => {
+      const sessionId = currentSessionId();
+      if (sessionId === null) return "missing";
+      return probeWorkspacePath(sessionId, path);
+    },
+  });
+
+  /**
+   * The session whose answers the resolver currently holds.
+   *
+   * The cache is keyed by path alone, while the answer is a fact about one
+   * workspace: `content/a.md` can be a file in one conversation and absent in
+   * the next. So the answers are dropped when the conversation changes, and
+   * this layer is the only one that knows which conversation is on screen.
+   * Keying the resolver by session instead would push that knowledge into a
+   * module that has no session at all.
+   */
+  let resolverSession: string | null = null;
+
+  /**
+   * Resolve one target against the conversation on screen.
+   *
+   * The check lives here rather than inside `probe` because a cache hit never
+   * reaches the probe: a stale answer would be served before any code that
+   * could notice the session had changed.
+   */
+  function resolveReference(target: string): Promise<ResolvedReference | null> {
+    const sessionId = currentSessionId();
+    if (sessionId === null) return Promise.resolve(null);
+    if (resolverSession !== sessionId) {
+      referenceResolver.clear();
+      resolverSession = sessionId;
+    }
+    return referenceResolver.resolve(target);
   }
 
   const copy = (): Copy => copyFor(refs.locale?.getSnapshot().active ?? "zh");
@@ -1245,6 +1358,59 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     missing();
   }
 
+  /**
+   * Hand one file workbench focus to the view, switching to it if needed.
+   *
+   * The same queue-then-switch shape as the commit jump: the focus goes into
+   * the `viewFocus` queue before the switch so a view that mounts on it cannot
+   * miss the moment, and a host that delivered the focus itself has the queued
+   * copy dropped again. A prose click has no panel to hang a notice on, and the
+   * underline was only offered because the view was registered, so a miss is
+   * silence rather than an error.
+   * @param focus - the focus string the view parses.
+   */
+  function handToFileWorkbench(focus: string): void {
+    const workbench = refs.workbench;
+    if (workbench === undefined) return;
+    if (workbench.openViewOrSwitch !== undefined) {
+      workbench.viewFocus?.request(FS_VIEW_ID, focus);
+      const result = workbench.openViewOrSwitch(FS_VIEW_ID, focus);
+      if (result.focused) {
+        workbench.viewFocus?.take(FS_VIEW_ID);
+        close();
+        return;
+      }
+      if (result.opened) {
+        close();
+        return;
+      }
+      workbench.viewFocus?.take(FS_VIEW_ID);
+      return;
+    }
+    if (workbench.openView(FS_VIEW_ID, focus)) close();
+  }
+
+  /** Open a file the prose named, in the workbench panel. */
+  function openReferenceFile(path: string, options: { readonly absolute: boolean }): void {
+    handToFileWorkbench(options.absolute ? `abs:${path}` : `path:${path}`);
+  }
+
+  /**
+   * Select a directory the prose named, without opening a panel.
+   *
+   * `reveal:` names a workspace path only: the view's parser strips a leading
+   * slash from it, so an absolute directory cannot be spelled that way. Such a
+   * target degrades to opening the directory as a panel, which is the nearest
+   * thing the protocol can express; the reader still lands on the right place.
+   */
+  function revealReferenceDirectory(path: string, options: { readonly absolute: boolean }): void {
+    if (options.absolute) {
+      handToFileWorkbench(`abs:${path}`);
+      return;
+    }
+    handToFileWorkbench(`reveal:${path}`);
+  }
+
   function goBack(): void {
     const snapshot = store.getSnapshot();
     const result = backModel(snapshot.model);
@@ -1628,6 +1794,22 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       gitViewPresent: () => gitViewPresent(refs.slots?.entries?.(GIT_VIEW_SLOT)),
     }),
   );
+  // The same document-level pass for workspace paths in the prose: an anchor,
+  // an inline code span, or a paragraph that is nothing but a path. Nothing is
+  // dotted until the host has confirmed the path exists, and a click hands the
+  // jump to the file workbench through the focus protocol.
+  disposers.push(
+    installReferenceLinks(doc, {
+      sessionId: currentSessionId,
+      resolve: target => resolveReference(target),
+      openFile: openReferenceFile,
+      revealDirectory: revealReferenceDirectory,
+      fsViewPresent: () => fsViewPresent(refs.slots?.entries?.(FS_VIEW_SLOT)),
+    }),
+  );
+  // The resolver outlives every message the reader scrolls past, so its cache
+  // is dropped with the runtime rather than with the listener.
+  disposers.push(() => referenceResolver.clear());
   disposers.push(startStatusTick());
   disposers.push(
     deps.ctx.inject(["layout", "theme", "sidebarRight"], scope => {

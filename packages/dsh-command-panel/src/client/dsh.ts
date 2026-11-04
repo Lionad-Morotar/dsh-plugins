@@ -181,6 +181,24 @@ export interface SessionOpenFace {
   ): Promise<RemoteResult<{ readonly opened: true }>>;
 }
 
+/**
+ * The two `workspaceFiles` calls the prose reference layer asks.
+ *
+ * `stat` answers for a file only, so a directory is discovered by listing it:
+ * the pair together is what tells a path that opens a panel from one that only
+ * moves the tree cursor. Both are read-only and both degrade to a refusal.
+ */
+export interface WorkspaceFilesFace {
+  stat(
+    request: { readonly sessionId: string; readonly path: string },
+    signal?: AbortSignal,
+  ): Promise<RemoteResult<{ readonly absolutePath: string }>>;
+  list(
+    request: { readonly sessionId: string; readonly path: string },
+    signal?: AbortSignal,
+  ): Promise<RemoteResult<{ readonly path: string }>>;
+}
+
 /** Whether a value structurally answers the session open pair. */
 export function isSessionOpenFace(value: unknown): value is SessionOpenFace {
   if (value === null || typeof value !== "object") return false;
