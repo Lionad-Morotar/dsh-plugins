@@ -1,24 +1,36 @@
 /**
- * The editable Markdown surface.
+ * The editable text surface.
  *
  * This is the only module in the package that imports CodeMirror, and it lives
- * in a lazy chunk: a reader who never opens a Markdown file pays neither the
- * parser nor the editor. The document stays the literal source; what changes is
- * the decoration plan — markers in the cursor's block stay visible, every other
- * block renders as formatted text.
+ * in a lazy chunk: a reader who never opens an editable file pays neither the
+ * parser nor the editor. The document stays the literal source.
+ *
+ * Two presentations come out of one view. Markdown turns the decoration layer on:
+ * markers in the cursor's block stay visible, every other block renders as
+ * formatted text. Every other text file turns it off and gets syntax highlighting
+ * instead, because the planner behind that layer understands Markdown only and
+ * would hide characters it mistook for markers.
  *
  * The same `EditorView` serves both modes. Source mode is not a second editor
  * with a second history: it reconfigures the decoration compartment to an empty
  * extension, so switching modes preserves scroll, selection and undo.
  */
 import { defaultKeymap, history } from "@codemirror/commands";
+import { css } from "@codemirror/lang-css";
+import { html } from "@codemirror/lang-html";
+import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
+import { yaml } from "@codemirror/lang-yaml";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, drawSelection, keymap, type KeyBinding } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
 import { useEffect, useRef, type ReactElement } from "react";
 
 import type { EditorBodyProps } from "../contracts.ts";
 import { planDecorations, type DecorationStyle } from "../decorations.ts";
+import { languageOf, type EditorLanguage } from "../language.ts";
 
 /** Marks a document replacement this component made itself, not the reader. */
 const ExternalChange = Annotation.define<boolean>();
@@ -39,6 +51,53 @@ const CLASS_NAMES: Readonly<Record<DecorationStyle, string>> = {
   "list-marker": "fmd-list-marker",
   "code-block": "fmd-code-block",
 };
+
+/**
+ * Colours come from the shell's tokens so the editor follows the theme.
+ *
+ * `defaultHighlightStyle` is tuned for one background; this table resolves
+ * through the same `--dsw-alias-*` variables as the rest of the panel.
+ */
+const highlightStyle = HighlightStyle.define([
+  { tag: [tags.keyword, tags.modifier, tags.operatorKeyword], color: "var(--fmd-syn-keyword)" },
+  { tag: [tags.string, tags.special(tags.string), tags.regexp], color: "var(--fmd-syn-string)" },
+  { tag: [tags.number, tags.bool, tags.null, tags.atom], color: "var(--fmd-syn-number)" },
+  { tag: [tags.comment, tags.lineComment, tags.blockComment], color: "var(--fmd-syn-comment)", fontStyle: "italic" },
+  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: "var(--fmd-syn-function)" },
+  { tag: [tags.typeName, tags.className, tags.namespace, tags.tagName], color: "var(--fmd-syn-type)" },
+  { tag: [tags.propertyName, tags.attributeName], color: "var(--fmd-syn-property)" },
+  { tag: [tags.heading, tags.strong], color: "var(--fmd-syn-heading)", fontWeight: "600" },
+  { tag: [tags.link, tags.url], color: "var(--fmd-syn-link)", textDecoration: "underline" },
+  { tag: tags.invalid, color: "var(--fmd-syn-invalid)" },
+]);
+
+/**
+ * The parser for one language id.
+ *
+ * `plaintext` is an empty extension rather than a null language: the file stays
+ * editable, it just gets no parser, which is the honest answer for a suffix this
+ * editor has no grammar for.
+ * @param language - id resolved from the path.
+ * @returns the extension to install in the language compartment.
+ */
+function languageExtension(language: EditorLanguage): Extension {
+  switch (language) {
+    case "javascript":
+      return javascript({ jsx: true, typescript: true });
+    case "json":
+      return json();
+    case "markdown":
+      return markdown();
+    case "css":
+      return css();
+    case "html":
+      return html();
+    case "yaml":
+      return yaml();
+    default:
+      return [];
+  }
+}
 
 /**
  * Turn the pure plan into CodeMirror decorations.
@@ -89,10 +148,15 @@ function saveKeyBinding(onSave: () => void): KeyBinding {
  * @returns the editor host element.
  */
 export function EditorBody(props: EditorBodyProps): ReactElement {
-  const { text, mode, visible } = props;
+  const { text, mode, visible, path } = props;
+  // Markdown is the only family whose planner understands the document, so the
+  // decoration layer is on only when the caller asked for it.
+  const decorate = props.decorate !== false;
+  const language = languageOf(path);
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const decorationCompartment = useRef(new Compartment());
+  const languageCompartment = useRef(new Compartment());
   const onChange = useRef(props.onChange);
   onChange.current = props.onChange;
   const onSave = useRef(props.onSave);
@@ -116,8 +180,9 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
           keymap.of(defaultKeymap),
           drawSelection(),
           EditorView.lineWrapping,
-          markdown(),
-          decorationCompartment.current.of(decorationExtension(mode === "reading")),
+          languageCompartment.current.of(languageExtension(language)),
+          syntaxHighlighting(highlightStyle),
+          decorationCompartment.current.of(decorationExtension(decorate && mode === "reading")),
           EditorView.updateListener.of(update => {
             if (!update.docChanged) return;
             if (update.transactions.some(transaction => transaction.annotation(ExternalChange) === true)) return;
@@ -134,7 +199,9 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
       view.current = null;
     };
     // The view is created once per mounted body; `text` and `mode` below are
-    // applied as transactions so they never rebuild it.
+    // applied as transactions so they never rebuild it. `language` and `decorate`
+    // are read here for the same reason: a panel is mounted per file, so neither
+    // can change under a live view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -152,9 +219,17 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
     const current = view.current;
     if (current === null) return;
     current.dispatch({
-      effects: decorationCompartment.current.reconfigure(decorationExtension(mode === "reading")),
+      effects: decorationCompartment.current.reconfigure(decorationExtension(decorate && mode === "reading")),
     });
-  }, [mode]);
+  }, [mode, decorate]);
+
+  useEffect(() => {
+    const current = view.current;
+    if (current === null) return;
+    current.dispatch({
+      effects: languageCompartment.current.reconfigure(languageExtension(language)),
+    });
+  }, [language]);
 
   useEffect(() => {
     // CodeMirror measures its viewport when it becomes visible again; a panel

@@ -46,6 +46,14 @@ export interface EditorBodyProps extends RendererBodyProps {
   onChange(text: string): void;
   /** Write the draft; bound to the session so ⌘S needs no pane round-trip. */
   readonly onSave?: () => void;
+  /**
+   * Whether the cursor-block decoration layer is on.
+   *
+   * The planner behind it understands Markdown only, so every other text file
+   * passes false: running it over TypeScript would hide characters it mistook
+   * for Markdown markers. Absent means on, which is what Markdown wants.
+   */
+  readonly decorate?: boolean;
 }
 
 /** One rendered failure, after transport envelopes are folded away. */

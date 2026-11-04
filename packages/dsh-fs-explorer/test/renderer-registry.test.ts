@@ -239,6 +239,44 @@ describe("built-in renderers", () => {
     await expect(registry.resolve({ path: "README.md" })?.load()).rejects.toThrow("loader require");
     await expect(registry.resolve({ path: "asset.glb" })?.load()).rejects.toThrow("loader require");
   });
+
+  it("keeps the source catch-all as the answer when no editor plugin is installed", async () => {
+    // This is the uninstall story: without dsh-fs-markdown a .ts still opens,
+    // just read-only. A catch-all that lost to nothing would leave the pane blank.
+    const registry = createRendererRegistry();
+    for (const contribution of createBuiltinRenderers()) install(registry, contribution);
+
+    const winner = registry.resolve({ path: "src/main.ts" });
+    expect(winner?.id).toBe("builtin.source");
+    expect(winner?.priority).toBe(-1000);
+  });
+
+  it("lets an editor plugin outrank the source catch-all without touching it", () => {
+    // The seam this depends on: a plugin claims the text suffixes at a priority
+    // between the catch-all and the Markdown renderer, and the built-in table is
+    // not modified to make room for it.
+    const registry = createRendererRegistry();
+    for (const contribution of createBuiltinRenderers()) install(registry, contribution);
+    registry.register(contributionOf("text-editor", { match: { extensions: [".ts", ".json"] }, priority: 5 }));
+
+    expect(registry.resolve({ path: "src/main.ts" })?.id).toBe("text-editor");
+    expect(registry.resolve({ path: "a.json" })?.id).toBe("text-editor");
+    // A suffix the plugin did not claim still falls through to the catch-all.
+    expect(registry.resolve({ path: "a.py" })?.id).toBe("builtin.source");
+    // And the built-in Markdown renderer keeps its own suffixes.
+    expect(registry.resolve({ path: "README.md" })?.id).toBe("builtin.markdown");
+  });
+
+  it("never lets a text claim take a binary family file", () => {
+    // Family matching is a separate dimension: a png resolves to its family
+    // renderer whatever a text plugin lists, because the plugin lists suffixes.
+    const registry = createRendererRegistry();
+    for (const contribution of createBuiltinRenderers()) install(registry, contribution);
+    registry.register(contributionOf("text-editor", { match: { extensions: [".ts"] }, priority: 5 }));
+
+    expect(registry.resolve({ path: "a.png" })?.id).toBe("builtin.family.image");
+    expect(registry.resolve({ path: "a.pdf" })?.id).toBe("builtin.family.pdf");
+  });
 });
 
 describe("client service", () => {

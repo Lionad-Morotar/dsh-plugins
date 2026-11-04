@@ -139,6 +139,24 @@ export const MARKDOWN_STYLES = `
 }
 .fmd-retry:hover { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent)); }
 .fmd-retry:focus-visible { outline: 2px solid var(--fmd-accent, currentColor); outline-offset: -2px; }
+/* The read-only degradation: the note sits above the text rather than over it,
+   so a reader can still select and copy what they cannot edit. */
+.fmd-readonly {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.fmd-readonly-note {
+  flex: none;
+  margin: 0;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--fmd-border, color-mix(in srgb, currentColor 12%, transparent));
+  background: var(--fmd-panel, color-mix(in srgb, currentColor 4%, transparent));
+  color: var(--fmd-caption, inherit);
+  font-size: 11px;
+}
+.fmd-readonly .fmd-source { flex: 1; min-height: 0; }
 `;
 
 /**
