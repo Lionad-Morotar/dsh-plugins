@@ -76,7 +76,7 @@ import {
   type SessionScope,
 } from "./panel-state.ts";
 import { GIT_VIEW_ID, GIT_VIEW_SLOT, gitViewPresent, installCommitLinks } from "./commit-ref.ts";
-import { createReferenceResolver, installReferenceLinks, type ReferenceProbeAnswer } from "./reference-link.ts";
+import { createReferenceResolver, installReferenceLinks, type ReferenceProbeAnswer, type ResolvedReference } from "./reference-link.ts";
 import { composeInsertion } from "./paths.ts";
 import { rankRows } from "./ranking.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
@@ -379,6 +379,35 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       return probeWorkspacePath(sessionId, path);
     },
   });
+
+  /**
+   * The session whose answers the resolver currently holds.
+   *
+   * The cache is keyed by path alone, while the answer is a fact about one
+   * workspace: `content/a.md` can be a file in one conversation and absent in
+   * the next. So the answers are dropped when the conversation changes, and
+   * this layer is the only one that knows which conversation is on screen.
+   * Keying the resolver by session instead would push that knowledge into a
+   * module that has no session at all.
+   */
+  let resolverSession: string | null = null;
+
+  /**
+   * Resolve one target against the conversation on screen.
+   *
+   * The check lives here rather than inside `probe` because a cache hit never
+   * reaches the probe: a stale answer would be served before any code that
+   * could notice the session had changed.
+   */
+  function resolveReference(target: string): Promise<ResolvedReference | null> {
+    const sessionId = currentSessionId();
+    if (sessionId === null) return Promise.resolve(null);
+    if (resolverSession !== sessionId) {
+      referenceResolver.clear();
+      resolverSession = sessionId;
+    }
+    return referenceResolver.resolve(target);
+  }
 
   const copy = (): Copy => copyFor(refs.locale?.getSnapshot().active ?? "zh");
 
@@ -1715,7 +1744,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   disposers.push(
     installReferenceLinks(doc, {
       sessionId: currentSessionId,
-      resolve: target => referenceResolver.resolve(target),
+      resolve: target => resolveReference(target),
       openFile: openReferenceFile,
       revealDirectory: revealReferenceDirectory,
       fsViewPresent: () => fsViewPresent(refs.slots?.entries?.(FS_VIEW_SLOT)),

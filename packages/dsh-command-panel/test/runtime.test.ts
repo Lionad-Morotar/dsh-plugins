@@ -1253,3 +1253,114 @@ describe("prose reference links", () => {
     expect(code.hasAttribute("data-dcp-ref")).toBe(false);
   });
 });
+
+/**
+ * A gateway caller whose answers depend on which session is asking.
+ *
+ * The same workspace path can be a file in one session and absent in another,
+ * which is exactly the case a cache keyed by path alone gets wrong.
+ */
+function perSessionRpc(bySession: Readonly<Record<string, readonly string[]>>): {
+  readonly call: ReturnType<typeof vi.fn>;
+} {
+  return {
+    call: vi.fn(async (_scope: string, endpoint: string, payload: unknown) => {
+      const request = (payload as { readonly args?: { readonly request?: { readonly sessionId?: string; readonly path?: string } } })
+        .args?.request;
+      const known = new Set(bySession[request?.sessionId ?? ""] ?? []);
+      const path = request?.path ?? "";
+      if (endpoint === "workspaceFiles/stat") {
+        return known.has(path)
+          ? { ok: true, value: { absolutePath: `/work/${path}`, version: "v1" } }
+          : { ok: false, error: { code: "not-found" } };
+      }
+      if (endpoint === "workspaceFiles/list") return { ok: false, error: { code: "not-found" } };
+      return { ok: false, error: { code: "unknown-endpoint" } };
+    }),
+  };
+}
+
+/** How many times one endpoint was asked for one path. */
+function callsFor(rpc: { readonly call: ReturnType<typeof vi.fn> }, endpoint: string, path: string): number {
+  return rpc.call.mock.calls.filter(call => {
+    const [scope, name, payload] = call as [string, string, { readonly args?: { readonly request?: { readonly path?: string } } }];
+    return scope === "/api" && name === endpoint && payload.args?.request?.path === path;
+  }).length;
+}
+
+/** A session list whose main-view holder can be swapped, which is what the panel reads. */
+function switchableSessions(): {
+  readonly sessions: Record<string, unknown>;
+  readonly show: (id: string) => void;
+} {
+  let current = SESSION_A.id;
+  const listeners = new Set<() => void>();
+  const row = (id: string): SessionSummary => ({ ...SESSION_A, id, retainedBy: { mainView: id === current ? 1 : 0 } });
+  const list = () => sessionList([row(SESSION_A.id), row(SESSION_B.id)]);
+  return {
+    sessions: {
+      ...fakeSessionsWithScope(),
+      list: {
+        getSnapshot: list,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+      },
+    },
+    show: (id: string) => {
+      current = id;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+describe("prose reference cache scope", () => {
+  it("drops the answers of the previous session when the reader switches", async () => {
+    // `content/a.md` exists in session A only. A cache keyed by path alone would
+    // answer B's hover with A's file and never ask the host again.
+    const rpc = perSessionRpc({ [SESSION_A.id]: ["content/a.md"] });
+    const live = switchableSessions();
+    const h = harness({ rpc, viewIds: ["fs-explorer"], sessions: live.sessions });
+    const code = proseCode("content/a.md");
+
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(code.getAttribute("data-dcp-ref")).toBe("file"));
+    const askedInA = callsFor(rpc, "workspaceFiles/stat", "content/a.md");
+    expect(askedInA).toBeGreaterThan(0);
+
+    // The reader moves to a conversation whose workspace does not hold the file.
+    live.show(SESSION_B.id);
+    await vi.waitFor(() => expect(callsFor(rpc, "workspaceFiles/stat", "content/a.md")).toBe(askedInA));
+
+    // A fresh element, because the dotted one carries its own answer.
+    const second = proseCode("content/a.md");
+    second.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(callsFor(rpc, "workspaceFiles/stat", "content/a.md")).toBeGreaterThan(askedInA));
+    await Promise.resolve();
+    expect(second.hasAttribute("data-dcp-ref")).toBe(false);
+    h.runtime.dispose();
+  });
+
+  it("keeps answering from the cache while the session stays put", async () => {
+    const rpc = perSessionRpc({ [SESSION_A.id]: ["content/a.md"] });
+    const h = harness({ rpc, viewIds: ["fs-explorer"] });
+    const code = proseCode("content/a.md");
+
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(code.getAttribute("data-dcp-ref")).toBe("file"));
+    const afterFirst = callsFor(rpc, "workspaceFiles/stat", "content/a.md");
+
+    for (let index = 0; index < 3; index += 1) {
+      const next = proseCode("content/a.md");
+      next.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+      await vi.waitFor(() => expect(next.getAttribute("data-dcp-ref")).toBe("file"));
+    }
+
+    // The candidate chain is walked once, not once per hover.
+    expect(callsFor(rpc, "workspaceFiles/stat", "content/a.md")).toBe(afterFirst);
+    h.runtime.dispose();
+  });
+});
