@@ -19,6 +19,7 @@ import type {
   PathExplorerRemote,
   RemoteResult,
   SessionOpenFace,
+  WorkspaceFilesFace,
 } from "./dsh.ts";
 import type { NativeOpenResult, PathResolveResult, ShutdownRequestResult } from "../shared.ts";
 import { OPEN_SERVICE, PATH_SERVICE, SHUTDOWN_SERVICE } from "../shared.ts";
@@ -143,5 +144,24 @@ export function createSessionOpenFace(rpc: GatewayRpc): SessionOpenFace {
       invoke(rpc, "session", "openWorkspacePath", { request }, signal) as Promise<
         RemoteResult<{ readonly opened: true }>
       >,
+  };
+}
+
+/**
+ * The `workspaceFiles` pair over the raw channel.
+ *
+ * The namespace belongs to the host's own file service, not to this package,
+ * so it is reached through the gateway rather than declared in `inject`: a
+ * profile without the file workbench then answers "no such path" instead of
+ * keeping the whole plugin waiting for a service that will never arrive.
+ */
+export function createWorkspaceFilesFace(rpc: GatewayRpc): WorkspaceFilesFace {
+  return {
+    stat: (request, signal) =>
+      invoke(rpc, "workspaceFiles", "stat", { request }, signal) as Promise<
+        RemoteResult<{ readonly absolutePath: string }>
+      >,
+    list: (request, signal) =>
+      invoke(rpc, "workspaceFiles", "list", { request }, signal) as Promise<RemoteResult<{ readonly path: string }>>,
   };
 }

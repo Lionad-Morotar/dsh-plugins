@@ -238,6 +238,36 @@ code[data-dcp-commit]:hover {
   color: var(--dsw-alias-state-business-primary, #2f6fed);
 }
 
+/*
+ * A workspace path in the prose that the host confirmed exists. Unscoped for
+ * the same reason as the commit mark: the prose is outside the panel root.
+ * Dotted so it reads as a reference rather than a link, and unbacked so the
+ * paragraph keeps its own colour until the pointer arrives.
+ */
+[data-dcp-ref] {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+[data-dcp-ref]:hover {
+  color: var(--dsw-alias-state-business-primary, #2f6fed);
+  text-decoration-style: solid;
+}
+
+/*
+ * A directory selects a row instead of opening a tab, so it is marked apart
+ * from a file: the reader can tell what the click will do before making it.
+ */
+[data-dcp-ref="dir"] {
+  text-decoration-color: var(--dsw-alias-state-warning-primary, #b7791f);
+}
+
+[data-dcp-ref="dir"]:hover {
+  color: var(--dsw-alias-state-warning-primary, #b7791f);
+}
+
 @media (prefers-reduced-motion: reduce) {
   [${ROOT_ATTR}] [data-dcp-mask],
   [${ROOT_ATTR}] [data-dcp-card] {
