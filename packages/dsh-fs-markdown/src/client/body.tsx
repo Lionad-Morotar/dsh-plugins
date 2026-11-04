@@ -171,11 +171,19 @@ export function isEditable(snapshot: DocumentSnapshotFace): boolean {
  * failure with its own message and retry, which is the answer Markdown already
  * gives and the one a reader can act on.
  */
-function ReadOnlyBody({ text, testId }: { readonly text: string; readonly testId: string }): ReactElement {
+function ReadOnlyBody({
+  text,
+  testId,
+  t,
+}: {
+  readonly text: string;
+  readonly testId: string;
+  readonly t: Translate;
+}): ReactElement {
   return (
     <div className="fmd-readonly" data-testid="fs-md-readonly">
       <p className="fmd-readonly-note" data-testid="fs-md-readonly-note">
-        当前部署没有保存通道，只能只读阅读
+        {t("md.readonly.note")}
       </p>
       <pre className="fmd-source" data-testid={testId}>
         {text}
@@ -301,7 +309,7 @@ export function createEditableBody(options: EditableBodyOptions) {
     // No write path: show the text and say why, rather than mounting an editor
     // that would accept keystrokes and drop them.
     if (!isEditable(snapshot)) {
-      return <ReadOnlyBody text={snapshot.text} testId={fallbackTestId} />;
+      return <ReadOnlyBody text={snapshot.text} testId={fallbackTestId} t={t} />;
     }
     if (chunk.failed) {
       return (

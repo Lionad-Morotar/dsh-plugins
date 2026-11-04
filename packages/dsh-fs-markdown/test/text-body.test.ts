@@ -161,8 +161,9 @@ describe("TextEditorBody", () => {
   async function show(
     overrides: Partial<RendererBodyProps> = {},
     store: DocumentStoreFace = createStore().store,
+    locale: string = "zh",
   ): Promise<void> {
-    configureBody({ documents: () => store, t: translatorFor("zh") });
+    configureBody({ documents: () => store, t: translatorFor(locale) });
     await act(async () => {
       root.render(createElement(TextEditorBody, props(overrides)));
     });
@@ -236,6 +237,19 @@ describe("TextEditorBody", () => {
     expect(testId("fs-md-readonly-note")?.textContent).toContain("只读");
     expect(testId("fs-text-source")?.textContent).toBe("// src/main.ts");
     expect(testId("fake-editor")).toBeNull();
+  });
+
+  it("translates the read-only note instead of hard-coding one language", async () => {
+    // The rest of this body routes every message through `t`, so a literal here
+    // would show Chinese to an English reader. Asserting only the Chinese text
+    // cannot catch that: it passes whether the string is translated or typed in.
+    const { store } = createStore({ writable: false });
+    await show({}, store, "en");
+
+    const note = testId("fs-md-readonly-note")?.textContent ?? "";
+    expect(note).not.toBe("");
+    expect(note).not.toMatch(/[\u4e00-\u9fff]/u);
+    expect(note.toLowerCase()).toContain("read-only");
   });
 
   it("keeps the read failure path for a file the channel refused", async () => {

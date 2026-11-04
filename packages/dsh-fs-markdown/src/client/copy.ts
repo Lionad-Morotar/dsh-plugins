@@ -18,6 +18,7 @@ export const ZH: Record<string, string> = {
   "md.error.no-workspace": "当前会话缺少工作目录，无法定位这个文件",
   "md.error.no-session": "没有会话上下文，无法读取这个文件",
   "md.error.unknown": "无法读取文档",
+  "md.readonly.note": "当前部署没有保存通道，只能只读阅读",
   "md.image": "图片",
 };
 
@@ -31,6 +32,7 @@ export const EN: Record<string, string> = {
   "md.error.no-workspace": "The current session has no working directory",
   "md.error.no-session": "There is no session context to read this file from",
   "md.error.unknown": "The document could not be read",
+  "md.readonly.note": "This deployment has no save channel, so the file is read-only",
   "md.image": "image",
 };
 
