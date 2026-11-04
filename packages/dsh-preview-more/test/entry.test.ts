@@ -125,7 +125,13 @@ describe("client entry", () => {
     const definitions = log.filter((entry) => entry.kind === "definition");
 
     // The count is the catalogue's, so adding a family here is a deliberate act.
-    expect(definitions.map((entry) => entry.value.id)).toEqual(["dsh-preview-more/scene3d", "dsh-preview-more/raster", "dsh-preview-more/cad"]);
+    expect(definitions.map((entry) => entry.value.id)).toEqual([
+      "dsh-preview-more/scene3d",
+      "dsh-preview-more/raster",
+      "dsh-preview-more/cad",
+      "dsh-preview-more/image",
+      "dsh-preview-more/pdf",
+    ]);
     for (const definition of definitions) {
       expect(definition.value.priority).toBe("extension");
       expect(definition.value.loading).toBe("renderer");
@@ -133,6 +139,8 @@ describe("client entry", () => {
     expect(definitions[0]?.value.extensions).toEqual(["glb", "gltf", "obj", "stl", "3mf"]);
     expect(definitions[1]?.value.extensions).toEqual(["tif", "tiff", "avif"]);
     expect(definitions[2]?.value.extensions).toEqual(["dxf"]);
+    expect(definitions[3]?.value.extensions).toEqual(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"]);
+    expect(definitions[4]?.value.extensions).toEqual(["pdf"]);
     teardown();
   });
 
@@ -141,7 +149,13 @@ describe("client entry", () => {
     clientPlugin.apply(ctx);
     const bodies = log.filter((entry) => entry.kind === "body");
 
-    expect(bodies.map((entry) => entry.value.key)).toEqual(["dsh-preview-more/scene3d", "dsh-preview-more/raster", "dsh-preview-more/cad"]);
+    expect(bodies.map((entry) => entry.value.key)).toEqual([
+      "dsh-preview-more/scene3d",
+      "dsh-preview-more/raster",
+      "dsh-preview-more/cad",
+      "dsh-preview-more/image",
+      "dsh-preview-more/pdf",
+    ]);
     for (const body of bodies) {
       expect(body.value.name).toBe("sidebar.right.tab.document");
       expect(body.value.locale).toBe("previewMore");

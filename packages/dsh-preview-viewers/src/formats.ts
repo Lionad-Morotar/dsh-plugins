@@ -1,11 +1,16 @@
 /**
  * Format catalogue for the previews these surfaces own.
  *
- * Every suffix here is one the built-in preview package either does not claim
- * at all (glb/gltf/obj/stl/3mf/dxf) or claims only as an unviewable binary
- * (tiff/tif/avif). Suffixes the built-in renders well — docx, pdf, png, svg,
- * xlsx — are deliberately absent: claiming them again would only shadow a
- * better implementation.
+ * The catalogue is the workbench's claim list, and the workbench is the file's
+ * main surface: a file picked in the tree should be drawn where it was picked,
+ * not bounce the reader into a sidebar tab. That is why images and PDF are
+ * claimed here even though the built-in preview renders them too. The goal is
+ * not to out-render that preview but to keep one surface authoritative for the
+ * files a reader opens from the tree.
+ *
+ * Office documents (docx, pptx, xlsx) and csv stay unclaimed: the built-in
+ * preview's renderers for those are richer than anything drawn here would be,
+ * so claiming them would only shadow a better implementation.
  *
  * The catalogue is data, not behaviour, so it is the one place a new format is
  * added: every consuming plugin derives its registry from it and its sidebar
@@ -16,7 +21,7 @@
  */
 
 /** Which renderer draws one family. */
-export type PreviewFamily = "scene3d" | "raster" | "cad";
+export type PreviewFamily = "scene3d" | "raster" | "cad" | "image" | "pdf";
 
 /** One renderer family and the suffixes it owns. */
 export interface PreviewFormat {
@@ -57,6 +62,20 @@ export const PREVIEW_FORMATS: readonly PreviewFormat[] = [
     family: "cad",
     extensions: ["dxf"],
     titleKey: "cad.title",
+  },
+  {
+    // The suffixes the built-in preview's image list already covers, claimed
+    // anyway: a reader who clicks a png in the tree stays in the tree.
+    family: "image",
+    extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"],
+    titleKey: "image.title",
+  },
+  {
+    // One suffix, one family: PDF needs its own chunk because it carries a
+    // worker-based engine rather than an image decoder.
+    family: "pdf",
+    extensions: ["pdf"],
+    titleKey: "pdf.title",
   },
 ];
 

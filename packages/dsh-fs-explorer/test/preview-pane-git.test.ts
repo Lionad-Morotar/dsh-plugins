@@ -141,7 +141,10 @@ describe("PreviewPane commit versions", () => {
     await show(
       createElement(PreviewPane, {
         sessionId: "s1",
-        path: "assets/icon.png",
+        // A suffix no family claims: this is the text path meeting a binary
+        // blob. An image would take the family path instead, which the next
+        // test covers.
+        path: "assets/archive.zip",
         revision: "17b6a55",
         git: { show: showFace },
         t: (key: string) => key,

@@ -46,7 +46,7 @@ const require = createRequire(join(packageRoot, "package.json"));
 const manifest = require(join(packageRoot, "package.json"));
 
 /** Renderer families, each one lazy chunk. Mirrors the shared src/formats.ts. */
-const CHUNKS = ["scene3d", "raster", "cad"];
+const CHUNKS = ["scene3d", "raster", "cad", "image", "pdf"];
 
 /**
  * Reserved URL the never-fetched Draco decoder paths resolve against.
@@ -119,6 +119,10 @@ const SIZE_BUDGETS = {
   "client.raster.js": 40 * 1024,
   // dxf-viewer carries its own three scene.
   "client.cad.js": 560 * 1024,
+  // No engine: the browser decodes these itself, so the chunk is the surface.
+  "client.image.js": 40 * 1024,
+  // pdf.js main library plus its inlined worker.
+  "client.pdf.js": 600 * 1024,
 };
 
 /**

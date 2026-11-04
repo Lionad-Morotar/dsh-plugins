@@ -66,6 +66,8 @@ const FAMILY_CHUNKS = {
   scene3d: "client.scene3d.js",
   raster: "client.raster.js",
   cad: "client.cad.js",
+  image: "client.image.js",
+  pdf: "client.pdf.js",
 };
 
 /**
@@ -83,6 +85,8 @@ const ENGINE_MARKERS = {
   scene3d: "THREE.WebGLRenderer",
   raster: "UTIF",
   cad: "_ProcessDxfEntity",
+  image: "createObjectURL",
+  pdf: "WorkerMessageHandler",
 };
 
 /**
@@ -125,6 +129,10 @@ const SIZE_BUDGETS = {
   "client.scene3d.js": 520 * 1024,
   "client.raster.js": 40 * 1024,
   "client.cad.js": 560 * 1024,
+  // No engine: the browser decodes these itself, so the chunk is the surface.
+  "client.image.js": 40 * 1024,
+  // pdf.js main library plus its inlined worker.
+  "client.pdf.js": 600 * 1024,
 };
 
 /**

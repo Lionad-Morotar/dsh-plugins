@@ -14,6 +14,8 @@ const SURFACE_KEYS = [
   "scene3d.title",
   "raster.title",
   "cad.title",
+  "image.title",
+  "pdf.title",
   "state.loading",
   "state.decoding",
   "state.failed",
