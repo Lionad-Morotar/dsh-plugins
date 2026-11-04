@@ -9,7 +9,21 @@
  * typed surface, the interaction seams (jsdom cannot replay pointer events,
  * so tests drive the same core the event handlers call) and the mandatory
  * initial viewport (the readable default lives in view-state, not here).
+ *
+ * Edges are not painted once and forgotten: their geometry is re-derived from
+ * the laid-out baseline plus the endpoints' current displacement on every
+ * drag frame, so a moved node takes its lines and label plates with it. The
+ * maths lives in `edge-geometry.ts` as pure functions.
  */
+import {
+  NO_DISPLACEMENT,
+  displacedPoints,
+  displacementAt,
+  fractionAt,
+  pathOfPoints,
+  type EdgeDisplacement,
+  type EdgePoint,
+} from "./edge-geometry.ts";
 
 type Pt = { x: number; y: number } | [number, number];
 
@@ -374,19 +388,10 @@ const el = <K extends keyof SVGElementTagNameMap>(
 const xy = (p: Pt): { x: number; y: number } => (Array.isArray(p) ? { x: p[0] ?? 0, y: p[1] ?? 0 } : p);
 
 /**
- * Build one edge's path: a straight line for two points, cubic segments for
- * the router's three-point groups. Edges without points render nothing.
+ * The laid-out points of one edge, decoded once and kept as the immutable
+ * baseline every later frame derives from (see `edge-geometry.ts`).
  */
-const pathOf = (edge: DiagramEdge): string => {
-  const pts = (edge.points ?? []).map(xy);
-  if (pts.length === 0) return "";
-  if (pts.length === 2) return `M${pts[0]?.x},${pts[0]?.y} L${pts[1]?.x},${pts[1]?.y}`;
-  let d = `M${pts[0]?.x},${pts[0]?.y}`;
-  for (let i = 1; i + 2 < pts.length; i += 3) {
-    d += ` C${pts[i]?.x},${pts[i]?.y} ${pts[i + 1]?.x},${pts[i + 1]?.y} ${pts[i + 2]?.x},${pts[i + 2]?.y}`;
-  }
-  return d;
-};
+const baselinePointsOf = (edge: DiagramEdge): EdgePoint[] => (edge.points ?? []).map(xy);
 
 /**
  * Approximate line width in ems: CJK sits on a full em, latin near 0.55.
@@ -498,7 +503,20 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
   // The two paths of each edge, by edge id: the visible one carries the paint
   // and the animation, the hit one carries the pointer. Selection and hover
   // both repaint through this map instead of re-querying the DOM.
-  const edgeEls = new Map<string, { visible: SVGPathElement; hit: SVGPathElement }>();
+  //
+  // `baseline` is the layout's own point list and the only thing displacement
+  // is measured from; `label` is the plate's group and the fraction of the path
+  // it sits at, so the plate can ride the curve instead of being pinned to
+  // stale coordinates.
+  interface EdgeRecord {
+    readonly visible: SVGPathElement;
+    readonly hit: SVGPathElement;
+    readonly source: string;
+    readonly target: string;
+    readonly baseline: readonly EdgePoint[];
+    readonly label: { readonly group: SVGGElement; readonly fraction: number } | null;
+  }
+  const edgeEls = new Map<string, EdgeRecord>();
   let selectedEdge: string | null = null;
 
   /** Append one marker to `<defs>` and return the `url(#...)` a path points at. */
@@ -520,7 +538,8 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
   };
 
   for (const edge of view.edges) {
-    const d = pathOf(edge);
+    const baseline = baselinePointsOf(edge);
+    const d = pathOfPoints(baseline);
     if (d === "") continue;
     // LikeC4 defaults an absent head to `normal`, so an edge that never named
     // its arrow still gets one; an absent tail means the line simply starts bare.
@@ -551,8 +570,11 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     const hit = el("path", { d, class: "arch-edge-hit", "data-edge-id": edge.id });
     hit.setAttribute("stroke-width", String(HIT_STROKE_WIDTH));
     edgeLayer.append(visible, hit);
-    edgeEls.set(edge.id, { visible, hit });
 
+    // The plate keeps its laid-out coordinates inside a group whose transform
+    // carries the displacement, so moving it is one attribute write rather than
+    // re-emitting every <text> and <rect>.
+    let label: EdgeRecord["label"] = null;
     const box = edge.labelBBox;
     if (box !== null && box !== undefined && edge.label) {
       const g = el("g");
@@ -598,7 +620,20 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
         g.append(text);
       }
       labelLayer.append(g);
+      // The plate rides the curve: remember where it sits along the path so a
+      // drag that moves only one end can still put it on the line.
+      const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      label = { group: g, fraction: fractionAt(baseline, centre) };
     }
+
+    edgeEls.set(edge.id, {
+      visible,
+      hit,
+      source: edge.source,
+      target: edge.target,
+      baseline,
+      label,
+    });
   }
 
   const nodeEls = new Map<string, SVGGElement>();
@@ -841,6 +876,19 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
   const nodeById = new Map(nodes.map(node => [node.id, node] as const));
 
   /**
+   * The laid-out position of every node, captured before any drag or restored
+   * offset touched it.
+   *
+   * Edge geometry and label plates are derived from the layout baseline plus
+   * the current displacement, never from the previous frame, which is what
+   * keeps repeated drags from accumulating float drift. `view.nodes` is the
+   * pristine source: `nodes` above is already carrying persisted offsets.
+   */
+  const laidOutById = new Map(
+    view.nodes.map(node => [node.id, { x: node.x, y: node.y }] as const),
+  );
+
+  /**
    * The dragged node plus every descendant, in move order: coordinates are
    * absolute, so a container drag that leaves children behind tears the
    * picture apart. The visited set is cycle insurance against a malformed
@@ -867,6 +915,43 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     return group;
   };
 
+  /**
+   * Re-derive every edge touching one moved node.
+   *
+   * The baseline is the layout's own points, so this is idempotent: calling it
+   * on every pointermove cannot accumulate drift, and a restored offset lands
+   * on exactly the geometry a live drag of the same distance produces.
+   *
+   * Edges where neither end moved are skipped, so dragging one card in a view
+   * with a hundred relations repaints only the handful that touch it.
+   *
+   * @param moved - ids of the nodes that just shifted.
+   */
+  const repaintEdgesOf = (moved: readonly string[]): void => {
+    const touched = new Set(moved);
+    for (const record of edgeEls.values()) {
+      if (!touched.has(record.source) && !touched.has(record.target)) continue;
+      const source = displacementOf(record.source);
+      const target = displacementOf(record.target);
+      const points = displacedPoints(record.baseline, source, target);
+      const d = pathOfPoints(points);
+      record.visible.setAttribute("d", d);
+      record.hit.setAttribute("d", d);
+      if (record.label !== null) {
+        const shift = displacementAt(source, target, record.label.fraction);
+        record.label.group.setAttribute("transform", `translate(${shift.dx} ${shift.dy})`);
+      }
+    }
+  };
+
+  /** How far one node currently sits from where the layout put it. */
+  const displacementOf = (id: string): EdgeDisplacement => {
+    const node = nodeById.get(id);
+    const base = laidOutById.get(id);
+    if (node === undefined || base === undefined) return NO_DISPLACEMENT;
+    return { dx: node.x - base.x, dy: node.y - base.y };
+  };
+
   /** Translate one move group; returns the members actually moved. */
   const moveNodeBy = (id: string, dxView: number, dyView: number) => {
     const group = moveGroupOf(id);
@@ -875,6 +960,13 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       member.y += dyView;
       nodeEls.get(member.id)?.setAttribute("transform", `translate(${member.x} ${member.y})`);
     }
+    // Lines and their plates follow: without this the cards move and every
+    // relationship stays pointing at where the card used to be.
+    repaintEdgesOf(group.map(member => member.id));
+    // The action bar hangs off the selected node's bottom edge, so it has to
+    // travel with a drag too; otherwise the buttons stay behind at the
+    // coordinates the node had when it was selected.
+    if (selected !== null) paintActions(nodeById.get(selected) ?? null);
     return group;
   };
 
@@ -1034,6 +1126,14 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     },
     { passive: false },
   );
+
+  // A view reopened with persisted offsets has nodes away from their laid-out
+  // coordinates before the first frame: paint their edges from the displaced
+  // geometry, not from the layout the offsets overrode.
+  repaintEdgesOf(nodes.filter(node => {
+    const base = laidOutById.get(node.id);
+    return base !== undefined && (base.x !== node.x || base.y !== node.y);
+  }).map(node => node.id));
 
   apply();
   return handle;
