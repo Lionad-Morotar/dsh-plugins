@@ -36,6 +36,20 @@ import {
   saveLeftColumnWidth,
   type PaneWidthStorage,
 } from "./pane-width.ts";
+import {
+  DEFAULT_DETAIL_PERCENT,
+  DETAIL_MAX_PERCENT,
+  DETAIL_MIN_HEIGHT,
+  DETAIL_MIN_PERCENT,
+  FALLBACK_COLUMN_HEIGHT,
+  clampDetailPixels,
+  detailResizeKeyAction,
+  percentFromPixels,
+  pixelsFromPercent,
+  readDetailHeight,
+  resetDetailHeight,
+  saveDetailHeight,
+} from "./detail-height.ts";
 import { describeFailure, unwrapTransport, type GitRemoteFace, type RemoteResolver } from "./wire.ts";
 import type { GitCommitNode, GitQueryResult, GitSnapshot, GitSnapshotResult } from "../host/types.ts";
 import { VIEW_ID } from "../shared.ts";
@@ -286,6 +300,20 @@ export function createGitExplorerView(wiring: ViewWiring) {
       null,
     );
 
+    // The detail pane's height, as a percentage of the right column: null keeps
+    // the stylesheet's shipped share, a number from a past drag pins it. The
+    // share (not pixels) is what gets stored, so the split survives a window
+    // resize instead of turning a tall screen's drag into a short one's fate.
+    const [detailHeight, setDetailHeight] = useState<number | null>(() => readDetailHeight(paneStorage));
+    const rowHandleRef = useRef<HTMLDivElement | null>(null);
+    const rowDragRef = useRef<{
+      pointerId: number;
+      startY: number;
+      baseHeight: number;
+      columnHeight: number;
+      restHeight: number | null;
+    } | null>(null);
+
     const selectFromFocus = useCallback((hash: string): void => {
       pendingFocus.current = hash;
       setSelected(hash);
@@ -389,11 +417,133 @@ export function createGitExplorerView(wiring: ViewWiring) {
       [paneStorage, resetPaneWidth, leftWidth],
     );
 
+    /** Measure the column the row separator divides; 0 when it is not laid out. */
+    const measureColumn = useCallback((): number => {
+      const column = rowHandleRef.current?.parentElement;
+      return column instanceof HTMLElement ? column.getBoundingClientRect().height : 0;
+    }, []);
+
+    /**
+     * The column height to reason about: its rendered box, or a plausible one
+     * when nothing was laid out (a hidden mount, jsdom). The clamps need a
+     * height, and refusing to nudge because the box measures zero would make
+     * the keyboard silently dead rather than merely approximate.
+     */
+    const columnHeight = useCallback((): number => measureColumn() || FALLBACK_COLUMN_HEIGHT, [measureColumn]);
+
+    /** The detail pane's height right now, measured rather than assumed. */
+    const currentDetailHeight = useCallback((): number => {
+      const height = columnHeight();
+      const stored = detailHeight === null ? DEFAULT_DETAIL_PERCENT : detailHeight;
+      return clampDetailPixels(pixelsFromPercent(stored, height), height);
+    }, [columnHeight, detailHeight]);
+
+    // The row divider between history and detail. Height is the axis here, so
+    // the drag reads clientY and the pane above the handle is the baseline: a
+    // downward move shrinks the detail pane sitting under the handle.
+    const beginRowDrag = useCallback(
+      (event: ReactPointerEvent<HTMLDivElement>): void => {
+        if (event.button !== 0 || rowDragRef.current !== null) return;
+        const column = rowHandleRef.current?.parentElement;
+        if (!(column instanceof HTMLElement)) return;
+        const detail = rowHandleRef.current?.nextElementSibling;
+        if (!(detail instanceof HTMLElement)) return;
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          return; // Without capture a pointer leaving the window strands the drag.
+        }
+        rowDragRef.current = {
+          pointerId: event.pointerId,
+          startY: event.clientY,
+          baseHeight: detail.getBoundingClientRect().height,
+          // A column that measures zero has no shared axis to divide; the drag
+          // then works against the same fallback the keyboard uses, so the
+          // gesture stays proportional instead of pinning every share to 0.
+          columnHeight: column.getBoundingClientRect().height || FALLBACK_COLUMN_HEIGHT,
+          restHeight: detailHeight,
+        };
+        document.body.classList.add("gx-row-resizing");
+      },
+      [detailHeight],
+    );
+
+    const moveRowDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
+      const drag = rowDragRef.current;
+      if (drag === null || drag.pointerId !== event.pointerId) return;
+      const height = clampDetailPixels(drag.baseHeight - (event.clientY - drag.startY), drag.columnHeight);
+      setDetailHeight(percentFromPixels(height, drag.columnHeight));
+    }, []);
+
+    const endRowDrag = useCallback(
+      (event: ReactPointerEvent<HTMLDivElement>): void => {
+        const drag = rowDragRef.current;
+        if (drag === null || drag.pointerId !== event.pointerId) return;
+        rowDragRef.current = null;
+        document.body.classList.remove("gx-row-resizing");
+        try {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch {
+          // Capture is already gone; pointercancel beats this handler here.
+        }
+        const height = clampDetailPixels(drag.baseHeight - (event.clientY - drag.startY), drag.columnHeight);
+        // A drag that lands back where it began expresses no new intent: the
+        // transient percentages the moves pinned into state are undone and the
+        // stylesheet default stays for the rest of the session.
+        if (dragReturnedToBase(height, drag.baseHeight)) {
+          setDetailHeight(drag.restHeight);
+          return;
+        }
+        setDetailHeight(saveDetailHeight(paneStorage, percentFromPixels(height, drag.columnHeight)));
+      },
+      [paneStorage],
+    );
+
+    const resetDetailPane = useCallback((): void => {
+      resetDetailHeight(paneStorage);
+      setDetailHeight(null);
+    }, [paneStorage]);
+
+    // Keyboard parity for the row separator. The pane is stored as a share of
+    // the column, so a nudge converts through the measured height, steps in
+    // pixels and converts back; preventDefault keeps the arrows from scrolling
+    // the list under the focus ring.
+    const onRowHandleKeyDown = useCallback(
+      (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+        if (event.nativeEvent.isComposing) return;
+        const action = detailResizeKeyAction(
+          event.key,
+          event.altKey || event.ctrlKey || event.metaKey || event.shiftKey,
+        );
+        if (action === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (action.kind === "reset") {
+          resetDetailPane();
+          return;
+        }
+        const height = columnHeight();
+        if (action.kind === "min" || action.kind === "max") {
+          // The bounds are the same pixel clamp the drag obeys, converted to
+          // shares: a stored 6% would render at the pane's 180px floor, so
+          // publishing the raw storage bound would promise a height the box
+          // never takes.
+          const target = action.kind === "min" ? clampDetailPixels(DETAIL_MIN_HEIGHT, height) : clampDetailPixels(height, height);
+          setDetailHeight(saveDetailHeight(paneStorage, percentFromPixels(target, height)));
+          return;
+        }
+        const next = clampDetailPixels(currentDetailHeight() + action.delta, height);
+        setDetailHeight(saveDetailHeight(paneStorage, percentFromPixels(next, height)));
+      },
+      [columnHeight, currentDetailHeight, paneStorage, resetDetailPane],
+    );
+
     // A drag that outlives this mount (view switched mid-gesture) must not
     // leave the document-level resizing class behind.
     useEffect(
       () => () => {
         if (dragRef.current !== null) document.body.classList.remove("gx-pane-resizing");
+        if (rowDragRef.current !== null) document.body.classList.remove("gx-row-resizing");
       },
       [],
     );
@@ -779,7 +929,14 @@ export function createGitExplorerView(wiring: ViewWiring) {
               onKeyDown={onPaneHandleKeyDown}
               onDoubleClick={resetPaneWidth}
             />
-            <div className="gx-col">
+            <div
+              className="gx-col"
+              style={
+                detailHeight === null
+                  ? undefined
+                  : ({ "--gx-detail-h": `${String(detailHeight)}%` } as CSSProperties)
+              }
+            >
               <HistoryPane
                 commits={commits}
                 graph={graph}
@@ -803,6 +960,26 @@ export function createGitExplorerView(wiring: ViewWiring) {
                       retryLabel: t("action.retry"),
                     }
                   : {})}
+              />
+              <div
+                ref={rowHandleRef}
+                className="gx-row-handle"
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label={t("detail.resize")}
+                aria-valuemin={DETAIL_MIN_PERCENT}
+                aria-valuemax={DETAIL_MAX_PERCENT}
+                aria-valuenow={detailHeight ?? undefined}
+                title={t("detail.resizeHint")}
+                tabIndex={0}
+                data-testid="gx-row-handle"
+                onPointerDown={beginRowDrag}
+                onPointerMove={moveRowDrag}
+                onPointerUp={endRowDrag}
+                onPointerCancel={endRowDrag}
+                onLostPointerCapture={endRowDrag}
+                onKeyDown={onRowHandleKeyDown}
+                onDoubleClick={resetDetailPane}
               />
               <DetailPane
                 sessionId={sessionId}

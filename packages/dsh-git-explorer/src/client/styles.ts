@@ -155,8 +155,35 @@ export const GIT_STYLES = `
 /* Applied to the document body while a drag is live: no text selection under a
    moving pointer and a stable cursor wherever it travels. */
 body.gx-pane-resizing { user-select: none; cursor: col-resize; }
-.gx-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 10px; }
+/* The right column is history, a row separator, then the detail pane. The
+   separator is the gutter itself, so the column keeps the 10px rhythm it had
+   when the two panes were simply spaced, and the vertical divider above stays
+   the only element that owns a grid track. */
+.gx-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 0; }
 .gx-col > .gx-pane { flex: 1; }
+.gx-row-handle {
+  position: relative;
+  flex: 0 0 10px;
+  cursor: row-resize;
+  touch-action: none;
+}
+.gx-row-handle::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-.5px);
+  background: var(--gx-accent);
+  opacity: 0;
+}
+.gx-row-handle:hover::before { opacity: .55; }
+/* 10px tall, so the default focus ring collapses into noise; the keyboard
+   focus reuses the hover line instead, exactly like the column divider. */
+.gx-row-handle:focus-visible { outline: none; }
+.gx-row-handle:focus-visible::before { opacity: .55; }
+body.gx-row-resizing { user-select: none; cursor: row-resize; }
 .gx-pane {
   display: flex;
   flex-direction: column;
@@ -400,7 +427,7 @@ body.gx-pane-resizing { user-select: none; cursor: col-resize; }
 .gx-linkbtn:hover:not(:disabled) { background: var(--gx-hover); }
 .gx-linkbtn:disabled { opacity: .45; cursor: default; }
 
-.gx-detail { display: flex; flex-direction: column; flex: none; height: 38%; min-height: 180px; border: 1px solid var(--gx-border); border-radius: 10px; background: var(--gx-panel); overflow: hidden; }
+.gx-detail { display: flex; flex-direction: column; flex: none; height: var(--gx-detail-h, 38%); min-height: 180px; border: 1px solid var(--gx-border); border-radius: 10px; background: var(--gx-panel); overflow: hidden; }
 .gx-detail-head { display: flex; align-items: center; gap: 8px; flex: none; height: 28px; padding: 0 10px; border-bottom: 1px solid var(--gx-border-soft); color: var(--gx-text-2); font-size: 11px; font-weight: 600; }
 .gx-detail-head .gx-hash { color: var(--gx-text-2); }
 .gx-detail-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 10px 10px; box-sizing: border-box; }
