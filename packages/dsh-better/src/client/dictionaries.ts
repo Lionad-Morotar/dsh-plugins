@@ -77,6 +77,10 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "skill.usage.workspace": "本工作区调用",
     "skill.params": "参数",
     "skill.hint.insert": "点击插入",
+    // The continue offer under an interrupted turn. `sending` is the pressed
+    // state, so the button never looks inert while the message is in flight.
+    "continue.label": "继续",
+    "continue.sending": "继续中…",
   },
   en: {
     "overlay.aria": "Select a model",
@@ -128,5 +132,7 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "skill.usage.workspace": "This workspace",
     "skill.params": "Arguments",
     "skill.hint.insert": "Click to insert",
+    "continue.label": "Continue",
+    "continue.sending": "Continuing…",
   },
 });
