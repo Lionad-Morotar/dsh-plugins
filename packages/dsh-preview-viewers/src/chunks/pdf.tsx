@@ -79,6 +79,25 @@ function createPdfWorker(): Worker | null {
 }
 
 /**
+ * Whether a thrown value is pdf.js saying the render was cancelled.
+ *
+ * A page turn cancels the render that was drawing the old page, and pdf.js
+ * answers that with a rejection. It is the expected outcome of the turn, not a
+ * page that cannot be drawn, so the surface has to tell the two apart or every
+ * fast page turn would paint an error over a page that is about to render.
+ *
+ * The name is checked rather than the class: the exception is exported, but a
+ * bundler is free to give it a different identity than the one this module
+ * imported, and the name is what pdf.js itself writes.
+ * @param error - whatever the render rejected with.
+ * @returns true when the render was cancelled on purpose.
+ */
+function isCancellation(error: unknown): boolean {
+  const name = typeof error === "object" && error !== null ? (error as { name?: unknown }).name : undefined;
+  return name === "RenderingCancelledException";
+}
+
+/**
  * The pdf surface: one document, one visible page, paging controls.
  * @param props - bytes, translator, settle callback.
  * @returns the page canvas, or a status line while it loads.
@@ -154,6 +173,13 @@ function PdfSurface(props: {
     if (canvas === null || host === null) return;
 
     let cancelled = false;
+    // The task the current attempt is drawing with. A page turn has to cancel it
+    // before the next attempt touches the same canvas: pdf.js refuses a second
+    // render on a canvas that already has one, so without this a fast page turn
+    // surfaces as a paint failure rather than a repaint. It is assigned late
+    // because `getPage` is awaited, so the cleanup has to cope with a turn that
+    // happened before there was anything to cancel.
+    let renderTask: { cancel(): void; promise: Promise<void> } | null = null;
     setPaint({ kind: "painting" });
     void (async () => {
       try {
@@ -175,17 +201,36 @@ function PdfSurface(props: {
           setPaint({ kind: "failed", message: t("pdf.error.render") });
           return;
         }
-        await proxy.render({ canvas, canvasContext: context, viewport }).promise;
+        const task = proxy.render({ canvas, canvasContext: context, viewport });
+        renderTask = task;
+        // A cancel that landed between the await above and this assignment has
+        // already run its cleanup, so it has to be honoured here instead.
+        if (cancelled) {
+          task.cancel();
+          return;
+        }
+        await task.promise;
         if (cancelled) return;
         setPaint({ kind: "painted" });
       } catch (error) {
-        if (cancelled) return;
+        // A cancelled render rejects with RenderingCancelledException. That is
+        // the expected answer to a page turn, not a page that cannot be drawn,
+        // so it must not reach the reader as a failure.
+        if (cancelled || isCancellation(error)) return;
         setPaint({ kind: "failed", message: t(loadFailureKey(error)) });
       }
     })();
 
     return () => {
       cancelled = true;
+      // Swallowed on purpose: pdf.js rejects the promise of a cancelled task,
+      // and that rejection is already handled where the attempt awaits it.
+      try {
+        renderTask?.cancel();
+      } catch {
+        // Nothing to do: the task is being torn down either way.
+      }
+      renderTask = null;
     };
   }, [state, page, t, visible]);
 
