@@ -22,9 +22,15 @@ import type {
 } from "../shared.ts";
 import { ROUTE_PREFIX } from "../shared.ts";
 import type { DiagramChunkModule } from "./chunk-loader.ts";
-import type { DiagramHandle, DiagramInteractions, DiagramView } from "./chunk/diagram.ts";
+import type { DiagramAnchor, DiagramHandle, DiagramInteractions, DiagramView, NodeAction } from "./chunk/diagram.ts";
 import { mountArchDetailsPane, readElement } from "./details.tsx";
 import { loadLocalState, saveLocalState } from "./local-state.ts";
+import { mountArchRelationsPane } from "./relations.tsx";
+import {
+  groupRelations,
+  readAllRelations,
+  relationsOfElement,
+} from "./relations-data.ts";
 import { createViewState, defaultViewport, type DiagramBounds, type ViewStateHandle } from "./view-state.ts";
 
 /**
@@ -154,7 +160,8 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
   host.replaceChildren();
 
   const root = div();
-  root.style.cssText = "display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden";
+  root.style.cssText =
+    "position:relative;display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden";
   const toolbar = div("archToolbar");
   toolbar.style.cssText = toolbarStyle;
   const content = div();
@@ -175,6 +182,18 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
   // Mounts are serialized: a slow chunk load must not land on top of the view
   // the user switched to in the meantime.
   let chain: Promise<void> = Promise.resolve();
+
+  // Escape closes the relations pane from anywhere in the panel, including
+  // from a row inside the pane itself, so it is bound to the document rather
+  // than to the chrome root: the pane is a floating overlay and focus may sit
+  // on the body when it opens. The listener is removed on dispose.
+  const onEscape = (event: KeyboardEvent): void => {
+    if (event.key !== "Escape" || !relationsPane.isOpen()) return;
+    event.preventDefault();
+    relationsPane.render(null);
+    handle?.selectEdge(null);
+  };
+  document.addEventListener("keydown", onEscape);
 
   // Arrow keys walk the view tabs while the diagram owns focus. Bound once to
   // the chrome root: the diagram element is rebuilt on some paths (a failed
@@ -219,6 +238,116 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
         return {};
       });
     return elementsPromise;
+  };
+
+  // The relations catalogue is the symmetric cache to `elementsOf`: one model
+  // fetch, decoded once, reused by every pane the user opens. Decoding the
+  // whole record up front is cheaper than re-walking it per edge, and the
+  // record is a few dozen entries even on a large model.
+  let relationsPromise: Promise<ReturnType<typeof readAllRelations>> | undefined;
+  const relationsOf = (): Promise<ReturnType<typeof readAllRelations>> => {
+    const session = options.sessionId;
+    if (session === undefined) return Promise.resolve([]);
+    relationsPromise ??= fetchImpl(`${ROUTE_PREFIX}/model?sessionId=${encodeURIComponent(session)}`)
+      .then(async response =>
+        response.ok ? readAllRelations(((await response.json()) as WireModelResponse).relations) : [],
+      )
+      .catch(() => {
+        // Same downgrade rule as the element catalogue: a missing relations
+        // record costs the pane its rows, not the diagram.
+        return [];
+      });
+    return relationsPromise;
+  };
+
+  // The relations pane floats in its own overlay rather than inside the
+  // diagram host: that host is rebuilt on every view switch, and a pane
+  // parented to it would be destroyed mid-read. The overlay is a stable
+  // sibling that spans the whole panel; the pane inside it takes pointer
+  // events while the overlay itself lets them through to the diagram.
+  const relationsLayer = document.createElement("div");
+  relationsLayer.dataset.archRelationsLayer = "";
+  relationsLayer.style.cssText =
+    "position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:20";
+  host.append(relationsLayer);
+
+  const relationsPane = mountArchRelationsPane(relationsLayer, {
+    onClose: () => {
+      relationsPane.render(null);
+      handle?.selectEdge(null);
+    },
+    onPick: row => {
+      // Picking a row focuses the pair it names: select the source element and
+      // close the pane, so the drawing is what the user is left looking at.
+      relationsPane.render(null);
+      handle?.selectEdge(null);
+      handle?.select(row.source.id);
+    },
+  });
+
+  /**
+   * The pane's anchor, converted from diagram-host space into overlay space.
+   *
+   * The renderer reports anchors relative to the diagram host's client box;
+   * the overlay is a sibling of that host, so the two differ by the host's
+   * offset inside the panel (the toolbar height, in practice).
+   */
+  const toOverlayAnchor = (anchor: DiagramAnchor): DiagramAnchor => {
+    if (diagramHost === undefined) return anchor;
+    const hostBox = host.getBoundingClientRect();
+    const diagramBox = diagramHost.getBoundingClientRect();
+    return {
+      x: anchor.x + (diagramBox.left - hostBox.left),
+      y: anchor.y + (diagramBox.top - hostBox.top),
+      width: anchor.width,
+      height: anchor.height,
+    };
+  };
+
+  /** Open the pane for one edge, resolving its relation ids through the cache. */
+  const openEdgeRelations = (edgeId: string, anchor: DiagramAnchor): void => {
+    const edge = view?.edges.find(candidate => candidate.id === edgeId);
+    if (edge === undefined) return;
+    const ids = (edge as { relations?: readonly string[] }).relations ?? [];
+    void relationsOf().then(all => {
+      // The edge lists its own relation ids; keep that order, then split by
+      // endpoint identity so nested resolutions land in the second group.
+      const byId = new Map(all.map(relation => [relation.id, relation] as const));
+      const decoded = ids.flatMap(id => {
+        const relation = byId.get(id);
+        return relation === undefined ? [] : [relation];
+      });
+      relationsPane.render({
+        title: edge.label ?? `${edge.source} → ${edge.target}`,
+        subtitle: `${edge.source} → ${edge.target}`,
+        groups: groupRelations(decoded, edge.source, edge.target),
+        anchor: toOverlayAnchor(anchor),
+        host: hostSize(),
+      });
+    });
+  };
+
+  /** Open the pane for one element, from its action bar's browse button. */
+  const openNodeRelations = (nodeId: string, anchor: DiagramAnchor): void => {
+    const node = view?.nodes.find(candidate => candidate.id === nodeId);
+    void relationsOf().then(all => {
+      relationsPane.render({
+        title: node?.title ?? nodeId,
+        subtitle: nodeId,
+        groups: relationsOfElement(all, nodeId),
+        anchor: toOverlayAnchor(anchor),
+        host: hostSize(),
+      });
+    });
+  };
+
+  /** The host box the pane flips inside; zero sizes fall back to the window. */
+  const hostSize = (): { width: number; height: number } => {
+    const box = host.getBoundingClientRect();
+    return {
+      width: box.width > 0 ? box.width : window.innerWidth,
+      height: box.height > 0 ? box.height : window.innerHeight,
+    };
   };
 
   // Write-back pump state: dirty marks unsaved corrections, the timer is the
@@ -356,11 +485,41 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
       scheduleSave();
     },
     onNodeMove: () => scheduleSave(),
+    onEdgeClick: (edgeId, anchor) => {
+      // An edge press replaces whatever pane was open: the element pane is a
+      // different surface and the two would otherwise stack.
+      detailsPane.render(null);
+      openEdgeRelations(edgeId, anchor);
+    },
+    onNodeAction: (action: NodeAction, nodeId, anchor) => {
+      if (action === "relationships") {
+        openNodeRelations(nodeId, anchor);
+        return;
+      }
+      // `navigate` switches to the target view and keeps the element selected
+      // there, which is what the official IconZoomScan action does.
+      const node = view?.nodes.find(candidate => candidate.id === nodeId);
+      const target = node?.navigateTo;
+      if (typeof target !== "string" || target === "") return;
+      relationsPane.render(null);
+      select(target);
+    },
+    onBackgroundClick: () => {
+      // A blank-canvas press is one of the three ways to dismiss the relations
+      // pane. It is reported on the press itself rather than inferred from a
+      // cleared selection, because an edge press has already cleared that.
+      relationsPane.render(null);
+    },
     onSelect: id => {
       if (id === null) {
         detailsPane.render(null);
+        // A blank-canvas press is one of the three ways to dismiss the
+        // relations pane; the renderer reports it as a cleared selection.
+        relationsPane.render(null);
         return;
       }
+      // Selecting a node closes an edge's pane: one surface at a time.
+      relationsPane.render(null);
       void elementsOf().then(elements => {
         const decoded = readElement(elements, id);
         if (decoded !== null) {
@@ -539,6 +698,7 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
 
   return () => {
     disposed = true;
+    document.removeEventListener("keydown", onEscape);
     observer?.disconnect();
     stopRefresh();
     if (saveTimer !== undefined) clearTimeout(saveTimer);

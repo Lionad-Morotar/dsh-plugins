@@ -106,6 +106,15 @@ export interface DiagramOptions {
    * node's relationship pane.
    */
   readonly onNodeAction?: (action: NodeAction, id: string, anchor: DiagramAnchor) => void;
+  /**
+   * Fired on a press that hits neither a node, an edge nor an action button.
+   *
+   * Separate from `onSelect(null)` on purpose: that callback only fires when a
+   * selection was actually cleared, so a blank press after an edge press (which
+   * already cleared the node selection) would otherwise be invisible, and a
+   * floating pane opened by the edge press would never learn to close.
+   */
+  readonly onBackgroundClick?: () => void;
 }
 
 /** The two buttons the selected node's action bar offers. */
@@ -138,6 +147,7 @@ export interface DiagramInteractions {
   onNodeMove?(id: string, x: number, y: number): void;
   onEdgeClick?(id: string, anchor: DiagramAnchor): void;
   onNodeAction?(action: NodeAction, id: string, anchor: DiagramAnchor): void;
+  onBackgroundClick?(): void;
 }
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -972,6 +982,9 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       drag = null;
       panFrom = { x: event.clientX, y: event.clientY };
       svg.style.cursor = "grabbing";
+      // Reported unconditionally: the panes close on the press itself, not on
+      // the selection change it may or may not have caused.
+      opts.onBackgroundClick?.();
       return;
     }
     const id = target.getAttribute("data-id") ?? "";
