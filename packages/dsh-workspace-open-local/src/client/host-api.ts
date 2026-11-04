@@ -219,8 +219,10 @@ function rewriteStored(previousRaw: string | null | undefined, applicationId: st
       // Fall through: an unreadable wrapper is replaced, not preserved.
     }
   }
-  if (trimmed.startsWith('"')) return JSON.stringify(applicationId);
-  return applicationId;
+  // A bare id, a quoted string, or anything unreadable all land on the host
+  // store's own shape. The host rehydrates with JSON.parse, so handing a bare
+  // id back would make the shared choice unreadable to it.
+  return JSON.stringify(applicationId);
 }
 
 /**

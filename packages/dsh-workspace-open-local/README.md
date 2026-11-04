@@ -8,7 +8,7 @@
 
 宿主只给会话行的菜单开了 slot（`sidebar.workspaces.session.menu.item`），工作区行的菜单是写死在组件里的数组，没有注册位。这一点可以在宿主包里核对：`temp/host-refs/ui-workspace-client.js` 的工作区菜单直接列出「重命名」与「删除工作区」两行，不经 `renderSlot`。
 
-所以这一条不能注册进去，只能等菜单浮层出现后按结构认出它：一个不在侧栏行里、携带至少两个 `role="menuitem"` 且其文案命中工作区菜单两行的容器。目录从哪来是另一件事。工作区行上只有 `data-row-key="workspace:<id>"`，路径在 `useWorkspaces` 的快照里。这个 hook 由宿主经 `slots.provideRoot({ hooks: { workspaces } })` 发布，渲染器把它变成每个 slot 组件的 `useWorkspaces` prop。本包在 `sidebar.workspaces.session.row.action` 挂一个渲染 null 的占位，把快照里的目录记下来供菜单锚点查。解析不到目录时整行不注入，宁可不出现也不提供一个打不开的按钮。
+所以这一条不能注册进去，只能等菜单浮层出现后按结构认出它：一个不在侧栏行里、携带至少两个 `role="menuitem"` 且其文案命中工作区菜单两行的容器。目录从哪来是另一件事。工作区行上只有 `data-row-key="workspace:<id>"`，路径在 `useWorkspaces` 的快照里。这个 hook 由宿主经 `slots.provideRoot({ hooks: { workspaces } })` 发布，渲染器把它变成每个 slot 组件的 `useWorkspaces` prop。本包在 `shell.overlay` 挂一个渲染 null 的占位，把快照里的目录记下来供菜单锚点查。这个帧级浮层常驻且点击穿透，工作区没有任何会话行（新建或成员全部归档）时仍能取到目录；会话行座位做不到，因为它每条会话行才挂一次。解析不到目录时整行不注入，宁可不出现也不提供一个打不开的按钮。
 
 ## 数据面
 
@@ -22,7 +22,7 @@
 
 请求保持文档相对，所以上面三条都不带前导斜杠：宿主挂在子路径下时相对请求仍然命中。
 
-选择记忆与宿主自己的分体按钮共用 `localStorage` 的 `dsh.open-in-app.choice`。宿主的 snapshot store 把整个 state 做 `JSON.stringify`，而初始 state 是一个字符串，所以槽里实际是带引号的 JSON 字符串（例如 `"cursor"`）。读取时兼容裸字符串与 `{value|choice|app}` 包装，写回时保持原有的包装，空槽按宿主的形状写。读写失败（隐私模式、配额）都被吞掉，不抛到页面。
+选择记忆与宿主自己的分体按钮共用 `localStorage` 的 `dsh.open-in-app.choice`。宿主的 snapshot store 把整个 state 做 `JSON.stringify`，而初始 state 是一个字符串，所以槽里实际是带引号的 JSON 字符串（例如 `"cursor"`）。读取时兼容裸字符串与 `{value|choice|app}` 包装；写回时对象包装只换对应键，其余情况（含读到的裸值）统一写成宿主的 JSON 字符串形状，空槽同样。读写失败（隐私模式、配额）都被吞掉，不抛到页面。
 
 ## 已知风险
 

@@ -199,7 +199,7 @@ describe("remembered choice", () => {
 
     const bare = memoryStorage({ [OPEN_IN_APP_CHOICE_KEY]: "finder" });
     rememberApplication(bare, "cursor", bare.getItem(OPEN_IN_APP_CHOICE_KEY));
-    expect(bare.dump()[OPEN_IN_APP_CHOICE_KEY]).toBe("cursor");
+    expect(bare.dump()[OPEN_IN_APP_CHOICE_KEY]).toBe('"cursor"');
 
     const fresh = memoryStorage();
     rememberApplication(fresh, "cursor", fresh.getItem(OPEN_IN_APP_CHOICE_KEY));

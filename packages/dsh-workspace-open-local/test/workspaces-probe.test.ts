@@ -189,4 +189,31 @@ describe("workspace path probe", () => {
     render();
     expect(store.resolve("ws-1")).toBe("/work/moved");
   });
+
+  it("survives the hook arriving after the first render and then publishes the snapshot", () => {
+    const store = createWorkspacePathStore();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    mounts.push(root);
+
+    const Probe = createProbeComponent(store);
+    const snapshot = { items: [{ workspaceId: "ws-1", path: "/work/one" }] };
+    const useWorkspaces = (selector: (value: unknown) => unknown): unknown => selector(snapshot);
+
+    expect(() => {
+      flushSync(() => {
+        root.render(createElement(Probe, {}));
+      });
+    }).not.toThrow();
+    expect(store.ready).toBe(false);
+
+    expect(() => {
+      flushSync(() => {
+        root.render(createElement(Probe, { useWorkspaces }));
+      });
+    }).not.toThrow();
+    expect(store.ready).toBe(true);
+    expect(store.resolve("ws-1")).toBe("/work/one");
+  });
 });

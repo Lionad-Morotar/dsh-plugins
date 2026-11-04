@@ -3,10 +3,10 @@
  *
  * The host renders a workspace id on the row and keeps the directory only on
  * the workspaces snapshot, which a slot occupant receives as `useWorkspaces`.
- * No workspace-row slot exists, so a null-rendering occupant of the session-row
- * action slot publishes that snapshot here for the menu anchor to read.
+ * No workspace-row slot exists, so a null-rendering occupant of the frame
+ * overlay publishes that snapshot here for the menu anchor to read.
  */
-import { useEffect, type ReactElement } from "react";
+import { createElement, useEffect, type ReactElement } from "react";
 
 /** One workspace the probe is willing to publish: an id paired with a directory. */
 export interface WorkspacePathItem {
@@ -104,19 +104,31 @@ export interface WorkspacePathProbeProps {
   readonly useWorkspaces?: UseWorkspaces;
 }
 
+/** Props of the inner probe, which only mounts once a hook exists to call. */
+interface ProbeInnerProps {
+  readonly useWorkspaces: UseWorkspaces;
+}
+
 /**
  * A slot occupant that renders nothing and mirrors the workspaces snapshot.
  *
- * It occupies `sidebar.workspaces.session.row.action`, a list slot mounted on
- * every session row. Rendering null keeps the row's layout exactly as the host
- * laid it out; the snapshot is what the occupant is there for. The component is
- * created once per store: its identity has to stay put across renders, because
- * the hook result lives in an effect and a new component type would remount it.
+ * It occupies `shell.overlay`, the frame overlay. Rendering null keeps that
+ * layer exactly as the host laid it out; the snapshot is what the occupant is
+ * there for. The component is created once per store: its identity has to stay
+ * put across renders, because the hook result lives in an effect and a new
+ * component type would remount it.
+ *
+ * The hook call is split into an inner component on purpose. A hook's call
+ * sequence has to be identical on every render of one component, and the host
+ * may deliver `useWorkspaces` only after the first render. Calling it through
+ * an optional chain would add a hook call mid-life and crash the probe. The
+ * outer component calls no hook at all and only chooses which child to render,
+ * so the inner component, which calls the hook unconditionally, mounts for the
+ * first time on the render where the hook appears.
  */
 export function createProbeComponent(store: WorkspacePathStore): (props: WorkspacePathProbeProps) => ReactElement | null {
-  return function WorkspacePathProbe(props: WorkspacePathProbeProps): ReactElement | null {
-    const useWorkspaces = props.useWorkspaces;
-    const snapshot = useWorkspaces?.((value) => value);
+  function ProbeInner(props: ProbeInnerProps): ReactElement | null {
+    const snapshot = props.useWorkspaces((value) => value);
     useEffect(() => {
       const items = snapshotItems(snapshot);
       // No items yet is "not ready", which is distinct from an empty workspace list:
@@ -125,5 +137,10 @@ export function createProbeComponent(store: WorkspacePathStore): (props: Workspa
       store.publish(readableItems(items));
     }, [snapshot]);
     return null;
+  }
+
+  return function WorkspacePathProbe(props: WorkspacePathProbeProps): ReactElement | null {
+    if (props.useWorkspaces === undefined) return null;
+    return createElement(ProbeInner, { useWorkspaces: props.useWorkspaces });
   };
 }

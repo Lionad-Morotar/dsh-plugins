@@ -2,8 +2,8 @@
  * Browser-half entry.
  *
  * The workspace-row menu is a hardcoded list, so nothing here registers a menu
- * item. Instead a null-rendering occupant of the session-row action slot mirrors
- * the workspaces snapshot, and a DOM anchor appends a container to the floating
+ * item. Instead a null-rendering occupant of the frame overlay mirrors the
+ * workspaces snapshot, and a DOM anchor appends a container to the floating
  * menu once it can name the directory. The row rendered into that container is
  * the split button from the client half.
  *
@@ -29,8 +29,18 @@ import { createProbeComponent, createWorkspacePathStore } from "./workspaces-pro
 /** The services this half reads; declared so Cordis resolves them before mounting. */
 export const inject = ["slots"];
 
-/** The slot whose occupant receives the root hooks, including `useWorkspaces`. */
-const PROBE_SLOT = "sidebar.workspaces.session.row.action";
+/**
+ * The slot whose occupant receives the root hooks, including `useWorkspaces`.
+ *
+ * `shell.overlay` is the frame-level overlay: list slot, `scope: root`, no
+ * owner props, and its standard props carry `useWorkspaces`. It stays mounted
+ * for the life of the frame, so a workspace whose sessions are all archived,
+ * or a workspace that has no session yet, still publishes its directory. The
+ * session-row action slot does not: it mounts once per session row, and with
+ * no row mounted the store never becomes ready. The layer is click-through and
+ * the probe renders null, so occupying it changes no layout.
+ */
+export const PROBE_SLOT = "shell.overlay";
 
 /** High on purpose: the probe renders nothing, so order only loses to a later null occupant. */
 const PROBE_ORDER = 900;
