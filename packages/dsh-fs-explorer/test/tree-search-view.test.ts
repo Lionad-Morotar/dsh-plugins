@@ -92,6 +92,10 @@ describe("tree search", () => {
     });
   }
 
+  function searchInput(): HTMLInputElement | null {
+    return host.querySelector<HTMLInputElement>('[data-testid="fs-tree-search-input"]');
+  }
+
   async function type(value: string): Promise<void> {
     const input = host.querySelector<HTMLInputElement>('[data-testid="fs-tree-search-input"]');
     if (input === null) throw new Error("no search input");
@@ -116,7 +120,6 @@ describe("tree search", () => {
 
   it("puts the search input inside the tree pane but outside the tree's scroll container", async () => {
     await show();
-    await openSearch();
 
     const input = host.querySelector('[data-testid="fs-tree-search-input"]');
     const pane = host.querySelector(".fx-tree-pane");
@@ -126,6 +129,24 @@ describe("tree search", () => {
     expect(pane?.contains(input)).toBe(true);
     // This is the property that keeps the prefix jump from eating typed letters.
     expect(scroll?.contains(input)).toBe(false);
+  });
+
+  it("shows the bar from the first paint without taking the keyboard", async () => {
+    // The bar has to exist before anyone asks for it: jump navigation labels a
+    // target that is already in the DOM, and a field that appears only after a
+    // click cannot be labelled. Staying out of focus is the other half, because
+    // arriving in the pane parks the keyboard on the tree.
+    await show();
+
+    expect(searchInput()).not.toBeNull();
+    expect(document.activeElement?.getAttribute("data-testid")).toBe("fs-tree-scroll");
+  });
+
+  it("puts the caret in the field when the header asks for it", async () => {
+    await show();
+    await openSearch();
+
+    expect(document.activeElement).toBe(searchInput());
   });
 
   it("searches the workspace index and labels the scope as the index", async () => {
@@ -196,7 +217,10 @@ describe("tree search", () => {
         ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
 
-    expect(host.querySelector('[data-testid="fs-tree-search"]')).toBeNull();
+    // The bar stays as furniture; what Escape drops is the query, so the tree is
+    // back and the keyboard with it.
+    expect(searchInput()?.value).toBe("");
+    expect(resultPaths()).toContain("src");
     expect(document.activeElement?.getAttribute("data-testid")).toBe("fs-tree-scroll");
   });
 

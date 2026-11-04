@@ -1038,13 +1038,24 @@ export function createFsExplorerView({
       [levels, expanded, statuses, workspaceTags],
     );
 
-    // Opening the bar and having a query are two states: an empty bar is up and
-    // waiting, while the tree behind it still shows the tree.
-    const [searchOpen, setSearchOpen] = useState(false);
+    // Having a query and having the caret in the bar are two states: a bar with
+    // no query is up and waiting, while the tree behind it still shows the tree.
+    //
+    // The bar is mounted for the pane's whole lifetime, not on demand, because
+    // both ways in require it to already be there: jump navigation labels a
+    // target that has to exist in the DOM, and a control that only appears after
+    // a click cannot be that target. Focusing is therefore an event the reader's
+    // gesture asks for, never a side effect of being on screen.
     const [search, setSearch] = useState("");
     const [searchResults, setSearchResults] = useState<readonly TreeRow[]>([]);
     const [searchOrigin, setSearchOrigin] = useState<SearchOrigin | null>(null);
     const [searchBusy, setSearchBusy] = useState(false);
+    // One per gesture so two asks in a row are two events, starting at zero so
+    // the first render cannot fire: arriving in the pane parks the keyboard on
+    // the tree, and the bar taking it back would make the tree's arrows
+    // unreachable until the reader clicked elsewhere.
+    const [focusSignal, setFocusSignal] = useState(0);
+    const askSearchFocus = useCallback((): void => setFocusSignal(previous => previous + 1), []);
 
     // The search answer. The index answers across the whole workspace, so it is
     // asked first; only its absence falls back to the listed entries, and which
@@ -1098,7 +1109,7 @@ export function createFsExplorerView({
 
     // Search replaces where rows come from; it does not add a second list, so
     // the virtual window, the cursor and the follow effect all keep working.
-    const searching = searchOpen && searchOrigin !== null;
+    const searching = searchOrigin !== null;
     const shownRows = searching ? searchResults : rows;
 
     // Serve a held reveal as soon as its row lands in the tree. The kind is
@@ -1592,8 +1603,13 @@ export function createFsExplorerView({
       if (cursorPath.current !== undefined) openSearchResult(cursorPath.current);
     }, [openSearchResult]);
 
-    const closeSearch = useCallback((): void => {
-      setSearchOpen(false);
+    /**
+     * Empty the bar and give the keyboard back to the tree.
+     *
+     * The bar itself stays: it is part of the pane's furniture now, and a query
+     * is what turns on the result list, not the bar's existence.
+     */
+    const clearSearch = useCallback((): void => {
       setSearch("");
       setSearchResults([]);
       setSearchOrigin(null);
@@ -1603,20 +1619,22 @@ export function createFsExplorerView({
       scroller?.focus({ preventScroll: true });
     }, []);
 
-    // Escape closes the search before it is read as "return to the composer":
-    // a reader backing out of a query wants the tree, not the transcript.
+    // Escape empties the query before it is read as "return to the composer": a
+    // reader backing out of a search wants the tree, not the transcript. It only
+    // claims the key while there is something to back out of, or it would eat
+    // the composer's own Escape on every visit to the panel.
     useEffect(() => {
-      if (!searchOpen || typeof document === "undefined") return;
+      if (search === "" || typeof document === "undefined") return;
       const onKeyDown = (event: KeyboardEvent): void => {
         if (event.key !== "Escape" || event.isComposing || event.defaultPrevented) return;
         if (pendingCloseRef.current !== null || hasOpenModal(document)) return;
         event.preventDefault();
         event.stopPropagation();
-        closeSearch();
+        clearSearch();
       };
       document.addEventListener("keydown", onKeyDown, true);
       return () => document.removeEventListener("keydown", onKeyDown, true);
-    }, [searchOpen, closeSearch]);
+    }, [search, clearSearch]);
 
     const collapseAll = (): void => setExpanded(new Set());
     const refresh = (): void => setReloadToken(token => token + 1);
@@ -1671,13 +1689,13 @@ export function createFsExplorerView({
               type="button"
               className="fx-btn"
               data-testid="fs-search-open"
-              data-open={searchOpen ? "true" : "false"}
+              data-open={search === "" ? "false" : "true"}
               title={t("search.open")}
               aria-label={t("search.open")}
-              aria-pressed={searchOpen}
+              aria-pressed={search !== ""}
               onClick={() => {
-                if (searchOpen) closeSearch();
-                else setSearchOpen(true);
+                if (search !== "") clearSearch();
+                else askSearchFocus();
               }}
             >
               <SearchIcon />
@@ -1749,19 +1767,18 @@ export function createFsExplorerView({
                 className="fx-tree-pane"
                 style={treeWidth === null ? undefined : ({ "--fx-tree-width": `${treeWidth}px` } as CSSProperties)}
               >
-                {searchOpen ? (
-                  <TreeSearchBox
-                    t={t}
-                    value={search}
-                    origin={searchOrigin}
-                    count={searchResults.length}
-                    busy={searchBusy}
-                    onChange={setSearch}
-                    onStep={delta => askCursor(undefined, delta, false)}
-                    onActivate={activateSearchRow}
-                    onClose={closeSearch}
-                  />
-                ) : null}
+                <TreeSearchBox
+                  t={t}
+                  value={search}
+                  origin={searchOrigin}
+                  count={searchResults.length}
+                  busy={searchBusy}
+                  onChange={setSearch}
+                  onStep={delta => askCursor(undefined, delta, false)}
+                  onActivate={activateSearchRow}
+                  onClose={clearSearch}
+                  focusSignal={focusSignal}
+                />
                 <TreeBody
                   rows={shownRows}
                   selectedPath={activeRevision === undefined ? activePath : undefined}

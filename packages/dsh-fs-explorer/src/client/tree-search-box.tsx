@@ -33,6 +33,17 @@ export interface TreeSearchBoxProps {
   readonly onActivate: () => void;
   /** Clear the query and hand the keyboard back to the tree. */
   readonly onClose: () => void;
+  /**
+   * A bump that asks for the caret to land in the field.
+   *
+   * The bar is mounted for the pane's whole lifetime so that it exists as a
+   * jump target before anyone has typed in it, which means it cannot focus
+   * itself on mount: the pane's arrival gesture parks the keyboard on the tree,
+   * and a field that grabbed it back would make the tree's arrow keys
+   * unreachable until the reader clicked somewhere else. Focusing is therefore
+   * an event the pane asks for, not a consequence of being on screen.
+   */
+  readonly focusSignal: number;
 }
 
 /**
@@ -50,14 +61,19 @@ export function TreeSearchBox({
   onStep,
   onActivate,
   onClose,
+  focusSignal,
 }: TreeSearchBoxProps): ReactElement {
   const input = useRef<HTMLInputElement>(null);
 
-  // Opening the bar means the reader wants to type, so the caret goes there
-  // rather than staying on the tree it was just taken from.
+  // The signal starts at zero and only a gesture bumps it, so the first render
+  // must not focus: that render is the pane arriving, and the keyboard belongs
+  // to the tree there. Any later change to the number is the pane asking.
+  const served = useRef(focusSignal);
   useEffect(() => {
+    if (served.current === focusSignal) return;
+    served.current = focusSignal;
     input.current?.focus();
-  }, []);
+  }, [focusSignal]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.nativeEvent.isComposing) return;
@@ -120,16 +136,20 @@ export function TreeSearchBox({
           {count === 0 ? t("search.none") : t("search.count").replace("{count}", String(count))}
         </span>
       )}
-      <button
-        type="button"
-        className="fx-pbtn"
-        data-testid="fs-tree-search-close"
-        title={t("search.close")}
-        aria-label={t("search.close")}
-        onClick={onClose}
-      >
-        ×
-      </button>
+      {/* Shown only when there is something to clear: an always-present close
+          button would be a control that does nothing on a bar with no query. */}
+      {value === "" ? null : (
+        <button
+          type="button"
+          className="fx-pbtn"
+          data-testid="fs-tree-search-close"
+          title={t("search.close")}
+          aria-label={t("search.close")}
+          onClick={onClose}
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 }
