@@ -35,6 +35,7 @@ function snapshot(hashes: readonly string[], total = hashes.length): GitSnapshot
     status: "",
     commits: hashes.map(hash => commit(hash)),
     lanes: [],
+    remotes: [],
     counts: { commits: total, branches: 0, changes: 0 },
   };
 }

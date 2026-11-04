@@ -541,8 +541,21 @@ export type NormalizedStatus =
       readonly head?: FsGitHead;
       /** Absolute repository root, for reading `.gitmodules` by path. */
       readonly root?: string;
+      /**
+       * Configured remotes, for building a link to the code.
+       *
+       * Undefined means the host never reported the field, which the menu says
+       * differently from a repository that has no remote at all.
+       */
+      readonly remotes?: readonly FsGitRemote[];
     }
   | { readonly ok: false; readonly message: string };
+
+/** One configured remote as the snapshot carries it, URL verbatim. */
+export interface FsGitRemote {
+  readonly name: string;
+  readonly url: string;
+}
 
 /** Read one numstat side: a count, null for a binary file, or undefined when invalid. */
 function readCount(value: unknown): number | null | undefined {
@@ -604,6 +617,26 @@ function readHead(value: unknown): FsGitHead | undefined {
   };
 }
 
+/**
+ * Shape-check the snapshot's remote list.
+ *
+ * Entries a host folded differently (an empty name, a missing URL) are dropped
+ * one by one; anything that is not an array degrades to "this host does not
+ * report remotes" rather than failing the status colouring that already works.
+ */
+function readRemotes(value: unknown): readonly FsGitRemote[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const remotes: FsGitRemote[] = [];
+  for (const entry of value) {
+    if (entry === null || typeof entry !== "object") continue;
+    const record = entry as { readonly name?: unknown; readonly url?: unknown };
+    if (typeof record.name !== "string" || record.name === "") continue;
+    if (typeof record.url !== "string" || record.url === "") continue;
+    remotes.push({ name: record.name, url: record.url });
+  }
+  return remotes;
+}
+
 function readSnapshot(value: unknown): NormalizedStatus {
   if (value === null || typeof value !== "object") {
     return { ok: false, message: "Git 服务返回了无效响应" };
@@ -614,6 +647,7 @@ function readSnapshot(value: unknown): NormalizedStatus {
     readonly stats?: unknown;
     readonly head?: unknown;
     readonly root?: unknown;
+    readonly remotes?: unknown;
   };
   if (typeof record.status !== "string") {
     return { ok: false, message: "Git 快照缺少 status" };
@@ -621,6 +655,7 @@ function readSnapshot(value: unknown): NormalizedStatus {
   const stats = readStats(record.stats);
   const head = readHead(record.head);
   const root = typeof record.root === "string" && record.root !== "" ? record.root : undefined;
+  const remotes = readRemotes(record.remotes);
   // A plain directory is a valid answer with no repository, hence no status.
   return {
     ok: true,
@@ -628,6 +663,7 @@ function readSnapshot(value: unknown): NormalizedStatus {
     ...(stats === undefined ? {} : { stats }),
     ...(head === undefined ? {} : { head }),
     ...(root === undefined ? {} : { root }),
+    ...(remotes === undefined ? {} : { remotes }),
   };
 }
 

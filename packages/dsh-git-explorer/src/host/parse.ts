@@ -10,6 +10,7 @@ import type {
   GitCommit,
   GitRef,
   GitRefEntry,
+  GitRemote,
 } from "./types.ts";
 
 const LOG_FIELDS = 5;
@@ -409,4 +410,45 @@ export function parseCommitMeta(text: string): (GitCommit & { readonly body: str
     subject,
     body,
   };
+}
+
+/**
+ * Parse `git remote -v` output into one entry per remote.
+ *
+ * Git prints one line per URL per direction, so a remote with a distinct push
+ * URL appears twice. The snapshot wants one row per remote, and the fetch URL is
+ * the one a link to the code should name; a push-only remote falls back to its
+ * push URL rather than disappearing, because it is still a place the code lives.
+ *
+ * The URL is kept verbatim: `git@host:owner/repo.git` and
+ * `https://host/owner/repo` are different strings, and only the client knows
+ * which provider's URL shape it is building.
+ *
+ * A line without the three parts git always prints (name, URL, and a
+ * parenthesised direction) is skipped rather than guessed at, and the result is
+ * sorted by name so a snapshot is stable across runs.
+ */
+export function parseRemotes(text: string): GitRemote[] {
+  /** The URL kept for each name: a fetch URL once seen, else the push URL. */
+  const chosen = new Map<string, { readonly url: string; readonly fetch: boolean }>();
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\r$/u, "");
+    if (line.trim() === "") continue;
+    const tab = line.indexOf("\t");
+    if (tab <= 0) continue;
+    const name = line.slice(0, tab);
+    const rest = line.slice(tab + 1);
+    // The direction is the trailing `(fetch)` or `(push)`; the URL itself may
+    // contain spaces, so the suffix is matched rather than split on.
+    const direction = /\s\((fetch|push)\)$/u.exec(rest);
+    if (direction === null) continue;
+    const url = rest.slice(0, direction.index).trim();
+    if (url === "") continue;
+    const fetch = direction[1] === "fetch";
+    const previous = chosen.get(name);
+    if (previous === undefined || (fetch && !previous.fetch)) chosen.set(name, { url, fetch });
+  }
+  return [...chosen.entries()]
+    .map(([name, entry]) => ({ name, url: entry.url }))
+    .sort((left, right) => left.name.localeCompare(right.name));
 }

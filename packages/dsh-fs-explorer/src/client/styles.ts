@@ -14,6 +14,11 @@ const STYLE_ID = "dsh-fs-explorer-styles";
 
 export const FS_STYLES = `
 .fx-root {
+  /* The name card, the bookmark picker and the management menu are positioned
+     against this panel. Without a containing block here they resolve against
+     whatever positioned ancestor the host happens to provide, which is not
+     something this package can rely on. */
+  position: relative;
   --fx-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --fx-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --fx-row-h: 22px;
@@ -95,6 +100,139 @@ export const FS_STYLES = `
   white-space: nowrap;
   flex: none;
 }
+
+/* The bookmark bar takes the header's elastic middle. It scrolls horizontally
+   rather than wrapping, because a second row would change the header's height
+   and push the whole panel down when a reader adds one bookmark too many. The
+   scrollbar is hidden for the same reason: a 38px header has no room for one. */
+.fx-bookmarks {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.fx-bookmarks::-webkit-scrollbar { display: none; }
+.fx-bookmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 24px;
+  max-width: 160px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fx-text-2);
+  font: inherit;
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fx-bookmark:hover { background: var(--fx-hover); color: var(--fx-text); }
+.fx-bookmark:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -1px; }
+.fx-bookmark[aria-expanded="true"] { background: var(--fx-active); color: var(--fx-text); }
+.fx-bookmark-name { overflow: hidden; text-overflow: ellipsis; }
+.fx-bookmark-chevron { display: inline-flex; color: var(--fx-caption); flex: none; }
+.fx-bookmark-empty { color: var(--fx-caption); font-size: 11px; white-space: nowrap; }
+
+/* Flyouts are fixed and placed from the chip's own rect: .fx-root sets
+   overflow: hidden, so an absolutely positioned card would be clipped at the
+   panel edge. The nested card hangs off its parent row instead. */
+.fx-bookmark-flyout {
+  position: fixed;
+  z-index: 70;
+  min-width: 180px;
+  max-width: 280px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--fx-border);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-family: var(--fx-font);
+  font-size: 12px;
+}
+/* A nested card is fixed and placed from its own row's rect, exactly like the
+   first level: the inline px coordinates are the whole position, so there is no
+   percentage offset to keep in sync. */
+.fx-bookmark-flyout-sub { position: fixed; }
+.fx-bookmark-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fx-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fx-bookmark-item:hover:not(:disabled) { background: var(--fx-hover); }
+.fx-bookmark-item:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -1px; }
+.fx-bookmark-item:disabled { color: var(--fx-caption); cursor: default; }
+.fx-bookmark-item[aria-disabled="true"] { color: var(--fx-caption); }
+.fx-bookmark-new { border-top: 1px solid var(--fx-border-soft); border-radius: 0 0 5px 5px; color: var(--fx-text-2); }
+
+/* A chip and its management button share one slot, so the button can sit beside
+   the chip without becoming a second navigation target. */
+.fx-bookmark-slot { position: relative; display: inline-flex; align-items: center; flex: none; }
+.fx-bookmark-slot[data-dragging="true"] { opacity: 0.45; }
+.fx-bookmark-item-wrap { position: relative; display: flex; align-items: center; }
+.fx-bookmark-manage {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fx-caption);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+.fx-bookmark-slot:hover .fx-bookmark-manage,
+.fx-bookmark-slot:focus-within .fx-bookmark-manage,
+.fx-bookmark-item-wrap:hover .fx-bookmark-manage,
+.fx-bookmark-item-wrap:focus-within .fx-bookmark-manage { opacity: 1; }
+.fx-bookmark-manage:hover { background: var(--fx-hover); color: var(--fx-text); }
+.fx-bookmark-manage:focus-visible { opacity: 1; outline: 2px solid var(--fx-accent); outline-offset: -1px; }
+
+/* The management menu is fixed and placed from its button's rect, for the same
+   reason the flyouts are: the header clips its overflow. */
+.fx-bookmark-manage-menu {
+  position: fixed; z-index: 75; min-width: 150px; padding: 4px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 1px; font-family: var(--fx-font); font-size: 12px; }
+
+/* The destination picker: one card, one level at a time. */
+.fx-bookmark-picker {
+  position: absolute; z-index: 65; top: 44px; left: 12px; width: 280px; max-height: 60vh; overflow-y: auto; padding: 10px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 8px; font-family: var(--fx-font); font-size: 12px; }
+.fx-bookmark-picker-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.fx-bookmark-picker-head strong { font-size: 12px; font-weight: 600; }
+.fx-bookmark-picker-target { color: var(--fx-caption); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-bookmark-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+.fx-bookmark-crumb {
+  padding: 2px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--fx-text-2); font: inherit; font-size: 11px; cursor: pointer; }
+.fx-bookmark-crumb:hover { background: var(--fx-hover); color: var(--fx-text); }
+.fx-bookmark-crumb + .fx-bookmark-crumb::before { content: "/"; color: var(--fx-caption); margin-right: 4px; }
+.fx-bookmark-picker-list {
+  display: flex; flex-direction: column; gap: 1px; max-height: 30vh; overflow-y: auto; padding: 2px 0; border-top: 1px solid var(--fx-border-soft); border-bottom: 1px solid var(--fx-border-soft); }
+.fx-bookmark-picker-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .fx-head-meta {
   margin-left: auto;
   display: flex;
@@ -106,6 +244,123 @@ export const FS_STYLES = `
   font-variant-numeric: tabular-nums;
 }
 .fx-head-meta b { color: var(--fx-text-2); font-weight: 600; }
+
+/* One transient sentence about what the last action did. It sits between the
+   header and the panes rather than floating over them: a toast would cover the
+   tree row the reader just acted on, which is exactly what they are looking at. */
+.fx-notice {
+  flex: none;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--fx-border-soft);
+  background: var(--fx-panel-2);
+  color: var(--fx-text-2);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fx-notice[data-tone="ok"] { color: var(--dsw-alias-state-success-primary, var(--fx-text-2)); }
+.fx-notice[data-tone="error"] { color: var(--dsw-alias-state-error-primary, var(--fx-text-2)); }
+
+/* The context menu's own card, used only when the host seeds no primitive kit.
+   The host's Menu brings its own material; this exists so right-click still
+   works on a host that has none, not as a second menu design. */
+.fx-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--fx-border);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  box-shadow: 0 8px 24px color-mix(in srgb, currentColor 16%, transparent);
+  color: var(--fx-text);
+  font-family: var(--fx-font);
+  font-size: 12px;
+}
+.fx-menu-sub {
+  position: absolute;
+  left: 100%;
+  top: -5px;
+  margin-left: 2px;
+}
+.fx-menu-item-wrap { position: relative; }
+.fx-menu-item {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fx-menu-item:hover:not(:disabled) { background: var(--fx-hover); }
+.fx-menu-item:disabled { color: var(--fx-caption); cursor: default; }
+.fx-menu-item[aria-disabled="true"] { color: var(--fx-caption); }
+.fx-menu-item[aria-haspopup="menu"]::after { content: " ›"; float: right; color: var(--fx-caption); }
+/* The reason a row cannot run, shown on the row itself: the host Menu's data rows
+   have no disabledReason, and a greyed row with no explanation reads as broken. */
+.fx-menu-reason { display: block; color: var(--fx-caption); font-size: 11px; line-height: 1.4; }
+
+/* The name card. Anchored to the tree rather than centered on the page: the
+   reader right-clicked a row, and a modal would take the tree away at exactly
+   the moment they need to see which directory they are creating in. */
+.fx-name-prompt {
+  position: absolute;
+  z-index: 55;
+  top: 44px;
+  left: 12px;
+  width: 268px;
+  padding: 10px;
+  border: 1px solid var(--fx-border);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--fx-font);
+  font-size: 12px;
+}
+.fx-name-prompt-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.fx-name-prompt-head strong { font-size: 12px; font-weight: 600; }
+.fx-name-prompt-parent {
+  color: var(--fx-caption);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fx-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  border: 1px solid var(--fx-border);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base, transparent);
+  color: var(--fx-text);
+  font: inherit;
+}
+.fx-name-input:focus { outline: 2px solid var(--fx-accent); outline-offset: -1px; }
+.fx-name-input[aria-invalid="true"] { border-color: var(--dsw-alias-state-error-primary, var(--fx-border)); }
+.fx-name-prompt-error { color: var(--dsw-alias-state-error-primary, var(--fx-text-2)); font-size: 11px; line-height: 1.4; }
+.fx-name-prompt-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.fx-btn-text, .fx-btn-primary { width: auto; padding: 0 10px; height: 24px; }
+.fx-btn-primary {
+  border-color: var(--fx-accent);
+  background: var(--fx-accent);
+  color: var(--dsw-alias-bg-base, #fff);
+}
+.fx-btn-primary:disabled, .fx-btn-text:disabled { opacity: 0.55; cursor: default; }
 .fx-btn {
   display: inline-flex;
   align-items: center;

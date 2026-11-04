@@ -7,8 +7,19 @@
  * or directory) and a status row for loading, failure, emptiness and host-side
  * truncation.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type UIEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type UIEvent,
+} from "react";
 
+import type { ContextMenuAnchor } from "./context-menu.ts";
 import type { Translate } from "./copy.ts";
 import {
   adoptsOpenFile,
@@ -108,6 +119,21 @@ export function FileBadge({ name }: { readonly name: string }) {
   );
 }
 
+/**
+ * One context-menu gesture.
+ *
+ * `row` is undefined for the tree's blank area: the reader right-clicked past
+ * the last row, which is a different menu (nothing to act on yet), not a bug.
+ * `trigger` is the element the menu was opened from, which is where the keyboard
+ * goes back to when it closes: a right-click leaves focus on the body, and the
+ * next Tab from there restarts at the top of the page.
+ */
+export type ContextMenuGesture = (
+  row: EntryRow | undefined,
+  anchor: ContextMenuAnchor,
+  trigger: HTMLElement | undefined,
+) => void;
+
 /** Props for one entry row. */
 export interface TreeRowViewProps {
   readonly row: EntryRow;
@@ -120,6 +146,8 @@ export interface TreeRowViewProps {
   readonly onSelect: (path: string) => void;
   /** Announced on every row activation so the tree cursor follows the mouse. */
   readonly onRowActivate: (path: string) => void;
+  /** Right-click on this row; the browser's own menu is suppressed first. */
+  readonly onContextMenu: (row: EntryRow, event: ReactMouseEvent<HTMLElement>) => void;
 }
 
 /**
@@ -127,7 +155,17 @@ export interface TreeRowViewProps {
  * @param props - the row, its selected state and the two tree gestures.
  * @returns the row element.
  */
-export function TreeRowView({ row, selected, cursor, top, t, onToggle, onSelect, onRowActivate }: TreeRowViewProps) {
+export function TreeRowView({
+  row,
+  selected,
+  cursor,
+  top,
+  t,
+  onToggle,
+  onSelect,
+  onRowActivate,
+  onContextMenu,
+}: TreeRowViewProps) {
   const directory = row.kind === "directory";
   const style: CSSProperties = { top, paddingLeft: 8 + row.depth * 12 };
   return (
@@ -143,6 +181,7 @@ export function TreeRowView({ row, selected, cursor, top, t, onToggle, onSelect,
       data-cursor={cursor ? "true" : "false"}
       data-expanded={directory ? (row.expanded ? "true" : "false") : undefined}
       data-status={row.status}
+      data-path={row.path}
       data-testid="fx-row"
       title={row.path}
       style={style}
@@ -150,6 +189,13 @@ export function TreeRowView({ row, selected, cursor, top, t, onToggle, onSelect,
         onRowActivate(row.path);
         if (directory) onToggle(row.path);
         else onSelect(row.path);
+      }}
+      onContextMenu={event => {
+        // The browser's menu would cover the panel and offer actions that do not
+        // know which file this is.
+        event.preventDefault();
+        event.stopPropagation();
+        onContextMenu(row, event);
       }}
     >
       <span
@@ -317,6 +363,8 @@ export interface TreeBodyProps {
   readonly onSelect: (path: string) => void;
   readonly onRetry: (path: string) => void;
   readonly onEntryFocusSettled: (() => void) | undefined;
+  /** Right-click on a row or on the blank area below the rows. */
+  readonly onContextMenu: ContextMenuGesture;
   /** Moves the cursor from outside the key handler; absent leaves it driven locally. */
   readonly cursorRequest?: TreeCursorRequest;
   /** Reports the row the cursor rests on, so an outside field can activate it. */
@@ -337,6 +385,7 @@ export function TreeBody({
   onSelect,
   onRetry,
   onEntryFocusSettled,
+  onContextMenu,
   cursorRequest,
   onCursorMove,
 }: TreeBodyProps) {
@@ -477,6 +526,39 @@ export function TreeBody({
     if (index >= 0) setCursor(index);
   }, [rows]);
 
+  /**
+   * Open the context menu for one row, from the pointer or from the keyboard.
+   *
+   * The row is selected first so the menu and the tree agree on which entry the
+   * actions address, and so closing the menu leaves the reader where the menu
+   * was about.
+   * @param row - the row the gesture landed on.
+   * @param anchor - where the menu should open, in viewport coordinates.
+   */
+  const openRowMenu = useCallback(
+    (row: EntryRow, anchor: ContextMenuAnchor, trigger: HTMLElement | undefined): void => {
+      handleRowActivate(row.path);
+      onContextMenu(row, anchor, trigger);
+    },
+    [handleRowActivate, onContextMenu],
+  );
+
+  /**
+   * Open the menu for the tree's blank area.
+   *
+   * A right-click below the last row lands on the scroll container rather than
+   * on a row, and a right-click on a row stops its own event, so this only ever
+   * sees the empty part of the pane.
+   * @param event - the pointer event on the scroll container.
+   */
+  const handleBlankContextMenu = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>): void => {
+      event.preventDefault();
+      onContextMenu(undefined, { x: event.clientX, y: event.clientY }, event.currentTarget);
+    },
+    [onContextMenu],
+  );
+
   const handleTreeKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>): void => {
       if (event.nativeEvent.isComposing || event.altKey || event.metaKey || event.ctrlKey) return;
@@ -533,6 +615,18 @@ export function TreeBody({
         onSelect(row.path);
         return;
       }
+      // The ContextMenu key and Shift+F10 are the keyboard's right-click. The
+      // menu opens at the row's own box rather than at a pointer that is not
+      // there, which is where a keyboard reader expects it. The box is computed
+      // from the virtual list's own geometry, so no DOM lookup is needed and a
+      // path with quotes or brackets cannot break a selector.
+      if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+        event.preventDefault();
+        const box = scroller.current?.getBoundingClientRect();
+        const top = box === undefined ? 0 : box.top + cursor * TREE_ROW_HEIGHT - (scroller.current?.scrollTop ?? 0);
+        openRowMenu(row, { x: box?.left ?? 0, y: top + TREE_ROW_HEIGHT }, scroller.current ?? undefined);
+        return;
+      }
       if (event.key === "Home") {
         event.preventDefault();
         if (entryIndexes[0] !== undefined) moveCursor(entryIndexes[0]);
@@ -581,7 +675,7 @@ export function TreeBody({
       // the preview, which is the whole point of the jump.
       if (landed.kind !== "directory") onSelect(landed.path);
     },
-    [cursor, entryIndexes, moveCursor, onToggle, onSelect, rows],
+    [cursor, entryIndexes, moveCursor, onToggle, onSelect, openRowMenu, rows],
   );
 
   useEffect(() => {
@@ -660,6 +754,7 @@ export function TreeBody({
       ref={scroller}
       onScroll={handleScroll}
       onKeyDown={handleTreeKeyDown}
+      onContextMenu={handleBlankContextMenu}
       tabIndex={0}
       data-testid="fs-tree-scroll"
       role="tree"
@@ -679,6 +774,13 @@ export function TreeBody({
               onToggle={onToggle}
               onSelect={onSelect}
               onRowActivate={handleRowActivate}
+              onContextMenu={(entry, event) =>
+                openRowMenu(
+                  entry,
+                  { x: event.clientX, y: event.clientY },
+                  event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined,
+                )
+              }
             />
           ) : (
             <StatusRowView key={row.key} row={row} top={top} t={t} onRetry={onRetry} />

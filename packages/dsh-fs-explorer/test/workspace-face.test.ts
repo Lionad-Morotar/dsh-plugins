@@ -1,0 +1,199 @@
+/**
+ * The client's face on the workspace channel.
+ *
+ * Two things are worth asserting here and neither is a formatting detail. The
+ * resolver has to find the namespace through the raw connection RPC, because a
+ * third-party package never gets a generated client table, and it has to answer
+ * "absent" instead of throwing when the host has no connection at all. And every
+ * answer has to fold down to the closed code union, because the view paints one
+ * sentence per code and an unmapped code would paint nothing.
+ */
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  createRpcWorkspaceFace,
+  createWorkspaceClient,
+  createWorkspaceResolver,
+  createWorkspaceRpc,
+  normalizeCapabilities,
+  normalizeInfo,
+  normalizeReveal,
+} from "../src/client/workspace-face.ts";
+import { WORKSPACE_SERVICE } from "../src/shared.ts";
+
+/** A connection service whose `rpc.call` records the endpoint it reached. */
+function connection(answer: unknown): {
+  readonly ctx: { get(name: string): unknown };
+  readonly calls: { scope: string; endpoint: string; payload: unknown }[];
+} {
+  const calls: { scope: string; endpoint: string; payload: unknown }[] = [];
+  return {
+    calls,
+    ctx: {
+      get: (name: string) =>
+        name === "connection"
+          ? {
+              rpc: {
+                call: async (scope: string, endpoint: string, payload: unknown) => {
+                  calls.push({ scope, endpoint, payload });
+                  return answer;
+                },
+              },
+            }
+          : undefined,
+    },
+  };
+}
+
+describe("createWorkspaceRpc", () => {
+  it("reaches the hand-published namespace under /api", async () => {
+    const { ctx, calls } = connection({ ok: true, value: { ok: true } });
+    const call = createWorkspaceRpc(ctx);
+    expect(call).toBeDefined();
+    await call?.("info", { args: { request: { sessionId: "s1", path: "a.md" } } });
+    expect(calls).toEqual([
+      {
+        scope: "/api",
+        endpoint: `${WORKSPACE_SERVICE}/info`,
+        payload: { args: { request: { sessionId: "s1", path: "a.md" } } },
+      },
+    ]);
+  });
+
+  it("answers undefined on a host with no connection service", () => {
+    expect(createWorkspaceRpc({ get: () => undefined })).toBeUndefined();
+    expect(createWorkspaceRpc({ get: () => ({}) })).toBeUndefined();
+    expect(
+      createWorkspaceRpc({
+        get: () => {
+          throw new Error("unknown service");
+        },
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("createWorkspaceResolver", () => {
+  it("prefers an injected service over the transport", () => {
+    const face = { capabilities: async () => ({}), info: async () => ({}), reveal: async () => ({}) };
+    const resolve = createWorkspaceResolver({ fsExplorerWorkspace: face, get: () => undefined });
+    expect(resolve()).toBe(face);
+  });
+
+  it("falls through to the raw RPC when nothing else answers", () => {
+    const { ctx } = connection({ ok: true, value: { ok: true } });
+    const resolve = createWorkspaceResolver(ctx);
+    expect(typeof resolve()?.info).toBe("function");
+  });
+
+  it("answers undefined when the host exposes no channel at all", () => {
+    expect(createWorkspaceResolver({ get: () => undefined })()).toBeUndefined();
+  });
+});
+
+describe("normalizeCapabilities", () => {
+  it("unwraps the generated Remote envelope", () => {
+    expect(
+      normalizeCapabilities({ ok: true, value: { ok: true, capabilities: { fileManager: "explorer", canReveal: true } } }),
+    ).toEqual({ ok: true, capabilities: { fileManager: "explorer", canReveal: true } });
+  });
+
+  it("reads a flat answer the same way", () => {
+    expect(normalizeCapabilities({ ok: true, capabilities: { fileManager: "directory", canReveal: true } })).toEqual({
+      ok: true,
+      capabilities: { fileManager: "directory", canReveal: true },
+    });
+  });
+
+  it("collapses an unknown file manager to null", () => {
+    expect(normalizeCapabilities({ ok: true, capabilities: { fileManager: "nautilus", canReveal: true } })).toEqual({
+      ok: true,
+      capabilities: { fileManager: null, canReveal: true },
+    });
+  });
+
+  it("carries a failure code through", () => {
+    expect(normalizeCapabilities({ ok: false, error: { code: "unsupported", message: "no" } })).toEqual({
+      ok: false,
+      error: { code: "unsupported", message: "no" },
+    });
+  });
+});
+
+describe("normalizeInfo", () => {
+  it("unwraps the envelope and keeps the three facts", () => {
+    expect(
+      normalizeInfo({
+        ok: true,
+        value: { ok: true, info: { absolutePath: "/w/a.md", type: "file", exists: true } },
+      }),
+    ).toEqual({ ok: true, info: { absolutePath: "/w/a.md", type: "file", exists: true } });
+  });
+
+  it("refuses an answer without an absolute path", () => {
+    expect(normalizeInfo({ ok: true, info: { type: "file", exists: true } })).toMatchObject({
+      ok: false,
+      error: { code: "io-error" },
+    });
+  });
+
+  it("maps an unknown code onto io-error", () => {
+    expect(normalizeInfo({ ok: false, error: { code: "gateway/internal", message: "boom" } })).toEqual({
+      ok: false,
+      error: { code: "io-error", message: "boom" },
+    });
+  });
+});
+
+describe("normalizeReveal", () => {
+  it("accepts a receipt", () => {
+    expect(normalizeReveal({ ok: true, value: { ok: true } })).toEqual({ ok: true });
+  });
+
+  it("keeps the failure code the host named", () => {
+    expect(normalizeReveal({ ok: false, error: { code: "outside-workspace", message: "no" } })).toEqual({
+      ok: false,
+      error: { code: "outside-workspace", message: "no" },
+    });
+  });
+});
+
+describe("createWorkspaceClient", () => {
+  it("answers a failure instead of throwing when the channel is missing", async () => {
+    const client = createWorkspaceClient({ get: () => undefined });
+    await expect(client.reveal("s1", "a.md")).resolves.toMatchObject({
+      ok: false,
+      error: { code: "unsupported" },
+    });
+  });
+
+  it("folds a thrown transport error into io-error", async () => {
+    const client = createWorkspaceClient({
+      fsExplorerWorkspace: {
+        capabilities: async () => ({}),
+        info: async () => ({}),
+        reveal: async () => {
+          throw new Error("socket closed");
+        },
+      },
+    });
+    await expect(client.reveal("s1", "a.md")).resolves.toEqual({
+      ok: false,
+      error: { code: "io-error", message: "socket closed" },
+    });
+  });
+
+  it("sends the request shape the gateway reads back", async () => {
+    const { ctx, calls } = connection({ ok: true, value: { ok: true, info: { absolutePath: "/w/a.md", type: "file", exists: true } } });
+    const client = createWorkspaceClient(ctx);
+    await client.info("s1", "a.md");
+    expect(calls[0]?.payload).toEqual({ args: { request: { sessionId: "s1", path: "a.md" } } });
+  });
+
+  it("builds a face over the RPC caller", async () => {
+    const call = vi.fn(async () => ({ ok: true, value: { ok: true } }));
+    const face = createRpcWorkspaceFace(call);
+    await face.reveal({ sessionId: "s1", path: "a.md" });
+    expect(call).toHaveBeenCalledWith("reveal", { args: { request: { sessionId: "s1", path: "a.md" } } }, undefined);
+  });
+});

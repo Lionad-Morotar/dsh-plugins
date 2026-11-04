@@ -5,7 +5,7 @@
 import { fail, runFailure } from "./failure.ts";
 import type { GitRunner } from "./git.ts";
 import { assignLanes } from "./lanes.ts";
-import { parseLog, parseNumStatZ, parseRefListing, parseStatusBranch, parseStatusZ } from "./parse.ts";
+import { parseLog, parseNumStatZ, parseRefListing, parseRemotes, parseStatusBranch, parseStatusZ } from "./parse.ts";
 import type {
   GitBranchState,
   GitChangeStat,
@@ -42,6 +42,7 @@ function emptySnapshot(root: string): GitSnapshot {
     counts: { commits: 0, branches: 0, changes: 0 },
     status: "",
     stats: [],
+    remotes: [],
   };
 }
 
@@ -134,6 +135,10 @@ export async function collectSnapshot(
     options.runner.run(["for-each-ref", REF_FORMAT, "refs/heads", "refs/remotes", "refs/tags"], { cwd: root, signal }),
     options.runner.run(["diff", "--numstat", "-z"], { cwd: root, signal }),
     options.runner.run(["diff", "--cached", "--numstat", "-z"], { cwd: root, signal }),
+    // The remote list rides the same first-paint read: a client that wants to
+    // build a link to the code needs it, and a second round trip would make the
+    // link appear a beat after the panel.
+    options.runner.run(["remote", "-v"], { cwd: root, signal }),
   ] as const;
   const historyCommands = unborn
     ? null
@@ -144,11 +149,11 @@ export async function collectSnapshot(
         }),
         options.runner.run(["rev-list", "--count", "--all"], { cwd: root, signal }),
       ] as const);
-  const [status, refs, worktreeStats, stagedStats] = await Promise.all(commands);
+  const [status, refs, worktreeStats, stagedStats, remotes] = await Promise.all(commands);
   const history = historyCommands === null ? null : await Promise.all(historyCommands);
   const log = history?.[0];
   const count = history?.[1];
-  for (const result of [status, refs, worktreeStats, stagedStats, ...(history ?? [])]) {
+  for (const result of [status, refs, worktreeStats, stagedStats, remotes, ...(history ?? [])]) {
     const failure = runFailure(result);
     if (failure !== null) return { ok: false, error: failure };
     if (result.stdoutLossy) return fail("git-failed", "command output exceeded the collection budget");
@@ -182,6 +187,7 @@ export async function collectSnapshot(
       },
       status: status.stdout,
       stats: mergeStats(parseNumStatZ(stagedStats.stdout), parseNumStatZ(worktreeStats.stdout)),
+      remotes: parseRemotes(remotes.stdout),
     },
   };
 }
