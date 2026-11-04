@@ -49,6 +49,27 @@ export interface PathResolveRequest {
   readonly limit?: number;
 }
 
+/** Inspect request: one absolute path, as the caller spells it. */
+export interface PathInspectRequest {
+  readonly path: string;
+}
+
+/**
+ * What one path is, and where a link goes.
+ *
+ * The host's own file reads refuse a final symlink on purpose, so a surface
+ * that wants to show the file behind one has to ask first and then open the
+ * target. `missing` is an answer, not an error: a path that is gone is a fact
+ * about the file.
+ */
+export interface PathInspectAnswer {
+  readonly kind: "file" | "directory" | "symlink" | "other" | "missing";
+  /** Absolute path with every link resolved; present for a `symlink` that resolves. */
+  readonly target?: string;
+  /** What that target is; absent when the link dangles. */
+  readonly targetKind?: "file" | "directory" | "other";
+}
+
 /** Resolve answer: the home directory plus up to `limit` matching entries. */
 export type PathResolveResult =
   | { readonly ok: true; readonly home: string; readonly entries: readonly PathEntry[] }

@@ -48,6 +48,8 @@ import { sessionFileAddress } from "dsh-preview-viewers/address.ts";
 import { runCatalogAction, type ActionDeps } from "./actions.ts";
 import { createBridgeView, type BridgeState } from "./bridge.ts";
 import { clientCommandRows, isClientCommandRow, runClientCommand } from "./client-commands.ts";
+import { createLinkBadge, LINK_BADGE_ID, LINK_BADGE_SLOT } from "./link-badge.ts";
+import { markLinked } from "./link-marks.ts";
 import { notifyMuteRow, runNotifyMute } from "./notify-mute.ts";
 import { planClaim, type ClaimProbe, type ClaimTarget } from "./claims.ts";
 import type { Copy } from "./copy.ts";
@@ -1130,18 +1132,64 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       notice(copy().actions.noSessionSurface, "error");
       return;
     }
-    const address = sessionFileAddress(sessionId, target.addressPath);
+    void placeInSidebar(sessionId, target, sidebar);
+  }
+
+  /**
+   * Put one file in the right column, following a symlink on the way.
+   *
+   * The host refuses to read through a final symlink, so a tab addressed at one
+   * could only ever show that refusal. What the reader wants is the file behind
+   * it, so the link resolves first and the pair is remembered for the header
+   * badge to explain the path it did not type.
+   */
+  async function placeInSidebar(
+    sessionId: string,
+    target: { readonly absolutePath: string; readonly addressPath: string },
+    sidebar: SidebarRightService,
+  ): Promise<void> {
+    const resolved = await resolveLink(target);
+    const address = sessionFileAddress(sessionId, resolved.path);
+    // Recorded before the tab exists: the badge reads it on its first render,
+    // and the host may mount the body in the same frame as the open.
+    if (resolved.link !== undefined) markLinked(resolved.path, resolved.link);
     try {
-      sidebar.openResource(address, { kind: DOCUMENT_PREVIEW_KIND });
+      sidebar.openResource?.(address, { kind: DOCUMENT_PREVIEW_KIND });
     } catch {
       try {
-        sidebar.openResource(address);
+        sidebar.openResource?.(address);
       } catch {
         notice(copy().noticeSidebarOpenFailed, "error");
         return;
       }
     }
     close();
+    if (resolved.link === undefined) return;
+    notifyComposer(copy().noticeOpenedLink(resolved.path), "info");
+  }
+
+  /**
+   * Where one row's file really lives.
+   *
+   * Only a link whose target is a regular file is followed: pointing the panel
+   * at a directory would trade one refusal for another.
+   */
+  async function resolveLink(
+    target: { readonly absolutePath: string; readonly addressPath: string },
+  ): Promise<{ readonly path: string; readonly link?: string }> {
+    const explorer = pathExplorerFace();
+    if (explorer?.inspect === undefined) return { path: target.addressPath };
+    try {
+      const answer = await explorer.inspect({ path: target.absolutePath });
+      const value = answer.ok ? answer.value : undefined;
+      if (value?.kind === "symlink" && value.targetKind === "file" && value.target !== undefined) {
+        return { path: value.target, link: target.absolutePath };
+      }
+    } catch {
+      // An inspection that cannot answer leaves the literal path in place; the
+      // preview then explains itself, which beats guessing at a target.
+    }
+    return { path: target.addressPath };
   }
 
   function acceptActive(): void {
@@ -1332,6 +1380,15 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
         slots.register(
           { name: "conversation.input.overlay", id: "command-panel.bridge", order: 90 },
           bridgeView,
+        ),
+      ),
+      // The document preview's header, where a symlinked file says where it
+      // really lives. Registered for the whole session, not per panel opening:
+      // the tab outlives the palette that opened it.
+      slots.inject(LINK_BADGE_SLOT, () =>
+        slots.register(
+          { name: LINK_BADGE_SLOT, id: LINK_BADGE_ID, order: 100 },
+          createLinkBadge({ React: deps.React, copy, explorer: pathExplorerFace }),
         ),
       ),
     ];

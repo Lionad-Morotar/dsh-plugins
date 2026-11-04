@@ -17,6 +17,7 @@ import { PANEL_MODAL, type PanelVerbs } from "../src/client/panel.ts";
 import type { ReactSlice } from "../src/client/react.ts";
 import { createRuntime, type PanelPlatform } from "../src/client/runtime.ts";
 import { copyFor } from "../src/client/copy.ts";
+import { forgetLinked, linkOfTarget } from "../src/client/link-marks.ts";
 import type {
   ClientContext,
   CommandDescriptor,
@@ -681,7 +682,8 @@ describe("sidebar open", () => {
     await onPanelFile(h);
     h.verbs.openInSidebar();
 
-    expect(h.sidebar.openResource).toHaveBeenCalledWith(PANEL_FILE_ADDRESS, { kind: "text" });
+    // Resolving a link is a host round trip, so the placement lands a tick later.
+    await vi.waitFor(() => expect(h.sidebar.openResource).toHaveBeenCalledWith(PANEL_FILE_ADDRESS, { kind: "text" }));
     expect(h.store.getSnapshot().open).toBe(false);
     // The column is the point of this accelerator: the file workbench is
     // Cmd+Enter's destination, and reaching it here would be the same jump
@@ -697,7 +699,7 @@ describe("sidebar open", () => {
     await onPanelFile(h);
     h.verbs.openInSidebar();
 
-    expect(h.sidebar.openResource).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(h.sidebar.openResource).toHaveBeenCalledTimes(2));
     expect(h.sidebar.openResource).toHaveBeenLastCalledWith(PANEL_FILE_ADDRESS);
     expect(h.store.getSnapshot().open).toBe(false);
   });
@@ -710,9 +712,8 @@ describe("sidebar open", () => {
     await onPanelFile(h);
     h.verbs.openInSidebar();
 
-    const snapshot = h.store.getSnapshot();
-    expect(snapshot.open).toBe(true);
-    expect(snapshot.notice).toBe(copyFor("zh").noticeSidebarOpenFailed);
+    await vi.waitFor(() => expect(h.store.getSnapshot().notice).toBe(copyFor("zh").noticeSidebarOpenFailed));
+    expect(h.store.getSnapshot().open).toBe(true);
   });
 
   it("says so when the host has no right column", async () => {
@@ -749,10 +750,79 @@ describe("sidebar open", () => {
     h.verbs.highlight(0);
     h.verbs.openInSidebar();
 
-    expect(h.sidebar.openResource).toHaveBeenCalledWith(
-      `dsh-resource://file/session/${SESSION_A.id}//Users/lionad/notes/todo.md`,
-      { kind: "text" },
+    await vi.waitFor(() =>
+      expect(h.sidebar.openResource).toHaveBeenCalledWith(
+        `dsh-resource://file/session/${SESSION_A.id}//Users/lionad/notes/todo.md`,
+        { kind: "text" },
+      ),
     );
+  });
+
+  it("follows a symlink and says which file really opened", async () => {
+    forgetLinked();
+    const h = harness({
+      pathExplorer: fakePathExplorer({
+        home: "/Users/lionad",
+        entries: [{ path: "/Users/lionad/.claude/CLAUDE.md", kind: "file", exists: true }],
+        inspect: () => ({ kind: "symlink", target: "/Users/lionad/.dsh/AGENTS.md", targetKind: "file" }),
+      }),
+    });
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    h.verbs.setQuery("/Users/lionad/.claude/CLA");
+    await vi.waitFor(() =>
+      expect(h.store.getSnapshot().rows.some(row => row.label === "/Users/lionad/.claude/CLAUDE.md")).toBe(true),
+    );
+    h.verbs.highlight(0);
+    h.verbs.openInSidebar();
+
+    // The host refuses to read through a link, so the tab is addressed at what
+    // the link points to; anything else would only open a refusal.
+    await vi.waitFor(() =>
+      expect(h.sidebar.openResource).toHaveBeenCalledWith(
+        `dsh-resource://file/session/${SESSION_A.id}//Users/lionad/.dsh/AGENTS.md`,
+        { kind: "text" },
+      ),
+    );
+    expect(linkOfTarget("/Users/lionad/.dsh/AGENTS.md")).toBe("/Users/lionad/.claude/CLAUDE.md");
+    expect(h.input.notify).toHaveBeenCalledWith("info", expect.stringContaining("/Users/lionad/.dsh/AGENTS.md"));
+  });
+
+  it("leaves a regular file at the path the row named", async () => {
+    forgetLinked();
+    const h = harness({
+      pathExplorer: fakePathExplorer({ inspect: () => ({ kind: "file" }) }),
+    });
+    await onPanelFile(h);
+    h.verbs.openInSidebar();
+
+    await vi.waitFor(() => expect(h.sidebar.openResource).toHaveBeenCalledWith(PANEL_FILE_ADDRESS, { kind: "text" }));
+    expect(linkOfTarget(PANEL_FILE)).toBeUndefined();
+    expect(h.input.notify).not.toHaveBeenCalled();
+  });
+
+  it("does not follow a link that points at a directory", async () => {
+    forgetLinked();
+    const h = harness({
+      pathExplorer: fakePathExplorer({
+        inspect: () => ({ kind: "symlink", target: "/Users/lionad/somewhere", targetKind: "directory" }),
+      }),
+    });
+    await onPanelFile(h);
+    h.verbs.openInSidebar();
+
+    // Trading one refusal for another is not an improvement: the literal path
+    // stays, and the preview explains what it found.
+    await vi.waitFor(() => expect(h.sidebar.openResource).toHaveBeenCalledWith(PANEL_FILE_ADDRESS, { kind: "text" }));
+  });
+
+  it("opens the literal path when the host half cannot inspect", async () => {
+    forgetLinked();
+    const h = harness();
+    await onPanelFile(h);
+    h.verbs.openInSidebar();
+
+    await vi.waitFor(() => expect(h.sidebar.openResource).toHaveBeenCalledWith(PANEL_FILE_ADDRESS, { kind: "text" }));
   });
 
   it("has no destination outside the navigate mode", async () => {
