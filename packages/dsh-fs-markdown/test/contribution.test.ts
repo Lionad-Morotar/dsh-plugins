@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { FsExplorerService, RendererContribution } from "../src/client/contracts.ts";
+import { TEXT_NAMES } from "../src/client/claims.ts";
 import { apply, inject, MARKDOWN_RENDERER, TEXT_RENDERER } from "../src/client/entry.ts";
 
 interface Harness {
@@ -126,6 +127,19 @@ describe("text-editor contribution", () => {
     expect(claimed.has(".yml")).toBe(true);
     expect(claimed.has(".md")).toBe(false);
     expect(claimed.has(".markdown")).toBe(false);
+  });
+
+  it("carries the suffix-less names on the names dimension", () => {
+    // These files have no dot, so a suffix claim can never reach them. The list
+    // has to reach the registry as names or the editor silently never wins them,
+    // which is exactly how Makefile stayed read-only while looking claimed.
+    expect(TEXT_RENDERER.match.names).toEqual([...TEXT_NAMES]);
+    expect(TEXT_RENDERER.match.names).toContain("makefile");
+    // And they must not be smuggled in as suffixes, which would match nothing.
+    const extensions = new Set(TEXT_RENDERER.match.extensions ?? []);
+    for (const name of TEXT_NAMES) {
+      expect(extensions.has(`.${name}`), name).toBe(false);
+    }
   });
 
   it("claims no binary family suffix", () => {

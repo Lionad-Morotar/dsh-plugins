@@ -109,7 +109,11 @@ export interface RendererContribution {
   /** Stable identity; a second registration of the same id is refused. */
   readonly id: string;
   readonly label: string;
-  readonly match: { readonly extensions?: readonly string[] };
+  readonly match: {
+    readonly extensions?: readonly string[];
+    /** Whole basenames, for the files that have no suffix to match on. */
+    readonly names?: readonly string[];
+  };
   /** Larger wins; ties break on id. */
   readonly priority?: number;
   load(): Promise<RendererModule>;

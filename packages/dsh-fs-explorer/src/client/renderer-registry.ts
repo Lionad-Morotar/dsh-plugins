@@ -84,6 +84,16 @@ export interface RendererMatch {
   readonly extensions?: readonly string[];
   /** Families from the shared format catalogue (`preview.ts#familyOf`). */
   readonly families?: readonly string[];
+  /**
+   * Whole basenames, compared lowercased.
+   *
+   * A file like `Makefile` has no suffix to match, so the other two dimensions
+   * cannot reach it at all; without this one an editor that lists such names
+   * silently never wins them. Only a name that is the entire basename matches: a
+   * claim for `makefile` does not reach `Makefile.bak`, which is a different file
+   * with a suffix of its own.
+   */
+  readonly names?: readonly string[];
 }
 
 /** One renderer a plugin has registered. */
@@ -155,6 +165,7 @@ interface Entry {
   readonly contribution: RendererContribution;
   readonly extensions: readonly string[];
   readonly families: readonly string[];
+  readonly names: readonly string[];
 }
 
 /**
@@ -182,15 +193,28 @@ function normalizeExtension(value: string): string {
 }
 
 /**
+ * The basename of one path, lowercased.
+ *
+ * The names dimension matches this whole string, which is why a claim for
+ * `makefile` cannot reach `Makefile.bak`: the suffix is part of the basename.
+ * @param path - workspace path or bare file name.
+ * @returns the lowercased basename.
+ */
+function baseNameOf(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1).toLowerCase();
+}
+
+/**
  * Whether one registration claims a file.
  *
  * Any declared dimension matching is enough, which is what lets a contribution
  * name both a suffix and a family without having to satisfy both.
  */
-function claims(entry: Entry, suffix: string, family: string | null): boolean {
-  if (entry.extensions.length === 0 && entry.families.length === 0) return true;
+function claims(entry: Entry, suffix: string, family: string | null, baseName: string): boolean {
+  if (entry.extensions.length === 0 && entry.families.length === 0 && entry.names.length === 0) return true;
   if (suffix !== "" && entry.extensions.includes(suffix)) return true;
-  return family !== null && entry.families.includes(family);
+  if (family !== null && entry.families.includes(family)) return true;
+  return entry.names.includes(baseName);
 }
 
 /**
@@ -239,6 +263,7 @@ export function createRendererRegistry(options: RendererRegistryOptions = {}): R
         contribution,
         extensions: (contribution.match?.extensions ?? []).map(normalizeExtension),
         families: [...(contribution.match?.families ?? [])],
+        names: (contribution.match?.names ?? []).map(name => name.toLowerCase()),
       });
       notify();
       let live = true;
@@ -253,9 +278,10 @@ export function createRendererRegistry(options: RendererRegistryOptions = {}): R
     resolve(query) {
       const suffix = suffixOf(query.path);
       const family = familyOf(query.path);
+      const baseName = baseNameOf(query.path);
       let winner: Entry | undefined;
       for (const entry of entries.values()) {
-        if (!claims(entry, suffix, family)) continue;
+        if (!claims(entry, suffix, family, baseName)) continue;
         if (winner === undefined || outranks(entry.contribution, winner.contribution)) winner = entry;
       }
       return winner?.contribution;

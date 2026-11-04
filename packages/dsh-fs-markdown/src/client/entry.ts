@@ -16,7 +16,7 @@
  * for every file this plugin cannot edit; see `claims.ts` for why.
  */
 import { MarkdownBody, TextEditorBody, configureBody } from "./body.tsx";
-import { claimsTextFile, TEXT_SUFFIXES } from "./claims.ts";
+import { claimsTextFile, TEXT_NAMES, TEXT_SUFFIXES } from "./claims.ts";
 import { boot, editorChunkRoute, loadEditorChunk, type LoaderRequire } from "./chunk-loader.ts";
 import type { DocumentStoreFace, FsExplorerService, RendererContribution } from "./contracts.ts";
 import { EN, ZH, translatorFor, type Translate } from "./copy.ts";
@@ -64,11 +64,17 @@ const TEXT_EXTENSIONS: readonly string[] = TEXT_SUFFIXES.map(suffix => `.${suffi
  * it beats the read-only source view, and loses to the Markdown claim for the
  * suffixes both could be read as. The suffix list is an allow-list, so a binary
  * family or an unknown extension keeps the renderer it already had.
+ *
+ * The names dimension carries the suffix-less files an editor opens. They have
+ * no dot to match on, so listing them as suffixes would never reach them: a
+ * `Makefile` claim spelled `.makefile` matches nothing. Both lists come from
+ * `claims.ts`, so the claim the registry sees and the claim the tests assert
+ * cannot drift apart.
  */
 export const TEXT_RENDERER: RendererContribution = {
   id: "text-editor",
   label: "Text",
-  match: { extensions: TEXT_EXTENSIONS },
+  match: { extensions: TEXT_EXTENSIONS, names: TEXT_NAMES },
   priority: 5,
   load: () => Promise.resolve({ Body: TextEditorBody, renderer: "text-editor" }),
 };
