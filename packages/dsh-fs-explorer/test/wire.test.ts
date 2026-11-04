@@ -96,6 +96,29 @@ describe("createGitStatusResolver", () => {
     expect(createGitStatusResolver({})()).toBeUndefined();
     expect(createGitStatusResolver({ remote: { gitExplorer: { query: () => undefined } } })()).toBeUndefined();
   });
+
+  it("prefers the raw RPC over a stale typed namespace", async () => {
+    const calls: { endpoint: string; payload: unknown }[] = [];
+    const ctx = {
+      remote: { gitExplorer: { snapshot: () => Promise.resolve({ ok: true, value: { ok: true, snapshot: { status: "stale" } } }) } },
+      get: (name: string) =>
+        name === "connection"
+          ? {
+              rpc: {
+                call: async (_scope: string, endpoint: string, payload: unknown) => {
+                  calls.push({ endpoint, payload });
+                  return { ok: true, value: { ok: true, snapshot: { isRepository: true, status: "", remotes: [] } } };
+                },
+              },
+            }
+          : undefined,
+    };
+    const resolved = createGitStatusResolver(ctx)();
+    expect(resolved).not.toBe(ctx.remote.gitExplorer);
+    await resolved?.snapshot({ sessionId: "s1", maxCommits: 1 });
+    expect(calls[0]?.endpoint).toBe("gitExplorer/snapshot");
+    expect(calls[0]?.payload).toEqual({ args: { request: { sessionId: "s1", maxCommits: 1 } } });
+  });
 });
 
 describe("normalizeStatusSnapshot", () => {

@@ -116,19 +116,30 @@ export function createRpcWorkspaceFace(call: WorkspaceRpcCall): WorkspaceFace {
 
 /** Whether a value is the workspace face rather than a Cordis stub. */
 export function isWorkspaceFace(value: unknown): value is WorkspaceFace {
-  return isRecord(value) && typeof value.info === "function" && typeof value.reveal === "function";
+  return (
+    isRecord(value) &&
+    typeof value.capabilities === "function" &&
+    typeof value.info === "function" &&
+    typeof value.reveal === "function"
+  );
 }
 
 /**
  * Resolve the workspace namespace on every call so a late mount works.
  *
- * Order: the injected service, the generated table, the non-throwing resolver,
- * then the raw connection RPC that hand-published host halves actually reach.
+ * Order: the raw connection RPC first, then the injected service, the generated
+ * table, and the non-throwing resolver. The raw route is what a hand-published
+ * host half answers on; a stale generated stub can expose `info` and `reveal`
+ * while lacking the capability probe, which would silently disable both the
+ * reveal row and the create rows.
  * @param ctx - the client context this row was applied to.
  * @returns a resolver that answers undefined while no transport exists.
  */
 export function createWorkspaceResolver(ctx: WorkspaceContextLike): () => WorkspaceFace | undefined {
   return () => {
+    const call = createWorkspaceRpc(ctx);
+    if (call !== undefined) return createRpcWorkspaceFace(call);
+
     const direct = safeRead(() => ctx.fsExplorerWorkspace);
     if (isWorkspaceFace(direct)) return direct;
 
@@ -139,9 +150,6 @@ export function createWorkspaceResolver(ctx: WorkspaceContextLike): () => Worksp
       typeof ctx.get === "function" ? ctx.get("remote.fsExplorerWorkspace") : undefined,
     );
     if (isWorkspaceFace(viaGet)) return viaGet;
-
-    const call = createWorkspaceRpc(ctx);
-    if (call !== undefined) return createRpcWorkspaceFace(call);
     return undefined;
   };
 }

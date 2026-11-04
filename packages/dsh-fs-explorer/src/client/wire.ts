@@ -511,17 +511,49 @@ export function isGitStatusFace(value: unknown): value is GitStatusFace {
 }
 
 /**
- * Resolve `remote.gitExplorer` without assuming the namespace is mounted.
+ * Reach `gitExplorer/snapshot` through the raw connection RPC.
  *
- * The Git panel's host half is optional in this deployment: a profile without
- * it must paint uncoloured rows, not an error. The documented path is tried
- * first; Cordis's non-throwing resolver is the fallback for hosts that enforce
- * the inject whitelist on nested services.
+ * The typed `remote.gitExplorer` namespace can be a generated stub from an
+ * older client artifact: it exposes `snapshot` but answers the old shape, so
+ * the tree would lose both status colouring and the remote list. The Git panel
+ * itself uses this route; preferring it for the file tree keeps the two panels
+ * on the same host build. Typed faces remain the fallback for hosts without a
+ * connection service.
+ * @param ctx - client context carrying the connection service.
+ * @returns the snapshot face, or undefined when no transport exists.
+ */
+function createGitStatusRpc(ctx: StatusContextLike): GitStatusFace | undefined {
+  const connection = safeRead(() =>
+    typeof ctx.get === "function" ? (ctx.get("connection") as GitConnectionFace | undefined) : undefined,
+  );
+  const candidate = isRecord(connection) ? connection.rpc : undefined;
+  if (!isRecord(candidate) || typeof candidate.call !== "function") return undefined;
+  const call = candidate.call as (
+    scope: string,
+    endpoint: string,
+    payload: unknown,
+    signal?: AbortSignal,
+  ) => Promise<unknown>;
+  return {
+    snapshot: (request, signal) =>
+      call.call(candidate, "/api", "gitExplorer/snapshot", { args: { request } }, signal),
+  };
+}
+
+/**
+ * Resolve the Git snapshot face.
+ *
+ * The raw RPC is preferred because the typed namespace is only a generated
+ * convenience and can lag the host half. If this host has no connection
+ * service, the documented typed paths are still tried, so a partial
+ * composition keeps its status colouring.
  * @param ctx - the client context this row was applied to.
  * @returns a resolver that answers undefined while the Git face is absent.
  */
 export function createGitStatusResolver(ctx: StatusContextLike): StatusResolver {
   return () => {
+    const viaRpc = createGitStatusRpc(ctx);
+    if (viaRpc !== undefined) return viaRpc;
     const direct = safeRead(() => (ctx.remote as { readonly gitExplorer?: unknown } | undefined)?.gitExplorer);
     if (isGitStatusFace(direct)) return direct;
     const viaGet = safeRead(() => (typeof ctx.get === "function" ? ctx.get("remote.gitExplorer") : undefined));

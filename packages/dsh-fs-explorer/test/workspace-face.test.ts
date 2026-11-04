@@ -86,6 +86,18 @@ describe("createWorkspaceResolver", () => {
     expect(typeof resolve()?.info).toBe("function");
   });
 
+  it("skips a stale typed stub that cannot answer capabilities", async () => {
+    const { ctx, calls } = connection({
+      ok: true,
+      value: { ok: true, capabilities: { fileManager: "finder", canReveal: true } },
+    });
+    const stale = { info: async () => ({}), reveal: async () => ({}) };
+    const face = createWorkspaceResolver({ ...ctx, fsExplorerWorkspace: stale })();
+    expect(typeof face?.capabilities).toBe("function");
+    await face?.capabilities({ sessionId: "s1" });
+    expect(calls[0]?.endpoint).toBe(`${WORKSPACE_SERVICE}/capabilities`);
+  });
+
   it("answers undefined when the host exposes no channel at all", () => {
     expect(createWorkspaceResolver({ get: () => undefined })()).toBeUndefined();
   });

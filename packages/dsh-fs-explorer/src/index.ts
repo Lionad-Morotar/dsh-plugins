@@ -291,7 +291,7 @@ export class FsExplorerWorkspaceService extends TypertRemoteService {
    * answer about the desktop.
    */
   @Remote("capabilities")
-  capabilities(request: WorkspaceCapabilitiesRequest): WorkspaceCapabilitiesResult {
+  async capabilities(request: WorkspaceCapabilitiesRequest): Promise<WorkspaceCapabilitiesResult> {
     void request;
     return capabilitiesResult(this.env);
   }

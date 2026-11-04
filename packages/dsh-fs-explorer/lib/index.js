@@ -602,7 +602,7 @@ var FsExplorerWorkspaceService = class extends (_a2 = TypertRemoteService, _capa
     if (cwd === void 0) return fail2("no-workspace", `session ${sessionId} has no workspace directory`);
     return { fs: this.fs, cwd, env: this.env };
   }
-  capabilities(request) {
+  async capabilities(request) {
     void request;
     return capabilitiesResult(this.env);
   }
