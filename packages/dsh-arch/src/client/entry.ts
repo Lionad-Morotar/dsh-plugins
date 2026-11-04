@@ -270,6 +270,9 @@ export async function mountArchDiagram(
     positions,
     onSelect: interactions.onSelect,
     onViewportChange: interactions.onViewportChange,
+    onEdgeClick: interactions.onEdgeClick,
+    onNodeAction: interactions.onNodeAction,
+    onBackgroundClick: interactions.onBackgroundClick,
     onMove: (id, x, y) => {
       const base = view.nodes.find(node => node.id === id);
       if (base !== undefined) state.queueOffset(view.id, id, offsetFromDrag(base, x, y));

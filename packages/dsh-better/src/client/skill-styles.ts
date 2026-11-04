@@ -33,8 +33,14 @@ export const SKILL_ENHANCER_SHEET = `
 .dsh-better-skill-panel {
   position: fixed;
   z-index: 60;
+  /* Width is chosen by the caller from the description's real length, so the
+     stylesheet only bounds it: narrow enough to feel like a tooltip for skills
+     with a one-line description, wide enough for the ~200-character ones that
+     dominate the installed catalog. The 640px ceiling is where 200 Chinese
+     characters land on ~4 lines; wider stops paying for itself because the
+     panel would then cover the transcript it is anchored over. */
   min-width: 240px;
-  max-width: 380px;
+  max-width: min(640px, calc(100vw - 24px));
   max-height: min(420px, 60vh);
   overflow: auto;
   box-sizing: border-box;
@@ -55,6 +61,19 @@ export const SKILL_ENHANCER_SHEET = `
   margin-bottom: 6px;
   font-size: 13px;
   font-weight: 600;
+}
+.dsh-better-skill-panel-desc {
+  margin-bottom: 8px;
+  color: var(--dsw-alias-label-secondary);
+  /* Long descriptions (the catalog runs to 895 characters) must not turn the
+     panel into a wall of text: four lines is roughly the 200-character budget
+     the width above is sized for, and anything past it is reachable by hovering
+     the title, which carries the full string. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
 }
 .dsh-better-skill-panel-section {
   margin-top: 8px;

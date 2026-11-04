@@ -17,8 +17,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   appendParam,
+  clampPanelLeft,
   hintLinesFor,
+  panelMaxWidth,
   panelPlacement,
+  panelWidthFor,
   panelVisibleFor,
   paramInsertionText,
   renderGhost,
@@ -225,6 +228,7 @@ function panelDeps(): Parameters<typeof renderPanel>[1] {
 
 const PROFILE: SkillProfileWire = {
   name: "flow-workflow",
+  description: "文档驱动的动态工作流：编排剧本写成工作流文档，主代理按文档编排子代理执行。",
   path: "/skills/flow-workflow/SKILL.md",
   argumentHint: "[--create] [--scope <package|project|global>]",
   metadata: { owner: "lionad" },
@@ -277,6 +281,92 @@ describe("panelPlacement", () => {
   });
 });
 
+describe("panelWidthFor", () => {
+  /** A wide desktop window: nothing is clamped by the viewport. */
+  const WIDE = 1600;
+
+  it("stays narrow for a skill with no description", () => {
+    expect(panelWidthFor(0, WIDE)).toBe(240);
+  });
+
+  it("stays narrow for a one-line description", () => {
+    expect(panelWidthFor(40, WIDE)).toBe(320);
+  });
+
+  it("widens for the catalog's typical description", () => {
+    // The installed catalog's median description is 175 characters.
+    expect(panelWidthFor(175, WIDE)).toBe(480);
+  });
+
+  it("takes the full width for the ~200-character budget", () => {
+    expect(panelWidthFor(200, WIDE)).toBe(640);
+    expect(panelWidthFor(201, WIDE)).toBe(640);
+  });
+
+  it("does not grow past the ceiling for very long descriptions", () => {
+    // The longest installed description is 895 characters; the panel clamps and
+    // the stylesheet ellipsizes rather than opening a full-width slab.
+    expect(panelWidthFor(895, WIDE)).toBe(640);
+  });
+
+  it("never exceeds a narrow viewport", () => {
+    expect(panelWidthFor(895, 400)).toBe(376);
+  });
+
+  it("never shrinks below the minimum on a tiny viewport", () => {
+    expect(panelWidthFor(895, 100)).toBe(240);
+  });
+
+  it("falls back to the ceiling when the viewport width is unknown", () => {
+    expect(panelWidthFor(895, 0)).toBe(640);
+  });
+
+  it("treats a non-finite length as no description", () => {
+    expect(panelWidthFor(Number.NaN, WIDE)).toBe(240);
+  });
+});
+
+describe("panelMaxWidth", () => {
+  it("caps at the stylesheet ceiling on a wide window", () => {
+    expect(panelMaxWidth(1600)).toBe(640);
+  });
+
+  it("leaves a margin on both sides of a narrow window", () => {
+    expect(panelMaxWidth(500)).toBe(476);
+  });
+
+  it("never returns less than the minimum", () => {
+    expect(panelMaxWidth(100)).toBe(240);
+  });
+
+  it("ignores an unknown viewport", () => {
+    expect(panelMaxWidth(0)).toBe(640);
+  });
+});
+
+describe("clampPanelLeft", () => {
+  it("keeps a panel that already fits", () => {
+    expect(clampPanelLeft(120, 480, 1600, 12)).toBe(120);
+  });
+
+  it("pulls a panel back from the right edge", () => {
+    // 100 + 640 would end at 740 in a 700px window; the left edge moves to 48.
+    expect(clampPanelLeft(100, 640, 700, 12)).toBe(48);
+  });
+
+  it("keeps the left margin when the panel is wider than the window", () => {
+    expect(clampPanelLeft(300, 640, 400, 12)).toBe(12);
+  });
+
+  it("never returns a negative left edge", () => {
+    expect(clampPanelLeft(-40, 480, 1600, 12)).toBe(12);
+  });
+
+  it("does nothing when the viewport is unknown", () => {
+    expect(clampPanelLeft(-40, 480, 0, 12)).toBe(-40);
+  });
+});
+
 describe("renderPanel", () => {
   it("renders the blocks in order: title, metadata, path, counts, params", () => {
     const { doc } = stubDocument();
@@ -302,6 +392,63 @@ describe("renderPanel", () => {
     ].map(name => classes.indexOf(name));
     expect(order.every(index => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("renders the description under the name, before the metadata block", () => {
+    const { doc } = stubDocument();
+    const panel = asStub(renderPanel(doc, panelDeps(), {
+      name: "flow-workflow",
+      profile: PROFILE,
+      usage: { session: 1 },
+      box: undefined,
+      sessionId: "s1",
+      getActions: () => undefined,
+      getDraft: () => "/flow-workflow ",
+      onEnter: () => {},
+      onLeave: () => {},
+    }));
+
+    const classes = classesOf(panel);
+    const titleAt = classes.indexOf("dsh-better-skill-panel-title");
+    const descAt = classes.indexOf("dsh-better-skill-panel-desc");
+    const metaAt = classes.indexOf("dsh-better-skill-panel-section");
+    expect(descAt).toBeGreaterThan(titleAt);
+    expect(descAt).toBeLessThan(metaAt);
+  });
+
+  it("carries the full description on the title attribute for the clamp", () => {
+    const { doc } = stubDocument();
+    const panel = asStub(renderPanel(doc, panelDeps(), {
+      name: "flow-workflow",
+      profile: PROFILE,
+      usage: undefined,
+      box: undefined,
+      sessionId: "s1",
+      getActions: () => undefined,
+      getDraft: () => "/flow-workflow ",
+      onEnter: () => {},
+      onLeave: () => {},
+    }));
+
+    const desc = panel.children.find(child => child.className === "dsh-better-skill-panel-desc");
+    expect(desc?.title).toBe(PROFILE.description);
+  });
+
+  it("omits the description row when the skill has none", () => {
+    const { doc } = stubDocument();
+    const panel = asStub(renderPanel(doc, panelDeps(), {
+      name: "virtual",
+      profile: { name: "virtual", metadata: {}, params: [] },
+      usage: undefined,
+      box: undefined,
+      sessionId: "s1",
+      getActions: () => undefined,
+      getDraft: () => "",
+      onEnter: () => {},
+      onLeave: () => {},
+    }));
+
+    expect(classesOf(panel)).not.toContain("dsh-better-skill-panel-desc");
   });
 
   it("anchors the panel above the token when the composer sits low", () => {

@@ -58,12 +58,14 @@ const HOST_MAX_BYTES = 256 * 1024;
 
 /**
  * Startup-bundle budgets. client.js boots on every page; the diagram chunk is
- * only fetched when a panel mounts. The prototype renderer was ~3.7KB raw, so
- * these leave room for interaction features, not for a second renderer.
+ * only fetched when a panel mounts. The prototype renderer was ~3.7KB raw; the
+ * chunk has since grown arrow markers, edge motion, the node action bar and the
+ * relations pane, so its budget is 40KB. Exceeding that means the renderer has
+ * stopped being the cheap half of the cost model, not that a feature is missing.
  */
 const SIZE_BUDGETS = {
   "client.js": 32 * 1024,
-  [DIAGRAM_CHUNK]: 24 * 1024,
+  [DIAGRAM_CHUNK]: 40 * 1024,
 };
 
 /**
