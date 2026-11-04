@@ -249,6 +249,15 @@ export interface ViewRequestSink {
    * @param revision - commit object id when the request names a commit version.
    */
   open(path: string, line: number, absolute: boolean, revision?: string): void;
+  /**
+   * Select one requested row without opening a panel.
+   *
+   * A `reveal:` request names a row to put the tree cursor on; a sink that
+   * cannot move a cursor has nothing to do with it, and the request is then
+   * left unconsumed rather than opened as a panel.
+   * @param path - normalized workspace-relative path.
+   */
+  reveal?(path: string): void;
 }
 
 /** One stack per conversation, owned by the view factory that mounts them. */
@@ -284,17 +293,23 @@ export function createPanelStackRegistry(): PanelStackRegistry {
  * Parse and consume one `openView("fs-explorer", focus)` request.
  *
  * Callers hand over `path:<workspace path>:<line>` (the Git changes pane, the
- * command palette), `abs:<filesystem path>:<line>` (the address bridge) or
- * `git:<hash>:<line>:<path>` (commit details); anything else is left alone. The
- * caller owns `completeViewRequest()` because only the host knows when the
- * request has been painted.
+ * command palette), `abs:<filesystem path>:<line>` (the address bridge),
+ * `git:<hash>:<line>:<path>` (commit details) or `reveal:<workspace path>` (the
+ * side bars, which want the row selected and no panel opened); anything else is
+ * left alone. The caller owns `completeViewRequest()` because only the host
+ * knows when the request has been painted.
  * @param focus - the request payload, or undefined when the tab was opened directly.
- * @param sink - opens the parsed path at the parsed line.
+ * @param sink - opens the parsed path at the parsed line, or selects it.
  * @returns whether the focus was a path request.
  */
 export function consumeViewRequest(focus: string | undefined, sink: ViewRequestSink): boolean {
   const target = parseFocus(focus);
   if (target === undefined) return false;
+  if (target.reveal === true) {
+    if (sink.reveal === undefined) return false;
+    sink.reveal(target.path);
+    return true;
+  }
   sink.open(target.path, target.line, target.absolute, target.revision);
   return true;
 }

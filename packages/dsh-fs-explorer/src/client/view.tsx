@@ -32,6 +32,7 @@ import {
   flattenTree,
   isAbsolutePath,
   listingPath,
+  type TreeKind,
   type TreeLevel,
   type TreeRow,
 } from "./model.ts";
@@ -588,6 +589,101 @@ export function createFsExplorerView({
       return () => controller.abort();
     }, [sessionId, files, rootReady, gitRoot, reloadToken]);
 
+    const [cursorRequest, setCursorRequest] = useState<TreeCursorRequest | undefined>(undefined);
+    const cursorPath = useRef<string | undefined>(undefined);
+    const requestNonce = useRef(0);
+    // A reveal that arrived before its row existed waits here. The row list is
+    // the only thing that knows when the ancestors finished listing, so the
+    // held path is served the moment it appears rather than dropped.
+    const pendingReveal = useRef<string | undefined>(undefined);
+    // Set once a reveal is the reason this view is on screen, so the arrival
+    // gesture does not answer it by opening the workspace front page.
+    const revealOnly = useRef(false);
+
+    // One gesture, one nonce: the tree serves a request once and a re-render
+    // must not replay it.
+    const askCursor = useCallback((path: string | undefined, delta: number | undefined, focus: boolean): void => {
+      requestNonce.current += 1;
+      setCursorRequest({ nonce: requestNonce.current, ...(path === undefined ? {} : { path }), ...(delta === undefined ? {} : { delta }), focus });
+    }, []);
+
+    /**
+     * Open the ancestors of one path so its row can exist, and list them.
+     *
+     * A row is only rendered once its parent's listing is in the ledger, so the
+     * chain is both expanded and read. A directory named by the path also needs
+     * its own listing: a reveal lands the cursor on it, and a search result that
+     * is a directory expands it, and both want the children to be there. The
+     * caller decides what happens to the row afterwards, which is the whole
+     * difference between opening a result and revealing one.
+     * @param path - a workspace-relative path.
+     * @param kind - the entry's kind when the caller knows it, so a directory's own level is listed.
+     */
+    const revealAncestors = useCallback(
+      (path: string, kind: TreeKind | undefined): void => {
+        const chain = revealChain(path);
+        setExpanded(previous => {
+          const next = new Set(previous);
+          for (const directory of chain) next.add(directory);
+          return next;
+        });
+        if (sessionId === undefined || files === undefined) return;
+        for (const directory of chain) {
+          if (levelsRef.current.get(directory) === undefined) void loadLevel(directory, sessionId, files);
+        }
+        if (kind === "directory" && levelsRef.current.get(path) === undefined) {
+          void loadLevel(path, sessionId, files);
+        }
+      },
+      [files, loadLevel, sessionId],
+    );
+
+    /**
+     * Move the tree cursor onto one path without opening a panel.
+     *
+     * A side bar asks for the row, not the file: opening a directory as a panel
+     * would replace what the reader is looking at with an empty tab. The cursor
+     * is the same state the arrow keys write, so the row highlights and the next
+     * key press continues from there. A directory is also expanded, because a
+     * selection that hides its contents answers half the question the reader
+     * asked.
+     */
+    const revealRequest = useCallback(
+      (path: string): void => {
+        const entry = listedEntries(levelsRef.current).find(candidate => candidate.path === path);
+        revealAncestors(path, entry?.kind);
+        if (entry?.kind === "directory") setExpanded(previous => new Set(previous).add(path));
+        // A reveal is the whole request, so the arrival gesture must not answer
+        // it by opening the workspace front page: the reader asked for a row.
+        revealOnly.current = true;
+        if (entry === undefined) {
+          // The row does not exist yet: its ancestors are still loading, so the
+          // request is held and served once the row list can honour it.
+          pendingReveal.current = path;
+          return;
+        }
+        askCursor(path, undefined, true);
+      },
+      [askCursor, revealAncestors],
+    );
+
+    /**
+     * Route one focus request to the panel stack or to the tree cursor.
+     *
+     * Every entry point (the host's view request, the core's focus queue) hands
+     * its focus here, so the split between "open this file" and "select this
+     * row" is decided once.
+     */
+    const handleFocus = useCallback(
+      (focus: string | undefined): void => {
+        consumeViewRequest(focus, {
+          open: openRequest,
+          reveal: revealRequest,
+        });
+      },
+      [openRequest, revealRequest],
+    );
+
     // The Git panel jumps with `path:<workspace path>:<line>` and the address
     // bridge with `abs:<filesystem path>:<line>`; consume that request once,
     // open the panel, and remember a relative target until the root level can
@@ -599,9 +695,9 @@ export function createFsExplorerView({
       const key = `${request.view}:${request.focus}`;
       if (handledRequest.current === key) return;
       handledRequest.current = key;
-      consumeViewRequest(request.focus, { open: openRequest });
+      handleFocus(request.focus);
       props.completeViewRequest?.();
-    }, [props.viewRequest, props.completeViewRequest, openRequest]);
+    }, [props.viewRequest, props.completeViewRequest, handleFocus]);
 
     // A caller outside the View More menu cannot hand the host's focus to this
     // view, so it leaves one in the core's queue instead. Take whatever is
@@ -613,11 +709,11 @@ export function createFsExplorerView({
       const consume = (): void => {
         const focus = queue.take(VIEW_ID);
         if (focus === undefined) return;
-        consumeViewRequest(focus, { open: openRequest });
+        handleFocus(focus);
       };
       consume();
       return queue.subscribe(consume);
-    }, [workbench, sessionId, openRequest]);
+    }, [workbench, sessionId, handleFocus]);
 
     // The active panel is the single source of reveal: every entry point — a
     // focus request, a tab click, the ⌘⌥ arrows, a close fallback or a remount
@@ -826,16 +922,6 @@ export function createFsExplorerView({
     const [searchResults, setSearchResults] = useState<readonly TreeRow[]>([]);
     const [searchOrigin, setSearchOrigin] = useState<SearchOrigin | null>(null);
     const [searchBusy, setSearchBusy] = useState(false);
-    const [cursorRequest, setCursorRequest] = useState<TreeCursorRequest | undefined>(undefined);
-    const cursorPath = useRef<string | undefined>(undefined);
-    const requestNonce = useRef(0);
-
-    // One gesture, one nonce: the tree serves a request once and a re-render
-    // must not replay it.
-    const askCursor = useCallback((path: string | undefined, delta: number | undefined, focus: boolean): void => {
-      requestNonce.current += 1;
-      setCursorRequest({ nonce: requestNonce.current, ...(path === undefined ? {} : { path }), ...(delta === undefined ? {} : { delta }), focus });
-    }, []);
 
     // The search answer. The index answers across the whole workspace, so it is
     // asked first; only its absence falls back to the listed entries, and which
@@ -892,6 +978,22 @@ export function createFsExplorerView({
     const searching = searchOpen && searchOrigin !== null;
     const shownRows = searching ? searchResults : rows;
 
+    // Serve a held reveal as soon as its row lands in the tree. The kind is
+    // resolved here rather than at request time because the listing that
+    // carries the row is also what says whether it is a directory.
+    useEffect(() => {
+      const path = pendingReveal.current;
+      if (path === undefined) return;
+      const entry = listedEntries(levelsRef.current).find(candidate => candidate.path === path);
+      if (entry === undefined) return;
+      pendingReveal.current = undefined;
+      if (entry.kind === "directory") {
+        revealAncestors(path, entry.kind);
+        setExpanded(previous => new Set(previous).add(path));
+      }
+      askCursor(path, undefined, true);
+    }, [rows, askCursor, revealAncestors]);
+
     // The arrival gesture. The stack outlives the mount, so a first arrival
     // with nothing open opens the workspace front page and hands the keyboard
     // to the tree, while a return visit only takes the second half of that.
@@ -913,6 +1015,9 @@ export function createFsExplorerView({
       // yet, and the effect runs again when they do.
       if (intent.kind === "skip") return;
       entryClaimed.current = true;
+      // A reveal asked for a row, not a file: opening the front page here would
+      // put a panel up that the caller deliberately did not ask for.
+      if (revealOnly.current) return;
       if (intent.open !== undefined) stack.open(intent.open);
       setEntryFocus({ path: intent.focus });
     }, [rows, stack]);
@@ -962,30 +1067,14 @@ export function createFsExplorerView({
     const openSearchResult = useCallback(
       (path: string): void => {
         const entry = listedEntries(levelsRef.current).find(candidate => candidate.path === path);
-        const chain = revealChain(path);
-        setExpanded(previous => {
-          const next = new Set(previous);
-          for (const directory of chain) next.add(directory);
-          return next;
-        });
-        // Ancestors the tree has never listed have to be read before the row
-        // can exist; a directory the index returned needs its own listing too.
-        if (sessionId !== undefined && files !== undefined) {
-          for (const directory of chain) {
-            const level = levelsRef.current.get(directory);
-            if (level === undefined) void loadLevel(directory, sessionId, files);
-          }
-          if (entry?.kind === "directory" && levelsRef.current.get(path) === undefined) {
-            void loadLevel(path, sessionId, files);
-          }
-        }
+        revealAncestors(path, entry?.kind);
         if (entry?.kind === "directory") {
           setExpanded(previous => new Set(previous).add(path));
           return;
         }
         stack.open(path);
       },
-      [files, loadLevel, sessionId, stack],
+      [revealAncestors, stack],
     );
 
     const activateSearchRow = useCallback((): void => {
