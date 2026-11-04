@@ -19,6 +19,7 @@
     "./chunks/scene3d.tsx": "./src/chunks/scene3d.tsx",
     "./chunks/cad.tsx": "./src/chunks/cad.tsx",
     "./chunks/raster.tsx": "./src/chunks/raster.tsx",
+    "./chunks/image.tsx": "./src/chunks/image.tsx",
     "./build/draco-plugin.mjs": "./build/draco-plugin.mjs",
     "./package.json": "./package.json"
   },
