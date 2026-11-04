@@ -690,6 +690,7 @@ function apply(ctx, config) {
   new FsExplorerDocumentsService(ctx, config);
   new FsExplorerWorkspaceService(ctx);
 }
+apply.inject = inject;
 var index_default = apply;
 export {
   DEFAULT_DOCUMENTS_CONFIG,

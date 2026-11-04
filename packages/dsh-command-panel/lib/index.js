@@ -335,6 +335,8 @@ function apply(ctx) {
   new HostShutdownService(ctx);
   new NativeOpenService(ctx);
 }
+apply.inject = inject;
+var index_default = apply;
 export {
   HostShutdownService,
   NativeOpenService,
@@ -342,7 +344,8 @@ export {
   PATH_SERVICE,
   PathExplorerService,
   SHUTDOWN_SERVICE,
-  apply as default,
+  apply,
+  index_default as default,
   inject,
   name,
   requestShutdown
