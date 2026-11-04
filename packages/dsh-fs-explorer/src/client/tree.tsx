@@ -76,6 +76,16 @@ export function RefreshIcon() {
   );
 }
 
+/** The header's search glyph. */
+export function SearchIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="7" cy="7" r="4.2" />
+      <path d="m10.2 10.2 3.3 3.3" />
+    </svg>
+  );
+}
+
 /** The header's collapse-all glyph. */
 export function CollapseIcon() {
   return (
@@ -158,6 +168,11 @@ export function TreeRowView({ row, selected, cursor, top, t, onToggle, onSelect,
         <FileBadge name={row.name} />
       )}
       <span className="fx-name">{row.name}</span>
+      {row.directory === undefined || row.directory === "" ? null : (
+        <span className="fx-row-dir" data-testid="fx-row-dir">
+          {row.directory}
+        </span>
+      )}
       {row.tag === undefined ? null : (
         <span
           className="fx-tag"
@@ -273,6 +288,25 @@ export function focusTreeEntry(scroller: HTMLElement | null): void {
   scroller.focus({ preventScroll: true });
 }
 
+/**
+ * A cursor move asked for from outside the tree's own key handler.
+ *
+ * The search bar sits outside the scroll container, so its gesture cannot reach
+ * the handler that owns the cursor. This is the channel back in: a nonce makes
+ * the request idempotent across renders, and `focus` says whether the tree may
+ * take the keyboard — a result cursor moved while the reader is still typing
+ * must leave the caret in the field.
+ */
+export interface TreeCursorRequest {
+  readonly nonce: number;
+  /** Land on this row's path when present; otherwise step from the cursor. */
+  readonly path?: string;
+  /** `1` steps down, `-1` steps up; only read when {@link path} is absent. */
+  readonly delta?: number;
+  /** Whether the scroll container takes DOM focus; false leaves it alone. */
+  readonly focus?: boolean;
+}
+
 /** Props for the virtualized tree body. */
 export interface TreeBodyProps {
   readonly rows: readonly TreeRow[];
@@ -283,6 +317,10 @@ export interface TreeBodyProps {
   readonly onSelect: (path: string) => void;
   readonly onRetry: (path: string) => void;
   readonly onEntryFocusSettled: (() => void) | undefined;
+  /** Moves the cursor from outside the key handler; absent leaves it driven locally. */
+  readonly cursorRequest?: TreeCursorRequest;
+  /** Reports the row the cursor rests on, so an outside field can activate it. */
+  readonly onCursorMove?: (path: string | undefined) => void;
 }
 
 /**
@@ -299,6 +337,8 @@ export function TreeBody({
   onSelect,
   onRetry,
   onEntryFocusSettled,
+  cursorRequest,
+  onCursorMove,
 }: TreeBodyProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -386,12 +426,51 @@ export function TreeBody({
   }, [cursor]);
 
   const moveCursor = useCallback(
-    (index: number): void => {
+    (index: number, focus = true): void => {
       setCursor(index);
-      scroller.current?.focus({ preventScroll: true });
+      if (focus) scroller.current?.focus({ preventScroll: true });
     },
     [],
   );
+
+  // A cursor moved from outside (the search bar owns the keys while it is open)
+  // lands through the same state the arrow keys write, so the follow effect and
+  // the row highlight are unchanged. The nonce is what keeps a re-render from
+  // replaying a request the reader already saw served.
+  const servedCursor = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (cursorRequest === undefined || servedCursor.current === cursorRequest.nonce) return;
+    const last = entryIndexes.at(-1);
+    if (cursorRequest.path !== undefined) {
+      const index = rows.findIndex(row => row.type === "entry" && row.path === cursorRequest.path);
+      servedCursor.current = cursorRequest.nonce;
+      if (index >= 0) moveCursor(index, cursorRequest.focus);
+      return;
+    }
+    if (cursorRequest.delta === undefined) {
+      servedCursor.current = cursorRequest.nonce;
+      return;
+    }
+    servedCursor.current = cursorRequest.nonce;
+    if (cursor === undefined) {
+      const landing = cursorRequest.delta > 0 ? entryIndexes[0] : last;
+      if (landing !== undefined) moveCursor(landing, cursorRequest.focus);
+      return;
+    }
+    const ordered =
+      cursorRequest.delta > 0
+        ? entryIndexes.find(index => index > cursor)
+        : [...entryIndexes].reverse().find(index => index < cursor);
+    if (ordered !== undefined) moveCursor(ordered, cursorRequest.focus);
+  }, [cursorRequest, cursor, entryIndexes, moveCursor, rows]);
+
+  // The row the cursor names, spelled out for a field that has no index space of
+  // its own.
+  useEffect(() => {
+    if (onCursorMove === undefined) return;
+    const row = cursor === undefined ? undefined : rows[cursor];
+    onCursorMove(row?.type === "entry" ? row.path : undefined);
+  }, [cursor, rows, onCursorMove]);
 
   const handleRowActivate = useCallback((path: string): void => {
     const index = rows.findIndex(row => row.type === "entry" && row.path === path);

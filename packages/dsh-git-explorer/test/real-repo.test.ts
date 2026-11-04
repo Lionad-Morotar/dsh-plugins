@@ -110,4 +110,24 @@ describe.runIf(hasGit)("real repository smoke", () => {
     expect(result.page.commits).toHaveLength(5);
     expect(result.page.lanes).toHaveLength(5);
   });
+
+  it("searches commit messages against the messages git itself reports", async () => {
+    // The panel's search is a repository-wide grep, so the assertion is against
+    // git's own answer for the same pattern rather than against a fixture: this
+    // is the one place the literal-match flag meets real commit messages.
+    const wanted = "fix";
+    // Same traversal flags the host builds: a different order would make this a
+    // test of git's defaults rather than of the search.
+    const expected = execFileSync(
+      "git",
+      ["log", "--topo-order", "-F", `--grep=${wanted}`, "--pretty=format:%H", "-n", "20", "--all"],
+      { cwd: repoRoot, encoding: "utf8" },
+    )
+      .split("\n")
+      .filter(Boolean);
+    const result = await collectQuery({ runner: localRunner, cwd: repoRoot, defaultLimit: 200 }, { search: wanted, limit: 20 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.page.commits.map(commit => commit.hash)).toEqual(expected);
+  });
 });

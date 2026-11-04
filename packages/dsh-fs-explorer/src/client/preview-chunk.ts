@@ -44,6 +44,16 @@ export interface CodePreviewOptions {
 /** The handle the pane keeps while one editor is mounted. */
 export interface CodePreviewHandle {
   update(text: string, offset: number): void;
+  /**
+   * Select one half-open interval of the current page and bring it into view.
+   *
+   * `from` and `to` are page-text offsets, which the editor's document is a
+   * verbatim copy of. It cannot change the document — the state is read-only
+   * and this dispatches a selection only — so a find never marks a draft dirty.
+   */
+  revealRange(from: number, to: number): void;
+  /** Collapse the selection in place, without moving the viewport. */
+  clearSelection(): void;
   destroy(): void;
 }
 

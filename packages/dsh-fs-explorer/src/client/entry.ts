@@ -24,6 +24,7 @@ import {
 } from "./document-session.ts";
 import { LOCALE_NAMESPACE, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
 import { KEYMAP, createEscapeHandler } from "./keyboard.ts";
+import { createFileReferencesResolver } from "./tree-search.ts";
 import {
   badgeFor,
   buildTree,
@@ -228,6 +229,10 @@ export function apply(ctx: ClientContextLike): () => void {
     renderers: registry,
     documents: documentsStore(ctx),
     locate: sessionId => createSymlinkLocator(ctx, sessionId),
+    // The workspace fuzzy index is optional: a host that does not mount it
+    // leaves the tree's search on the listed-rows fallback, which the bar
+    // labels. Probed at call time so a late mount still takes effect.
+    fileReferences: createFileReferencesResolver(ctx),
   });
 
   // The address bridge hangs off the optional right sidebar; it registers

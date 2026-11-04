@@ -139,6 +139,24 @@ export function mountCodePreview(host: HTMLElement, options: CodePreviewOptions)
       });
       view.scrollDOM.scrollTop = 0;
     },
+    revealRange(from, to) {
+      const length = view.state.doc.length;
+      // A page change lands between the find bar's read and this dispatch, so
+      // the interval is clamped rather than trusted; a selection is not worth
+      // throwing over.
+      const start = Math.max(0, Math.min(from, length));
+      const end = Math.max(start, Math.min(to, length));
+      view.dispatch({
+        selection: { anchor: start, head: end },
+        scrollIntoView: true,
+      });
+    },
+    clearSelection() {
+      // Collapsing in place keeps the reader where they were reading; a find
+      // that jumps the viewport back on close would lose that place.
+      const head = view.state.selection.main.head;
+      view.dispatch({ selection: { anchor: head } });
+    },
     destroy() {
       view.destroy();
     },
