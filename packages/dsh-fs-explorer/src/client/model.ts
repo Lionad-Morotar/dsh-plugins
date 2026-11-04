@@ -530,6 +530,14 @@ export type TreeRow =
       readonly diff?: FsChangeDiff;
       /** Identity badge a directory row carries; files never ask for one. */
       readonly tag?: WorkspaceTag;
+      /**
+       * Directory prefix for a row that has no parent row above it.
+       *
+       * Search results are a flat list, so the parent chain that the tree
+       * spells with indentation has no rows to indent against; this is the
+       * same information written out instead of laid out.
+       */
+      readonly directory?: string;
     }
   | {
       readonly type: "status";

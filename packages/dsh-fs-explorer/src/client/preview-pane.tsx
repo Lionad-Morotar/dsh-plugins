@@ -46,7 +46,16 @@ import {
   type FamilyChunkModule,
   type PreviewChunkModule,
 } from "./preview-chunk.ts";
+import {
+  createDomSurface,
+  createOffsetSurface,
+  FindSurfaceContext,
+  useFindSurfaceSink,
+  type FindSurface,
+  type FindSurfaceSink,
+} from "./find-surface.ts";
 import { PreviewFailureView, PreviewLoadingView } from "./preview-failure.tsx";
+import { PreviewFindBar } from "./preview-find.tsx";
 import {
   createRendererRegistry,
   loadRenderer,
@@ -220,6 +229,9 @@ function CodeSurface({
 }) {
   const host = useRef<HTMLDivElement>(null);
   const handle = useRef<CodePreviewHandle | null>(null);
+  const sink = useFindSurfaceSink();
+  const pageText = useRef(text);
+  pageText.current = text;
   const [failed, setFailed] = useState(false);
   const language = languageFor(path);
 
@@ -249,6 +261,21 @@ function CodeSurface({
   useEffect(() => {
     handle.current?.update(text, offset);
   }, [text, offset, chunk]);
+
+  // The editor answers in page-text offsets because its document is that text.
+  // It is offered to the pane only while it is the body actually drawing, so a
+  // plain-text fallback is never paired with an editor that does not exist.
+  useEffect(() => {
+    if (sink === null || chunk === null || failed) return;
+    sink.register(
+      createOffsetSurface({
+        text: () => pageText.current,
+        select: (from, to) => handle.current?.revealRange(from, to),
+        clear: () => handle.current?.clearSelection(),
+      }),
+    );
+    return () => sink.register(null);
+  }, [sink, chunk, failed]);
 
   if (chunk === null || failed) {
     return (
@@ -436,6 +463,13 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
   const [binaryLink, setBinaryLink] = useState<string | undefined>(undefined);
   // The reload button becomes a confirmation before it drops a dirty draft.
   const [discardArmed, setDiscardArmed] = useState(false);
+  // The find bar is a transient surface: opening it is the only state it keeps.
+  const [finding, setFinding] = useState(false);
+  const bodyHost = useRef<HTMLDivElement>(null);
+  // Whichever body registered a surface of its own; null means the DOM reading
+  // of `.fx-preview-body` is the answer, which is what Markdown and plain text
+  // need and what the editor deliberately overrides.
+  const editorSurface = useRef<FindSurface | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const draftCopyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -604,6 +638,29 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
           ? "fallback"
           : "plain";
 
+  // A body that can answer for its own offsets offers a surface through the
+  // context below; everything else is found by reading the rendered DOM. The
+  // bar asks this on every gesture, so a renderer swap mid-find just works.
+  const domSurface = useMemo(() => createDomSurface(() => bodyHost.current), []);
+  const surface = useMemo<() => FindSurface>(
+    () => () => editorSurface.current ?? domSurface,
+    [domSurface],
+  );
+  const surfaceSink = useMemo<FindSurfaceSink>(
+    () => ({
+      register: created => {
+        editorSurface.current = created;
+      },
+    }),
+    [],
+  );
+  // Anything that replaces the words under the bar re-runs the count: a page
+  // change, a mode switch, a renderer arriving, a file swap.
+  const findStamp = [shownPath, String(mode), snapshot.offset, snapshot.text.length, engine].join("|");
+  // Binary families draw pixels, not text; a find bar there would have nothing
+  // to search and no way to say so honestly.
+  const findable = !binary && textReady;
+
   const bodyProps: RendererBodyProps = {
     path: linkTarget ?? path,
     sessionId,
@@ -764,12 +821,29 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
               </button>
             </>
           )}
+          {findable ? (
+            <button
+              type="button"
+              className="fx-pbtn"
+              data-testid="fs-preview-find"
+              data-open={finding ? "true" : "false"}
+              title={t("preview.find")}
+              aria-label={t("preview.find")}
+              aria-pressed={finding}
+              onClick={() => setFinding(open => !open)}
+            >
+              {t("preview.find")}
+            </button>
+          ) : null}
           <button type="button" className="fx-pbtn" onClick={copyPath} data-testid="fs-preview-copy">
             {copied ? t("preview.copied") : t("preview.copyPath")}
           </button>
           {busy ? <span className="fx-spinner" aria-hidden="true" /> : null}
         </div>
       </header>
+      {finding && findable ? (
+        <PreviewFindBar t={t} surface={surface} stamp={findStamp} onClose={() => setFinding(false)} />
+      ) : null}
       {snapshot.source === "first-parent" ? (
         <div className="fx-preview-notice" data-testid="fs-preview-deleted">
           {t("preview.deletedCommit")}
@@ -833,8 +907,8 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
           )}
         </div>
       ) : null}
-      <div className="fx-preview-body" data-scroll={reading ? "y" : "none"}>
-        {body}
+      <div className="fx-preview-body" data-scroll={reading ? "y" : "none"} ref={bodyHost}>
+        <FindSurfaceContext.Provider value={surfaceSink}>{body}</FindSurfaceContext.Provider>
       </div>
     </section>
   );

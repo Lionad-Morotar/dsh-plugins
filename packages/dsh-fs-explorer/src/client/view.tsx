@@ -56,6 +56,7 @@ import {
   isAbsolutePath,
   listingPath,
   type TreeLevel,
+  type TreeRow,
 } from "./model.ts";
 import {
   TREE_PANE_MAX_WIDTH,
@@ -73,7 +74,27 @@ import { consumeViewRequest, createPanelStackRegistry, panelTitle } from "./pane
 import { headLabel, joinChangeStats, parseStatusZ, type FsGitHead, type StatusMap } from "./status.ts";
 import { PreviewPane, saveFailureReason } from "./preview-pane.tsx";
 import type { RendererRegistry } from "./renderer-registry.ts";
-import { CollapseIcon, FolderIcon, RefreshIcon, TreeBody, type TreeEntryFocus } from "./tree.tsx";
+import {
+  CollapseIcon,
+  FolderIcon,
+  RefreshIcon,
+  SearchIcon,
+  TreeBody,
+  type TreeCursorRequest,
+  type TreeEntryFocus,
+} from "./tree.tsx";
+import { TreeSearchBox } from "./tree-search-box.tsx";
+import {
+  createFileReferencesResolver,
+  filterListedEntries,
+  listedEntries,
+  normalizeReferences,
+  referenceRows,
+  revealChain,
+  searchQuery,
+  type FileReferencesFace,
+  type SearchOrigin,
+} from "./tree-search.ts";
 import { buildWorkspaceMap, MANIFEST_FILES, type WorkspaceTag } from "./workspace-map.ts";
 import { createWorkspaceClient, type WorkspaceClient, type WorkspaceError } from "./workspace-face.ts";
 import type { WorkspaceCapabilities } from "../host/types.ts";
@@ -89,7 +110,7 @@ import {
   type StatusResolver,
   type WorkspaceFilesFace,
 } from "./wire.ts";
-import { VIEW_ID } from "../shared.ts";
+import { PACKAGE_NAME, VIEW_ID } from "../shared.ts";
 
 /** The pending-focus queue the core carries, as this view consumes it. */
 export interface ViewFocusFace {
@@ -153,6 +174,15 @@ export interface ViewWiring {
    * offer. A test injects a fake here.
    */
   readonly workspace?: (sessionId: string) => WorkspaceClient;
+  /**
+   * Resolve the host's workspace-wide fuzzy file index, read per search.
+   *
+   * Absent — or answering undefined — is a legal deployment: the search then
+   * filters the entries already listed and labels that narrower scope, rather
+   * than failing. It is a resolver and not the face itself because the host may
+   * mount the namespace after this view.
+   */
+  readonly fileReferences?: () => FileReferencesFace | undefined;
 }
 
 /** The first-paint state without waiting for an effect. */
@@ -287,6 +317,7 @@ export function createFsExplorerView({
   documents,
   locate,
   workspace: resolveWorkspace,
+  fileReferences: resolveReferences,
 }: ViewWiring) {
   // One registry per registered view: the host mounts and unmounts this
   // component on every view switch, while the factory itself lives on.
@@ -911,6 +942,79 @@ export function createFsExplorerView({
       [levels, expanded, statuses, workspaceTags],
     );
 
+    // Opening the bar and having a query are two states: an empty bar is up and
+    // waiting, while the tree behind it still shows the tree.
+    const [searchOpen, setSearchOpen] = useState(false);
+    const [search, setSearch] = useState("");
+    const [searchResults, setSearchResults] = useState<readonly TreeRow[]>([]);
+    const [searchOrigin, setSearchOrigin] = useState<SearchOrigin | null>(null);
+    const [searchBusy, setSearchBusy] = useState(false);
+    const [cursorRequest, setCursorRequest] = useState<TreeCursorRequest | undefined>(undefined);
+    const cursorPath = useRef<string | undefined>(undefined);
+    const requestNonce = useRef(0);
+
+    // One gesture, one nonce: the tree serves a request once and a re-render
+    // must not replay it.
+    const askCursor = useCallback((path: string | undefined, delta: number | undefined, focus: boolean): void => {
+      requestNonce.current += 1;
+      setCursorRequest({ nonce: requestNonce.current, ...(path === undefined ? {} : { path }), ...(delta === undefined ? {} : { delta }), focus });
+    }, []);
+
+    // The search answer. The index answers across the whole workspace, so it is
+    // asked first; only its absence falls back to the listed entries, and which
+    // one answered is what the bar's scope chip reports.
+    useEffect(() => {
+      const query = searchQuery(search);
+      if (query === undefined) {
+        setSearchResults([]);
+        setSearchOrigin(null);
+        setSearchBusy(false);
+        return;
+      }
+      const local = (): void => {
+        const entries = filterListedEntries(listedEntries(levelsRef.current), query);
+        setSearchResults(
+          referenceRows(
+            entries.map(entry => ({ path: entry.path, kind: entry.kind === "directory" ? "directory" as const : "file" as const })),
+            statuses,
+          ),
+        );
+        setSearchOrigin("loaded");
+        setSearchBusy(false);
+      };
+      const face = resolveReferences?.();
+      if (face === undefined || sessionId === undefined) {
+        local();
+        return;
+      }
+      const controller = new AbortController();
+      setSearchBusy(true);
+      void Promise.resolve(face.list(sessionId, query, controller.signal)).then(
+        response => {
+          if (controller.signal.aborted) return;
+          const candidates = normalizeReferences(response);
+          // An answer with no candidates may be a refusal or a genuine empty
+          // set; either way the index is what was asked, so the label stays.
+          setSearchResults(referenceRows(candidates, statuses));
+          setSearchOrigin("index");
+          setSearchBusy(false);
+        },
+        error => {
+          if (controller.signal.aborted) return;
+          // The index is an enhancement; a transport failure degrades to the
+          // rows already listed rather than emptying the panel.
+          console.debug(`[${PACKAGE_NAME}] the file index failed, searching listed rows instead`, error);
+          local();
+        },
+      );
+      return () => controller.abort();
+    }, [search, sessionId, statuses, resolveReferences]);
+
+    // Search replaces where rows come from; it does not add a second list, so
+    // the virtual window, the cursor and the follow effect all keep working.
+    const searching = searchOpen && searchOrigin !== null;
+    const shownRows = searching ? searchResults : rows;
+
     // The arrival gesture. The stack outlives the mount, so a first arrival
     // with nothing open opens the workspace front page and hands the keyboard
     // to the tree, while a return visit only takes the second half of that.
@@ -1363,6 +1467,67 @@ export function createFsExplorerView({
             ),
       [capabilities, contextMenu, remoteLinks, t, workspace],
     );
+    // Opening a result does what opening a row in the tree does, plus the
+    // reveal the tree would already have: the ancestors open so the file keeps
+    // a row once the search ends.
+    const openSearchResult = useCallback(
+      (path: string): void => {
+        const entry = listedEntries(levelsRef.current).find(candidate => candidate.path === path);
+        const chain = revealChain(path);
+        setExpanded(previous => {
+          const next = new Set(previous);
+          for (const directory of chain) next.add(directory);
+          return next;
+        });
+        // Ancestors the tree has never listed have to be read before the row
+        // can exist; a directory the index returned needs its own listing too.
+        if (sessionId !== undefined && files !== undefined) {
+          for (const directory of chain) {
+            const level = levelsRef.current.get(directory);
+            if (level === undefined) void loadLevel(directory, sessionId, files);
+          }
+          if (entry?.kind === "directory" && levelsRef.current.get(path) === undefined) {
+            void loadLevel(path, sessionId, files);
+          }
+        }
+        if (entry?.kind === "directory") {
+          setExpanded(previous => new Set(previous).add(path));
+          return;
+        }
+        stack.open(path);
+      },
+      [files, loadLevel, sessionId, stack],
+    );
+
+    const activateSearchRow = useCallback((): void => {
+      if (cursorPath.current !== undefined) openSearchResult(cursorPath.current);
+    }, [openSearchResult]);
+
+    const closeSearch = useCallback((): void => {
+      setSearchOpen(false);
+      setSearch("");
+      setSearchResults([]);
+      setSearchOrigin(null);
+      setSearchBusy(false);
+      // The keyboard goes back where the search took it from.
+      const scroller = document.querySelector<HTMLElement>('[data-testid="fs-tree-scroll"]');
+      scroller?.focus({ preventScroll: true });
+    }, []);
+
+    // Escape closes the search before it is read as "return to the composer":
+    // a reader backing out of a query wants the tree, not the transcript.
+    useEffect(() => {
+      if (!searchOpen || typeof document === "undefined") return;
+      const onKeyDown = (event: KeyboardEvent): void => {
+        if (event.key !== "Escape" || event.isComposing || event.defaultPrevented) return;
+        if (pendingCloseRef.current !== null || hasOpenModal(document)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        closeSearch();
+      };
+      document.addEventListener("keydown", onKeyDown, true);
+      return () => document.removeEventListener("keydown", onKeyDown, true);
+    }, [searchOpen, closeSearch]);
 
     const collapseAll = (): void => setExpanded(new Set());
     const refresh = (): void => setReloadToken(token => token + 1);
@@ -1413,6 +1578,21 @@ export function createFsExplorerView({
                 <b>{rootLevel.nodes.length}</b> {t("head.entries")}
               </span>
             ) : null}
+            <button
+              type="button"
+              className="fx-btn"
+              data-testid="fs-search-open"
+              data-open={searchOpen ? "true" : "false"}
+              title={t("search.open")}
+              aria-label={t("search.open")}
+              aria-pressed={searchOpen}
+              onClick={() => {
+                if (searchOpen) closeSearch();
+                else setSearchOpen(true);
+              }}
+            >
+              <SearchIcon />
+            </button>
             <button
               type="button"
               className="fx-btn"
@@ -1480,16 +1660,33 @@ export function createFsExplorerView({
                 className="fx-tree-pane"
                 style={treeWidth === null ? undefined : ({ "--fx-tree-width": `${treeWidth}px` } as CSSProperties)}
               >
+                {searchOpen ? (
+                  <TreeSearchBox
+                    t={t}
+                    value={search}
+                    origin={searchOrigin}
+                    count={searchResults.length}
+                    busy={searchBusy}
+                    onChange={setSearch}
+                    onStep={delta => askCursor(undefined, delta, false)}
+                    onActivate={activateSearchRow}
+                    onClose={closeSearch}
+                  />
+                ) : null}
                 <TreeBody
-                  rows={rows}
+                  rows={shownRows}
                   selectedPath={activeRevision === undefined ? activePath : undefined}
-                  entryFocus={entryFocus}
+                  entryFocus={searching ? undefined : entryFocus}
                   t={t}
                   onToggle={toggleDirectory}
-                  onSelect={path => stack.open(path)}
+                  onSelect={path => (searching ? openSearchResult(path) : stack.open(path))}
                   onRetry={retryDirectory}
                   onEntryFocusSettled={releaseEntryFocus}
                   onContextMenu={openContextMenu}
+                  cursorRequest={cursorRequest}
+                  onCursorMove={path => {
+                    cursorPath.current = path;
+                  }}
                 />
               </div>
               <div

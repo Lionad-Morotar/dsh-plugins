@@ -51,7 +51,12 @@ export async function collectQuery(
   const argv = ["log", "--topo-order", "--parents", LOG_FORMAT, `--max-count=${limit + 1}`];
   if (skip > 0) argv.push(`--skip=${skip}`);
   const search = cleanFilter(request.search);
-  if (search !== undefined) argv.push(`--grep=${search}`);
+  // `-F` because the box is a search field, not a regex editor: a reader who
+  // types `[` or `(.` means those characters, and as a pattern they are either a
+  // different query or a fatal "brackets not balanced". `-i` is left off on
+  // purpose; git's own default keeps case significant for commit subjects, and
+  // the changes filter's case-insensitivity is a separate product decision.
+  if (search !== undefined) argv.push("-F", `--grep=${search}`);
   const author = cleanFilter(request.author);
   if (author !== undefined) argv.push(`--author=${author}`);
   if (ref === undefined) argv.push("--all");

@@ -20,10 +20,22 @@
 import type { ReactNode } from "react";
 
 import { createAliasSettingsPage } from "./alias-page.tsx";
-import { createAliasSource } from "./alias-source.ts";
+import {
+  createAliasSource,
+  type AliasPick,
+  type AliasPickOutcome,
+} from "./alias-source.ts";
 import { createAliasStore } from "./alias-store.ts";
 import { insertAliasPageStyles } from "./alias-styles.ts";
 import { createAliasWatcher, type AliasTriggerController } from "./alias-watcher.tsx";
+import {
+  createSkillEnhancer,
+  type InputActionsLike,
+  type SkillInputStoreLike,
+} from "./skill-enhancer.tsx";
+import { insertSkillEnhancerStyles } from "./skill-styles.ts";
+import { workspaceUsageOf, type SessionUsageRow } from "./skill-usage-reading.ts";
+import type { SkillProfileWire } from "../skill-profile.ts";
 import { createOverlay, type OverlayDeps, type OverlayProps } from "./overlay.tsx";
 import {
   createComposerAttachments,
@@ -79,6 +91,12 @@ const ALIAS_WATCHER_ID = "alias-watcher";
 /** A floating-entry order after the visible menus; the watcher renders null. */
 const ALIAS_WATCHER_ORDER = 50;
 
+/** The invisible overlay entry that paints the skill ghost and its hover panel. */
+const SKILL_ENHANCER_ID = "skill-enhancer";
+
+/** Sits just after the alias watcher, which also renders nothing. */
+const SKILL_ENHANCER_ORDER = ALIAS_WATCHER_ORDER + 1;
+
 /** The composer seat whose trigger opens the picker instead of its own menu. */
 const SEAT_SLOT = "conversation.input.model";
 
@@ -128,6 +146,12 @@ const SHADOW_PRIORITY = -100;
 /** Locale namespace of the strings this surface shows. */
 const NS = "better";
 
+/** The host route that answers one skill's profile. Same-origin relative. */
+const SKILL_PROFILE_ROUTE = "/better/api/skill-profile";
+
+/** How long a failed catalogue fetch is remembered before it is retried. */
+const SKILL_CATALOGUE_RETRY_MS = 5000;
+
 /** The loader `require`, handed over by the build's `boot` call. */
 let loaderRequire: LoaderRequire | null = null;
 
@@ -144,6 +168,13 @@ export interface LoaderRequire {
  */
 export interface SessionsLike {
   scope?(sessionId: string): unknown;
+  /**
+   * The session list snapshot store.
+   *
+   * Optional: it is read only for the workspace-wide usage figure, and a host
+   * without it must still get the ghost, the panel and the session count.
+   */
+  list?: SessionsListLike;
 }
 
 /** What this entry needs from `ctx.commandUi`. */
@@ -248,6 +279,51 @@ export interface ConversationLike {
   readonly input?: { for?(scope: unknown): { readonly state: AliasInputStoreLike } | undefined };
 }
 
+/** One skill as the host's remote catalogue lists it. */
+export interface SkillSummaryLike {
+  readonly name: string;
+  readonly path?: string;
+  readonly description?: string;
+}
+
+/** The `remote.skills` namespace this package probes for the catalogue. */
+export interface SkillsRemoteLike {
+  list(input: { readonly sessionId: string }): Promise<
+    { readonly ok: true; readonly value: { readonly skills: readonly SkillSummaryLike[] } } | { readonly ok: false }
+  >;
+}
+
+/** One session's projection values, as the sessions list publishes them. */
+export interface SessionProjectionsLike {
+  readonly projectionsBySession?: Readonly<
+    Record<string, { readonly values?: Readonly<Record<string, { readonly counts?: Readonly<Record<string, number>> }>> }>
+  >;
+}
+
+/** One session as the sessions list publishes it. */
+export interface SessionListEntryLike {
+  readonly cwd?: string;
+  readonly projectionValues?: unknown;
+}
+
+/** The sessions list snapshot the usage reading walks. */
+export interface SessionsListSnapshotLike {
+  readonly ids?: readonly string[];
+  readonly byId?: Readonly<Record<string, SessionListEntryLike | null>>;
+  readonly projectionsBySession?: Readonly<
+    Record<
+      string,
+      { readonly values?: Readonly<Record<string, unknown>>; readonly state?: string } | null
+    >
+  >;
+}
+
+/** The slice of `ctx.sessions.list` the usage lookup reads. */
+export interface SessionsListLike {
+  getSnapshot?(): SessionsListSnapshotLike;
+  subscribe?(listener: () => void): () => void;
+}
+
 /** The client context this plugin reads. */
 export interface ClientContextLike {
   readonly slots: SlotsLike;
@@ -282,6 +358,13 @@ export interface ClientContextLike {
    * through this object — Cordis refuses a nested lookup that was not declared.
    */
   readonly remote?: unknown;
+  /**
+   * The session list, read for projection values.
+   *
+   * Optional on the type: the skill panel's usage line is the only reader, and a
+   * host without it must still get the ghost and the parameter list.
+   */
+  readonly sessionsList?: SessionsListLike;
   get?(name: string): unknown;
   effect(callback: () => () => void, label?: string): void;
   /**
@@ -575,6 +658,9 @@ export const clientPlugin = {
               config: () => aliases.getSnapshot(),
               translate: aliasText,
               bareMenuOpen: () => aliasBareMenu.open,
+              // Only routed after insertion; the command source claims the
+              // resulting `/target ` draft on the next task.
+              routeCommand: (_target, pick) => claimPickedCommand(ctx, pick),
             }),
           ),
         "dsh-better: alias slash source",
@@ -625,6 +711,55 @@ export const clientPlugin = {
           );
         }),
       "dsh-better: alias selector watcher",
+    );
+
+    // The skill enhancer. Two surfaces over one registration: the argument ghost
+    // after a leading skill token, and the hover panel with the skill's profile.
+    // It renders into `body` rather than into the overlay cell, so the composer's
+    // own overflow cannot clip it; the slot entry exists only to receive the
+    // session id.
+    ctx.effect(() => insertSkillEnhancerStyles(doc), "dsh-better: skill enhancer stylesheet");
+    ctx.effect(
+      () =>
+        ctx.slots.inject(OVERLAY_SLOT, () => {
+          const Enhancer = createSkillEnhancer({
+            scopeFor: sessionId => ctx.sessions.scope?.(sessionId),
+            inputStoreFor: sessionId => {
+              const actx = ctx.sessions.scope?.(sessionId);
+              if (actx === undefined || ctx.conversation === undefined) return undefined;
+              try {
+                return ctx.conversation.input?.for?.(actx)?.state as SkillInputStoreLike | undefined;
+              } catch {
+                return undefined;
+              }
+            },
+            actionsFor: sessionId => {
+              const actx = ctx.sessions.scope?.(sessionId);
+              if (actx === undefined || ctx.conversation === undefined) return undefined;
+              try {
+                return ctx.conversation.input?.for?.(actx) as InputActionsLike | undefined;
+              } catch {
+                return undefined;
+              }
+            },
+            skillNamesFor: skillNamesResolver(ctx),
+            loadProfile: (sessionId, name) => loadSkillProfile(ctx, sessionId, name),
+            loadUsage: (sessionId, name) => readSkillUsage(ctx, sessionId, name),
+            translate: aliasText,
+            document: doc,
+          });
+          return registerComponent(
+            ctx.slots,
+            {
+              name: OVERLAY_SLOT,
+              id: SKILL_ENHANCER_ID,
+              order: SKILL_ENHANCER_ORDER,
+              inject: (sessionId) => ({ sessionId }),
+            },
+            Enhancer,
+          );
+        }),
+      "dsh-better: skill enhancer",
     );
 
     // The alias settings page. A page of its own rather than a General row: the
@@ -879,8 +1014,123 @@ function registerComponent(
 }
 
 /**
- * The ledger the tab controller reads.
+ * The skill catalogue resolver, cached per session.
  *
+ * The enhancer asks on every mount and the answer only changes when the workspace
+ * does, so one fetch per session is kept. A failed fetch is remembered for a few
+ * seconds rather than forever: the route may simply not be mounted yet, and a
+ * permanent empty set would hide the ghost for the rest of the session.
+ * @param ctx - client context.
+ * @returns a resolver returning the session's known skill names.
+ */
+function skillNamesResolver(ctx: ClientContextLike): (sessionId: string) => Promise<ReadonlySet<string>> {
+  const cache = new Map<string, ReadonlySet<string>>();
+  const failedAt = new Map<string, number>();
+  return async sessionId => {
+    const cached = cache.get(sessionId);
+    if (cached !== undefined) return cached;
+    const failed = failedAt.get(sessionId);
+    if (failed !== undefined && Date.now() - failed < SKILL_CATALOGUE_RETRY_MS) return new Set<string>();
+    const skills = readHostService(ctx, "remote.skills") as SkillsRemoteLike | undefined;
+    if (skills === undefined) return new Set<string>();
+    try {
+      const result = await skills.list({ sessionId });
+      if (!result.ok) {
+        failedAt.set(sessionId, Date.now());
+        return new Set<string>();
+      }
+      const names: ReadonlySet<string> = new Set(result.value.skills.map(skill => skill.name));
+      cache.set(sessionId, names);
+      failedAt.delete(sessionId);
+      return names;
+    } catch {
+      failedAt.set(sessionId, Date.now());
+      return new Set<string>();
+    }
+  };
+}
+
+/**
+ * Fetch one skill's profile from the host route.
+ *
+ * A same-origin relative path: the GUI port changes on every host boot, so an
+ * absolute URL would be wrong on the next launch. Any non-200 answer degrades to
+ * "no profile", which the panel renders as a title-only card.
+ * @param ctx - client context.
+ * @param sessionId - session whose workspace the skill resolves against.
+ * @param name - skill name.
+ * @returns the wire profile, or undefined.
+ */
+async function loadSkillProfile(
+  ctx: ClientContextLike,
+  sessionId: string,
+  name: string,
+): Promise<SkillProfileWire | undefined> {
+  const query = `?sessionId=${encodeURIComponent(sessionId)}&name=${encodeURIComponent(name)}`;
+  try {
+    const response = await fetch(`${SKILL_PROFILE_ROUTE}${query}`, { headers: { accept: "application/json" } });
+    if (!response.ok) return undefined;
+    return (await response.json()) as SkillProfileWire;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read one skill's invocation counts, for this session and for its workspace.
+ *
+ * The session figure is one projection read. The workspace figure sums the same
+ * projection over every session whose `cwd` matches this one exactly, which is
+ * the host's own notion of a workspace; the arithmetic lives in
+ * `workspaceUsageOf` so it can be tested without a client context.
+ *
+ * This runs on the panel's render path, so every shape problem degrades to the
+ * session figure alone rather than throwing: a stale or half-populated snapshot
+ * must not take the panel down with it. It is a pure in-memory read, no IO.
+ * @param ctx - client context.
+ * @param sessionId - session to read.
+ * @param name - skill name.
+ * @returns the counts; `workspace` is absent when it cannot be determined.
+ */
+export function readSkillUsage(
+  ctx: ClientContextLike,
+  sessionId: string,
+  name: string,
+): { session: number; workspace?: number } {
+  const list = ctx.sessions.list ?? (readHostService(ctx, "sessions.list") as SessionsListLike | undefined);
+  try {
+    const snapshot = list?.getSnapshot?.();
+    const countsOf = (id: string): Readonly<Record<string, number>> | undefined => {
+      const values = snapshot?.projectionsBySession?.[id]?.values;
+      const skillUsage = values?.skillUsage;
+      if (typeof skillUsage !== "object" || skillUsage === null) return undefined;
+      const counts = (skillUsage as { readonly counts?: unknown }).counts;
+      return typeof counts === "object" && counts !== null ? (counts as Readonly<Record<string, number>>) : undefined;
+    };
+
+    const own = countsOf(sessionId)?.[name];
+    const session = typeof own === "number" && Number.isFinite(own) ? own : 0;
+
+    const cwd = snapshot?.byId?.[sessionId]?.cwd;
+    if (typeof cwd !== "string" || cwd === "") return { session };
+
+    const rows: SessionUsageRow[] = Object.keys(snapshot?.byId ?? {}).map(id => {
+      const usage = countsOf(id);
+      const rowCwd = snapshot?.byId?.[id]?.cwd;
+      return {
+        ...(typeof rowCwd === "string" ? { cwd: rowCwd } : {}),
+        ...(usage === undefined ? {} : { usage }),
+      };
+    });
+    const workspace = workspaceUsageOf(rows, cwd, name);
+    return workspace === undefined ? { session } : { session, workspace };
+  } catch {
+    return { session: 0 };
+  }
+}
+
+/**
+ * The ledger the tab controller reads.
  * `entriesOfSlot` is the shadowing projection, so a cell another plugin has
  * shadowed contributes one row. A host that predates the method degrades to the
  * raw ledger, which is the same list when no cell is shadowed.
@@ -917,6 +1167,57 @@ function readHostService(ctx: ClientContextLike, name: string): unknown {
     return (ctx as unknown as Record<string, unknown>)[name];
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Let the shipped command source claim an alias target after the pick inserts it.
+ *
+ * The alias source can only return text, and a pick has to stay synchronous. So
+ * the pick inserts `/target ` and this helper rebases the trigger hit onto that
+ * token on the next task, then runs the trigger controller's space adjudication.
+ * A `leadingInput` command (the `/placeholder` case) becomes a real command chip
+ * whose submit runs inside the command service's own context; skills make
+ * `onSpace` a no-op and keep the inserted text.
+ * @param ctx - client context.
+ * @param pick - the menu pick carrying the session id.
+ */
+function claimPickedCommand(ctx: ClientContextLike, pick: AliasPick): void {
+  const sessionId = pick.session?.sessionId;
+  if (sessionId === undefined) return;
+  const actx = ctx.sessions.scope?.(sessionId);
+  if (actx === undefined) return;
+  const triggers = readHostService(ctx, "inputTriggers") as InputTriggersLike | undefined;
+  if (triggers === undefined) return;
+  try {
+    const controller = triggers.sessionOf(actx);
+    const input = ctx.conversation?.input?.for?.(actx)?.state;
+    let attempts = 0;
+    const tryClaim = (): void => {
+      const snapshot = input?.getSnapshot();
+      if (snapshot === undefined || snapshot.draft.trim() === "" || !snapshot.draft.startsWith("/")) return;
+      try {
+        // The pick inserted `/target params ` as text. The trigger detector only
+        // opens a token while the caret is inside it, so hand it just the command
+        // token; the claim then replaces that span and the configured params stay
+        // behind as ordinary command arguments.
+        const token = snapshot.draft.trimStart().split(/\s/u)[0] ?? "";
+        if (!token.startsWith("/")) return;
+        controller.track?.(token, token.length, { tier: "plain" }, snapshot.draftRev);
+        if (controller.onSpace?.() === true) return;
+        // A skill target is not a command: the synthetic track above opened the
+        // command menu, so close it again before it can paint.
+        controller.dismiss?.();
+      } catch {
+        // The hit moved between the pick and the timer; text stays as typed.
+      }
+      attempts += 1;
+      // The editor publishes the inserted text on its own task; retry briefly.
+      if (attempts < 4) setTimeout(tryClaim, 25);
+    };
+    setTimeout(tryClaim, 0);
+  } catch {
+    // Scope went away; the plain text is still a valid draft.
   }
 }
 

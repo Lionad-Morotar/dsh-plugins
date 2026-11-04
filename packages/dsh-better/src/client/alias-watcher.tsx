@@ -70,6 +70,15 @@ export interface AliasTriggerController {
     },
   ): void;
   dismiss(): void;
+  /** Feed one draft/caret change through trigger detection (public track path). */
+  track?(
+    draft: string,
+    caret: number,
+    guard: { readonly tier: "plain" },
+    draftRev: number,
+  ): void;
+  /** Let the shipped command source claim the current hit (no-op for skills). */
+  onSpace?(): boolean;
 }
 
 /** What one watcher needs from the plugin. */

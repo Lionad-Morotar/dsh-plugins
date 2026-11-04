@@ -221,6 +221,36 @@ describe("collectQuery", () => {
     expect(result.page.lanes).toHaveLength(2);
   });
 
+  it("greps the whole history literally rather than as a pattern", async () => {
+    // A search box is not a regex editor: `(` or `[` is what the reader typed,
+    // and as a pattern it is either a different query or a fatal
+    // "brackets ([ ]) not balanced". The page keeps its shape either way, so the
+    // flag is the only observable difference.
+    const seen: string[][] = [];
+    const runner: GitRunner = {
+      async run(args) {
+        seen.push([...args]);
+        return ok(["git", ...args], LOG);
+      },
+    };
+    const result = await collectQuery({ runner, cwd: "/repo", defaultLimit: 200 }, { search: "fix (ui" });
+    expect(result.ok).toBe(true);
+    expect(seen[0]).toContain("-F");
+    expect(seen[0]).toContain("--grep=fix (ui");
+  });
+
+  it("leaves the grep flag out entirely when the search is blank", async () => {
+    const seen: string[][] = [];
+    const runner: GitRunner = {
+      async run(args) {
+        seen.push([...args]);
+        return ok(["git", ...args], LOG);
+      },
+    };
+    await collectQuery({ runner, cwd: "/repo", defaultLimit: 200 }, { search: "   " });
+    expect(seen[0]?.some(argument => argument.startsWith("--grep"))).toBe(false);
+  });
+
   it("rejects a ref that could be read as a revision or an option", async () => {
     const result = await collectQuery({ runner: fakeRunner(), cwd: "/repo", defaultLimit: 200 }, { ref: "--upload-pack=x" });
     expect(result).toEqual({

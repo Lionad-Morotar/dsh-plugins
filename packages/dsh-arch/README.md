@@ -50,6 +50,11 @@ flow-dx 的 `agents-md` 流程派 `c4-mapper` 子代理产出的正是本包要�
 - 画布透明：SVG 自己不铺底色，容器节点只画边框与标题（不填色），所以整个视图叠在面板自己的背景上，亮暗主题都不用换一套配色。最外层容器覆盖整张视图，它一旦填色就等于给画布刷了层白底，卡片与标签全被压在上面看不清。
 - 选中是环不是淡出：选中的节点套一圈屏幕像素宽的高亮环（`vector-effect: non-scaling-stroke`，缩放到 0.05 也看得见），其余节点保持原样；把非选中节点压到 40% 会让整张图的字和画布混成一片。
 - 详情侧栏：点节点右侧滑出，读 `/arch/api/model` 的元素目录（title/description/technology/links/tags）；再点空白或 × 收起。列宽由面板外壳给（`min(480px, 40%)`），侧栏本体 `width:100%` 撑满，正文 15px；宽度若由侧栏自己的 `max-width` 百分比算，会以收缩到内容宽的 flex 项为参照，正文只剩三分之一列宽。
+- 箭头与线型：按 `edge.head` / `edge.tail` 生成 `<marker>` 并挂 `marker-end` / `marker-start`，几何与 `refX`/`refY`/`viewBox` 照抄官方 `EdgeMarkers`，`fill="context-stroke"` 让箭头跟随线色。`head` 缺省按 LikeC4 语义补 `normal`，所以没写箭头的边也有箭头；`tail` 缺省即线端留空。`line` 为 `dotted` 取 `1 8`、`dashed` 取 `8 10`、`solid` 不设 dasharray。`dir` 为 `back` 时两个 marker 对调。marker 一律挂在 `<defs>` 里而不是 root 的 transform 组内：挂在组内会继承该组的缩放，除了量取时的那个缩放级别之外箭头都会偏离线端。
+- 边动效：`@keyframes arch-edge-flow` 常驻声明、默认 `animation-play-state: paused`，只有带 `data-arch-edge-active` 的边才 running；悬停与选中都会点亮它，选中另外把线加粗到 2.5 并换选中色，指针移走后仍看得出刚才点的是哪条。`prefers-reduced-motion: reduce` 时整条动画置 `animation: none` 而不是只暂停。实线边不流动是官方语义不是漏做：动画动的是 `stroke-dashoffset`，没有 dash 间隔就没有可位移的 offset，官方也不给实线强加 dasharray。
+- 边命中区：可见线之下叠一条 `stroke` 透明、`stroke-width: 12`、`pointer-events: stroke` 的交互 path，与可见线共用同一个 `d`。1.5px 的线在 0.75 缩放下几乎点不到，但把可见线加粗来扩大命中会让整张图变丑，所以命中与观感分开。
+- 节点动作条：选中节点后底边中央浮出按钮，模型给了 `navigateTo` 的元素多一个「定位」，每个元素都有「浏览关系」。按钮在 SVG 内绘制，跟着节点一起缩放平移。动作条单独占一层而不塞进节点自己的 `g`：节点组带 `cursor:move` 且是拖拽命中目标，按钮嵌在里面会继承拖拽手感，按下去无论按钮做什么都会先落到拖拽处理上。`pointerdown` 里按钮分支排在最前，命中即 `stopPropagation` 并清掉拖拽与平移状态。
+- 关系面板：点边或点元素的「浏览关系」弹出浮层，列出被点中那条边聚合的关系，按端点身份分 `DIRECT` 与 `RESOLVED FROM NESTED` 两组（关系自身的 source/target 与被点中的边完全一致算直连，其余是被折叠上来的嵌套关系）。每行是「源胶囊 → 目标胶囊」加关系标题，`technology` 与 `description` 有则显示；胶囊显示 id 最后一段，全名放 `title` 做悬浮提示。定位按锚点矩形手算四象限翻转，锚点由渲染器换算成 host 像素后上报，面板不需要知道平移与缩放。Esc、空白画布、右上 × 三路都能关。关系数据来自 `/arch/api/model` 的 `relations`，chrome 有与 `elementsOf` 对称的 `relationsOf` 缓存，一次取回解码复用。
 - 诊断：坏模型不抛，`hasErrors()` 的错误以独立区块呈现在视图上方，图照常挂载。
 
 ## 已知限制
@@ -59,11 +64,15 @@ flow-dx 的 `agents-md` 流程派 `c4-mapper` 子代理产出的正是本包要�
 - 宿主缺 `storageDomain` 时降级：状态写客户端 localStorage（按 sessionId 键控，不跨设备、不跨 profile，清缓存即丢），此时面板不发无谓的 POST。
 - 300px 高的 dock 默认视口是固定可读缩放（0.75）居中，不是 fitView——fitView 在这个高度把 12px 文字缩到 1.5px 不可读；要看全景开 dock 的 fullscreen（此时才 fitView，退出时回到可读缩放）。
 - 不做 DSL 编辑与 LikeC4 Edit 模式；不做 SSR；不接管其他插件的 `.c4` 预览诉求；布局状态不跨工作区共享。
+- 关系面板只「列出关系」，不是官方的 `RelationshipsBrowser`：官方那个是以元素为中心重新布局一张关系图的独立 xyflow 实例，本包不引 xyflow，所以点「浏览关系」看到的是列表而不是重排后的画布。
+- 面板的分组按端点身份判定，所以一条聚合边的直连组可能是空的（真实模型里 5 条聚合边的 11 条关系全部起于嵌套子元素），此时只画有行的组，不画空标题。
+- 关系记录的 `technology` / `description` 在真实模型里常常整个字段都不存在（实测 67 条关系只有 `{ id, source, target, title }`），解码走软探针，缺字段解成 null 而不是渲染成空行。
+- 面板不跟随视口变化重算位置：打开后平移或缩放画布，面板留在原处，直到重新点开或关闭。
 
 ## 验证
 
-单包：`pnpm --filter dsh-arch test`、`typecheck`、`build`（断言启动包不含渲染器符号、chunk 名三处一致、体积预算）。写回闭环、详情侧栏三态、baseline 窗口、轮询刷新均有 vitest 用例钉住。真实 LikeC4 布局走 `test/integration/from-workspace.test.ts` 的临时工作区集成测。
+单包：`pnpm --filter dsh-arch test`、`typecheck`、`build`（断言启动包不含渲染器符号、chunk 名三处一致、体积预算）。写回闭环、详情侧栏三态、baseline 窗口、轮询刷新均有 vitest 用例钉住。箭头与线型（八种 marker 几何、三种 dash 模式、`dir=back` 对调）、边动效（默认 paused、active 转 running、reduced-motion 关掉、12px 命中区）、节点动作条（有/无 `navigateTo` 的按钮数、按按钮不触发拖拽）、关系解码与分组（完整记录/缺字段/未知 id）、面板 DOM（两组标题、胶囊、三路关闭）也都有用例。真实 LikeC4 布局走 `test/integration/from-workspace.test.ts` 的临时工作区集成测。
 
 ## 结构
 
-`src/host/` 是宿主半：`render.ts` 进程内布局与实例缓存（LRU + baseline 窗口）、`discover.ts` 有界 config 走查、`arch-store.ts` storageDomain 领域、`routes.ts` 三条 `/arch/api` 路由、`workspace.ts` 会话到工作区的反查。`src/client/` 是客户端半：`chrome.tsx` 面板外壳（视图标签、写回泵、轮询刷新）、`chunk/diagram.ts` 懒加载的 SVG 渲染器、`details.tsx` 详情侧栏、`view-state.ts` 视口/偏移状态机、`local-state.ts` 降级层。所有服务按 `ctx.get?.(name)` 结构探测，缺一个降级一项能力，不阻塞插件启动。
+`src/host/` 是宿主半：`render.ts` 进程内布局与实例缓存（LRU + baseline 窗口）、`discover.ts` 有界 config 走查、`arch-store.ts` storageDomain 领域、`routes.ts` 三条 `/arch/api` 路由、`workspace.ts` 会话到工作区的反查。`src/client/` 是客户端半：`chrome.tsx` 面板外壳（视图标签、写回泵、轮询刷新、关系面板接线）、`chunk/diagram.ts` 懒加载的 SVG 渲染器（箭头、线型、边动效、命中区、节点动作条）、`details.tsx` 详情侧栏、`relations.tsx` 关系浮层面板、`relations-data.ts` 关系解码与分组（纯函数，脱离 DOM 可单测）、`view-state.ts` 视口/偏移状态机、`local-state.ts` 降级层。所有服务按 `ctx.get?.(name)` 结构探测，缺一个降级一项能力，不阻塞插件启动。

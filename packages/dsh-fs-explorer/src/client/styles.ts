@@ -390,6 +390,69 @@ export const FS_STYLES = `
   min-height: 0;
   border-right: 1px solid var(--fx-border-soft);
 }
+/* The tree's search bar lives in the pane, above the scroller and outside it:
+   the scroller owns the tree's key handler and its prefix jump, so an input
+   nested there would lose every typed letter to the typeahead. */
+.fx-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--fx-border-soft);
+}
+.fx-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--fx-border-soft);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fx-text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.fx-search-input:focus-visible { border-color: var(--fx-accent); }
+.fx-search-input::-webkit-search-cancel-button { display: none; }
+.fx-search-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in oklab, currentColor 10%, transparent);
+  color: var(--fx-caption);
+  font-family: var(--fx-mono);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+/* The fallback answers a strictly smaller question than the reader asked, so it
+   is the one state that gets a warning tone rather than the neutral one. */
+.fx-search-scope[data-origin="loaded"] { color: var(--fx-modified); }
+.fx-search-count {
+  flex: none;
+  color: var(--fx-caption);
+  font-family: var(--fx-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.fx-search-count[data-state="empty"] { color: var(--fx-modified); }
+/* A result row's dimmed directory prefix; the name itself stays full strength. */
+.fx-row-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fx-caption);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
 .fx-pane-handle {
   position: relative;
   z-index: 1;
@@ -902,6 +965,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-pbtn:hover:not(:disabled) { background: var(--fx-hover); color: var(--fx-text); border-color: var(--fx-border); }
 .fx-pbtn:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -2px; }
 .fx-pbtn:disabled { opacity: .35; cursor: default; }
+.fx-pbtn[data-open="true"] { background: var(--fx-active); color: var(--fx-text); border-color: var(--fx-border); }
 .fx-preview-notice {
   flex: none;
   padding: 6px 10px;
@@ -958,6 +1022,42 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   scrollbar-width: thin;
 }
 .fx-preview-body[data-scroll="none"] { overflow: hidden; }
+/* The find bar sits between the toolbar and the body, so it never covers the
+   words it points at; it is not inside the scroller for the same reason. */
+.fx-find {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 30px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--fx-border-soft);
+}
+.fx-find-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--fx-border-soft);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fx-text);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.fx-find-input:focus-visible { border-color: var(--fx-accent); }
+.fx-find-input::-webkit-search-cancel-button { display: none; }
+.fx-find-count {
+  flex: none;
+  min-width: 7ch;
+  color: var(--fx-caption);
+  font-family: var(--fx-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.fx-find-count[data-state="empty"] { color: var(--fx-modified); }
 .fx-preview-read { height: 100%; }
 .fx-preview-hint {
   max-width: 60ch;

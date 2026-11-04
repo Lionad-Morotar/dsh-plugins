@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { GIT_STYLES } from "../src/client/styles.ts";
+
 import {
   computeWindow,
   createCommitJump,
@@ -7,9 +9,11 @@ import {
   formatCommitDetail,
   graphLaneCount,
   groupChanges,
+  HISTORY_ROW_HEIGHT,
   layoutGraph,
   parsePorcelain,
   relativeTime,
+  revealRowIndex,
   statusLetter,
 } from "../src/client/model.ts";
 
@@ -222,5 +226,60 @@ describe("layoutGraph", () => {
     const intoRoot = rows[3]?.segments.filter(segment => segment.kind === "into");
     expect(intoRoot).toHaveLength(2);
     expect(new Set(intoRoot?.map(segment => segment.from))).toEqual(new Set([0, 1]));
+  });
+});
+
+describe("revealRowIndex", () => {
+  it("shares its row height with the window that mounts the rows", () => {
+    // The cursor follow and the virtual window must agree on the row height or
+    // every reveal lands a row off from what the reader sees. One constant is
+    // what makes that agreement structural rather than a review finding.
+    const last = 99;
+    const offset = revealRowIndex({
+      scrollTop: 0,
+      viewport: HISTORY_ROW_HEIGHT * 10,
+      rowHeight: HISTORY_ROW_HEIGHT,
+      index: last,
+      rowCount: 100,
+    });
+    const win = computeWindow(Array.from({ length: 100 }, (_, row) => row), {
+      scrollTop: offset,
+      height: HISTORY_ROW_HEIGHT * 10,
+      rowHeight: HISTORY_ROW_HEIGHT,
+      overscan: 0,
+    });
+    expect(win.rows).toContain(last);
+    expect(revealRowIndex({ scrollTop: 0, viewport: HISTORY_ROW_HEIGHT * 10, rowHeight: HISTORY_ROW_HEIGHT, index: 0, rowCount: 100 })).toBe(0);
+    expect(offset).toBeGreaterThan(0);
+  });
+
+  it("does not move the viewport for a row that already fits", () => {
+    const settled = revealRowIndex({ scrollTop: 240, viewport: 240, rowHeight: 24, index: 12, rowCount: 100 });
+    expect(settled).toBe(240);
+  });
+
+  it("reveals a row above the viewport at its own top", () => {
+    expect(revealRowIndex({ scrollTop: 480, viewport: 240, rowHeight: 24, index: 4, rowCount: 100 })).toBe(96);
+  });
+
+  it("reveals a row below the viewport far enough to show its bottom", () => {
+    // 24 rows of 24px in a 240px viewport: row 24's bottom sits at 600.
+    expect(revealRowIndex({ scrollTop: 0, viewport: 240, rowHeight: 24, index: 24, rowCount: 100 })).toBe(360);
+  });
+
+  it("clamps a cursor that outlived a shrunken list", () => {
+    // A search replaced a 100-commit page with 3 commits while the cursor was
+    // deep in the old list; scrolling for index 90 would land past the end.
+    expect(revealRowIndex({ scrollTop: 0, viewport: 240, rowHeight: 24, index: 90, rowCount: 3 })).toBe(0);
+  });
+});
+
+describe("row height sources", () => {
+  it("keeps the CSS variable and the TypeScript constant in step", () => {
+    // The virtual window multiplies the constant while the browser lays rows out
+    // with the variable. If they disagree, the cursor's reveal lands on a
+    // neighbour and the mounted slice is short or long by the difference; this is
+    // the only place the two declarations are compared.
+    expect(GIT_STYLES).toContain(`--gx-row-h: ${String(HISTORY_ROW_HEIGHT)}px;`);
   });
 });

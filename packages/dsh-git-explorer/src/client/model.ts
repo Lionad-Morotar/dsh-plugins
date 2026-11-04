@@ -6,6 +6,7 @@
  * probe can load the built client bundle in plain Node and drive them with
  * captured command output. Anything that needs a service lives in `view.tsx`.
  */
+import { revealSpan } from "./cursor.ts";
 import type { GitChangeStatus, GitCommit } from "../host/types.ts";
 
 /** One file row after grouping a raw porcelain status. */
@@ -352,6 +353,17 @@ export function parseCommitFocus(focus: string | undefined): CommitFocus | undef
   return match === null ? undefined : { hash: (match[1] ?? "").toLowerCase() };
 }
 
+/**
+ * History row height.
+ *
+ * One constant feeds three consumers that must agree: the CSS variable
+ * `--gx-row-h` in the stylesheet, {@link computeWindow}'s row arithmetic and
+ * {@link revealScrollTop}'s inverse. A cursor followed by a different row height
+ * drifts by the difference on every row, so the value lives here rather than in
+ * the component that happens to render it.
+ */
+export const HISTORY_ROW_HEIGHT = 24;
+
 /** Viewport inputs for {@link computeWindow}. */
 export interface WindowOptions {
   readonly scrollTop: number;
@@ -387,6 +399,39 @@ export function computeWindow<Row>(rows: readonly Row[], options: WindowOptions)
   const startIndex = Math.min(Math.max(rawStart, 0), maxStart);
   const endIndex = Math.min(rows.length, startIndex + visible + overscan * 2);
   return { rows: rows.slice(startIndex, endIndex), startIndex, endIndex };
+}
+
+/** Inputs for {@link revealRowIndex}. */
+export interface RevealRowOptions {
+  readonly scrollTop: number;
+  readonly viewport: number;
+  readonly rowHeight: number;
+  readonly index: number;
+  /** Rows in the list; the index is clamped so a stale cursor cannot overscroll. */
+  readonly rowCount: number;
+}
+
+/**
+ * The scroll offset that brings one row of a uniform list into view.
+ *
+ * {@link computeWindow} answers "which rows does this offset mount"; the keyboard
+ * cursor asks the opposite question, "what offset mounts this row", and the two
+ * must derive from the same row height or the reveal lands on a neighbour. The
+ * index is clamped to the list because a cursor can outlive a filtered or
+ * truncated list by one render.
+ * @param options - current offset, viewport height, row height, index and count.
+ * @returns the offset to apply; the current one when the row already fits.
+ */
+export function revealRowIndex(options: RevealRowOptions): number {
+  const rowHeight = Math.max(1, options.rowHeight || 1);
+  const last = Math.max(0, Math.trunc(options.rowCount) - 1);
+  const index = Math.min(Math.max(0, Math.trunc(options.index)), last);
+  return revealSpan({
+    scrollTop: options.scrollTop,
+    viewport: options.viewport,
+    top: index * rowHeight,
+    height: rowHeight,
+  });
 }
 
 /** One SVG segment inside a graph row. */
