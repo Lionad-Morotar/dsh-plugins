@@ -719,6 +719,9 @@ export const clientPlugin = {
     // own overflow cannot clip it; the slot entry exists only to receive the
     // session id.
     ctx.effect(() => insertSkillEnhancerStyles(doc), "dsh-better: skill enhancer stylesheet");
+    // One catalogue per client half: both the ghost's name set and the panel's
+    // `path` come from the same cached `remote.skills` read.
+    const catalogue = skillNamesResolver(ctx);
     ctx.effect(
       () =>
         ctx.slots.inject(OVERLAY_SLOT, () => {
@@ -742,8 +745,9 @@ export const clientPlugin = {
                 return undefined;
               }
             },
-            skillNamesFor: skillNamesResolver(ctx),
-            loadProfile: (sessionId, name) => loadSkillProfile(ctx, sessionId, name),
+            skillNamesFor: catalogue.names,
+            loadProfile: async (sessionId, name) =>
+              loadSkillProfile(ctx, sessionId, name, await catalogue.pathOf(sessionId, name)),
             loadUsage: (sessionId, name) => readSkillUsage(ctx, sessionId, name),
             translate: aliasText,
             document: doc,
@@ -1023,31 +1027,43 @@ function registerComponent(
  * @param ctx - client context.
  * @returns a resolver returning the session's known skill names.
  */
-function skillNamesResolver(ctx: ClientContextLike): (sessionId: string) => Promise<ReadonlySet<string>> {
-  const cache = new Map<string, ReadonlySet<string>>();
+function skillNamesResolver(ctx: ClientContextLike): SkillCatalogueResolver {
+  const cache = new Map<string, ReadonlyMap<string, SkillSummaryLike>>();
   const failedAt = new Map<string, number>();
-  return async sessionId => {
+  const load = async (sessionId: string): Promise<ReadonlyMap<string, SkillSummaryLike> | undefined> => {
     const cached = cache.get(sessionId);
     if (cached !== undefined) return cached;
     const failed = failedAt.get(sessionId);
-    if (failed !== undefined && Date.now() - failed < SKILL_CATALOGUE_RETRY_MS) return new Set<string>();
+    if (failed !== undefined && Date.now() - failed < SKILL_CATALOGUE_RETRY_MS) return undefined;
     const skills = readHostService(ctx, "remote.skills") as SkillsRemoteLike | undefined;
-    if (skills === undefined) return new Set<string>();
+    if (skills === undefined) return undefined;
     try {
       const result = await skills.list({ sessionId });
       if (!result.ok) {
         failedAt.set(sessionId, Date.now());
-        return new Set<string>();
+        return undefined;
       }
-      const names: ReadonlySet<string> = new Set(result.value.skills.map(skill => skill.name));
-      cache.set(sessionId, names);
+      // Keyed by name so the panel can also recover the `path`, which it needs
+      // because the host's own route cannot reach the scoped registry.
+      const byName = new Map(result.value.skills.map(skill => [skill.name, skill] as const));
+      cache.set(sessionId, byName);
       failedAt.delete(sessionId);
-      return names;
+      return byName;
     } catch {
       failedAt.set(sessionId, Date.now());
-      return new Set<string>();
+      return undefined;
     }
   };
+  return {
+    names: async sessionId => new Set((await load(sessionId))?.keys() ?? []),
+    pathOf: async (sessionId, name) => (await load(sessionId))?.get(name)?.path,
+  };
+}
+
+/** The catalogue reads the enhancer needs, both served from one cached fetch. */
+interface SkillCatalogueResolver {
+  names(sessionId: string): Promise<ReadonlySet<string>>;
+  pathOf(sessionId: string, name: string): Promise<string | undefined>;
 }
 
 /**
@@ -1065,8 +1081,15 @@ async function loadSkillProfile(
   ctx: ClientContextLike,
   sessionId: string,
   name: string,
+  path?: string,
 ): Promise<SkillProfileWire | undefined> {
-  const query = `?sessionId=${encodeURIComponent(sessionId)}&name=${encodeURIComponent(name)}`;
+  // `path` rides along because the host's root context cannot reach the scoped
+  // skill registry (a scope-less `list` sees only the 10 bundled skills, while the
+  // user's own live in `~/.agents/skills` behind the agent's preset scope). The
+  // client already holds the full catalogue from `remote.skills`, whose summaries
+  // carry `path`, so handing the path over is what makes the panel work at all.
+  const query = `?sessionId=${encodeURIComponent(sessionId)}&name=${encodeURIComponent(name)}`
+    + (path === undefined ? "" : `&path=${encodeURIComponent(path)}`);
   try {
     const response = await fetch(`${SKILL_PROFILE_ROUTE}${query}`, { headers: { accept: "application/json" } });
     if (!response.ok) return undefined;

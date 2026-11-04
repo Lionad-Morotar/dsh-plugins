@@ -21,6 +21,7 @@ import {
   normalizeMetadata,
   parseArgumentHint,
   readFrontmatterArgumentHint,
+  readFrontmatterFields,
   skillProfileOf,
   type SkillParam,
 } from "../src/skill-profile.ts";
@@ -269,6 +270,60 @@ describe("normalizeMetadata", () => {
     expect(normalizeMetadata("text")).toEqual({});
     expect(normalizeMetadata(7)).toEqual({});
     expect(normalizeMetadata([1, 2])).toEqual({});
+  });
+});
+
+describe("readFrontmatterFields", () => {
+  it("reads the hint and the metadata block in one pass", () => {
+    const source = [
+      "---",
+      "name: flow-workflow",
+      'argument-hint: "[--create] [--dynamic]"',
+      "metadata:",
+      "  version: 0.0.1-alpha.16",
+      "  owner: lionad",
+      "---",
+      "",
+      "# Body",
+    ].join("\n");
+
+    expect(readFrontmatterFields(source)).toEqual({
+      name: "flow-workflow",
+      argumentHint: "[--create] [--dynamic]",
+      metadata: { version: "0.0.1-alpha.16", owner: "lionad" },
+    });
+  });
+
+  it("reads metadata that sits before the hint", () => {
+    const source = ["---", "metadata:", "  version: 1.2.3", 'argument-hint: "[--x]"', "---"].join("\n");
+    expect(readFrontmatterFields(source)).toEqual({
+      argumentHint: "[--x]",
+      metadata: { version: "1.2.3" },
+    });
+  });
+
+  it("stops the metadata block at the next top-level key", () => {
+    // `name` is not indented, so it is not metadata and must not be swallowed.
+    const source = ["---", "metadata:", "  version: 1", "name: demo", "  bogus: not-metadata", "---"].join("\n");
+    expect(readFrontmatterFields(source).metadata).toEqual({ version: "1" });
+  });
+
+  it("tolerates a blank line inside the metadata block", () => {
+    const source = ["---", "metadata:", "  version: 1", "", "  owner: lionad", "---"].join("\n");
+    expect(readFrontmatterFields(source).metadata).toEqual({ version: "1", owner: "lionad" });
+  });
+
+  it("returns nothing for a file without frontmatter", () => {
+    expect(readFrontmatterFields("# Just a body")).toEqual({});
+  });
+
+  it("returns only the name when neither hint nor metadata is present", () => {
+    expect(readFrontmatterFields(["---", "name: demo", "description: d", "---"].join("\n"))).toEqual({ name: "demo" });
+  });
+
+  it("ignores a metadata-like line in the body", () => {
+    const source = ["---", "name: demo", "---", "", "metadata:", "  fake: value"].join("\n");
+    expect(readFrontmatterFields(source)).toEqual({ name: "demo" });
   });
 });
 

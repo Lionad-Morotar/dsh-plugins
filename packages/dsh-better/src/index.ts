@@ -19,7 +19,8 @@ import { readFile } from "node:fs/promises";
 
 import { sessionCompactionProjection } from "./compaction.ts";
 import { registerSkillProfileRoutes, type WebServerFace } from "./host/skill-profile-routes.ts";
-import { readFrontmatterArgumentHint } from "./skill-profile.ts";
+import { readFrontmatterArgumentHint, readFrontmatterFields } from "./skill-profile.ts";
+import type { SkillFrontmatter } from "./skill-profile.ts";
 import { sessionSkillUsageProjection } from "./skill-usage.ts";
 
 /** Loader row name; must match the id in `cordis.patch.yml`. */
@@ -98,6 +99,15 @@ interface SkillsFace {
     readonly path?: string;
     readonly metadata?: unknown;
   } | undefined>;
+  /** Summaries carry `path` and `description` without loading bodies. */
+  list(options?: { readonly cwd?: string }): Promise<readonly SkillSummaryLike[]>;
+}
+
+/** The subset of a skill summary this package reads. */
+interface SkillSummaryLike {
+  readonly name: string;
+  readonly description?: string;
+  readonly path?: string;
 }
 
 /** Structural slice of the `sessions` store (live session objects). */
@@ -222,25 +232,74 @@ async function loadSkillProfile(
 ): Promise<{ name: string; description?: string; path?: string; argumentHint?: string; metadata?: unknown } | undefined> {
   const skills = readService(ctx, "skills") as SkillsFace | undefined;
   if (skills === undefined) return undefined;
-  const definition = await skills.get(name, cwd === undefined ? undefined : { cwd });
-  if (definition === undefined) return undefined;
 
-  let argumentHint: string | undefined;
-  if (typeof definition.path === "string" && definition.path !== "") {
+  // `list` rather than `get`: the summaries already carry `path` and
+  // `description`, and — unlike a scoped `get` — a scope-less `list` reads the
+  // global layer, which is where installed skills live. `get` needs the calling
+  // agent's scope (`presets.serviceFor(agent, 'skills')`), and a plugin's root
+  // context is not an agent, so the scoped registry is not reachable from here.
+  const options = cwd === undefined ? undefined : { cwd };
+  const summaries = await skills.list(options);
+  const summary = summaries.find(entry => entry.name === name);
+  if (summary === undefined) return undefined;
+
+  const path = typeof summary.path === "string" && summary.path !== "" ? summary.path : undefined;
+  let frontmatter: SkillFrontmatter = {};
+  if (path !== undefined) {
     try {
-      argumentHint = readFrontmatterArgumentHint(await readFile(definition.path, "utf8"));
+      frontmatter = readFrontmatterFields(await readFile(path, "utf8"));
     } catch {
-      argumentHint = undefined;
+      frontmatter = {};
     }
   }
 
-  const profile: { name: string; description?: string; path?: string; argumentHint?: string; metadata?: unknown } = { name: definition.name };
-  if (typeof definition.description === "string" && definition.description !== "") {
-    profile.description = definition.description;
+  const profile: { name: string; description?: string; path?: string; argumentHint?: string; metadata?: unknown } = { name: summary.name };
+  if (typeof summary.description === "string" && summary.description !== "") {
+    profile.description = summary.description;
   }
-  if (definition.path !== undefined) profile.path = definition.path;
-  if (argumentHint !== undefined) profile.argumentHint = argumentHint;
-  if (definition.metadata !== undefined) profile.metadata = definition.metadata;
+  if (path !== undefined) profile.path = path;
+  if (frontmatter.argumentHint !== undefined) profile.argumentHint = frontmatter.argumentHint;
+  if (frontmatter.metadata !== undefined) profile.metadata = frontmatter.metadata;
+  return profile;
+}
+
+/**
+ * Build a profile by reading one SKILL.md at a path the client supplied.
+ *
+ * The host's registry is not usable for the user's own skills: a plugin's root
+ * context has no agent scope, and a scope-less `list` sees only the bundled
+ * skills. The client does hold the full catalogue (through `remote.skills`,
+ * which the host serves with the right scope), and its summaries carry `path`,
+ * so the file is read directly here instead of being looked up again.
+ *
+ * The name is re-checked against the frontmatter rather than trusted: the path
+ * arrives from the browser, and a mismatched pair would label one skill's
+ * parameters with another skill's name.
+ * @param name - the skill the client asked for.
+ * @param path - absolute SKILL.md path from the client's catalogue.
+ * @returns the profile, or undefined when the file is unreadable or is another skill.
+ */
+async function readSkillProfileAt(
+  name: string,
+  path: string,
+): Promise<{ name: string; description?: string; path?: string; argumentHint?: string; metadata?: unknown } | undefined> {
+  if (typeof path !== "string" || path === "") return undefined;
+  let source: string;
+  try {
+    source = await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
+  const frontmatter = readFrontmatterFields(source);
+  // The path arrives from the browser; a mismatched pair would label one skill's
+  // parameters with another skill's name, so the file has to confirm it.
+  if (frontmatter.name !== undefined && frontmatter.name !== name) return undefined;
+  const profile: { name: string; description?: string; path?: string; argumentHint?: string; metadata?: unknown } = {
+    name,
+    path,
+  };
+  if (frontmatter.argumentHint !== undefined) profile.argumentHint = frontmatter.argumentHint;
+  if (frontmatter.metadata !== undefined) profile.metadata = frontmatter.metadata;
   return profile;
 }
 
@@ -270,6 +329,7 @@ function registerSkillProfile(ctx: HostContextLike): void {
       () =>
         registerSkillProfileRoutes(webServer, {
           loadSkill: (name, cwd) => loadSkillProfile(ctx, name, cwd),
+          readSkillAt: (name, path) => readSkillProfileAt(name, path),
           resolveCwd: sessionId => resolveSessionCwd(ctx, sessionId),
         }),
       "dsh-better: skill profile route",

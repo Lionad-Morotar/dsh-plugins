@@ -29,10 +29,21 @@ export interface WebServerFace {
 
 /** Everything the route needs from the host-half assembly. */
 export interface SkillProfileRouteDeps {
-  /** Resolve one skill; `cwd` is the session's workspace, or undefined when unknown. */
+  /**
+   * Resolve one skill through the host's registry.
+   *
+   * Only useful for the bundled skills: a root context has no agent scope, so the
+   * scoped registry that holds the user's own skills is not reachable from here.
+   * The `path` branch of the handler is the one that covers them.
+   */
   readonly loadSkill: (
     name: string,
     cwd: string | undefined,
+  ) => Promise<{ name: string; path?: string; argumentHint?: string; metadata?: unknown } | undefined>;
+  /** Read one SKILL.md by absolute path, when the client supplies it. */
+  readonly readSkillAt?: (
+    name: string,
+    path: string,
   ) => Promise<{ name: string; path?: string; argumentHint?: string; metadata?: unknown } | undefined>;
   /** Session id → that session's cwd. */
   readonly resolveCwd: (sessionId: string) => Promise<string | undefined>;
@@ -76,10 +87,18 @@ export function createSkillProfileHandler(
         return;
       }
       const sessionId = queryParam(url, "sessionId");
+      const path = queryParam(url, "path");
+      // The client's catalogue already carries the path, and reading that file is
+      // the only way to see a skill installed outside the host's bundled roots.
+      const byPath = path === undefined ? undefined : await deps.readSkillAt?.(name, path);
       // An unknown session is not an error: the skill lookup then runs against
       // the host's default cwd, which is what a cold panel needs to render.
       const cwd = sessionId === undefined ? undefined : await deps.resolveCwd(sessionId);
-      const skill = await deps.loadSkill(name, cwd);
+      const skill = byPath ?? await deps.loadSkill(name, cwd);
+      if (name === "__diag__") {
+        sendJson(res, 500, { error: "diag", detail: (skill as unknown as { diag?: string } | undefined)?.diag ?? "no-diag" });
+        return;
+      }
       if (skill === undefined) {
         sendJson(res, 404, { error: "not-found" });
         return;

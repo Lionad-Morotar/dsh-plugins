@@ -388,6 +388,78 @@ export function readFrontmatterArgumentHint(source: string): string | undefined 
   return undefined;
 }
 
+/** Frontmatter fields this package resolves for itself. */
+export interface SkillFrontmatter {
+  readonly name?: string;
+  readonly argumentHint?: string;
+  readonly metadata?: Record<string, string>;
+}
+
+/**
+ * Read the fields the host's parser drops.
+ *
+ * `skill-filesystem` keeps only name/description/whenToUse and the `metadata:`
+ * block, so `argument-hint` never reaches a plugin through the skill service.
+ * Reading the file directly is the only way to get it, and since the file has to
+ * be opened anyway, the metadata block comes out of the same pass.
+ * @param source - the whole SKILL.md.
+ * @returns the fields present; an absent block yields an empty object.
+ */
+export function readFrontmatterFields(source: string): SkillFrontmatter {
+  if (typeof source !== "string") return {};
+  const text = source.replace(/^\uFEFF/u, "");
+  const block = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(text);
+  if (block === null) return {};
+  const lines = (block[1] ?? "").split(/\r?\n/u);
+
+  let name: string | undefined;
+  let argumentHint: string | undefined;
+  const metadata: Record<string, string> = {};
+  let metadataIndent = -1;
+
+  for (const line of lines) {
+    if (metadataIndent >= 0) {
+      // The block ends at the first line that is not indented deeper than the
+      // `metadata:` key itself; a blank line inside it is skipped rather than
+      // treated as a terminator, because YAML allows them.
+      if (line.trim() === "") continue;
+      const indent = line.length - line.trimStart().length;
+      if (indent > metadataIndent) {
+        const entry = /^\s+([A-Za-z0-9_.-]+):[ \t]*(.*)$/u.exec(line);
+        if (entry !== null) {
+          const key = entry[1] ?? "";
+          const value = stripQuotes(entry[2] ?? "");
+          if (key !== "" && value !== "") metadata[key] = value;
+        }
+        continue;
+      }
+      metadataIndent = -1;
+    }
+    const nameLine = /^name:[ \t]*(.*)$/u.exec(line);
+    if (nameLine !== null && name === undefined) {
+      const raw = stripQuotes(nameLine[1] ?? "");
+      if (raw !== "") name = raw;
+      continue;
+    }
+    const hintLine = /^argument-hint:[ \t]*(.*)$/u.exec(line);
+    if (hintLine !== null) {
+      const raw = stripQuotes(hintLine[1] ?? "");
+      if (raw !== "") argumentHint = raw;
+      continue;
+    }
+    const metadataLine = /^metadata:[ \t]*$/u.exec(line);
+    if (metadataLine !== null) {
+      metadataIndent = line.length - line.trimStart().length;
+    }
+  }
+
+  const frontmatter: { name?: string; argumentHint?: string; metadata?: Record<string, string> } = {};
+  if (name !== undefined) frontmatter.name = name;
+  if (argumentHint !== undefined) frontmatter.argumentHint = argumentHint;
+  if (Object.keys(metadata).length > 0) frontmatter.metadata = metadata;
+  return frontmatter;
+}
+
 /**
  * Compose the wire shape for one skill.
  *
