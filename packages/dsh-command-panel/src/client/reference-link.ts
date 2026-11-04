@@ -370,3 +370,178 @@ export function createReferenceResolver(deps: ReferenceResolverDeps, limit = DEF
     },
   };
 }
+
+/**
+ * Marks an element the reader may click; the value is the kind it resolved to.
+ *
+ * The stylesheet and the click handler both read it, and so does a test: the
+ * attribute is the only record that a hover already paid for its answer.
+ */
+export const REF_LINK_ATTR = "data-dcp-ref";
+
+/**
+ * The tags a bare path may be written in.
+ *
+ * These are the elements the host's markdown renderer wraps a paragraph, a list
+ * item, a table cell or an inline run in. Anything else (a `div` holding a whole
+ * message, an `h2`) is a container whose text is not one reference.
+ */
+const TEXT_TAGS: ReadonlySet<string> = new Set(["P", "LI", "TD", "SPAN"]);
+
+/** What one click needs from the runtime, answered fresh on every gesture. */
+export interface ReferenceLinkHost {
+  /** The session on screen, or null when none is mounted. */
+  sessionId(): string | null;
+  /**
+   * Resolve one target. Null means no such path.
+   *
+   * The implementation owns the caching policy; this layer asks again on every
+   * gesture and lets the resolver decide what that costs.
+   */
+  resolve(target: string): Promise<ResolvedReference | null>;
+  /** Open a file in the workbench panel. The path is workspace-relative or absolute. */
+  openFile(path: string, options: { readonly absolute: boolean }): void;
+  /** Select a directory in the tree without opening a panel. */
+  revealDirectory(path: string, options: { readonly absolute: boolean }): void;
+  /** Whether the workbench view is registered right now. */
+  fsViewPresent(): boolean;
+}
+
+/**
+ * The candidate element a gesture landed on, or undefined when it may not be one.
+ *
+ * The node type is read off the target's own document. A listener installed from
+ * outside it (the test runner, the bundled plugin) does not share that document's
+ * `Element`, so `instanceof` against the outer one never matches, and
+ * `event.view` is null for an event dispatched by hand. This is the same rule
+ * `commit-ref.ts` applies; that helper is private to its module and this slice
+ * may not edit it, so the four lines are repeated rather than shared.
+ */
+function candidateOf(event: Event): Element | undefined {
+  const target = event.target;
+  const owner = target as { readonly ownerDocument?: Document } | null;
+  const Element = owner?.ownerDocument?.defaultView?.Element;
+  if (Element === undefined || !(target instanceof Element)) return undefined;
+  if (target.closest("[data-streaming]") !== null) return undefined;
+  if (target.closest("pre") !== null) return undefined;
+  return target.closest("a, code, p, li, td, span") ?? undefined;
+}
+
+/**
+ * Read one element as a reference probe, or refuse it before asking the resolver.
+ *
+ * The bare-text shape is held to a stricter bar here than the pure recogniser
+ * can enforce, because the DOM is now visible: the element must be one of the
+ * inline tags, must hold nothing but text, and that text must be the whole
+ * element. A sentence that mentions a path is therefore left alone. Recognising
+ * a path inside running prose needs text-node precision and its own positioning,
+ * which is a different piece of work; dotting the sentence instead would promise
+ * a click the reader did not aim at.
+ * @param element - the candidate the gesture landed on.
+ * @returns the probe to classify, or undefined when the element is not eligible.
+ */
+function probeOf(element: Element): ReferenceProbe | undefined {
+  const tag = element.tagName.toUpperCase();
+  const streaming = element.closest("[data-streaming]") !== null;
+  const insidePre = element.closest("pre") !== null;
+
+  if (tag === "A") {
+    const href = element.getAttribute("href") ?? undefined;
+    return { tag, text: element.textContent ?? "", ...(href === undefined ? {} : { href }), insidePre, streaming };
+  }
+  if (tag === "CODE") {
+    return { tag, text: element.textContent ?? "", insidePre, streaming };
+  }
+  if (!TEXT_TAGS.has(tag)) return undefined;
+  // A code span or an anchor inside the container owns its own text, so the
+  // container is mixed content and its whole text is not one reference.
+  if (element.closest("code") !== null || element.closest("a") !== null) return undefined;
+  if (element.children.length > 0) return undefined;
+  const text = element.textContent ?? "";
+  if (/\s/u.test(text)) return undefined;
+  return { tag, text, insidePre, streaming };
+}
+
+/** The attribute value for one resolved kind. */
+function markOf(kind: ResolvedReference["kind"]): string {
+  return kind === "directory" ? "dir" : "file";
+}
+
+/**
+ * Watch the document for workspace references and make the ones that exist clickable.
+ *
+ * Both listeners capture, so the decision lands before any handler lower in the
+ * tree restyles the element or claims the click for text selection. Nothing is
+ * decorated until the resolver has confirmed the path exists: an underline over
+ * a path the workbench cannot open is a promise the click cannot keep.
+ * @param doc - the document the chat renders into.
+ * @param host - the runtime's answers, read fresh on every gesture.
+ * @returns a disposer that drops both listeners and retires every answer in flight.
+ */
+export function installReferenceLinks(doc: Document, host: ReferenceLinkHost): () => void {
+  const view = doc.defaultView;
+  if (view === null) return () => undefined;
+
+  // A hover whose answer arrives after the pointer moved on, or after the
+  // element was rewritten, must not decorate: the ticket is what makes the
+  // newest gesture the only one allowed to write.
+  let ticket = 0;
+
+  const onOver = (event: Event): void => {
+    const element = candidateOf(event);
+    if (element === undefined || element.hasAttribute(REF_LINK_ATTR)) return;
+    // A view that is not registered has nothing to land on, so the decoration
+    // is skipped before the resolver is even asked.
+    if (!host.fsViewPresent()) return;
+    const probe = probeOf(element);
+    if (probe === undefined) return;
+    const match = classifyReference(probe);
+    if (match === undefined) return;
+    if (host.sessionId() === null) return;
+
+    const text = element.textContent ?? "";
+    const mine = ++ticket;
+    void host.resolve(match.target).then(
+      resolved => {
+        if (mine !== ticket || resolved === null) return;
+        if ((element.textContent ?? "") !== text) return;
+        element.setAttribute(REF_LINK_ATTR, markOf(resolved.kind));
+      },
+      // A transport failure is silence: the row simply stays plain, and the
+      // next hover asks again through the resolver's own cache.
+      () => undefined,
+    );
+  };
+
+  const onClick = (event: Event): void => {
+    const element = candidateOf(event);
+    if (element === undefined) return;
+    const mark = element.getAttribute(REF_LINK_ATTR);
+    if (mark === null) return;
+    const probe = probeOf(element);
+    if (probe === undefined) return;
+    const match = classifyReference(probe);
+    if (match === undefined) return;
+    if (host.sessionId() === null) return;
+    event.preventDefault();
+    void host.resolve(match.target).then(
+      resolved => {
+        // The mark says what the row was when it was dotted; the resolver says
+        // what it is now. A path deleted in between opens nothing, silently.
+        if (resolved === null) return;
+        const absolute = resolved.path.startsWith("/");
+        if (resolved.kind === "directory") host.revealDirectory(resolved.path, { absolute });
+        else host.openFile(resolved.path, { absolute });
+      },
+      () => undefined,
+    );
+  };
+
+  view.addEventListener("mouseover", onOver, true);
+  view.addEventListener("click", onClick, true);
+  return () => {
+    ticket += 1;
+    view.removeEventListener("mouseover", onOver, true);
+    view.removeEventListener("click", onClick, true);
+  };
+}

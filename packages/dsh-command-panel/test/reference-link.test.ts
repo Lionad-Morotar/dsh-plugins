@@ -8,15 +8,20 @@
  * weight than the acceptances, because a wrong underline is a promise the click
  * cannot keep.
  */
-import { describe, expect, it } from "vitest";
+import { JSDOM } from "jsdom";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   classifyReference,
   createReferenceResolver,
+  installReferenceLinks,
   normalizeReferenceTarget,
   referenceCandidates,
+  REF_LINK_ATTR,
+  type ReferenceLinkHost,
   type ReferenceProbe,
   type ReferenceProbeAnswer,
+  type ResolvedReference,
 } from "../src/client/reference-link.ts";
 
 /** A probe for an element in a settled message, outside any fence. */
@@ -350,5 +355,250 @@ describe("createReferenceResolver", () => {
     const before = table.calls.length;
     await resolver.resolve("a.md");
     expect(table.calls.length).toBe(before + 1);
+  });
+});
+
+/** A document with nothing in it, built per test so no window leaks between them. */
+function page(): { readonly window: JSDOM["window"]; readonly doc: Document } {
+  const { window } = new JSDOM("<!doctype html><html><head></head><body></body></html>");
+  return { window, doc: window.document };
+}
+
+/** The answers a fake host resolves against: one target, one outcome. */
+function answers(table: Readonly<Record<string, ResolvedReference | null>>): ReferenceLinkHost["resolve"] {
+  return vi.fn(async (target: string) => table[target] ?? null);
+}
+
+function host(overrides: Partial<ReferenceLinkHost> = {}): ReferenceLinkHost {
+  return {
+    sessionId: () => "sess-1",
+    resolve: answers({}),
+    openFile: vi.fn(),
+    revealDirectory: vi.fn(),
+    fsViewPresent: () => true,
+    ...overrides,
+  };
+}
+
+/** Hover one element and let the resolution settle. */
+async function hover(window: JSDOM["window"], element: Element): Promise<void> {
+  element.dispatchEvent(new window.MouseEvent("mouseover", { bubbles: true }));
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+/** Click one element, reporting whether the listener claimed the gesture. */
+function click(window: JSDOM["window"], element: Element): boolean {
+  const event = new window.MouseEvent("click", { bubbles: true, cancelable: true });
+  element.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
+describe("installReferenceLinks", () => {
+  it("dots an anchor the resolver places and opens it as a file", async () => {
+    const { window, doc } = page();
+    const anchor = doc.createElement("a");
+    anchor.setAttribute("href", "/maps/x/y");
+    anchor.textContent = "the map";
+    doc.body.append(anchor);
+    const face = host({ resolve: answers({ "/maps/x/y": { kind: "file", path: "content/maps/x/y.md" } }) });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, anchor);
+    expect(anchor.getAttribute(REF_LINK_ATTR)).toBe("file");
+
+    expect(click(window, anchor)).toBe(true);
+    await vi.waitFor(() => expect(face.openFile).toHaveBeenCalledWith("content/maps/x/y.md", { absolute: false }));
+    stop();
+  });
+
+  it("dots an inline code span", async () => {
+    const { window, doc } = page();
+    const code = doc.createElement("code");
+    code.textContent = "content/a.md";
+    doc.body.append(code);
+    const face = host({ resolve: answers({ "content/a.md": { kind: "file", path: "content/a.md" } }) });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, code);
+    expect(code.getAttribute(REF_LINK_ATTR)).toBe("file");
+    stop();
+  });
+
+  it("dots a paragraph that is nothing but a path, and reveals it as a directory", async () => {
+    const { window, doc } = page();
+    const paragraph = doc.createElement("p");
+    paragraph.textContent = "content/6.maps/a";
+    doc.body.append(paragraph);
+    const face = host({ resolve: answers({ "content/6.maps/a": { kind: "directory", path: "content/6.maps/a" } }) });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, paragraph);
+    expect(paragraph.getAttribute(REF_LINK_ATTR)).toBe("dir");
+
+    expect(click(window, paragraph)).toBe(true);
+    await vi.waitFor(() => expect(face.revealDirectory).toHaveBeenCalledWith("content/6.maps/a", { absolute: false }));
+    expect(face.openFile).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("leaves a sentence that merely contains a path alone", async () => {
+    const { window, doc } = page();
+    const sentence = doc.createElement("p");
+    sentence.textContent = "这是一句话 content/a.md";
+    // Mixed content: the path is one child among others, so the paragraph as a
+    // whole is prose and dotting it would underline the sentence.
+    const mixed = doc.createElement("p");
+    mixed.append("see ");
+    const inner = doc.createElement("span");
+    inner.textContent = "content/a.md";
+    mixed.append(inner);
+    doc.body.append(sentence, mixed);
+    const face = host({ resolve: answers({ "content/a.md": { kind: "file", path: "content/a.md" } }) });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, sentence);
+    expect(sentence.hasAttribute(REF_LINK_ATTR)).toBe(false);
+    await hover(window, mixed);
+    expect(mixed.hasAttribute(REF_LINK_ATTR)).toBe(false);
+    stop();
+  });
+
+  it("leaves a path inside a fence alone", async () => {
+    const { window, doc } = page();
+    const pre = doc.createElement("pre");
+    const code = doc.createElement("code");
+    code.textContent = "content/a.md";
+    pre.append(code);
+    doc.body.append(pre);
+    const face = host({ resolve: answers({ "content/a.md": { kind: "file", path: "content/a.md" } }) });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, code);
+    expect(code.hasAttribute(REF_LINK_ATTR)).toBe(false);
+    expect(face.resolve).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("leaves a message that is still streaming alone", async () => {
+    const { window, doc } = page();
+    const message = doc.createElement("div");
+    message.setAttribute("data-streaming", "");
+    const code = doc.createElement("code");
+    code.textContent = "content/a.md";
+    message.append(code);
+    doc.body.append(message);
+    const face = host({ resolve: answers({ "content/a.md": { kind: "file", path: "content/a.md" } }) });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, code);
+    expect(code.hasAttribute(REF_LINK_ATTR)).toBe(false);
+    expect(face.resolve).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("promises nothing when the resolver finds no such path", async () => {
+    const { window, doc } = page();
+    const code = doc.createElement("code");
+    code.textContent = "content/gone.md";
+    doc.body.append(code);
+    const face = host({ resolve: answers({}) });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, code);
+    expect(code.hasAttribute(REF_LINK_ATTR)).toBe(false);
+    expect(face.resolve).toHaveBeenCalledWith("content/gone.md");
+    stop();
+  });
+
+  it("promises nothing when the workbench is not registered", async () => {
+    const { window, doc } = page();
+    const code = doc.createElement("code");
+    code.textContent = "content/a.md";
+    doc.body.append(code);
+    const face = host({
+      resolve: answers({ "content/a.md": { kind: "file", path: "content/a.md" } }),
+      fsViewPresent: () => false,
+    });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, code);
+    expect(code.hasAttribute(REF_LINK_ATTR)).toBe(false);
+    expect(face.resolve).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("opens nothing when a click lands on an element it never dotted", async () => {
+    const { window, doc } = page();
+    const code = doc.createElement("code");
+    code.textContent = "content/a.md";
+    doc.body.append(code);
+    const face = host({ resolve: answers({ "content/a.md": { kind: "file", path: "content/a.md" } }) });
+    const stop = installReferenceLinks(doc, face);
+
+    expect(click(window, code)).toBe(false);
+    await Promise.resolve();
+    expect(face.openFile).not.toHaveBeenCalled();
+    expect(face.revealDirectory).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("asks the resolver once for a row the pointer crosses twice", async () => {
+    const { window, doc } = page();
+    const code = doc.createElement("code");
+    code.textContent = "content/a.md";
+    doc.body.append(code);
+    const face = host({ resolve: answers({ "content/a.md": { kind: "file", path: "content/a.md" } }) });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, code);
+    await hover(window, code);
+    expect(code.getAttribute(REF_LINK_ATTR)).toBe("file");
+    expect(face.resolve).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("stays silent when a dotted row no longer resolves", async () => {
+    const { window, doc } = page();
+    const code = doc.createElement("code");
+    code.textContent = "content/a.md";
+    doc.body.append(code);
+    let found: ResolvedReference | null = { kind: "file", path: "content/a.md" };
+    const face = host({ resolve: vi.fn(async () => found) });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, code);
+    expect(code.getAttribute(REF_LINK_ATTR)).toBe("file");
+
+    // The file was deleted between the hover and the click.
+    found = null;
+    expect(click(window, code)).toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(face.openFile).not.toHaveBeenCalled();
+    expect(face.revealDirectory).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("drops both listeners and every answer in flight on dispose", async () => {
+    const { window, doc } = page();
+    const code = doc.createElement("code");
+    code.textContent = "content/a.md";
+    doc.body.append(code);
+    const face = host({ resolve: answers({ "content/a.md": { kind: "file", path: "content/a.md" } }) });
+    const stop = installReferenceLinks(doc, face);
+
+    stop();
+    await hover(window, code);
+    expect(code.hasAttribute(REF_LINK_ATTR)).toBe(false);
+    expect(face.resolve).not.toHaveBeenCalled();
+  });
+
+  it("has nothing to install in a document with no window", () => {
+    const face = host();
+    const stop = installReferenceLinks({ defaultView: null } as unknown as Document, face);
+    expect(typeof stop).toBe("function");
+    expect(() => stop()).not.toThrow();
+    expect(face.resolve).not.toHaveBeenCalled();
   });
 });
