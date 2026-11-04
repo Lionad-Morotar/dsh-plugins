@@ -27,6 +27,16 @@ export type {
 } from "./shared.ts";
 
 export const name = "dsh-command-panel";
+
+/**
+ * Services this row needs before it can be applied.
+ *
+ * Empty today, so the module binding and the default export's copy agree by
+ * accident. It is still copied onto `apply` below: the Loader reads
+ * `module.default.inject`, and a module-level binding alone is invisible to it.
+ * The day this list grows, that copy is what keeps the row from activating
+ * before its dependency exists.
+ */
 export const inject: string[] = [];
 
 /**
@@ -36,8 +46,13 @@ export const inject: string[] = [];
  * `apply`, and Cordis resolves a class plugin to that method, so the plugin
  * call rejects it and neither namespace is ever published.
  */
-export default function apply(ctx: Context): void {
+export function apply(ctx: Context): void {
   new PathExplorerService(ctx);
   new HostShutdownService(ctx);
   new NativeOpenService(ctx);
 }
+
+/** The dependency list the Loader actually reads; see {@link inject}. */
+apply.inject = inject;
+
+export default apply;
