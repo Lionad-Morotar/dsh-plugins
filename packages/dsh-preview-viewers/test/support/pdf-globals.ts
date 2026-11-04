@@ -1,14 +1,16 @@
 /**
- * The browser globals pdf.js expects at import time.
+ * The globals pdf.js expects that this test runtime does not provide.
  *
- * pdf.js builds a `DOMMatrix` while its module body evaluates, and jsdom does not
- * ship one, so importing the surface under test throws before any test body runs.
- * A setup file is the only place early enough to fix that.
+ * pdf.js assumes a browser that is at least as new as the one it ships to, and
+ * two of those assumptions do not hold under the Node process the tests run in.
+ * Both fail during module evaluation or the first message it sends, which is
+ * earlier than any test body can install them, so a setup file is the only place
+ * early enough to fix them.
  *
- * The stand-in carries the members pdf.js's viewport math reads and nothing else.
- * Stubbing pdf.js itself would be the easier fix and the wrong one: the pdf
- * surface test exists to prove a real document is parsed, and a fake engine would
- * pass whether or not the inlining works.
+ * Each stand-in is the smallest thing that lets the real engine run. Stubbing
+ * pdf.js itself would be the easier fix and the wrong one: the pdf surface test
+ * exists to prove a real document is parsed, and a fake engine would pass whether
+ * or not the inlining works.
  */
 
 if (globalThis.DOMMatrix === undefined) {
@@ -50,4 +52,35 @@ if (globalThis.DOMMatrix === undefined) {
   }
 
   (globalThis as { DOMMatrix?: unknown }).DOMMatrix = FakeDOMMatrix;
+}
+
+/**
+ * `Promise.try`, which pdf.js's message handler calls on every request.
+ *
+ * It is an ES2025 addition, so a browser new enough to run this plugin has it and
+ * the shipped code needs no fallback. A Node older than v24 does not, and there
+ * the handler throws on its first message: the document loads, then every page
+ * request rejects, and the surface never leaves its loading state.
+ *
+ * The body is the spec's, not a shorthand. `Promise.resolve().then(fn)` would
+ * defer `fn` to a later microtask and, worse, would let a synchronous throw
+ * escape as a throw instead of becoming a rejection; running `fn` inside the
+ * executor is what makes both behaviours match the standard.
+ */
+
+// The reads and the assignment go through a local view of the constructor: the
+// TypeScript lib this package compiles against predates `Promise.try`, and
+// widening the global lib for one setup file would leak into every consumer's
+// program.
+const PromiseWithTry = Promise as unknown as {
+  try?: <Args extends unknown[], R>(fn: (...args: Args) => R | PromiseLike<R>, ...args: Args) => Promise<Awaited<R>>;
+};
+
+if (typeof PromiseWithTry.try !== "function") {
+  PromiseWithTry.try = function tryFn<Args extends unknown[], R>(
+    fn: (...args: Args) => R | PromiseLike<R>,
+    ...args: Args
+  ): Promise<Awaited<R>> {
+    return new Promise<Awaited<R>>(resolve => resolve(fn(...args) as Awaited<R> | PromiseLike<Awaited<R>>));
+  };
 }
