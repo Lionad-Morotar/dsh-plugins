@@ -93,16 +93,30 @@ function readableItems(entries: readonly unknown[]): WorkspacePathItem[] {
   return items;
 }
 
+/** Props of the probe: the hook, when the caller has one to hand it. */
+export interface WorkspacePathProbeProps {
+  /**
+   * The host's workspaces hook. Optional because the slot occupant reads it off
+   * its own props, and a render before the host publishes the root contribution
+   * has none. Absent means nothing is published, which the store keeps as
+   * "not ready" rather than as an empty workspace list.
+   */
+  readonly useWorkspaces?: UseWorkspaces;
+}
+
 /**
  * A slot occupant that renders nothing and mirrors the workspaces snapshot.
  *
  * It occupies `sidebar.workspaces.session.row.action`, a list slot mounted on
  * every session row. Rendering null keeps the row's layout exactly as the host
- * laid it out; the snapshot is what the occupant is there for.
+ * laid it out; the snapshot is what the occupant is there for. The component is
+ * created once per store: its identity has to stay put across renders, because
+ * the hook result lives in an effect and a new component type would remount it.
  */
-export function createProbeComponent(store: WorkspacePathStore, useWorkspaces: UseWorkspaces): () => ReactElement | null {
-  return function WorkspacePathProbe(): ReactElement | null {
-    const snapshot = useWorkspaces((value) => value);
+export function createProbeComponent(store: WorkspacePathStore): (props: WorkspacePathProbeProps) => ReactElement | null {
+  return function WorkspacePathProbe(props: WorkspacePathProbeProps): ReactElement | null {
+    const useWorkspaces = props.useWorkspaces;
+    const snapshot = useWorkspaces?.((value) => value);
     useEffect(() => {
       const items = snapshotItems(snapshot);
       // No items yet is "not ready", which is distinct from an empty workspace list:

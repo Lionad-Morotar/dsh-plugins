@@ -32,13 +32,13 @@ afterEach(() => {
 
 /** Render the probe the way the host mounts a slot occupant, and flush it. */
 function renderProbe(store: WorkspacePathStore, useWorkspaces: (selector: (value: unknown) => unknown) => unknown): HTMLElement {
-  const Probe = createProbeComponent(store, useWorkspaces);
+  const Probe = createProbeComponent(store);
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   mounts.push(root);
   flushSync(() => {
-    root.render(createElement(Probe));
+    root.render(createElement(Probe, { useWorkspaces }));
   });
   return host;
 }
@@ -174,10 +174,11 @@ describe("workspace path probe", () => {
     const root = createRoot(host);
     mounts.push(root);
 
+    const Probe = createProbeComponent(store);
     const render = (): void => {
-      const Probe = createProbeComponent(store, (selector: (value: unknown) => unknown) => selector(snapshot));
+      const useWorkspaces = (selector: (value: unknown) => unknown): unknown => selector(snapshot);
       flushSync(() => {
-        root.render(createElement(Probe));
+        root.render(createElement(Probe, { useWorkspaces }));
       });
     };
 
