@@ -119,18 +119,20 @@ describe("client entry", () => {
     expect(clientPlugin.inject).toContain("remote.workspaceFiles");
   });
 
-  it("registers one definition per catalogued family, at the extension band", () => {
+  it("registers one definition per sidebar-claimed family, at the extension band", () => {
     const { ctx, log, teardown } = fakeContext();
     clientPlugin.apply(ctx);
     const definitions = log.filter((entry) => entry.kind === "definition");
 
-    // The count is the catalogue's, so adding a family here is a deliberate act.
+    // The list is the catalogue's sidebar claim, not its whole family list. The
+    // host registers its own image and PDF previews at the `builtin` band with a
+    // zoom viewport and a real text layer, and `extension` always outranks
+    // `builtin`, so claiming those two here would shadow a better renderer with
+    // this plugin's simpler one.
     expect(definitions.map((entry) => entry.value.id)).toEqual([
       "dsh-preview-more/scene3d",
       "dsh-preview-more/raster",
       "dsh-preview-more/cad",
-      "dsh-preview-more/image",
-      "dsh-preview-more/pdf",
     ]);
     for (const definition of definitions) {
       expect(definition.value.priority).toBe("extension");
@@ -139,8 +141,20 @@ describe("client entry", () => {
     expect(definitions[0]?.value.extensions).toEqual(["glb", "gltf", "obj", "stl", "3mf"]);
     expect(definitions[1]?.value.extensions).toEqual(["tif", "tiff", "avif"]);
     expect(definitions[2]?.value.extensions).toEqual(["dxf"]);
-    expect(definitions[3]?.value.extensions).toEqual(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"]);
-    expect(definitions[4]?.value.extensions).toEqual(["pdf"]);
+    teardown();
+  });
+
+  it("never claims the families the host renders better", () => {
+    // A direct statement of the gap this fixes: the catalogue grew, and the
+    // sidebar must not grow with it. The host's image preview has a shared zoom
+    // viewport and its PDF preview has a selectable text layer, so an
+    // `extension`-band claim here would win the file and lose the reader both.
+    const { ctx, log, teardown } = fakeContext();
+    clientPlugin.apply(ctx);
+    const ids = log.filter((entry) => entry.kind === "definition").map((entry) => entry.value.id);
+
+    expect(ids).not.toContain("dsh-preview-more/image");
+    expect(ids).not.toContain("dsh-preview-more/pdf");
     teardown();
   });
 
@@ -153,8 +167,6 @@ describe("client entry", () => {
       "dsh-preview-more/scene3d",
       "dsh-preview-more/raster",
       "dsh-preview-more/cad",
-      "dsh-preview-more/image",
-      "dsh-preview-more/pdf",
     ]);
     for (const body of bodies) {
       expect(body.value.name).toBe("sidebar.right.tab.document");

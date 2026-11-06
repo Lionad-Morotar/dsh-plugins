@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { claimedExtensions, chunkOf, families, familyOf, PREVIEW_FORMATS } from "../src/formats.ts";
+import { claimedExtensions, chunkOf, families, familiesFor, familyOf, PREVIEW_FORMATS } from "../src/formats.ts";
 
 describe("format catalogue", () => {
   it("claims the formats the built-in preview does not render", () => {
@@ -41,6 +41,33 @@ describe("format catalogue", () => {
     // consumers register without anyone asking for it.
     expect(families()).toEqual(["scene3d", "raster", "cad", "image", "pdf"]);
     expect(PREVIEW_FORMATS.slice(0, 3).map(format => format.family)).toEqual(["scene3d", "raster", "cad"]);
+  });
+
+  it("claims image and pdf for the workbench only", () => {
+    // The workbench is the file's main surface, so it takes these two even though
+    // the host renders them. The sidebar does not: the host's image preview has a
+    // shared zoom viewport and its PDF preview has a selectable text layer, and
+    // the sidebar registers at a band that outranks `builtin`, so claiming them
+    // there would win the file and lose the reader both.
+    expect(familiesFor("workbench")).toEqual(["scene3d", "raster", "cad", "image", "pdf"]);
+    expect(familiesFor("sidebar")).toEqual(["scene3d", "raster", "cad"]);
+  });
+
+  it("claims the three original families on both surfaces", () => {
+    // These are the ones the host cannot draw at all, so neither surface has a
+    // better answer to defer to.
+    for (const family of ["scene3d", "raster", "cad"] as const) {
+      const format = PREVIEW_FORMATS.find(entry => entry.family === family);
+      expect(format?.claims, family).toEqual(["workbench", "sidebar"]);
+    }
+  });
+
+  it("gives every family at least one claiming surface", () => {
+    // A family nobody claims is a chunk built for no reader; the catalogue would
+    // be carrying a format that can never be shown.
+    for (const format of PREVIEW_FORMATS) {
+      expect(format.claims.length, format.family).toBeGreaterThan(0);
+    }
   });
 
   it("keeps the original suffix sets and titles unchanged", () => {
