@@ -260,6 +260,13 @@ export async function listIgnoredPaths(
     // a repository": there is no ignore information to report either way.
     return noIgnored();
   }
+  if (probe.timedOut === true) {
+    // A probe killed for taking too long says nothing about whether this is a
+    // repository, so it must not borrow the empty answer that "not a repository"
+    // earns: that answer un-dims every row, and a hung git is exactly when the
+    // reader needs to know the listing is unknown rather than empty.
+    return fail("io-error", `git rev-parse did not finish within ${String(GIT_IGNORED_TIMEOUT_MS)}ms`);
+  }
   if (probe.code !== 0) return noIgnored();
   const root = probe.stdout.trim() === "" ? null : probe.stdout.trim();
 
@@ -272,7 +279,12 @@ export async function listIgnoredPaths(
   if (listing.timedOut === true) {
     return fail("io-error", `git ls-files did not finish within ${String(GIT_IGNORED_TIMEOUT_MS)}ms`);
   }
-  if (listing.code !== 0) {
+  // A capture cut at the byte cap is killed by the runner, so it always arrives
+  // with a non-zero code. Judging the exit code first would reject the answer
+  // the cap exists to deliver and lose the dimming for every huge ignore list;
+  // the cut is a known, reported state, while an uncut non-zero exit is a real
+  // failure with nothing to trust.
+  if (listing.truncated !== true && listing.code !== 0) {
     const reason = listing.stderr.trim();
     return fail("io-error", reason === "" ? `git ls-files exited with ${String(listing.code)}` : reason);
   }

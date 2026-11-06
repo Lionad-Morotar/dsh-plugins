@@ -513,6 +513,9 @@ async function listIgnoredPaths(deps, request, signal) {
   } catch {
     return noIgnored();
   }
+  if (probe.timedOut === true) {
+    return fail2("io-error", `git rev-parse did not finish within ${String(GIT_IGNORED_TIMEOUT_MS)}ms`);
+  }
   if (probe.code !== 0) return noIgnored();
   const root = probe.stdout.trim() === "" ? null : probe.stdout.trim();
   let listing;
@@ -524,7 +527,7 @@ async function listIgnoredPaths(deps, request, signal) {
   if (listing.timedOut === true) {
     return fail2("io-error", `git ls-files did not finish within ${String(GIT_IGNORED_TIMEOUT_MS)}ms`);
   }
-  if (listing.code !== 0) {
+  if (listing.truncated !== true && listing.code !== 0) {
     const reason = listing.stderr.trim();
     return fail2("io-error", reason === "" ? `git ls-files exited with ${String(listing.code)}` : reason);
   }

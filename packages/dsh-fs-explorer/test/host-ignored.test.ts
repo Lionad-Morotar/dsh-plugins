@@ -149,12 +149,50 @@ describe("listIgnoredPaths", () => {
     });
   });
 
+  it("reports a timed-out repository probe as io-error, not as a missing repository", async () => {
+    // A probe killed for taking too long says nothing about whether this is a
+    // repository. Reading it as "not a repository" would answer an empty list
+    // and silently un-dim every ignored row, which is the one outcome the
+    // timeout exists to avoid.
+    const git = fakeGit(() => ({ code: null, stdout: "", stderr: "", timedOut: true }));
+    await expect(listIgnoredPaths({ cwd: "/workspace", git }, { sessionId: "s1" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "io-error" },
+    });
+    expect(git.calls).toEqual([["rev-parse", "--show-toplevel"]]);
+  });
+
+  it("keeps a listing that was cut at the byte cap instead of failing on its exit code", async () => {
+    // The runner kills the child once stdout crosses the cap, so a truncated
+    // capture always arrives with a non-zero code. Judging the exit code first
+    // would reject the very answer the cap was built to deliver: a huge ignore
+    // list would lose its dimming entirely rather than arrive cut.
+    const git = repoListing("a.log\u0000b.log\u0000c.lo", { code: null, truncated: true });
+    const result = await listIgnoredPaths({ cwd: "/workspace", git }, { sessionId: "s1" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.ignored.entries).toEqual(["a.log", "b.log"]);
+    expect(result.ignored.entries).not.toContain("c.lo");
+    expect(result.ignored.truncated).toBe(true);
+  });
+
   it("reports a listing that exited non-zero as io-error", async () => {
     const git = repoListing("", { code: 129, stderr: "fatal: bad revision" });
     await expect(listIgnoredPaths({ cwd: "/workspace", git }, { sessionId: "s1" })).resolves.toMatchObject({
       ok: false,
       error: { code: "io-error" },
     });
+  });
+
+  it("still fails a non-truncated listing that exited non-zero", async () => {
+    // The truncation exemption must not swallow a real failure: a git that died
+    // without filling the cap has no entries to trust.
+    const git = repoListing("", { code: 128, stderr: "fatal: not a git repository" });
+    const result = await listIgnoredPaths({ cwd: "/workspace", git }, { sessionId: "s1" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("io-error");
+    expect(result.error.message).toContain("fatal");
   });
 
   it("reports a runner that threw as io-error", async () => {
