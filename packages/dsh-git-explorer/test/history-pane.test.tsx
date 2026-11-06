@@ -509,6 +509,14 @@ describe("HistoryPane columns", () => {
     expect(columnWidth("hash")).toBe(`${String(DEFAULT_HISTORY_COLUMN_WIDTHS.hash)}px`);
   });
 
+  it("keeps the graph column wide enough for its header label", async () => {
+    // A linear history is one lane, so the lane arithmetic alone would ask for
+    // 12px and the header label would be truncated to "图.." in every ordinary
+    // repository. The floor is the label's width, not the lane count's.
+    await mount();
+    expect(columnWidth("graph")).toBe("36px");
+  });
+
   it("nudges a column by one step on the bare arrows", async () => {
     const store = memoryStorage();
     await mount({ storage: store });

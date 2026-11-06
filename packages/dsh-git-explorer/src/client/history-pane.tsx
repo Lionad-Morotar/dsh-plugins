@@ -54,9 +54,15 @@ export interface WorkingTreeSummary {
  * The graph column's width for a lane count, matching `GraphSvg`'s own sizing.
  * The two have to agree: the row grid reserves this track while the SVG paints
  * inside it, and a formula that drifted would clip the outermost lane.
+ *
+ * The floor is 36px because the header label needs it, not because the lanes
+ * do: a single lane asks for 12px, and a 12px column truncates "Graph" to
+ * "Gr…". From three lanes up the lane arithmetic already exceeds 36px, so this
+ * floor only changes the one- and two-lane case, where the node stays centred
+ * on lane 0.
  */
 function graphColumnWidth(laneCount: number): number {
-  return Math.min(116, Math.max(16, laneCount * 12));
+  return Math.min(116, Math.max(36, laneCount * 12));
 }
 
 /**
@@ -138,7 +144,7 @@ function CommitRow({
       title={`${commit.hash.slice(0, 7)} ${commit.subject}`}
       onClick={() => onSelect(commit.hash)}
     >
-      {row === undefined ? <span className="gx-graph" style={{ width: 16 }} /> : <GraphSvg row={row} laneCount={laneCount} height={HISTORY_ROW_HEIGHT} />}
+      {row === undefined ? <span className="gx-graph" style={{ width: graphColumnWidth(laneCount) }} /> : <GraphSvg row={row} laneCount={laneCount} height={HISTORY_ROW_HEIGHT} />}
       {/* The refs cell sits between the graph and the subject, so a long branch
           name has a column of its own to be truncated in rather than pushing the
           subject around. */}
