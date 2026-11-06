@@ -1,18 +1,18 @@
 # 页面与入口清单
 
-<!-- refreshed: 261030 -->
+<!-- refreshed: 261106 -->
 
-数据来源：本仓没有前端路由体系（web 客户端半边以 ModuleLoader 工厂挂载，不是页面路由），页面族不适用；命令族取自根 `package.json` 的 scripts 与十七个包各自的 scripts，静态提取。另附两张本仓真正对外的入口表：插件挂载入口（profile 里的 Loader row 由哪个 patch 文件提供、带哪份清单）与客户端半边入口（`src/client/entry.ts` 对应哪个产物、注册在哪个 slot，文件面板的地址桥另列两条登记）。市场分发产物（`market/`）单列一节，它是本仓对外承诺安装形态的那一面。
+数据来源：本仓没有前端路由体系（web 客户端半边以 ModuleLoader 工厂挂载，不是页面路由），页面族不适用；命令族取自根 `package.json` 的 scripts 与各包各自的 scripts，静态提取。另附两张本仓真正对外的入口表：插件挂载入口（profile 里的 Loader row 由哪个 patch 文件提供、带哪份清单）与客户端半边入口（`src/client/entry.ts` 对应哪个产物、注册在哪个 slot，文件面板的地址桥另列两条登记）。市场分发产物（`market/`）单列一节，它是本仓对外承诺安装形态的那一面。
 
 ## 命令总览
 
 | 命令 | 实现文件 | 子命令数 | 说明 |
 | ---- | -------- | -------- | ---- |
-| `pnpm build` | `pnpm -r build` | 16 | 递归十七个包，其中十六个有 `build` 脚本：十五个出 `lib/`，`ascii-rest-scenes` 出 `src/catalog.generated.ts`；`dsh-preview-viewers` 只有 test 与 typecheck |
-| `pnpm test` | `pnpm -r test` | 17 | 递归十七个包的 `vitest run`，实测 135 个测试文件 |
-| `pnpm typecheck` | `pnpm -r typecheck` | 17 | 递归十七个包的 `tsc -p tsconfig.json`，`noEmit` |
-| `pnpm check:market` | `scripts/check-market-manifest.mjs` | 1 | 断言可投稿包面向市场索引的暴露面（宿主真正读取的字段），并断言七个自用包保持 `private: true` |
-| `pnpm build:market` | `scripts/build-market-index.mjs` | 1 | 从包自身元数据派生 `market/index.json`（format 1，git source） |
+| `pnpm build` | `pnpm -r build` | 1 | 递归所有包：有 `build` 脚本的产出 `lib/` 或 `src/catalog.generated.ts`；`dsh-preview-viewers` 只有 test 与 typecheck |
+| `pnpm test` | `pnpm -r test` | 1 | 递归所有包的 `vitest run` |
+| `pnpm typecheck` | `pnpm -r typecheck` | 1 | 递归所有包的 `tsc -p tsconfig.json`，`noEmit` |
+| `pnpm check:market` | `scripts/check-market-manifest.mjs` | 1 | 断言可投稿包面向市场索引的暴露面（宿主真正读取的字段），断言自用包保持 `private: true`，并验证所有声明 `engines.dsh` 的包都容纳当前桌面运行时 |
+| `pnpm build:market` | `scripts/build-market-index.mjs` | 1 | 从包自身元数据派生 `market/index.json`（format 1，默认 npm source） |
 | `pnpm check:market-index` | `scripts/build-market-index.mjs --check` | 1 | 只校验不写盘，输出每个包的安装 spec |
 | `pnpm build:awesome` | `scripts/build-awesome-entry.mjs` | 1 | 产出 awesome 社区目录条目 YAML，须带 `assets/icon-180.png` 光栅图 |
 
@@ -24,17 +24,17 @@
 
 | 脚本 | 用法 | 说明 |
 | ---- | ---- | ---- |
-| `check-market-manifest.mjs` | `node scripts/check-market-manifest.mjs [包名…]` | 省略包名则检查全部可投稿包；断言 `engines.dsh` 是显式 `>=floor <ceiling` 区间且容纳本机运行态、`exports` 能解析到 icon、`dsh.bundle.patch` 是 `./` 相对路径且在 `files` 里、`locale/en.json` 有 `meta.title/description`、禁 `preinstall/install/postinstall/prepublish/prepare` 生命周期脚本、`npm pack --dry-run` 产物不含 `src/` 与 `test/` |
-| `build-market-index.mjs` | `node scripts/build-market-index.mjs [--source git\|npm] [--check]` | 默认 `--source git`（安装 spec 钉当前 HEAD 的 commit + `path:/packages/<name>`）；`--source npm` 出精确版本；icon 内联 base64（上限 32 KiB）；写完用宿主自己的 `parseMarketIndex` 解析一遍，所以成功是一次正向测试而不只是格式化 |
+| `check-market-manifest.mjs` | `node scripts/check-market-manifest.mjs [包名…] [--selftest]` | 省略包名则检查全部可投稿包；运行时版本优先读桌面 app.asar 的 `dsh/package.json`（`DSH_RUNTIME_VERSION` 可覆盖），Info.plist 次之，`dsh --version` 兜底，输出标明来源；断言 `engines.dsh` 是显式 `>=floor <ceiling` 区间且容纳该运行时，并对所有声明了 `engines.dsh` 的包单独跑同一区间断言；`exports` 能解析到 icon、`dsh.bundle.patch` 是 `./` 相对路径且在 `files` 里、`locale/en.json` 有 `meta.title/description`、禁 `preinstall/install/postinstall/prepublish/prepare` 生命周期脚本、`npm pack --dry-run` 产物不含 `src/` 与 `test/` |
+| `build-market-index.mjs` | `node scripts/build-market-index.mjs [--source git\|npm] [--check]` | 默认 `--source npm`（安装 spec 出 registry 上的精确版本）；`--source git` 预览未发布的版本，把 spec 钉成当前 HEAD 的 commit + `path:/packages/<name>`；icon 内联 base64（上限 32 KiB）；写完用宿主自己的 `parseMarketIndex` 解析一遍，所以成功是一次正向测试而不只是格式化 |
 | `build-awesome-entry.mjs` | `node scripts/build-awesome-entry.mjs <包名> [--check]` | 按 `owner__repo--<subdir>.yml` 命名写 `market/awesome/`；社区目录拒收 SVG，因此要求 `assets/icon-180.png`；检出 awesome-dsh-plugin 仓库时（`AWESOME_DSH_PLUGIN_ROOT`，默认 `/tmp/awesome-check`）交给它自带的 `validateEntries` 复核 |
 
 ### 包内脚本（`packages/*/package.json`）
 
 | 包 | 脚本 | 命令 | 说明 |
 | -- | ---- | ---- | ---- |
-| 除 `dsh-preview-viewers` 外的十六个包 | `build` | `node scripts/build.mjs`（`ascii-rest-scenes` 为 `node scripts/generate-catalog.mjs`） | 唯一的产物生成入口，`lib/` 只允许被它写 |
-| 十七个包 | `test` | `vitest run` | 单包测试；`dsh-preview-more` 与 `dsh-fs-explorer` 另带 `build.mjs --check` 前置 |
-| 十七个包 | `typecheck` | `tsc -p tsconfig.json` | 单包类型检查 |
+| 有 `build` 脚本的包 | `build` | `node scripts/build.mjs`（`ascii-rest-scenes` 为 `node scripts/generate-catalog.mjs`） | 唯一的产物生成入口，`lib/` 只允许被它写 |
+| 各包 | `test` | `vitest run` | 单包测试；`dsh-preview-more` 与 `dsh-fs-explorer` 另带 `build.mjs --check` 前置 |
+| 各包 | `typecheck` | `tsc -p tsconfig.json` | 单包类型检查 |
 | `dsh-preview-more`、`dsh-fs-explorer` | `check:lib` | `node scripts/build.mjs --check` | 构建到内存后与磁盘 `lib/` 逐文件比对，不一致即失败（不删 `lib/`）；两者的 `test` 已前置调用 |
 | `ascii-rest-scenes` | `build:catalog` | `node scripts/generate-catalog.mjs` | 与 `build` 同一条命令，语义化别名：升级上游 ascii.rest commit 后重跑它 |
 
@@ -76,14 +76,16 @@
 | `dsh-session-timing` | `src/client/entry.ts` | `lib/client.js` | 以 `id: activity`、`priority: -1` 接管 `conversation.composer.dock` 的统计 pill；`inject = ["slots", "locale", "configForms"]`，模式偏好镜像 `ui-chat` 的 `performanceUsage` |
 | `dsh-better` | `src/client/entry.ts` | `lib/client.js` | 以 `id: command-popup`、`priority: -100` 遮蔽 `conversation.input.overlay` 接管 `/model` 弹窗；另以 `priority: -50` 遮蔽 `conversation.input.model` 的 seat，把输入框触发器接到同一个弹窗，caption 自己从目录快照画（provider 显示名加模型名，名称为空回落 id），因为 `conversation.input.model.label` 子 slot 不可二次声明；另在 `conversation.composer.dock` 注册 `id: better-compaction`、slot `order: -1` 的压缩次数读数（宿主半 `sessionCompaction` 投影提供数字；视觉位置靠自身 CSS `order: 1` 与负 slot 顺序配对，落在占用环右侧、docked 终端上方）；另向 `ctx.shortcuts` 声明一条命令 `better.focusComposer`（`⌘Space` 聚焦输入框，web 与 Linux 上 `Space` 被宿主判 reserved，故只声明 desktop:macos / desktop:windows / web:macos / web:windows 四个默认），经 `ctx.inject(["shortcuts"])` 软探测注册；标签隐藏不走 slot：`settings.section` 的 Tab 管理页（id `tabs`，order 55）只管勾选，规则以样式表落在 `[data-conversation-tabs] > button` 的 DOM seam 上（位置按 ledger 位寻址、文本核验，对不上退化为唯一 label 匹配；宿主 `conversation.session.header` 是自占 single slot、`registerOptions: []`，pin 闭包无旁路，插同优先级注册会把 web boot 打挂）；另注册「技能别名」设置页（`settings.section`，id `aliases`，order 56）与 `/` 源（name `alias`，order -1），并在 `conversation.input.overlay` 挂一个无渲染 watcher（id `alias-watcher`），裸词经 `inputTriggers.sessionOf(...).toggleSource` 打开同一个原生菜单；`inject = ["slots"]`；另在 `conversation.chat.turnTail`（list、session scope）注册 `id: better-continue`、`order: 20` 的「继续」按钮，占用层主已给的 owner props `turn`（其 `.end` 就是 `turn/end` 事件本体）与标准套件的 `useChat`/`useSession`/`t`，经 `inject` 拿发送动作 `submitContinue`，点击后走 `ctx.sessions.binding(sessionId).session.prompt([{type:"text",text:"continue"}], "queue")` 发一条用户消息（与用户敲回车同一入口，故零宿主半改动），出现条件三条同时在位：`turn.end.data.reason.kind === "interrupted"`、是 `timeline.turnOrder` 末位、无未落定提交 |
 | `dsh-more-config` | `src/client/entry.ts` | `lib/client.js` | `slots.register({ name: "settings.section", id: "mcp", order: 10 })` 注册 MCP 配置栏；`inject = ["slots", "locale", "configForms"]`，读写走 `more-config` 命名空间的 volatile 数组字段 |
-| `dsh-workspace-open-local` | `src/client/entry.ts` | `lib/client.js` | 不注册菜单项：在 `sidebar.workspaces.session.row.action` 挂渲染 null 的探针（id `workspace-open-local-probe`，order 900）镜像 `useWorkspaces` 快照，工作区行菜单浮层出现后按结构锚定注入「在本地打开」分体行；`inject = ["slots"]` |
-| `dsh-session-interruption` | `src/client/entry.ts` | `lib/client.js` | `sidebar.session.row.leading` 红点、`sidebar.session.row.hover` 中断说明与 `sidebar.workspaces.session.menu.item` 忽略项三座共享一个读数面；`inject = ["slots", "locale", "sessions"]`，投影值走列表快照 `projectionsBySession` 并按 `running` 排除进行中会话 |
+| `dsh-workspace-open-local` | `src/client/entry.ts` | `lib/client.js` | `ctx.contextMenus.register({ id: "open-local.workspace", target: "workspace", order: 250, resolve })` 贡献「在本地打开」父行与应用子菜单，宿主从「…」/ 右键 / `Shift+F10` 三个入口捕获 `{ workspaceId, path, displayTitle }`；图标注册 `contextMenu.icon` 的 `open-local.application` 键；`inject = ["slots", "contextMenus", "locale"]`；旧方案的 `sidebar.workspaces.session.row.action` 探针与 `shell.overlay` 浮层锚定已删 |
+| `dsh-session-interruption` | `src/client/entry.ts` | `lib/client.js` | `sidebar.session.row.leading` 红点、`sidebar.session.row.hover` 中断说明与 `sidebar.workspaces.session.menu.item` 忽略项三座共享一个读数面（legacy 菜单槽在共享菜单内容区渲染，忽略行排在 footer 的 Archive 之前）；`inject = ["slots", "locale", "sessions"]`，投影值走列表快照 `projectionsBySession` 并按 `running` 排除进行中会话 |
 | `dsh-command-panel` | `src/client/entry.ts` → `createRuntime` | `lib/client.js` | `slots.register({ name: "shell.overlay", id: "command-panel.palette", order: 50 })` 承载面板（组件内 portal 到 body），另在 `conversation.input.overlay` 挂 `id: command-panel.bridge` 的隐形会话桥以取当前会话与 `inputActions`；`inject = ["slots", "shortcuts", "sessions", "workspaces", "uiWorkspace", "conversation", "remote", "remote.fileReferences", "remote.commands", "locale"]`（Remote 命名空间是独立的点号服务） |
 | `dsh-workbench-core` | `src/client/entry.ts` | `lib/client.js` | `provide("workbench")` 后再注册 `slots.register({ name: "settings.section", id: "workbench", order: 60 })` 与 `conversation.session.header.views.actions`（id `workbench.return-to-chat`）；另注册九条 `workbench.view.digit1..9`（设置页开关控制，关掉即释放）并在 web 端装一个 `⌥+数字` 的捕获阶段本地路由；`inject = ["slots", "locale", "shortcuts"]` |
 | `dsh-fs-explorer` | `src/client/entry.ts` | `lib/client.js` + `lib/client.preview.js` + 五个家族 chunk（`lib/client.scene3d.js` / `lib/client.raster.js` / `lib/client.cad.js` / `lib/client.image.js` / `lib/client.pdf.js`） | `slots.register({ name: "conversation.view", id: "fs-explorer", order: 100 })`；另有可选地址桥（见下）；`inject = ["slots", "locale", "workbench", "remote"]`；CodeMirror 与 Markdown 渲染器在懒 chunk，二进制家族渲染器按家族懒加载 |
 | `dsh-git-explorer` | `src/client/entry.ts` | `lib/client.js`（宿主半 `lib/index.js`） | `slots.register({ name: "conversation.view", id: "git-explorer", order: 110 })`；`inject` 同文件面板，数据走 `remote.gitExplorer` 的 snapshot / query / commit |
 | `dsh-term-dock` | `src/client/entry.ts` | `lib/client.js` + `lib/client.terminal.js` | `slots.register({ name: "shell.bottom", id: "term-dock" })`，仅在 core 的 `dockVisible` 为真时注册；`inject = ["slots", "locale", "workbench"]`；xterm 在懒 chunk |
 | `dsh-arch` | `src/client/entry.ts` | `lib/client.js` + `lib/client.diagram.js` | `slots.register({ name: "conversation.view", id: "arch", order: 120 })` 会话标签（文件 100、Git 110 之后），另经 `workbench.registerDockPanelKind` 可选注册 kind `arch`；SVG 渲染器在懒 chunk；宿主半 `lib/index.js` 提供 `/arch/api` 三路由；`inject = ["slots", "locale", "workbench"]` |
+
+宿主 0.2.2 的共享菜单另有两个 keyed slot：`contextMenu.content` 是菜单的内容槽（`scope: root`，按 target 的 kind 取 key，宿主菜单覆盖层负责渲染），本仓不注册它——工作区菜单走 `ctx.contextMenus.register` 的数据动作；`contextMenu.icon` 是内联的图标槽，动作按 `icon.key` 取，`dsh-workspace-open-local` 注册 `open-local.application`。
 
 ### 右栏地址桥（`dsh-fs-explorer`，可选）
 
@@ -98,7 +100,7 @@
 
 | 产物 | 消费者 | 说明 |
 | ---- | ------ | ---- |
-| `market/index.json` | DSH 插件管理器（Discover 加索引 URL） | format 1 索引，一个条目（`dsh-jump`），git source 钉 commit；icon 已内联为 data URI，索引自足 |
+| `market/index.json` | DSH 插件管理器（Discover 加索引 URL） | format 1 索引，一个条目（`dsh-jump`），source 是 `{type: "npm"}` 并钉精确版本；icon 已内联为 data URI，索引自足 |
 | `market/awesome/*.yml` | awesome-dsh-plugin 社区目录 | 每包一条，字段从 `package.json` 与 `locale` 派生，`icon` 指向 GitHub raw 上的 `assets/icon-180.png` |
 
 两份产物都是生成物，改包元数据后应重跑 `pnpm build:market` 与 `pnpm build:awesome <包名>`，而不是手改。

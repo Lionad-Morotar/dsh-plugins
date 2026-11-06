@@ -28,7 +28,8 @@ import { useCallback, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 
 import { resolvePrimitives } from "./primitives.ts";
-import { triggerCaption } from "./caption.ts";
+import { triggerCaption, triggerCaptionParts } from "./caption.ts";
+import { localizedText, type LocalizedTextLike } from "./localized-text.ts";
 
 /** Props the shell's seat receives; this shadow reads the same share. */
 export interface SeatProps {
@@ -47,6 +48,30 @@ export interface SeatProps {
     | undefined;
   /** `model`-namespace translator. */
   readonly t?: ((key: string, params?: Record<string, unknown>) => string) | undefined;
+  /**
+   * Resolve provider-authored display text.
+   *
+   * 0.2.2 added it to the seat's injection face for the catalog badge; the same
+   * shape is passed through to the shell's own seat on the fallback path, which
+   * calls it while rendering a badged model.
+   */
+  readonly resolveText?: ((text: LocalizedTextLike) => string) | undefined;
+}
+
+/** One catalog model as the trigger draws it. */
+export interface SeatCatalogModel {
+  readonly id: string;
+  readonly name: string;
+  readonly reasoning?: { readonly efforts?: readonly { readonly id: string; readonly name: string }[]; readonly defaultEffort?: string } | undefined;
+  /** Provider-authored label shown beside the name; display data only (0.2.2). */
+  readonly badge?: { readonly text: LocalizedTextLike; readonly tone?: string | undefined } | undefined;
+}
+
+/** One provider group as the trigger draws it. */
+export interface SeatCatalogGroup {
+  readonly id: string;
+  readonly name: string;
+  readonly models: readonly SeatCatalogModel[];
 }
 
 /** The directory snapshot fields the trigger draws from. */
@@ -54,15 +79,7 @@ export interface SeatSnapshotLike {
   readonly current: { provider: string; model: string; reasoningEffort?: string } | null;
   readonly retainedEffort?: string | undefined;
   readonly status: string;
-  readonly groups: readonly {
-    readonly id: string;
-    readonly name: string;
-    readonly models: readonly {
-      readonly id: string;
-      readonly name: string;
-      readonly reasoning?: { readonly efforts?: readonly { readonly id: string; readonly name: string }[]; readonly defaultEffort?: string } | undefined;
-    }[];
-  }[];
+  readonly groups: readonly SeatCatalogGroup[];
 }
 
 /** What one seat mount needs but cannot import. */
@@ -100,6 +117,15 @@ export interface SeatClasses {
   readonly triggerLabel: string;
   readonly triggerEffort: string;
   readonly chevron: string;
+  /**
+   * The catalog badge capsule.
+   *
+   * Optional, unlike the rest: 0.2.2 added it to the stylesheet, and a shell
+   * that predates the badge must still be taken over. Requiring it here would
+   * send every older host down the native fallback path just because one
+   * decorative class is missing.
+   */
+  readonly badge?: string | undefined;
 }
 
 /** Stable id the shell installs the seat stylesheet under. */
@@ -126,7 +152,10 @@ export function readSeatClasses(doc: Document | undefined): SeatClasses | undefi
     chevron: find("chevron"),
   };
   for (const value of Object.values(classes)) if (value === undefined) return undefined;
-  return classes as SeatClasses;
+  const badge = find("badge");
+  // The badge is spread in only when the shell has one, so a caller can tell
+  // "this host predates the badge" from "this host's badge class is empty".
+  return { ...(classes as Omit<SeatClasses, "badge">), ...(badge === undefined ? {} : { badge }) };
 }
 
 /**
@@ -182,7 +211,7 @@ interface TriggerProps {
  * order cannot depend on a prop.
  */
 function Trigger({ props, primitives, openPicker, translate, classes }: TriggerProps): ReactNode {
-  const { directory, t, sessionId, locked } = props;
+  const { directory, t, sessionId, locked, resolveText } = props;
   const state = useDirectorySnapshot(directory);
   // The seat's registration declares this package's namespace, so `t` speaks
   // `better` rather than the shell's `model` strings; the trigger's own few
@@ -194,7 +223,14 @@ function Trigger({ props, primitives, openPicker, translate, classes }: TriggerP
   const waiting = current === null && state?.status === "loading";
   const found = findModel(state, current);
 
-  const modelLabel = waiting ? (tr?.("trigger.loading") ?? "") : triggerCaption(found, tr?.("trigger.fallback") ?? "");
+  const fallbackText = tr?.("trigger.fallback") ?? "";
+  const caption = triggerCaption(found, fallbackText);
+  const parts = triggerCaptionParts(found, fallbackText);
+  // The provider-authored badge sits between the provider and the model name,
+  // which is where the shell draws it in its own trigger. Resolved here rather
+  // than by the inject face so the props stay the only input this component reads.
+  const badge = badgeViewOf(found, resolveText);
+  const modelLabel = waiting ? (tr?.("trigger.loading") ?? "") : caption;
   const effortLabel = effortCaption(state, current, found, tr);
   const triggerLabel = effortLabel === undefined ? modelLabel : `${modelLabel} · ${effortLabel}`;
   const aria = waiting
@@ -211,6 +247,8 @@ function Trigger({ props, primitives, openPicker, translate, classes }: TriggerP
 
   const IconData = primitives.IconDataOutlineRegular;
   const IconChevron = primitives.IconChevronDownOutlineRegular;
+  const Tag = primitives.Tag;
+  const badgeClass = classes.badge;
 
   return (
     <div className={classes.root} data-dsh-better-seat="">
@@ -226,7 +264,18 @@ function Trigger({ props, primitives, openPicker, translate, classes }: TriggerP
       >
         {IconData === undefined ? null : <IconData className={classes.triggerIcon} size={16} />}
         <span className={classes.triggerLabel} data-provider-id={current?.provider} data-model-id={current?.model}>
-          {modelLabel}
+          {waiting ? modelLabel : (
+            <>
+              {parts.provider === undefined ? null : `${parts.provider} `}
+              {badge === undefined || badgeClass === undefined || Tag === undefined ? null : (
+                <>
+                  <Tag className={badgeClass} tone={badge.tone}>{badge.text}</Tag>
+                  {" "}
+                </>
+              )}
+              {parts.model}
+            </>
+          )}
         </span>
         {effortLabel !== undefined && <span className={classes.triggerEffort}>{effortLabel}</span>}
         {IconChevron === undefined ? null : <IconChevron className={classes.chevron} />}
@@ -253,6 +302,12 @@ function useDirectorySnapshot(directory: SeatProps["directory"]): SeatSnapshotLi
   return useSyncExternalStore(subscribe, getSnapshot);
 }
 
+/** The group and model a catalog entry pairs. */
+export interface SeatCatalogEntry {
+  readonly group: SeatCatalogGroup;
+  readonly model: SeatCatalogModel;
+}
+
 /**
  * The model entry the current selection names.
  * @param state - directory snapshot.
@@ -262,7 +317,7 @@ function useDirectorySnapshot(directory: SeatProps["directory"]): SeatSnapshotLi
 function findModel(
   state: SeatSnapshotLike | undefined,
   current: SeatSnapshotLike["current"],
-): { group: SeatSnapshotLike["groups"][number]; model: SeatSnapshotLike["groups"][number]["models"][number] } | undefined {
+): SeatCatalogEntry | undefined {
   if (state === undefined || current === null || current === undefined) return undefined;
   for (const group of state.groups) {
     if (group.id !== current.provider) continue;
@@ -271,6 +326,33 @@ function findModel(
     }
   }
   return undefined;
+}
+
+/** One catalog badge as the trigger draws it. */
+export interface SeatBadgeView {
+  readonly text: string;
+  readonly tone: string | undefined;
+}
+
+/**
+ * Read the badge a catalog entry carries.
+ *
+ * The badge is display data the provider authors: either one literal or a map of
+ * translations. An empty resolved label renders nothing, because an empty capsule
+ * reads as a broken layout rather than as a label.
+ * @param found - catalog entry for the selection, if any.
+ * @param resolveText - the host's localized-text resolver, when available.
+ * @returns the badge to draw, or undefined when the entry carries none.
+ */
+export function badgeViewOf(
+  found: SeatCatalogEntry | undefined,
+  resolveText: SeatProps["resolveText"],
+): SeatBadgeView | undefined {
+  const badge = found?.model.badge;
+  if (badge === undefined) return undefined;
+  const text = localizedText(resolveText, badge.text);
+  if (text === "") return undefined;
+  return { text, tone: badge.tone };
 }
 
 /**

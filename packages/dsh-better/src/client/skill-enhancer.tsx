@@ -29,6 +29,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { matchLeadingSkillToken, shouldShowHint } from "./skill-hint.ts";
+import { composerBusy } from "./composer-phase.ts";
 import type { SkillProfileWire } from "../skill-profile.ts";
 
 /** One session's published composer state, narrowed to what this module reads. */
@@ -374,12 +375,14 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
     // otherwise: a host that changes the slot props must degrade, not blank.
     const fromSlot = props.useInput;
     const draftFromSlot = fromSlot === undefined ? undefined : fromSlot(state => state.draft);
-    const draftFromStore = useSyncExternalStore(
+    const phaseFromSlot = fromSlot === undefined ? undefined : fromSlot(state => state.phase);
+    const stateFromStore = useSyncExternalStore(
       listener => (store === undefined ? () => undefined : store.subscribe(listener)),
-      () => (store === undefined ? EMPTY_INPUT_STATE.draft : store.getSnapshot().draft),
-      () => (store === undefined ? EMPTY_INPUT_STATE.draft : store.getSnapshot().draft),
+      () => (store === undefined ? EMPTY_INPUT_STATE : store.getSnapshot()),
+      () => (store === undefined ? EMPTY_INPUT_STATE : store.getSnapshot()),
     );
-    const draft = draftFromSlot ?? draftFromStore;
+    const draft = draftFromSlot ?? stateFromStore.draft;
+    const phase = phaseFromSlot ?? stateFromStore.phase;
 
     const [names, setNames] = useState<ReadonlySet<string>>(() => new Set<string>());
     const [profile, setProfile] = useState<SkillProfileWire | undefined>(undefined);
@@ -407,7 +410,12 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
 
     const match = matchLeadingSkillToken(draft, name => names.has(name));
     // The caret is assumed to be at the end; see the module note on staleness.
-    const hintName = shouldShowHint(match, draft, draft.length) ? match?.name : undefined;
+    // While a submission is in flight the host keeps the draft (it clears only
+    // after acceptance) and freezes the editor, so a hint here would invite a
+    // parameter click that cannot land.
+    const hintName = shouldShowHint(match, draft, draft.length) && !composerBusy(phase)
+      ? match?.name
+      : undefined;
 
     // The ghost's text follows whichever skill the draft addresses, whether it was
     // reached by typing or by hovering.

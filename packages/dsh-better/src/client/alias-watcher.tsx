@@ -24,6 +24,7 @@
 import { useEffect, useRef, useSyncExternalStore, type ComponentType } from "react";
 
 import { ALIAS_SOURCE_NAME } from "./alias-source.ts";
+import type { ComposerPhase } from "./composer-phase.ts";
 import {
   matchBareAliasDraft,
   matchPrefixedAliasDraft,
@@ -32,11 +33,17 @@ import {
   type AliasStore,
 } from "./alias-store.ts";
 
-/** The input state this watcher reads; the host publishes more fields. */
+/**
+ * The input state this watcher reads; the host publishes more fields.
+ *
+ * `sending` is part of the union even though the watcher only tests against
+ * `plain`: the host freezes the editor while a message waits for acceptance, and
+ * an unknown value here would read as a type that no longer describes the host.
+ */
 export interface AliasInputState {
   readonly draft: string;
   readonly draftRev: number;
-  readonly phase: "plain" | "adjudicating" | "claimed" | "submitting";
+  readonly phase: ComposerPhase;
 }
 
 /** One session's published input state; a snapshot store. */

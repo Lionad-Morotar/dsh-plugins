@@ -9,6 +9,8 @@ DSH 侧栏自带的会话状态全是客户端运行时观测：进行中的转�
 - 宿主半注册 `sessionInterruption` projection。它对持久转录做全量折叠，只回答一个问题：最新一轮是否从未收口。判据只看最新一轮，所以续聊产生的新闭合轮会让标记自然熄灭；用户主动取消的轮由 agent loop 在 `finally` 里补 `turn/end`，不会误报。wire 视图暴露 `since`（中断起点时间）、`turnStartSeq`（轮起始 seq，客户端忽略锚点）与 `pendingToolCount`（中断时仍挂起的工具调用数）。
 - 客户端半在会话行的三个座各挂一个入口：`sidebar.session.row.leading` 红点（宿主对运行中、待交互、完成未读的行会用自带状态点顶掉它，互不打架）、`sidebar.session.row.hover` 中断时间与挂起工具数、行菜单「忽略本次中断」。读数从会话列表快照的 `projectionsBySession` 取宿主折叠值（不打开会话、不 retain 任何行），叠加 `running` 排除进行中的会话；忽略标记按 `turnStartSeq` 记在 localStorage，同一会话新一轮中断会重新点亮。坏形状的投影值一律静默不标。
 
+`sidebar.workspaces.session.menu.item` 是宿主的 legacy 菜单槽，0.2.2 起它与内置内容行（pin 100 … session-id 450）一起渲染在共享上下文菜单的内容区，而 Archive 是 `afterContent` 的 footer 行（order 600）。footer 永远排在内容区之后，所以忽略行现在出现在 Archive 之前；它的 order 500 只保证在同为内容区的扩展行里排最后，调到 600 以上也不会越过 footer。本包因此保留旧槽，不迁到 `afterContent` 数据动作，以同时兼容 0.2.1。
+
 ## 安装
 
 profile 的 `package.json` 加依赖并登记 bundle：

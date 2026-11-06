@@ -124,15 +124,16 @@ export function createOpenInAppHost(options?: { fetchImpl?: FetchLike; baseUrl?:
 }
 
 /**
- * The application a menu should open with before the user picks.
+ * The catalog order, except that the remembered application leads.
  *
- * A remembered id that the host no longer resolves (uninstalled, SSH) is not a
- * choice, so the list's first id takes over. An empty list has no default.
+ * The menu offers every installed application as a row; keeping the remembered
+ * one first makes the common case the first row without hiding the others. A
+ * remembered id the host no longer resolves (uninstalled, SSH) is not a choice,
+ * so the plain catalog order stands.
  */
-export function resolveDefaultApplication(applications: readonly string[], remembered: string | null): string | null {
-  if (applications.length === 0) return null;
-  if (remembered !== null && applications.includes(remembered)) return remembered;
-  return applications[0] ?? null;
+export function orderApplications(applications: readonly string[], remembered: string | null): readonly string[] {
+  if (remembered === null || !applications.includes(remembered)) return applications;
+  return [remembered, ...applications.filter((id) => id !== remembered)];
 }
 
 /**

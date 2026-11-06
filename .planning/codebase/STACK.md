@@ -1,16 +1,16 @@
 # 技术栈（Technology Stack）
 
-更新: 2026-10-27
+更新: 2026-11-06
 
 ## 语言
 
 **主要：**
 - TypeScript ^5.9.0（根 `package.json` devDependencies）——全部 `src/`、`test/` 源码；ESM（`"type": "module"`），`verbatimModuleSyntax` + 显式 `.ts` 扩展名导入
-- JavaScript（ESM）——构建与生成脚本共八个：包内五个 `packages/ascii-rest-scenes/scripts/generate-catalog.mjs`、`packages/dsh-client-ui-skin-ascii-rest/scripts/build.mjs`、`packages/dsh-jump/scripts/build.mjs`、`packages/dsh-better-keybindings/scripts/build.mjs`、`packages/dsh-slash-commands/scripts/build.mjs`（实测行数依次为 160 / 171 / 97 / 90 / 91）；根 `scripts/` 三个市场脚本 `check-market-manifest.mjs`（220 行）、`build-market-index.mjs`（124 行）、`build-awesome-entry.mjs`（96 行）
+- JavaScript（ESM）——构建与生成脚本分布在包内 `scripts/`，根 `scripts/` 另有三个市场脚本 `check-market-manifest.mjs`（653 行）、`build-market-index.mjs`（124 行）、`build-awesome-entry.mjs`（96 行）；包内脚本按包各自产出 `lib/`、`src/catalog.generated.ts` 或只做校验
 
 **次要：**
 - CSS——`packages/dsh-client-ui-skin-ascii-rest/src/client/styles.ts`（内联字符串）与 `vendor/lil-gui.css`（以 text loader 打进 gui 分块）
-- JSON——`skin.json`（皮肤清单）、皮肤包的 `locale/zh.json`、`locale/en.json`（实测各 39 个键）、`packages/dsh-slash-commands/dsh-plugin.json`（TUI 准入清单，manifestVersion `0.15`）；三个可投稿包各有一对 `locale/{zh,en}.json`，但只含 `meta.title` 与 `meta.description` 两个键（宿主据此显示包名，不用于面板文案）
+- JSON——`skin.json`（皮肤清单）、皮肤包的 `locale/zh.json`、`locale/en.json`（实测各 39 个键）、`packages/dsh-slash-commands/dsh-plugin.json`（TUI 准入清单，manifestVersion `0.15`）；带 `locale/` 的包各有一对 `locale/{zh,en}.json`，市场条目那几份只含 `meta.title` 与 `meta.description` 两个键（宿主据此显示包名，不用于面板文案）
 - YAML——`packages/*/cordis.patch.yml`（Loader row）与 `market/awesome/*.yml`（社区目录条目，单引号标量、`description` 分 `en`/`zh` 两行）；`market/index.json` 是 format 1 市场索引（实测 3 个 plugin 条目、8681 B，icon 以 data URI 内联）
 
 五包 TypeScript 源码规模（实测 `find packages/*/src -name '*.ts'` 计数与 `cat | wc -l`）：`packages/ascii-rest-scenes` 8 文件 2489 行、`packages/dsh-client-ui-skin-ascii-rest` 17 文件 3224 行、`packages/dsh-jump` 15 文件 1833 行（宿主侧 1 个 + `src/client/` 14 个）、`packages/dsh-better-keybindings` 6 文件 728 行、`packages/dsh-slash-commands` 11 文件 1573 行（宿主侧 7 个 + `src/client/` 4 个）。
@@ -18,7 +18,7 @@
 ## 运行时
 
 **环境：**
-- Node.js 22.22.1（本机实测，开发/构建）；四个插件的宿主半 `lib/index.js` 由 Node 以 ESM 导入（`packages/ascii-rest-scenes` 例外：`exports` 直指 `src/index.ts`，只被皮肤包按源码引用）。客户端半边跑在 DSH Web 客户端浏览器环境，构建目标 ES2022（`packages/dsh-client-ui-skin-ascii-rest`、`packages/dsh-jump`、`packages/dsh-better-keybindings`、`packages/dsh-slash-commands`）
+- Node.js 22.22.1（本机 shell，开发/构建）；DSH 0.2.2 起宿主最低 Node 24.9（桌面 app 自带 24.21，桌面端无感）。四个插件的宿主半 `lib/index.js` 由 Node 以 ESM 导入（`packages/ascii-rest-scenes` 例外：`exports` 直指 `src/index.ts`，只被皮肤包按源码引用）。客户端半边跑在 DSH Web 客户端浏览器环境，构建目标 ES2022（`packages/dsh-client-ui-skin-ascii-rest`、`packages/dsh-jump`、`packages/dsh-better-keybindings`、`packages/dsh-slash-commands`）
 - `packages/dsh-slash-commands` 两个半边并存。宿主半边跑在 DSH 进程内（Node），三端共用：`/rename` 只碰命令注册表与 `sessionTitle`；`/copy` 在终端组合里才注册，运行期用 `node:child_process` 的 `spawn` 拉起本地剪贴板工具，并用 `process.stdout.write` 发 OSC 52 转义。客户端半边跑在 DSH Web 客户端浏览器环境（构建目标 ES2022，esbuild 打成 browser bundle，套 ModuleLoader 工厂）：`/resume` 走 `ctx.uiWorkspace.openSession` 做会话切换，另给页面全局的 `navigator.clipboard.writeText` 套上有界写入
 - `packages/dsh-jump` 的客户端半边拆成 15 个模块（`settings-page.ts` 284 行、`bindings.ts` 281 行、`app.ts` 279 行、`runtime.ts` 156 行、`store.ts` 132 行、`settings-controller.ts` 129 行、`hints.ts` 123 行、`keys.ts` 111 行、`config.ts` 104 行、`target.ts` 96 行、`copy.ts` 86 行、`entry.ts` 78 行、`overlay.ts` 74 行、`recorder.ts` 61 行、`react.ts` 50 行）。全部零三方依赖：DOM 事件、`localStorage` 与 `navigator.platform` 是唯一的外部面，React 不 import 而由 loader 的 `require` 在 boot 时取宿主副本
 - `packages/dsh-slash-commands` 的客户端半边同样零三方依赖，浏览器面只有两个全局：`navigator.clipboard.writeText`（被包装对象）与 `document`（`execCommand("copy")` 兜底需要）；timer 由 `globalThis.setTimeout` 提供，其余协作方全部经 `inject` 从 Cordis 取
@@ -26,7 +26,7 @@
 
 **包管理器：**
 - pnpm 10.15.0（`packageManager` 字段钉死；`pnpm-workspace.yaml`：`packages: ["packages/*"]`，`onlyBuiltDependencies: [esbuild]`）
-- Lockfile：`pnpm-lock.yaml` 存在，已含 `@deepseek-ai/dsh-plugin-market-index@0.2.1-rc.4`（其传递依赖 `@deepseek-ai/dsh-package-manifest@0.2.1-rc.4` 与 `semver ^7.8.5`，peer 为 `@deepseek-ai/cordis ~4.0.5`）
+- Lockfile：`pnpm-lock.yaml` 存在，已含 `@deepseek-ai/dsh-plugin-market-index@0.2.2-rc.1`（其传递依赖 `@deepseek-ai/dsh-package-manifest@0.2.2-rc.1` 与 `semver ^7.8.5`，peer 为 `@deepseek-ai/cordis ~4.1.0`）
 
 ## 框架
 
@@ -46,14 +46,14 @@
 **构建/开发：**
 - esbuild ^0.28.2——唯一打包器，四个 `scripts/build.mjs` 直调 `build()` API、无配置文件。根 devDependencies 声明一份，皮肤 / jump / better-keybindings / slash-commands 四包各自再声明（`packages/ascii-rest-scenes` 不打包，不声明）
 - tsc——仅类型检查（`tsconfig.base.json` 设 `noEmit: true`）
-- `@deepseek-ai/dsh-plugin-market-index` 0.2.1-rc.4——根 devDependency，只在 `scripts/build-market-index.mjs` 里动态 import：用它的 `parseMarketIndex` 把刚生成的索引按宿主的 format-1 规则重解析一遍，再用 `marketInstallTarget` 打印每个条目解析出的安装 spec。未安装时脚本只 warn 不失败，因此这是「能写出来」与「宿主认不认」之间的唯一自动门
+- `@deepseek-ai/dsh-plugin-market-index` 0.2.2-rc.1——根 devDependency，只在 `scripts/build-market-index.mjs` 里动态 import：用它的 `parseMarketIndex` 把刚生成的索引按宿主的 format-1 规则重解析一遍，再用 `marketInstallTarget` 打印每个条目解析出的安装 spec。未安装时脚本只 warn 不失败，因此这是「能写出来」与「宿主认不认」之间的唯一自动门
 
 ## 关键依赖
 
 **关键：**
 - `ascii.rest@github:bas3line/ascii#c556be4`——场景代码与 meta 的唯一来源；升级流程见根 `README.md`（换 sha → `pnpm --filter ascii-rest-scenes run build:catalog` → `pnpm build && pnpm test`）
 - `ascii-rest-scenes`（`workspace:*`）——皮肤包纯逻辑层，皮肤包 tsconfig `paths` 直指其源码
-- `@deepseek-ai/cordis` ^4.0.1 与 `@deepseek-ai/dsh` `>=0.2.0-rc.2 <0.3.0-0`——均为 optional peerDependencies，由 `packages/dsh-client-ui-skin-ascii-rest`、`packages/dsh-jump` 与 `packages/dsh-better-keybindings` 声明；三包都刻意不 import 其类型，宿主契约分别手写在 `src/client/dsh.ts`（slots/theme/locale）、`src/client/app.ts` 的 `JumpWindow` 与 `KeysWindow` 等结构类型里
+- `@deepseek-ai/cordis`（^4.0.1）与 `@deepseek-ai/dsh`——部分包把它们写成 optional peerDependencies；当前 18 个包声明 `engines.dsh`，地板分三档：5 个 `>=0.2.0-rc.2`、12 个 `>=0.2.1-rc.3`、`dsh-workspace-open-local` 在 0.2.2 迁移后为 `>=0.2.2-rc.1`，上限统一 `<0.3.0-0`。这些包都刻意不 import 宿主类型，契约手写在 `src/client/dsh.ts`（slots/theme/locale）与 `src/client/app.ts` 的 `JumpWindow`、`KeysWindow` 等结构类型里
 - `packages/dsh-slash-commands` 不声明任何 peerDependency：宿主面（`commands`、`sessionTitle`、`tuiPluginHost`、`tuiToast`、`logger`）全部以 `src/command.ts` / `src/rename-command.ts` 内的 `HostContextLike`、`RenameContextLike` 等结构类型描述；客户端半边的宿主面（`commandUi`、`sessions`、`workspaces`、`uiWorkspace`）同样手写成 `src/client/resume-command.ts` 的 `ResumeWiringContext` 等结构类型
 
 **基础设施：**
@@ -91,29 +91,29 @@
 
 | 命令（根 `package.json` scripts） | 脚本 | 输出 | 校验方式 |
 | --- | --- | --- | --- |
-| `pnpm check:market` | `scripts/check-market-manifest.mjs`（220 行） | 无，只报错 | 逐条断言宿主真正读取的字段；另跑 `npm pack --dry-run` 看真实产物面 |
+| `pnpm check:market` | `scripts/check-market-manifest.mjs`（653 行） | 无，只报错 | 逐条断言宿主真正读取的字段；另跑 `npm pack --dry-run` 看真实产物面 |
 | `pnpm build:market` | `scripts/build-market-index.mjs`（124 行） | `market/index.json` | 写完前先用 `@deepseek-ai/dsh-plugin-market-index` 的 `parseMarketIndex` 重解析 |
 | `pnpm check:market-index` | 同上 + `--check` | 无，只校验不写 | 同上 |
 | `pnpm build:awesome` | `scripts/build-awesome-entry.mjs`（96 行） | `market/awesome/<owner>__<repo>--packages-<name>.yml` | 有 awesome 目录 checkout 时调它的 `validateEntries` |
 
-- `check:market` 的断言清单（失败即不可投稿，不是「不够整洁」）：`private` 必须缺席；`version` 为精确 SemVer；`license` 为 MIT；`repository.url` 能归一成 `github.com/owner/repo` 且 `repository.directory` 等于 `packages/<name>`；`homepage` 是 https；`keywords` 非空且含 `dsh-plugin`；`engines.dsh` 是不含 `workspace:` 的显式 `>=floor <ceiling` 区间且覆盖本机 `dsh --version`；`dsh.bundle.patch` 是 `./` 相对路径、文件存在且在 `files` 里；`dsh.client.platform` 若声明必须是 `web`；`exports` 含 `.`、`./client`、`./package.json`，有 `locale/` 就必须导出 `./locale/*.json`，图标经 `exports["./icon"]` 或顶层 `icon` 声明；`files` 含 `lib`、`README.md`、`LICENSE` 且不含 `src*`、`test*`；`scripts` 里不得出现 `preinstall`/`install`/`postinstall`/`prepublish`/`prepare`；图标 ≤ 256 KiB、扩展名在 SVG/PNG/JPEG/WebP 内、PNG 校验签名、SVG 过 `xmllint`；`locale/en.json` 必须存在且每个语言文件的 `meta.title` 与 `meta.description` 都非空
-- `build:market` 的事实来源：每个条目的 `title`/`description` 取 `locale/en.json` 与 `locale/zh.json` 的 `meta`，`icon` 读包内 `icon`（或 `exports["./icon"]`）并把字节内联成 data URI（上限 32 KiB，超出即抛），`author`/`homepage`/`version`/`engines.dsh` 直接抄 `package.json`；`versions[0].source` 默认是 `git`（`repoUrl + HEAD commit + path: packages/<name>`），`--source npm` 时换成 `{type: "npm"}`；`publishTimestamp` 取 `git log -1 --format=%ct HEAD`。分类与标签是脚本里写死的两张表（`ui`/`tools`、`keyboard`/`official`），不来自包
-- 索引相对 HEAD 会秒级过期：`market/index.json` 里三条 `source.commit` 都钉在 `6b3e04d`，而 HEAD 是 `2aea6ad`（`publishTimestamp` 也是 6b3e04d 的提交时间）。改任何包元数据后必须重跑 `pnpm build:market`，否则索引指向的安装快照不含当前改动
+- `check:market` 的断言清单（失败即不可投稿，不是「不够整洁」）：`private` 必须缺席；`version` 为精确 SemVer；`license` 为 MIT；`repository.url` 能归一成 `github.com/owner/repo` 且 `repository.directory` 等于 `packages/<name>`；`homepage` 是 https；`keywords` 非空且含 `dsh-plugin`；`engines.dsh` 是不含 `workspace:` 的显式 `>=floor <ceiling` 区间且覆盖当前桌面运行时（版本优先从 app.asar 的 `dsh/package.json` 读，Info.plist 次之，`dsh --version` 兜底；所有声明了 `engines.dsh` 的包都验这一条，不只可投稿包）；`dsh.bundle.patch` 是 `./` 相对路径、文件存在且在 `files` 里；`dsh.client.platform` 若声明必须是 `web`；`exports` 含 `.`、`./client`、`./package.json`，有 `locale/` 就必须导出 `./locale/*.json`，图标经 `exports["./icon"]` 或顶层 `icon` 声明；`files` 含 `lib`、`README.md`、`LICENSE` 且不含 `src*`、`test*`；`scripts` 里不得出现 `preinstall`/`install`/`postinstall`/`prepublish`/`prepare`；图标 ≤ 256 KiB、扩展名在 SVG/PNG/JPEG/WebP 内、PNG 校验签名、SVG 过 `xmllint`；`locale/en.json` 必须存在且每个语言文件的 `meta.title` 与 `meta.description` 都非空
+- `build:market` 的事实来源：每个条目的 `title`/`description` 取 `locale/en.json` 与 `locale/zh.json` 的 `meta`，`icon` 读包内 `icon`（或 `exports["./icon"]`）并把字节内联成 data URI（上限 32 KiB，超出即抛），`author`/`homepage`/`version`/`engines.dsh` 直接抄 `package.json`；`versions[0].source` 默认是 `{type: "npm"}`（安装 spec 取 registry 上的精确版本），`--source git` 时才换成 `repoUrl + HEAD commit + path: packages/<name>`；`publishTimestamp` 在 npm 模式下取 registry，git 模式取 `git log -1 --format=%ct HEAD`。分类与标签是脚本里写死的两张表（`ui`/`tools`、`keyboard`/`official`），不来自包
+- 索引已与 HEAD 解耦：`market/index.json` 只有一个 `dsh-jump` 条目、source 是 npm 精确版本，不再钉 commit。发版或改包元数据后仍必须重跑 `pnpm build:market`，否则索引继续指向旧版本；`--source git` 只用于发布前预览尚未上 registry 的版本
 - `build:awesome` 只接受光栅图标：条目 `icon` 固定指向 `assets/icon-180.png`（GitHub raw 直链），没有该文件直接退出——这是三个包都补 `icon-180.png` 的原因，`icon.svg` 不能替代
 - 产物现状：`market/index.json` 8681 B、format 1、3 个 plugin 条目；`market/awesome/` 三条 `.yml`（dsh-jump 与 dsh-better-keybindings 归 `ui`，dsh-slash-commands 归 `tools`）
 - 打包产物面（实测 `npm pack --dry-run`）：`dsh-jump` 11 文件 29.1 kB、`dsh-better-keybindings` 10 文件 19.9 kB、`dsh-slash-commands` 11 文件 27.9 kB。共同内容是 `package.json`、`cordis.patch.yml`、`README.md`、`LICENSE`、`lib/index.js`、`lib/client.js`、`assets/icon.svg`、`assets/icon-180.png`、`locale/{en,zh}.json`；差异只有 `dsh-jump` 多一个 `assets/icon.png`（48×48 的旧尺寸），`dsh-slash-commands` 多一个 `dsh-plugin.json`
-- 图标与 locale 的资产面：三个可投稿包各有 `assets/icon.svg`（694–985 B）与 `assets/icon-180.png`（11137–12761 B，目录条目用）；`locale/{zh,en}.json` 各两个键（`meta.title` 约 150–205 B/文件）。皮肤包的 `locale` 是另一种形态（39 个键的面板文案），不参与市场脚本
+- 图标与 locale 的资产面：市场条目 `dsh-jump` 有 `assets/icon.svg`（694–985 B）与 `assets/icon-180.png`（11137–12761 B，目录条目用）；`locale/{zh,en}.json` 各两个键（`meta.title` 约 150–205 B/文件）。皮肤包的 `locale` 是另一种形态（39 个键的面板文案），不参与市场脚本
 
 ## 平台要求
 
 **开发：**
 - Node（本机实测 v22.22.1）+ pnpm 10.15.0；`pnpm install` 需能拉取 github 依赖 `bas3line/ascii`（仅前两个包需要）
-- 根 scripts 分两类：`build` / `test` / `typecheck` 是递归（`pnpm -r <script>`），单包用 `pnpm --filter <name> <script>`；`check:market` / `build:market` / `check:market-index` / `build:awesome` 是单条 `node scripts/*.mjs`，作用域是整个仓的三条投稿条目，没有对应的递归形态
-- 市场校验要两样仓外东西：`npm`（`check-market-manifest.mjs` 的打包面检查）与可选的 awesome 目录 checkout（`AWESOME_DSH_PLUGIN_ROOT`，默认 `/tmp/awesome-check`；本机实测该目录里只有 `entries.mjs` 与 `check-submission.mjs`，缺 `scripts/lib/entries.mjs`，所以条目形状校验实际被跳过）。`dsh` 命令不在 PATH 时只跳过运行时版本区间那条断言
+- 根 scripts 分两类：`build` / `test` / `typecheck` 是递归（`pnpm -r <script>`），单包用 `pnpm --filter <name> <script>`；`check:market` / `build:market` / `check:market-index` / `build:awesome` 是单条 `node scripts/*.mjs`，作用域是整个仓的一条投稿条目，没有对应的递归形态
+- 市场校验要两样仓外东西：`npm`（`check-market-manifest.mjs` 的打包面检查）与可选的 awesome 目录 checkout（`AWESOME_DSH_PLUGIN_ROOT`，默认 `/tmp/awesome-check`；本机实测该目录里只有 `entries.mjs` 与 `check-submission.mjs`，缺 `scripts/lib/entries.mjs`，所以条目形状校验实际被跳过）。桌面运行时、Info.plist 与 `dsh` 命令都取不到版本时只跳过运行时区间断言（输出会标明版本来源；`DSH_RUNTIME_VERSION` / `DSH_DESKTOP_APP` 可覆盖）
 
 **生产（安装态）：**
 - DSH profile 直接读已安装包内 `lib/`，不执行 build——四个插件包（皮肤、`dsh-jump`、`dsh-better-keybindings`、`dsh-slash-commands`）一致：`lib/` 刻意提交入库（`.gitignore` 反排除 `!packages/*/lib/`）。改 `src/` 后必须 `pnpm build` 再提交；`packages/ascii-rest-scenes` 不产出 `lib/`，`exports` 直指 `src/index.ts`，由皮肤包的 tsconfig `paths` 与 `workspace:*` 依赖消费
-- 可投稿与私有的分界：`packages/dsh-jump`、`packages/dsh-better-keybindings`、`packages/dsh-slash-commands` 三者去掉 `private`，补齐 `author`/`homepage`/`repository`/`bugs`/`keywords`/`icon`/`engines.dsh`/`files` 与 `exports["./icon"]`、`exports["./locale/*.json"]`，各有 `assets/icon.svg` + `assets/icon-180.png` + `locale/{zh,en}.json`；`packages/dsh-client-ui-skin-ascii-rest` 与 `packages/ascii-rest-scenes` 保持 `private: true`（皮肤走皮肤管理器分发，纯逻辑层只被同仓消费），也不参与任何市场脚本
-- 安装形态分两类：web 面插件（皮肤、`dsh-jump` 与 `dsh-better-keybindings`，包内 `dsh.client.platform: "web"`）装进 web 类 profile，tui profile 装 `dsh-slash-commands` 的宿主半边。`dsh-slash-commands` 现在是双半边包：`dsh.bundle.patch` 三端都要，`dsh.client.platform: "web"` 只有在 web 类 profile 才被装（`/resume` 与有界剪贴板只在这些端生效）。本机实测（`~/.dsh/profiles/*/package.json`）：皮肤与 `dsh-better-keybindings` 均在 `desktop` 与 `web`，`dsh-jump` 在 `web` 与 `desktop`，`dsh-slash-commands` 在 `desktop`、`web` 与 `dsh-tui`（另有 `headless`、`scratch-mig`、`scratchtest` 三个 profile 不装本仓任何包）
-- 第三种形态（市场分发）：`market/index.json` 里的 git source 让宿主按 `git+https://…#<commit>&path:/packages/<name>` 直接取子目录，不经过 npm 注册表；`engines.dsh`（三包统一 `>=0.2.0-rc.2 <0.3.0-0`）是宿主在安装前唯一读的兼容门，本机 `dsh --version` 为 `0.2.1-rc.2`，落在区间内
+- 可投稿与私有的分界：现在只有 `packages/dsh-jump` 去掉 `private` 并投市场；其余包（含曾短暂具备可投稿面的 `dsh-better-keybindings` 与 `dsh-slash-commands`）都以 `private: true` 自用，不参与索引。皮肤走皮肤管理器分发，`ascii-rest-scenes` 与 `dsh-preview-viewers` 是纯源码包，只被同仓消费
+- 安装形态分两类：web 面插件（皮肤、`dsh-jump` 与 `dsh-better-keybindings`，包内 `dsh.client.platform: "web"`）装进 web 类 profile，tui profile 装 `dsh-slash-commands` 的宿主半边。`dsh-slash-commands` 现在是双半边包：`dsh.bundle.patch` 三端都要，`dsh.client.platform: "web"` 只有在 web 类 profile 才被装（`/resume` 与有界剪贴板只在这些端生效）。本机实测（`~/.dsh/profiles/*/package.json`）：`desktop` 与 `web` 装皮肤、`dsh-jump`、`dsh-better-keybindings`、`dsh-slash-commands` 以及工作台四包与多数自用插件；`dsh-tui` 只装 `dsh-slash-commands` 与 `dsh-repo-harness`；`headless` 不装本仓任何包
+- 第三种形态（市场分发）：`market/index.json` 当前只有 `dsh-jump` 一个条目，source 是 `{type: "npm"}`，安装 spec 钉 registry 上的精确版本；条目里的 `engines.dsh`（`>=0.2.0-rc.2 <0.3.0-0`）是宿主在安装前读的兼容门。桌面运行时是 0.2.2-rc.1，落在区间内；全局 CLI 仍为 0.2.1-rc.5，`check:market` 不再拿它当预言机
 - 只读参考仓库：`refs/deepseek-harness-for-vs-code` 以 git submodule 挂在仓内（`.gitmodules` 设 `ignore = all`，指针 `9d1c7f38`，实测 checkout 约 788 KB）。它不参与构建、测试与市场脚本，只用于查宿主实现细节；`git submodule status` 是唯一需要碰它的命令

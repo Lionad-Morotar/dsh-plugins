@@ -37,6 +37,9 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "attach.pasteMissing": "{count} 个附件对应的文件已不存在，未粘贴",
     "attach.pasteReferenced": "{count} 个附件超出单次读取上限，已改为路径引用",
     "attach.copyFailed": "浏览器拒绝了这次剪贴板写入",
+    // The host freezes the composer while a message waits for acceptance, so a
+    // paste in that window cannot land and must say so rather than do nothing.
+    "attach.pasteBusy": "消息正在发送，稍后再粘贴",
     // The compression count beside the context meter. The row stays silent at
     // zero, so every string here describes at least one compression.
     "compaction.reading": "压缩 {count} 次",
@@ -100,6 +103,7 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "attach.pasteMissing": "{count} attachment(s) no longer exist and were not pasted",
     "attach.pasteReferenced": "{count} attachment(s) exceed the read limit and became path references",
     "attach.copyFailed": "The browser refused this clipboard write",
+    "attach.pasteBusy": "A message is being sent; paste again in a moment",
     "compaction.reading": "{count} compactions",
     "compaction.readingOne": "1 compaction",
     "compaction.tooltip": "This session's context was compressed {count} time(s)",

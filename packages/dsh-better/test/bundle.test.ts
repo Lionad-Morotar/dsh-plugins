@@ -154,15 +154,25 @@ function fakeStorage(): Storage {
   };
 }
 
+/** Host faces one case may need to observe, shared by mount and its browser wrapper. */
+interface HostOptions {
+  fileDrag?: { read: (transfer: unknown) => unknown } | undefined;
+}
+
 /**
  * Run the plugin's apply against a context double and report what it registered.
  *
  * Every host face is a stub rather than an absence, because the point of this
  * case is the registration list: a missing face would make `apply` skip a
  * surface and the assertion would pass for the wrong reason.
+ * @param options - host faces a single case needs to observe, e.g. a `fileDrag`
+ *   service the attachment rail's reader resolves through.
  * @returns every registration and the slots that were injected into.
  */
-function mount(): { registered: readonly Registered[]; slots: readonly string[] } {
+function mount(options: HostOptions = {}): {
+  registered: readonly Registered[];
+  slots: readonly string[];
+} {
   const call = evaluate();
   const plugin = call.factory(platform()) as { apply(ctx: unknown): () => void; name: string; inject: string[] };
   expect(plugin.name).toBe(PACKAGE_NAME);
@@ -225,9 +235,16 @@ function mount(): { registered: readonly Registered[]; slots: readonly string[] 
     locale: {
       register: () => () => {},
       bind: () => (key: string) => key,
+      // The seat's badge resolution goes through this face on 0.2.2; the fake
+      // follows the host's chain shape just enough to see which text won.
+      resolveText: (text: unknown) =>
+        typeof text === "string"
+          ? text
+          : (text as Record<string, string>).zh ?? (text as Record<string, string>).en ?? "",
     },
     modelDirectories: { directoryFor: () => undefined },
     remote: {},
+    ...(options.fileDrag === undefined ? {} : { fileDrag: options.fileDrag }),
     effect: (run: () => () => void) => {
       run();
       return () => {};
@@ -253,10 +270,10 @@ describe("client bundle", () => {
   });
 
   /** Install the browser globals `apply` reads, then mount. */
-  function mountInBrowser() {
+  function mountInBrowser(options: HostOptions = {}) {
     globals.document = fakeDocument().doc;
     globals.localStorage = fakeStorage();
-    return mount();
+    return mount(options);
   }
 
   it("loads under the package name", () => {
@@ -287,6 +304,64 @@ describe("client bundle", () => {
     if (typeof inject !== "function") throw new Error("unreachable");
     const props = (inject as (sessionId: string) => Record<string, unknown>)("session-1");
     expect(typeof props.submitContinue).toBe("function");
+  });
+
+  it("hands the attachment rail the application-internal drag reader it now requires", () => {
+    // 0.2.2's rail calls the reader the moment an in-app image drag is released,
+    // unguarded. The shadow replaced the shell's registration, so the reader has
+    // to come from this injection or the drop throws.
+    const transfer = {} as DataTransfer;
+    const file = { name: "shot.png" } as unknown as File;
+    const { registered } = mountInBrowser({
+      fileDrag: { read: (candidate: unknown) => (candidate === transfer ? file : undefined) },
+    });
+    const entry = registered.find(one => one.options.name === "conversation.input.attachments");
+    const inject = entry?.options.inject as ((sessionId: string) => Record<string, unknown>) | undefined;
+    expect(typeof inject).toBe("function");
+    const props = inject?.("session-1");
+    expect(typeof props?.readFileDrag).toBe("function");
+    const read = props?.readFileDrag as (candidate: DataTransfer) => File | undefined;
+    expect(read(transfer)).toBe(file);
+    expect(read({} as DataTransfer)).toBeUndefined();
+  });
+
+  it("keeps the drag reader safe on a host that has no fileDrag service", () => {
+    const { registered } = mountInBrowser();
+    const entry = registered.find(one => one.options.name === "conversation.input.attachments");
+    const inject = entry?.options.inject as ((sessionId: string) => Record<string, unknown>) | undefined;
+    const props = inject?.("session-1");
+    expect(typeof props?.readFileDrag).toBe("function");
+    expect((props?.readFileDrag as (candidate: DataTransfer) => File | undefined)({} as DataTransfer))
+      .toBeUndefined();
+  });
+
+  it("supplies every face the shell's own seat renders with", () => {
+    // The fallback path renders the shipped seat as a child. It reads the store,
+    // the catalog loader, the selection verb and the badge resolver from its own
+    // registration, all of which the shadow replaced; a missing resolver throws
+    // while drawing a model that carries a badge.
+    const { registered } = mountInBrowser();
+    const entry = registered.find(one => one.options.name === "conversation.input.model");
+    const inject = entry?.options.inject as ((sessionId: string) => Record<string, unknown>) | undefined;
+    expect(typeof inject).toBe("function");
+    const props = inject?.("session-1");
+    expect(typeof props?.load).toBe("function");
+    expect(typeof props?.select).toBe("function");
+    expect(typeof props?.resolveText).toBe("function");
+    const resolveText = props?.resolveText as (text: unknown) => string;
+    expect(resolveText("beta")).toBe("beta");
+    expect(resolveText({ en: "beta", zh: "测试" })).toBe("测试");
+    expect(() => (props?.load as () => void)()).not.toThrow();
+    // The shell's seat renders its label through the child slot it declares.
+    // This shadow replaces that registration, so the child binding is absent;
+    // without a stand-in the fallback branch throws before drawing anything.
+    const renderSlot = props?.renderSlot as (
+      key: string,
+      owner: object,
+      options?: { fallback?: unknown },
+    ) => unknown;
+    expect(renderSlot("conversation.input.model.label", {}, { fallback: "label" })).toBe("label");
+    expect(renderSlot("conversation.input.model.label", {})).toBeNull();
   });
 
   it("does not bundle a second React or any node builtin", () => {

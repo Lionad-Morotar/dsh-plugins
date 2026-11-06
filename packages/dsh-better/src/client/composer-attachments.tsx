@@ -42,6 +42,7 @@ import {
   type ClipboardAttachment,
   type ComposerClipboardPayload,
 } from "./composer-clipboard.ts";
+import { composerBusy } from "./composer-phase.ts";
 
 /** One draft attachment, narrowed to the fields this surface reads. */
 export interface DraftAttachmentLike {
@@ -101,8 +102,23 @@ export interface ComposerAttachmentsProps {
   readonly onRetryFile?: ((id: string) => void) | undefined;
   /** Image limits, shown by the drop overlay. */
   readonly dropLimits?: unknown;
+  /**
+   * Resolve an application-internal drag into its original file.
+   *
+   * Injected by this package's registration because the shipped rail's own
+   * registration (which supplies it from `fileDrag`) is shadowed. Without it a
+   * drop of a transcript image throws inside the shipped drop handler.
+   */
+  readonly readFileDrag?: ((transfer: DataTransfer) => File | undefined) | undefined;
   /** Session the rail belongs to, injected by this package's registration. */
   readonly sessionId?: string | undefined;
+  /**
+   * The composer's submit phase, read when a paste arrives.
+   *
+   * A function rather than a value: the input controller mounts with the
+   * composer, which can be later than this slot entry's registration.
+   */
+  readonly phase?: (() => string | undefined) | undefined;
   /** The composer's insert face, a standard Session prop. */
   readonly inputActions?: InputActionsLike | undefined;
   /** This package's namespace translator, from the slot's locale seat. */
@@ -367,18 +383,28 @@ function Rail({ native: Native, props, deps }: RailProps): ReactNode {
       if (Array.from(data.types).includes("Files")) return;
       const readProps = (): ComposerAttachmentsProps => latest.current;
       const payload = decodePayload(data.getData(COMPOSER_CLIPBOARD_MIME));
-      if (payload !== undefined) {
+      const parsed = payload === undefined ? parsePathList(data.getData("text/plain")) : undefined;
+      // Not this surface's paste: leave it to whatever the editor does with it.
+      if (payload === undefined && parsed === undefined) return;
+      // From here the paste is a draft this surface owns. While a submission is
+      // in flight the host freezes the editor, so `insertText` answers false and
+      // the payload would disappear without a trace; claim the event and say why
+      // instead. The draft is deliberately not written by another route.
+      const busyNotice = pasteBusyNotice(latest.current.phase?.(), translateRef.current);
+      if (busyNotice !== undefined) {
         event.preventDefault();
         event.stopPropagation();
-        clear();
-        consume(payload, readProps, deps, setNotice, translateRef.current);
+        setNotice(busyNotice);
         return;
       }
-      const parsed = parsePathList(data.getData("text/plain"));
-      if (parsed === undefined) return;
       event.preventDefault();
       event.stopPropagation();
       clear();
+      if (payload !== undefined) {
+        consume(payload, readProps, deps, setNotice, translateRef.current);
+        return;
+      }
+      if (parsed === undefined) return;
       consume(
         {
           text: parsed.text,
@@ -442,6 +468,23 @@ function Rail({ native: Native, props, deps }: RailProps): ReactNode {
       )}
     </div>
   );
+}
+
+/**
+ * The notice a draft paste shows while the composer cannot take it.
+ *
+ * The host freezes the editor for every phase but `plain`, so a paste then is
+ * refused by `insertText`. Leaving it at that would look exactly like an empty
+ * clipboard, so the refusal is surfaced instead.
+ * @param phase - the composer's published phase, when the host offers one.
+ * @param translate - namespace translator.
+ * @returns the text to show, or undefined when the paste may proceed.
+ */
+export function pasteBusyNotice(
+  phase: string | undefined,
+  translate: (key: string) => string,
+): string | undefined {
+  return composerBusy(phase) ? translate("attach.pasteBusy") : undefined;
 }
 
 /**

@@ -4,7 +4,8 @@
  * `lib/client.js` is a committed build product, so the wrapper is checked here
  * rather than by eye: the loader keys its module table on the id, and a factory
  * that returns anything but the plugin object is rejected at mount. Evaluating
- * the real file also proves the client half did not bundle its own React.
+ * the real file also proves the client half did not bundle its own React and no
+ * longer carries the DOM-anchor machinery the declarative menu replaced.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -47,20 +48,31 @@ describe("client bundle", () => {
     expect(bundle).toContain("__ModuleLoader__.load");
 
     const plugin = call.factory((specifier) => {
-      if (specifier === "react" || specifier === "react/jsx-runtime" || specifier === "react-dom" || specifier === "react-dom/client") return {};
+      if (specifier === "react" || specifier === "react/jsx-runtime") return {};
       throw new Error(`unexpected require: ${specifier}`);
     }) as Plugin;
 
     expect(plugin.name).toBe("dsh-workspace-open-local");
-    expect(plugin.inject).toEqual(["slots"]);
+    expect(plugin.inject).toEqual(["slots", "contextMenus", "locale"]);
     expect(typeof plugin.apply).toBe("function");
   });
 
   it("leaves React to the host instead of bundling a second copy", () => {
     expect(bundle).not.toContain("react.production.min");
     expect(bundle).not.toContain("react-dom.production.min");
-    expect(bundle).toContain("require(\"react\")");
-    expect(bundle).toContain("require(\"react-dom/client\")");
+    expect(bundle).toContain('require("react/jsx-runtime")');
+  });
+
+  it("ships the declarative contribution and none of the DOM anchor", () => {
+    expect(bundle).toContain("contextMenus");
+    expect(bundle).toContain("contextMenu.icon");
+    expect(bundle).toContain("open-local.workspace");
+    expect(bundle).not.toContain("pointerover");
+    expect(bundle).not.toContain("useWorkspaces");
+    expect(bundle).not.toContain("menuShield");
+    expect(bundle).not.toContain("data-dsh-workspace-open-local");
+    // Structural types only: no host package may leak into the bundle.
+    expect(bundle).not.toContain("@deepseek-ai/");
   });
 });
 

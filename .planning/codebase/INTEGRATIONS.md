@@ -1,6 +1,6 @@
 # 外部集成（External Integrations）
 
-更新: 2026-10-27
+更新: 2026-11-06
 
 ## 外部服务
 
@@ -12,7 +12,7 @@
   - Auth：无，运行期零网络请求
 
 **DSH 市场索引与社区目录（构建期发布面，`scripts/` 三个根脚本）：**
-- `@deepseek-ai/dsh-plugin-market-index` 0.2.1-rc.4（根 devDependency，传递依赖 `@deepseek-ai/dsh-package-manifest@0.2.1-rc.4` + `semver ^7.8.5`，peer `@deepseek-ai/cordis ~4.0.5`）
+- `@deepseek-ai/dsh-plugin-market-index` 0.2.2-rc.1（根 devDependency，传递依赖 `@deepseek-ai/dsh-package-manifest@0.2.2-rc.1` + `semver ^7.8.5`，peer `@deepseek-ai/cordis ~4.1.0`）
   - 用法：`scripts/build-market-index.mjs` 动态 `import()` 它，拿 `parseMarketIndex(index, INDEX_URL)` 按宿主 format 1 规则重解析刚生成的 `market/index.json`，再用 `marketInstallTarget(name, version)` 打印解析出的安装 spec。校验失败即抛，脚本不会写出坏索引
   - 索引里的绝对 URL 由脚本常量提供：`INDEX_URL = https://raw.githubusercontent.com/Lionad-Morotar/dsh-plugins/main/market/index.json`（相对 icon 引用与条目身份都相对它解析）、`REPO_URL = https://github.com/Lionad-Morotar/dsh-plugins`
   - Auth：无，纯本地 npm 包，不发网络请求
@@ -55,7 +55,7 @@
 | `packages/dsh-slash-commands` | `dsh-slash-commands` | `dsh-slash-commands` | `dsh-plugin.json`（TUI 准入读取，只声明宿主侧命令） |
 
 - 三份包的 README 手工 patch 示例现在与文件一致（jump 的 `id: jump`、better-keybindings 的 `id: better-keybindings`、slash-commands 的 `id: dsh-slash-commands`）；皮肤管理器只管皮肤那个 row 的 `disabled` 标志，其余三包的 row 由 profile 的 `dsh.profile.bundles` 或手工 patch 决定
-- 第三条发现通道（市场）：宿主读 `market/index.json`（format 1）里的 `plugins[]`，每条取 `versions[0].source` 安装。三条目都是 `{type: "git", url: REPO_URL, commit: <40 hex>, path: "packages/<name>"}`，宿主拼成 `git+https://github.com/Lionad-Morotar/dsh-plugins.git#<commit>&path:/packages/<name>`。同一份条目里 `engines.dsh` 是兼容门（`>=0.2.0-rc.2 <0.3.0-0`），`icon` 是 data URI（PNG/SVG 内联，format 1 允许到 32 KiB 解码后），`author`/`homepage`/`repository.directory` 与 `package.json` 逐字一致——它们不是手写的，是 `scripts/build-market-index.mjs` 从包里抄的
+- 第三条发现通道（市场）：宿主读 `market/index.json`（format 1）里的 `plugins[]`，每条取 `versions[0].source` 安装。当前索引只有 `dsh-jump` 一个条目，source 是 `{type: "npm"}`，安装 spec 钉 registry 上的精确版本；条目里的 `engines.dsh` 是兼容门（`>=0.2.0-rc.2 <0.3.0-0`），`icon` 是 data URI（PNG/SVG 内联，format 1 允许到 32 KiB 解码后），`author`/`homepage`/`repository.directory` 与 `package.json` 逐字一致——它们不是手写的，是 `scripts/build-market-index.mjs` 从包里抄的
 - 安装后的包还必须满足 `exports` 与 `files` 的约定，宿主据此定位 client 半边与图标：`exports["./client"]`（client bundle）、`exports["./icon"]`（市场图标）、`exports["./locale/*.json"]`（`meta.title`/`meta.description`）；`files` 必须包含 `lib`、`assets`、`locale`、`cordis.patch.yml`、`README.md`、`LICENSE`（slash-commands 另含 `dsh-plugin.json`），且不得包含 `src` 与 `test`
 - 安装方式 A（推荐）：profile 依赖（本机实测皮肤在 `~/.dsh/profiles/desktop/package.json`、jump 在 `~/.dsh/profiles/web/package.json`、better-keybindings 在 `web` 与 `desktop` 两个 profile，`dsh-slash-commands` 在 `desktop`、`web`、`dsh-tui` 三个 profile，均同时写 `dependencies` 与 `dsh.profile.bundles`，值为 `link:` 指向本仓）；方式 B：手工往 profile 的 `cordis.patch.yml` 追加 insert（顶层必须是 YAML 数组，只写注释会让 boot 失败）
 - `skin.json` 是皮肤管理器读取的清单：id `ascii-rest`、`bodyAttr: data-dsh-ascii-rest`、`dshCompatibility: 0.2.1rc2`、`wiring.bundleWired: false`、`wiring.id: ui-skin-ascii-rest`（与 patch row 对齐）、`order: 20`
@@ -94,10 +94,11 @@
 
 ## CI/CD 与部署
 
-- 无 CI 配置（无 `.github/workflows`）。质量门是本地命令：`pnpm build`、`pnpm test`、`pnpm typecheck`（根 scripts 均 `pnpm -r`），投稿前另加 `pnpm check:market` 与 `pnpm check:market-index`（本机实测两条都通过，前者输出 `market manifest check passed for dsh-jump, dsh-better-keybindings, dsh-slash-commands against dsh 0.2.1-rc.2`）
-- 投稿产物与 HEAD 的耦合：`build-market` 把「生成时的 HEAD」commit 与提交时间写进每条 `versions[0]`，而产物只能在其后一次提交里入库，于是索引天然落指向上一个提交。当前三条都钉 `6b3e04d`，HEAD 是 `2aea6ad`；改完包元数据后要重跑 `pnpm build:market` 并同批提交，否则索引指向的安装快照不含本次改动
+- 无 CI 配置（无 `.github/workflows`）。质量门是本地命令：`pnpm build`、`pnpm test`、`pnpm typecheck`（根 scripts 均 `pnpm -r`），投稿前另加 `pnpm check:market` 与 `pnpm check:market-index`（本机实测两条都通过，前者输出 `market manifest check passed for dsh-jump against desktop runtime 0.2.2-rc.1 (asar)`）
+- `check:market` 的运行时版本预言机优先读桌面 app.asar 内的 `dsh/package.json`，其次 `/Applications/DeepSeek Harness.app/Contents/Info.plist`，`dsh --version`（全局 CLI 0.2.1-rc.5）只作兜底；`DSH_RUNTIME_VERSION` 可直接覆盖版本，`DSH_DESKTOP_APP` 可改 app 路径。同一脚本对所有声明了 `engines.dsh` 的包单独断言区间（含私有包与 submodule 里的 `dsh-jump`），不再只验可投稿包
+- 索引已与 HEAD 解耦：`market/index.json` 只有一个 `dsh-jump` 条目、source 是 npm 精确版本，不再钉 commit；发版或改包元数据后仍要重跑 `pnpm build:market` 并同批提交，否则索引继续指向旧版本。`--source git` 只用于发布前预览尚未上 registry 的版本
 - 「部署」有两条通道。通道一 = 包被 profile 安装（本机开发态）：皮肤与 `dsh-better-keybindings` 在 `desktop` 与 `web`，`dsh-jump` 在 `desktop` 与 `web`，`dsh-slash-commands` 在 `desktop`、`web`、`dsh-tui` 三个 profile。同包在不同 profile 装的半边不同——tui profile 只装宿主半边（拿到 `/copy` 与 TUI 自带的 `/rename`），web 与 desktop profile 同时装宿主半边与客户端半边（拿到 `/rename` 与 `/resume`，另带有界剪贴板）。四包都靠 `cordis.patch.yml` 插 Loader row，`lib/` 必须随源码同步提交（`.gitignore` 反排除 `!packages/*/lib/`），`dsh-slash-commands` 的两个产物都要提
-- 通道二 = 市场分发：宿主读 `market/index.json`，按条目里的 git commit + 子目录直接取包，不经过 npm 注册表；三个可投稿包因此必须保持非 `private` 且元数据完整（`pnpm check:market` 就是把这条通道的可安装性写成断言）。皮肤与 `ascii-rest-scenes` 不上市场，只走通道一
+- 通道二 = 市场分发：宿主读 `market/index.json`，当前唯一条目 `dsh-jump` 的 source 是 npm 精确版本，从 registry 安装；它必须保持非 `private` 且元数据完整（`pnpm check:market` 就是把这条通道的可安装性写成断言）。其余包都保持 private，不上市场
 - 本机现状（只读核对）：各 profile 的 `dependencies` 与 `dsh.profile.bundles` 均含对应包（`link:` 指向本仓），`node_modules/<name>` 为指向 `packages/` 的符号链接
 
 ## 环境变量
@@ -112,4 +113,4 @@
 
 ## 小结
 
-零后端、零网络、零密钥的事实依然成立，四个包运行期无一发出网络请求、无一需要凭据。集成面分四层：构建期对上游 ascii.rest 的代码与 meta 复用（前两包）；构建期/发布期的市场链（`@deepseek-ai/dsh-plugin-market-index` 校验索引、`npm pack --dry-run` 核对打包面、`xmllint` 验图标、awesome 目录自带的 `validateEntries` 复核条目）；运行期对 DSH Web 宿主 slots/theme/locale 的 Cordis 契约对接（皮肤与 jump 的设置行）、纯 DOM 键盘接管（jump 与 better-keybindings）、`commandUi` / `sessions` / `workspaces` / `uiWorkspace` 四个客户端服务的对接（slash-commands 客户端半边，另给页面的 `navigator.clipboard.writeText` 套了一道有界包装）；运行期对 dsh-tui 的 `commands` / `sessionTitle` / `tuiPluginHost` / `tuiToast` 契约对接，以及三条系统剪贴板外部路径（native 工具、tmux buffer、OSC 52 终端转义）。
+零后端、零网络、零密钥的事实依然成立，本仓插件运行期无一发出网络请求、无一需要凭据。集成面分四层：构建期对上游 ascii.rest 的代码与 meta 复用（前两包）；构建期/发布期的市场链（`@deepseek-ai/dsh-plugin-market-index` 校验索引、`npm pack --dry-run` 核对打包面、`xmllint` 验图标、awesome 目录自带的 `validateEntries` 复核条目）；运行期对 DSH Web 宿主 slots/theme/locale 的 Cordis 契约对接（皮肤与 jump 的设置行）、纯 DOM 键盘接管（jump 与 better-keybindings）、`commandUi` / `sessions` / `workspaces` / `uiWorkspace` 四个客户端服务的对接（slash-commands 客户端半边，另给页面的 `navigator.clipboard.writeText` 套了一道有界包装）；运行期对 dsh-tui 的 `commands` / `sessionTitle` / `tuiPluginHost` / `tuiToast` 契约对接，以及三条系统剪贴板外部路径（native 工具、tmux buffer、OSC 52 终端转义）。
