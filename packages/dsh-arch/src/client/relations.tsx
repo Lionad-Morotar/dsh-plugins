@@ -51,8 +51,14 @@ const PANE_OFFSET = 8;
 const paneStyle =
   "position:absolute;z-index:30;box-sizing:border-box;display:flex;flex-direction:column;" +
   "gap:6px;padding:10px 12px;border-radius:10px;overflow:auto;max-height:420px;" +
-  "background:#1a1d23;color:#e5e7eb;border:1px solid rgba(148,163,184,0.28);" +
-  "box-shadow:0 12px 32px rgba(0,0,0,0.45);font-size:12px;line-height:1.5;cursor:default";
+  // A raised surface from the host's own tokens: the pane used to be a dark
+  // card, which on a light host read as a foreign overlay rather than part of
+  // the panel it belongs to.
+  "background:color-mix(in srgb, var(--dsw-alias-bg-layer-2,#ffffff) 97%, transparent);" +
+  "color:var(--dsw-alias-label-primary,#0f1115);" +
+  "border:1px solid var(--dsw-alias-border-l3,rgba(0,0,0,0.12));" +
+  "box-shadow:0 12px 32px color-mix(in srgb, var(--dsw-alias-label-primary,#0f1115) 16%, transparent);" +
+  "font-size:12px;line-height:1.5;cursor:default";
 const headerStyle = "display:flex;align-items:flex-start;gap:8px;flex:none";
 const titleStyle = "font-size:12px;font-weight:600;margin:0;flex:1;min-width:0;word-break:break-word";
 const subtitleStyle = "font-size:11px;opacity:0.62;margin:0;word-break:break-word";
@@ -88,7 +94,7 @@ function capsule(endpoint: { short: string; full: string }, colour: string | nul
   pill.style.cssText = capsuleStyle;
   pill.textContent = endpoint.short;
   pill.title = endpoint.full;
-  pill.style.color = colour ?? "#93c5fd";
+  pill.style.color = colour ?? "var(--dsw-alias-label-secondary,#61666b)";
   return pill;
 }
 
@@ -148,8 +154,8 @@ function relationRow(
       onPick(row);
     });
     element.addEventListener("pointerenter", () => {
-      element.style.background = "rgba(148,163,184,0.12)";
-      element.style.borderColor = "rgba(148,163,184,0.28)";
+      element.style.background = "color-mix(in srgb, var(--dsw-alias-label-primary,#0f1115) 7%, transparent)";
+      element.style.borderColor = "var(--dsw-alias-border-l2,rgba(0,0,0,0.1))";
     });
     element.addEventListener("pointerleave", () => {
       element.style.background = "transparent";

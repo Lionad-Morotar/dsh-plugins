@@ -118,8 +118,13 @@ describe("rendering", () => {
     // turned the panel white and made every label on it unreadable.
     const containerBody = nodeG("dshPlugins.jump").querySelectorAll("rect")[1];
     expect(containerBody?.getAttribute("fill")).toBe("none");
+    // Cards are a wash mixed from the host's own tokens: a literal fill is a
+    // scheme assumption, and the old saturated block buried its captions on a
+    // light host.
     const cardBody = nodeG("dshPlugins.jump.jumpEntry").querySelectorAll("rect")[1];
-    expect(cardBody?.getAttribute("fill")).toBe("#3b82f6");
+    const fill = cardBody?.getAttribute("fill") ?? "";
+    expect(fill).toContain("color-mix");
+    expect(fill).toContain("var(--dsw-alias-bg-layer-1");
   });
 
   it("applies the given viewport as the initial root transform", () => {
@@ -559,13 +564,15 @@ describe("edge motion and hit area", () => {
       viewport: VIEWPORT,
     });
     const path = visibleOf("1icru9q");
-    expect(path.getAttribute("stroke-width")).toBe("1.5");
+    expect(path.getAttribute("stroke-width")).toBe("1.6");
     diagram.selectEdge("1icru9q");
     expect(path.getAttribute("stroke-width")).toBe("2.5");
-    expect(path.getAttribute("stroke")).toBe("#60a5fa");
+    // The selected ink is the host accent, not a literal: a selected edge has
+    // to read in both schemes.
+    expect(path.getAttribute("stroke")).toContain("--dsw-alias-state-business-primary");
     expect(path.hasAttribute("data-arch-edge-active")).toBe(true);
     diagram.selectEdge(null);
-    expect(path.getAttribute("stroke-width")).toBe("1.5");
+    expect(path.getAttribute("stroke-width")).toBe("1.6");
     expect(path.hasAttribute("data-arch-edge-active")).toBe(false);
   });
 

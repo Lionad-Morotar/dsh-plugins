@@ -166,8 +166,95 @@ export interface DiagramInteractions {
 
 const SVG = "http://www.w3.org/2000/svg";
 
-/** Default edge ink; the selected state repaints it (see `selectEdge`). */
-const EDGE_STROKE = "#8b93a1";
+/**
+ * The host's inks, forwarded rather than copied.
+ *
+ * The panel is chromeless by design: it draws on whatever surface the host
+ * handed it, and that surface has two schemes. The first pass hard-coded a
+ * dark-scheme palette (`#3b82f6` cards, `#1a1d23` plates, `#8b93a1` hairlines)
+ * and it showed on a light host: saturated cards buried their own captions,
+ * the hairline edges dissolved into the paper, and every dark plate sat on the
+ * drawing like a sticker. Resolving through `--dsw-alias-*` makes the drawing
+ * follow the scheme live — a theme flip repaints through CSS, the SVG is not
+ * rebuilt, and neither scheme needs its own stylesheet.
+ *
+ * The fallbacks only cover a host without the alias layer (tests, jsdom).
+ */
+const INK = {
+  /** Element titles: the only text allowed to outrank the card wash. */
+  primary: "var(--dsw-alias-label-primary,#0f1115)",
+  /** Captions, edge labels and icons: readable secondary text. */
+  secondary: "var(--dsw-alias-label-secondary,#61666b)",
+  /** Edge lines and container frames: present, never competing. */
+  tertiary: "var(--dsw-alias-label-tertiary,#81858c)",
+  /** Card wash base; the element hue is mixed into it. */
+  surface: "var(--dsw-alias-bg-layer-1,#ffffff)",
+  /** Floating plate fill: edge labels and the node action bar. */
+  raised: "var(--dsw-alias-bg-layer-2,#ffffff)",
+  /** Hairline around plates and container frames. */
+  border: "var(--dsw-alias-border-l2,#0000001a)",
+  /** Panel background, used for the hollow arrow centres. */
+  canvas: "var(--dsw-alias-bg-base,#ffffff)",
+  /** Selection accent; also the hue of the default (primary) element family. */
+  accent: "var(--dsw-alias-state-business-primary,#3b82f6)",
+} as const;
+
+/**
+ * Element hue per LikeC4 colour name.
+ *
+ * A C4 colour is model semantics, not theme decoration, so these stay literal:
+ * `secondary` and the neutral tailwind names share one slate hue, the status
+ * names borrow their status colour, and every other tailwind name keeps its
+ * own. An unknown or absent colour falls back to the accent, which is what the
+ * vast majority of elements in a real model use.
+ */
+const ELEMENT_HUES: Readonly<Record<string, string>> = {
+  primary: "var(--dsw-alias-state-business-primary,#3b82f6)",
+  secondary: "#64748b",
+  muted: "#64748b",
+  neutral: "#64748b",
+  slate: "#64748b",
+  gray: "#64748b",
+  zinc: "#71717a",
+  stone: "#78716c",
+  blue: "#3b82f6",
+  indigo: "#6366f1",
+  sky: "#0ea5e9",
+  cyan: "#06b6d4",
+  teal: "#14b8a6",
+  emerald: "#10b981",
+  green: "#22c55e",
+  success: "#22c55e",
+  lime: "#84cc16",
+  yellow: "#eab308",
+  amber: "#f59e0b",
+  warning: "#f59e0b",
+  orange: "#f97316",
+  red: "#ef4444",
+  danger: "#ef4444",
+  rose: "#f43f5e",
+  pink: "#ec4899",
+  fuchsia: "#d946ef",
+  purple: "#a855f7",
+  violet: "#8b5cf6",
+};
+
+const DEFAULT_HUE = "var(--dsw-alias-state-business-primary,#3b82f6)";
+
+/** The hue a node's C4 colour resolves to; unknown names read as primary. */
+const hueOf = (color: string | undefined): string =>
+  color === undefined || color === "" ? DEFAULT_HUE : (ELEMENT_HUES[color] ?? DEFAULT_HUE);
+
+/** A card wash: the element hue at low strength over the host surface. */
+const cardFill = (color: string | undefined): string =>
+  `color-mix(in srgb, ${hueOf(color)} 14%, ${INK.surface})`;
+
+/** The card outline: the same hue, strong enough to read as a border. */
+const cardStroke = (color: string | undefined): string =>
+  `color-mix(in srgb, ${hueOf(color)} 58%, transparent)`;
+
+/** Default edge ink; the selected state repaints it (see `paintEdge`). */
+const EDGE_STROKE = INK.tertiary;
 
 /**
  * Marker geometry, copied verbatim from the official `EdgeMarkers`
@@ -216,7 +303,7 @@ const MARKER_SPECS = {
     attrs: {
       d: "M 0 0 L 8 3 L 0 6 L 1 3 z",
       stroke: "context-stroke",
-      fill: "var(--likec4-background-color,#14161d)",
+      fill: INK.canvas,
       "stroke-width": 1.25,
       "stroke-linejoin": "miter",
       "stroke-linecap": "square",
@@ -257,7 +344,7 @@ const MARKER_SPECS = {
     attrs: {
       d: "M5,0 L10,4 L5,8 L0,4 Z",
       stroke: "context-stroke",
-      fill: "var(--likec4-background-color,#14161d)",
+      fill: INK.canvas,
       "stroke-width": 1.25,
       "stroke-linecap": "round",
     },
@@ -281,7 +368,7 @@ const MARKER_SPECS = {
     attrs: {
       "stroke-width": 1.25,
       stroke: "context-stroke",
-      fill: "var(--likec4-background-color,#14161d)",
+      fill: INK.canvas,
       cx: 4,
       cy: 4,
       r: 3,
@@ -360,8 +447,8 @@ const EDGE_STYLE = `
 const HIT_STROKE_WIDTH = 12;
 
 /** Selected edges thicken and repaint so the click target stays obvious. */
-const EDGE_STROKE_SELECTED = "#60a5fa";
-const EDGE_STROKE_WIDTH = 1.5;
+const EDGE_STROKE_SELECTED = INK.accent;
+const EDGE_STROKE_WIDTH = 1.6;
 const EDGE_STROKE_WIDTH_SELECTED = 2.5;
 
 /**
@@ -578,15 +665,19 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     const box = edge.labelBBox;
     if (box !== null && box !== undefined && edge.label) {
       const g = el("g");
+      // The plate is a raised surface, not a dark sticker: the drawing may sit
+      // on either scheme, and a scheme-locked plate is what made labels read as
+      // holes punched into the canvas.
       g.append(
         el("rect", {
-          x: box.x - 3,
-          y: box.y - 2,
-          width: box.width + 6,
-          height: box.height + 4,
-          rx: 3,
-          fill: "#1a1d23",
-          opacity: 0.85,
+          x: box.x - 4,
+          y: box.y - 3,
+          width: box.width + 8,
+          height: box.height + 6,
+          rx: 4,
+          fill: INK.raised,
+          stroke: INK.border,
+          "stroke-width": 1,
         }),
       );
       // LikeC4 lays multi-line labels out inside `labelBBox`; SVG collapses a
@@ -602,12 +693,12 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       const widest = Math.max(...lines.map(line => measureEm(line)), 1);
       // One step above the plate's own type size. The plate was measured for
       // the smaller size, so a line that no longer fits is squeezed to it.
-      const fontSize = Math.min(Math.max(lineHeight * 0.78, 14), (box.width * 0.92) / widest);
+      const fontSize = Math.min(Math.max(lineHeight * 0.82, 15), (box.width * 0.92) / widest);
       for (const [index, line] of lines.entries()) {
         const attrs: Record<string, string | number> = {
           x: box.x,
           y: box.y + lineHeight * (index + 0.8),
-          fill: "#c9ccd2",
+          fill: INK.secondary,
           "font-size": fontSize,
           "font-family": "system-ui,sans-serif",
         };
@@ -649,7 +740,7 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     // there turned the canvas itself into a white slab that swallowed every
     // label inside it. The border and caption carry the grouping instead, in
     // the panel's own ink so the same drawing reads on light and dark hosts.
-    const fill = isContainer ? "none" : node.color === "secondary" ? "#475569" : "#3b82f6";
+    const fill = isContainer ? "none" : cardFill(node.color);
     const ring = el("rect", {
       x: -4,
       y: -4,
@@ -657,7 +748,7 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       height: node.height + 8,
       rx: 11,
       fill: "none",
-      stroke: "var(--dsw-alias-brand-primary, #60a5fa)",
+      stroke: INK.accent,
       "stroke-width": 2,
       // A view-unit stroke vanishes at the readable zoom; the ring is a
       // screen-space affordance, so it keeps its weight at every scale.
@@ -675,15 +766,16 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       // frame-less interior, or selecting the grouping becomes a pixel hunt
       // along a 1.5px border.
       "pointer-events": isContainer ? "all" : "visiblePainted",
-      stroke: isContainer ? "color-mix(in srgb, #60a5fa 80%, transparent)" : "#2563eb",
-      "stroke-width": 1.5,
+      // The frame is ink, not accent: a grouping that competes with its own
+      // children reads as one more card instead of a boundary.
+      stroke: isContainer ? `color-mix(in srgb, ${INK.primary} 18%, transparent)` : cardStroke(node.color),
+      "stroke-width": isContainer ? 1 : 1.25,
     });
     g.append(ring, rect);
     const title = el("text", {
       x: 10,
       y: 24,
-      fill: isContainer ? "var(--dsw-alias-label-primary, #e5e7eb)" : "#eff6ff",
-      "fill-opacity": isContainer ? 0.88 : 1,
+      fill: isContainer ? INK.secondary : INK.primary,
       "font-size": 16,
       "font-weight": 600,
       "font-family": "system-ui,sans-serif",
@@ -694,7 +786,7 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       const tech = el("text", {
         x: 10,
         y: 44,
-        fill: isContainer ? "var(--dsw-alias-label-secondary, #9ca3af)" : "#bfdbfe",
+        fill: isContainer ? INK.tertiary : INK.secondary,
         "font-size": 13,
         "font-family": "system-ui,sans-serif",
       });
@@ -706,8 +798,8 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
       const desc = el("text", {
         x: 10,
         y: node.technology ? 64 : 44,
-        fill: isContainer ? "var(--dsw-alias-label-secondary, #9ca3af)" : "#e0edff",
-        "font-size": 12,
+        fill: isContainer ? INK.tertiary : INK.secondary,
+        "font-size": 13,
         "font-family": "system-ui,sans-serif",
       });
       const sliced = slicedDescription(description);
@@ -793,8 +885,8 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
           width: ACTION_BUTTON,
           height: ACTION_BUTTON,
           rx: 7,
-          fill: "#1a1d23",
-          stroke: "color-mix(in srgb, #60a5fa 55%, transparent)",
+          fill: INK.raised,
+          stroke: INK.border,
           "stroke-width": 1,
         }),
       );
@@ -802,7 +894,7 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
         d: ACTION_ICONS[action],
         transform: `translate(${x + 4} 4)`,
         fill: "none",
-        stroke: "#cbd5e1",
+        stroke: INK.secondary,
         "stroke-width": 1.6,
         "stroke-linecap": "round",
         "stroke-linejoin": "round",

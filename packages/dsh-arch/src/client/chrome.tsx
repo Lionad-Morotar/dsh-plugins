@@ -139,7 +139,7 @@ const tabActiveStyle =
   "background:color-mix(in srgb, currentColor 8%, transparent);color:inherit;cursor:pointer;" +
   "font-size:11px;padding:2px 8px;border-radius:6px;opacity:1";
 const errorBlockStyle =
-  "flex:none;padding:4px 8px;font-size:11px;color:#f87171;border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);max-height:72px;overflow:auto";
+  "flex:none;padding:4px 8px;font-size:11px;color:var(--dsw-alias-state-error-primary,#ef4444);border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);max-height:72px;overflow:auto";
 const retryStyle =
   "margin-left:8px;border:1px solid color-mix(in srgb, currentColor 24%, transparent);background:transparent;" +
   "color:inherit;cursor:pointer;font-size:11px;padding:1px 8px;border-radius:6px";
