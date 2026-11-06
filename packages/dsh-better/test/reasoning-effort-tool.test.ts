@@ -278,6 +278,37 @@ describe("execute: reading without an effort id", () => {
   });
 });
 
+/**
+ * A session can record a level for a model that no longer advertises one: the
+ * model was retired, the provider degraded, or the config drifted. The recorded
+ * level is then inert, because nothing downstream consumes it.
+ *
+ * Reporting it anyway would put `levels: []` and `effort: "high"` in the same
+ * value, contradicting the render's own conclusion that there is nothing to
+ * switch. The read must therefore answer null, and a switch must fail.
+ */
+describe("execute: a session pinned to a level its model no longer has", () => {
+  it("reads an empty ladder and no level instead of echoing the stale pin", async () => {
+    const tool = createSetEffortTool({ llm: NO_LADDER });
+    const { agent, select } = agentOn(selectionOn("high"));
+
+    const value = await tool.execute({}, { agent });
+    const text = textOf(tool, {}, value);
+
+    expect(select).not.toHaveBeenCalled();
+    expect(value).toMatchObject({ changed: false, levels: [], effort: null, defaultEffort: null });
+    expect(text).toContain("does not expose reasoning effort levels");
+  });
+
+  it("refuses to switch to the very level the session still records", async () => {
+    const tool = createSetEffortTool({ llm: NO_LADDER });
+    const { agent, select } = agentOn(selectionOn("high"));
+
+    await expect(tool.execute({ effort: "high" }, { agent })).rejects.toThrow(/does not support/);
+    expect(select).not.toHaveBeenCalled();
+  });
+});
+
 describe("execute: switching", () => {
   it("rejects a non-string effort", async () => {
     const tool = createSetEffortTool({ llm: ladderLlm() });

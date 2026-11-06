@@ -171,6 +171,13 @@ const OUTPUT_SCHEMA: JsonObject = {
 /**
  * Read the session's effort state against the model's advertised ladder.
  *
+ * The ladder decides whether a level can be reported at all. A session can still
+ * record a level for a model that no longer advertises one (retired model,
+ * degraded provider, drifted config), but nothing downstream consumes it, so
+ * echoing it would put `levels: []` and `effort: "high"` in the same value and
+ * contradict the tool's own conclusion that there is nothing to switch. With a
+ * ladder present the behaviour is unchanged: an explicit choice wins, and a
+ * session that records none inherits the model default.
  * @param llm - the host llm service, used only for model info.
  * @param selection - the session's current provider/model/effort selection.
  * @returns the snapshot; the model-info failure propagates untouched.
@@ -178,15 +185,16 @@ const OUTPUT_SCHEMA: JsonObject = {
 export async function readEffortSnapshot(llm: EffortLlmFace, selection: EffortSelection): Promise<EffortSnapshot> {
   const info = await llm.resolveModelInfo(selection.provider, selection.model);
   const reasoning = info.reasoning;
+  const levels = reasoning?.efforts ?? [];
   const explicit = selection.reasoningEffort !== undefined;
   return {
     provider: selection.provider,
     model: selection.model,
-    levels: reasoning?.efforts ?? [],
+    levels,
     defaultEffort: reasoning?.defaultEffort,
     // An inherited default is the level in effect just as much as a pinned one:
     // asking for it back must not cost a cache flush.
-    currentEffort: explicit ? selection.reasoningEffort : reasoning?.defaultEffort,
+    currentEffort: levels.length === 0 ? undefined : explicit ? selection.reasoningEffort : reasoning?.defaultEffort,
     explicit,
   };
 }
