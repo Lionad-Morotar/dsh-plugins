@@ -14,6 +14,7 @@ import {
 import { computeWindow, graphLaneCount, HISTORY_ROW_HEIGHT, relativeTime, revealRowIndex, type ChangeGroup, type GraphRow } from "./model.ts";
 import { cursorActionOf, nearTail, stepCursor } from "./cursor.ts";
 import type { Translate } from "./copy.ts";
+import { useRowHeight } from "./font-scale.ts";
 import type { GitCommitNode } from "../host/types.ts";
 import { GraphSvg } from "./graph.tsx";
 import {
@@ -117,6 +118,7 @@ function CommitRow({
   commit,
   row,
   laneCount,
+  rowHeight,
   top,
   selected,
   head,
@@ -126,6 +128,7 @@ function CommitRow({
   readonly commit: GitCommitNode;
   readonly row: GraphRow | undefined;
   readonly laneCount: number;
+  readonly rowHeight: number;
   readonly top: number;
   readonly selected: boolean;
   readonly head: boolean;
@@ -144,7 +147,7 @@ function CommitRow({
       title={`${commit.hash.slice(0, 7)} ${commit.subject}`}
       onClick={() => onSelect(commit.hash)}
     >
-      {row === undefined ? <span className="gx-graph" style={{ width: graphColumnWidth(laneCount) }} /> : <GraphSvg row={row} laneCount={laneCount} height={HISTORY_ROW_HEIGHT} />}
+      {row === undefined ? <span className="gx-graph" style={{ width: graphColumnWidth(laneCount) }} /> : <GraphSvg row={row} laneCount={laneCount} height={rowHeight} />}
       {/* The refs cell sits between the graph and the subject, so a long branch
           name has a column of its own to be truncated in rather than pushing the
           subject around. */}
@@ -179,6 +182,7 @@ function CommitRow({
 function UncommittedRow({
   summary,
   laneCount,
+  rowHeight,
   top,
   selected,
   cursor,
@@ -187,6 +191,7 @@ function UncommittedRow({
 }: {
   readonly summary: WorkingTreeSummary;
   readonly laneCount: number;
+  readonly rowHeight: number;
   readonly top: number;
   readonly selected: boolean;
   readonly cursor: boolean;
@@ -224,15 +229,15 @@ function UncommittedRow({
       <svg
         className="gx-graph"
         width={width}
-        height={HISTORY_ROW_HEIGHT}
-        viewBox={`0 0 ${String(width)} ${String(HISTORY_ROW_HEIGHT)}`}
+        height={rowHeight}
+        viewBox={`0 0 ${String(width)} ${String(rowHeight)}`}
         aria-hidden="true"
         focusable="false"
       >
         <circle
           data-testid="git-uncommitted-node"
           cx={cx}
-          cy={HISTORY_ROW_HEIGHT / 2}
+          cy={rowHeight / 2}
           r={3.6}
           fill="none"
           stroke="var(--gx-accent)"
@@ -361,6 +366,9 @@ export function HistoryPane(props: HistoryPaneProps) {
   // The scrollbar gutter the rows give up and the header does not. jsdom lays
   // nothing out, so it measures 0 there and the header simply spans full width.
   const [gutter, setGutter] = useState(0);
+  // One row height for the virtual window, the scroll math and the SVG graph; a
+  // second source would drift the cursor off the row it highlights.
+  const rowHeight = useRowHeight(HISTORY_ROW_HEIGHT);
   const columnDrag = useRef<{ pointerId: number; startX: number; baseWidth: number; restWidth: number; id: HistoryColumnId } | null>(null);
   // The cursor is an index into `commits` and doubles as this pane's notion of
   // "which commit is under the keyboard". Moving it selects the commit, which is
@@ -455,14 +463,14 @@ export function HistoryPane(props: HistoryPaneProps) {
     const next = revealRowIndex({
       scrollTop: element.scrollTop,
       viewport: element.clientHeight === 0 ? 480 : element.clientHeight,
-      rowHeight: HISTORY_ROW_HEIGHT,
+      rowHeight,
       index: cursor,
       rowCount,
     });
     if (next === element.scrollTop) return;
     element.scrollTop = next;
     setScrollTop(next);
-  }, [cursor, rowCount]);
+  }, [cursor, rowCount, rowHeight]);
 
   // Walking into the tail asks for the next page, so the cursor keeps going
   // instead of stopping at the last loaded row. The scroll path above does the
@@ -514,7 +522,7 @@ export function HistoryPane(props: HistoryPaneProps) {
     {
       scrollTop,
       height: height === 0 ? 480 : height,
-      rowHeight: HISTORY_ROW_HEIGHT,
+      rowHeight,
     },
   );
   const laneCount = Math.max(1, graphLaneCount(graph));
@@ -617,8 +625,13 @@ export function HistoryPane(props: HistoryPaneProps) {
         "--gx-col-time": `${String(widths.time)}px`,
         "--gx-col-author": `${String(widths.author)}px`,
         "--gx-col-hash": `${String(widths.hash)}px`,
+        // The window positions rows by an integer, so the stylesheet sizes them
+        // by the same integer. It sits on the pane instead of the scroller
+        // because the column header lives outside the scroller and must share
+        // the height; the sheet's ratio form stays as the no-JavaScript fallback.
+        "--gx-row-h": `${String(rowHeight)}px`,
       }) as CSSProperties,
-    [laneCount, widths],
+    [laneCount, rowHeight, widths],
   );
   // An empty list means two different things: the repository has no commit, or
   // the current query matched none. The query is what decides, not the in-flight
@@ -682,15 +695,16 @@ export function HistoryPane(props: HistoryPaneProps) {
             onScroll={handleScroll}
             onKeyDown={handleKeyDown}
           >
-          <div className="gx-vlist" style={{ height: rowCount * HISTORY_ROW_HEIGHT }}>
+          <div className="gx-vlist" style={{ height: rowCount * rowHeight }}>
             {slice.rows.map(rowIndex => {
-              const top = rowIndex * HISTORY_ROW_HEIGHT;
+              const top = rowIndex * rowHeight;
               if (rowIndex === 0 && hasUncommitted && workingTree !== undefined) {
                 return (
                   <UncommittedRow
                     key="uncommitted"
                     summary={workingTree}
                     laneCount={laneCount}
+                    rowHeight={rowHeight}
                     top={top}
                     selected={selectedHash === UNCOMMITTED}
                     cursor={cursor === 0}
@@ -711,6 +725,7 @@ export function HistoryPane(props: HistoryPaneProps) {
                   commit={commit}
                   row={graph[index]}
                   laneCount={laneCount}
+                  rowHeight={rowHeight}
                   top={top}
                   selected={commit.hash === selectedHash}
                   head={commit.hash === headHash}

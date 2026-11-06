@@ -7,6 +7,7 @@
  * panel's "service unavailable" state instead of keeping the tab hidden.
  */
 import { EN, ZH } from "./copy.ts";
+import { attachFontScale, type FontScaleContextLike } from "./font-scale.ts";
 import {
   GIT_SERVICE,
   HEADER_ID,
@@ -41,6 +42,8 @@ export interface ClientContextLike {
   readonly remote?: { readonly gitExplorer?: GitRemoteFace };
   /** Cordis's non-throwing resolver, used to probe a namespace not injected. */
   get?(name: string): unknown;
+  /** Cordis's scoped injection, used to follow an optional host service. */
+  inject?: FontScaleContextLike["inject"];
 }
 
 /**
@@ -137,6 +140,9 @@ export function apply(ctx: ClientContextLike): () => void {
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
   registeredDictionaries = offLocale;
   const offStyles = insertStyles(typeof document === "undefined" ? undefined : document);
+  // Optional: without the host's theme service the panel keeps the sizes the
+  // host wrote on `body`, so this never blocks the header action from mounting.
+  const offFontScale = attachFontScale(ctx);
   const remote = createRemoteResolver(ctx);
 
   const BranchAction = createBranchAction({ store: createBranchStore(remote), t });
@@ -171,6 +177,7 @@ export function apply(ctx: ClientContextLike): () => void {
 
   return () => {
     offStyles();
+    offFontScale();
     offLocale();
     if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
   };

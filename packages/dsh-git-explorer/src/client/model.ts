@@ -354,13 +354,14 @@ export function parseCommitFocus(focus: string | undefined): CommitFocus | undef
 }
 
 /**
- * History row height.
+ * History row height at the design font size.
  *
- * One constant feeds three consumers that must agree: the CSS variable
- * `--gx-row-h` in the stylesheet, {@link computeWindow}'s row arithmetic and
- * {@link revealScrollTop}'s inverse. A cursor followed by a different row height
- * drifts by the difference on every row, so the value lives here rather than in
- * the component that happens to render it.
+ * One baseline feeds three consumers that must agree: the CSS variable
+ * `--gx-row-h` in the stylesheet (scaled from the host's text size at this
+ * ratio), {@link computeWindow}'s row arithmetic and {@link revealScrollTop}'s
+ * inverse. The pane scales it with `useRowHeight`; a cursor followed by a
+ * different row height drifts by the difference on every row, so the value lives
+ * here rather than in the component that happens to render it.
  */
 export const HISTORY_ROW_HEIGHT = 24;
 

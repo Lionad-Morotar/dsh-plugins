@@ -17,7 +17,14 @@ export const GIT_STYLES = `
 .gx-root, .gx-preview {
   --gx-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --gx-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  --gx-row-h: 24px;
+  /* The host's own axes: body text for the interface, code size for monospace
+     text. Both keep the design baseline as their fallback so a host that
+     writes neither still gets the sizes this panel shipped with. */
+  --gx-fs: var(--dsh-content-font-size, 14px);
+  --gx-fs-code: var(--dsh-code-font-size, 11px);
+  /* The one row height the virtual window and this sheet share; the floor
+     keeps a row clickable below the design baseline, matching the TS helper. */
+  --gx-row-h: max(24px, calc(var(--gx-fs) * 1.7143));
   --gx-text: var(--dsw-alias-label-primary, inherit);
   --gx-text-2: var(--dsw-alias-label-secondary, inherit);
   --gx-text-3: var(--dsw-alias-label-tertiary, inherit);
@@ -56,7 +63,7 @@ export const GIT_STYLES = `
   color: var(--gx-text);
   background: var(--dsw-alias-bg-base, transparent);
   font-family: var(--gx-font);
-  font-size: 12px;
+  font-size: calc(var(--gx-fs) * 0.8571);
   line-height: 1.45;
   padding-bottom: calc(var(--dsh-composer-height, 140px) + 12px);
 }
@@ -66,7 +73,7 @@ export const GIT_STYLES = `
   align-items: center;
   gap: 10px;
   flex: none;
-  min-height: 38px;
+  min-height: calc(var(--gx-fs) * 2.7143);
   padding: 6px 12px;
   border-bottom: 1px solid var(--gx-border-soft);
 }
@@ -74,7 +81,7 @@ export const GIT_STYLES = `
 .gx-head-icon { display: inline-flex; color: var(--gx-accent); flex: none; }
 .gx-repo {
   font-weight: 600;
-  font-size: 13px;
+  font-size: calc(var(--gx-fs) * 0.9286);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -84,24 +91,24 @@ export const GIT_STYLES = `
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 18px;
+  height: calc(var(--gx-fs-code) * 1.6364);
   padding: 0 7px;
   border: 1px solid var(--gx-border);
   border-radius: 999px;
   color: var(--gx-text-2);
   font-family: var(--gx-mono);
-  font-size: 10.5px;
+  font-size: calc(var(--gx-fs-code) * 0.9545);
   white-space: nowrap;
   flex: none;
 }
 .gx-branch { color: var(--gx-accent); border-color: color-mix(in srgb, var(--gx-accent) 40%, transparent); }
-.gx-head-meta { display: flex; align-items: center; gap: 8px; flex: none; color: var(--gx-caption); font-size: 11px; }
+.gx-head-meta { display: flex; align-items: center; gap: 8px; flex: none; color: var(--gx-caption); font-size: calc(var(--gx-fs) * 0.7857); }
 .gx-head-meta b { color: var(--gx-text-2); font-weight: 600; font-variant-numeric: tabular-nums; }
 .gx-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 24px;
+  height: calc(var(--gx-fs) * 1.7143);
   min-width: 24px;
   padding: 0 6px;
   border: 1px solid transparent;
@@ -199,11 +206,11 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
   align-items: center;
   gap: 8px;
   flex: none;
-  height: 30px;
+  height: calc(var(--gx-fs) * 2.1429);
   padding: 0 10px;
   border-bottom: 1px solid var(--gx-border-soft);
   color: var(--gx-text-2);
-  font-size: 11px;
+  font-size: calc(var(--gx-fs) * 0.7857);
   font-weight: 600;
   letter-spacing: .02em;
 }
@@ -214,7 +221,7 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
 .gx-filter {
   flex: none;
   width: 132px;
-  height: 20px;
+  height: calc(var(--gx-fs) * 1.4286);
   padding: 0 6px;
   box-sizing: border-box;
   border: 1px solid transparent;
@@ -222,7 +229,7 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
   background: color-mix(in srgb, currentColor 7%, transparent);
   color: var(--gx-text);
   font: inherit;
-  font-size: 11px;
+  font-size: calc(var(--gx-fs) * 0.7857);
   font-weight: 400;
   letter-spacing: 0;
   outline: none;
@@ -258,11 +265,11 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
+  height: calc(var(--gx-fs) * 1.5714);
   padding: 0 10px;
   background: var(--gx-panel-2);
   color: var(--gx-caption);
-  font-size: 10.5px;
+  font-size: calc(var(--gx-fs) * 0.75);
   border-bottom: 1px solid var(--gx-border-soft);
 }
 .gx-group-head .gx-group-dir { font-family: var(--gx-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -274,7 +281,8 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
 
 .gx-file {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
+  /* The status badge scales with the code axis, so its track has to as well. */
+  grid-template-columns: calc(var(--gx-fs-code) * 1.4545) minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
   width: 100%;
@@ -298,11 +306,11 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
    instead of inventing a second selection colour. */
 .gx-file[data-cursor="true"]:hover { background: var(--gx-hover); }
 .gx-file[data-directory="true"] { cursor: default; color: var(--gx-text-2); }
-.gx-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.gx-file-name .gx-file-dir { color: var(--gx-caption); font-family: var(--gx-mono); font-size: 10.5px; margin-right: 4px; }
+.gx-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(var(--gx-fs) * 0.8571); }
+.gx-file-name .gx-file-dir { color: var(--gx-caption); font-family: var(--gx-mono); font-size: calc(var(--gx-fs-code) * 0.9545); margin-right: 4px; }
 .gx-file[data-renamed="true"] .gx-file-name { color: var(--gx-text-2); }
-.gx-file-orig { color: var(--gx-caption); font-size: 10px; margin-left: 4px; text-decoration: line-through; }
-.gx-file-stats { display: inline-flex; align-items: center; gap: 5px; font-family: var(--gx-mono); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.gx-file-orig { color: var(--gx-caption); font-size: calc(var(--gx-fs) * 0.7143); margin-left: 4px; text-decoration: line-through; }
+.gx-file-stats { display: inline-flex; align-items: center; gap: 5px; font-family: var(--gx-mono); font-size: calc(var(--gx-fs-code) * 0.9545); font-variant-numeric: tabular-nums; }
 .gx-add { color: var(--gx-added); }
 .gx-del { color: var(--gx-deleted); }
 .gx-stat-muted { color: var(--gx-caption); }
@@ -311,11 +319,11 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 15px;
-  height: 15px;
+  width: calc(var(--gx-fs-code) * 1.3636);
+  height: calc(var(--gx-fs-code) * 1.3636);
   border-radius: 4px;
   font-family: var(--gx-mono);
-  font-size: 9.5px;
+  font-size: calc(var(--gx-fs-code) * 0.8636);
   font-weight: 700;
   line-height: 1;
   background: color-mix(in oklab, currentColor 16%, transparent);
@@ -364,8 +372,8 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
 .gx-graph { flex: none; display: block; overflow: visible; }
 /* The hash column moved to the end, where it reads as the commit's identity
    rather than as a prefix in front of the subject. */
-.gx-hash { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--gx-caption); font-family: var(--gx-mono); font-size: 10.5px; text-align: right; }
-.gx-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.gx-hash { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--gx-caption); font-family: var(--gx-mono); font-size: calc(var(--gx-fs-code) * 0.9545); text-align: right; }
+.gx-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: calc(var(--gx-fs) * 0.8571); }
 /* The refs cell clips its own chips: a column narrower than the names has to
    truncate them rather than push the subject off its track. */
 .gx-refs { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
@@ -378,8 +386,8 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
   border-radius: 999px;
   color: var(--gx-accent);
   font-family: var(--gx-mono);
-  font-size: 9.5px;
-  line-height: 15px;
+  font-size: calc(var(--gx-fs-code) * 0.8636);
+  line-height: calc(var(--gx-fs-code) * 1.3636);
 }
 .gx-ref-name { display: block; overflow: hidden; text-overflow: ellipsis; }
 /* The chip lives inside the row button, whose title suppresses a child's native
@@ -396,8 +404,8 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
   border-radius: 6px;
   background: var(--gx-panel-2);
   color: var(--gx-text);
-  font-size: 10.5px;
-  line-height: 16px;
+  font-size: calc(var(--gx-fs) * 0.75);
+  line-height: calc(var(--gx-fs) * 1.1429);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -406,7 +414,7 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
 }
 .gx-ref:hover .gx-ref-tip { display: block; }
 .gx-ref[data-kind="tag"] { color: var(--gx-modified); border-color: color-mix(in srgb, var(--gx-modified) 35%, transparent); }
-.gx-author, .gx-time { min-width: 0; color: var(--gx-caption); font-size: 10.5px; }
+.gx-author, .gx-time { min-width: 0; color: var(--gx-caption); font-size: calc(var(--gx-fs) * 0.75); }
 .gx-author { overflow: hidden; text-overflow: ellipsis; }
 .gx-time { font-family: var(--gx-mono); font-variant-numeric: tabular-nums; text-align: right; }
 
@@ -419,12 +427,14 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
   align-items: center;
   column-gap: 8px;
   flex: none;
-  height: 24px;
+  /* The header labels the cells under it, so it takes the row height itself
+     rather than a second expression that could round differently. */
+  height: var(--gx-row-h);
   padding: 0 10px 0 4px;
   box-sizing: border-box;
   border-bottom: 1px solid var(--gx-border-soft);
   color: var(--gx-caption);
-  font-size: 10px;
+  font-size: calc(var(--gx-fs) * 0.7143);
   font-weight: 600;
   letter-spacing: .02em;
   white-space: nowrap;
@@ -502,11 +512,11 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   align-items: center;
   gap: 8px;
   flex: none;
-  height: 28px;
+  height: calc(var(--gx-fs) * 2);
   padding: 0 10px;
   border-top: 1px solid var(--gx-border-soft);
   color: var(--gx-caption);
-  font-size: 10.5px;
+  font-size: calc(var(--gx-fs) * 0.75);
 }
 .gx-loadbar .gx-spacer { flex: 1; }
 .gx-loadbar .gx-del { max-width: 42ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -515,7 +525,7 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   background: transparent;
   color: var(--gx-accent);
   font: inherit;
-  font-size: 11px;
+  font-size: calc(var(--gx-fs) * 0.7857);
   cursor: pointer;
   padding: 2px 4px;
   border-radius: 4px;
@@ -524,37 +534,37 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
 .gx-linkbtn:disabled { opacity: .45; cursor: default; }
 
 .gx-detail { display: flex; flex-direction: column; flex: none; height: var(--gx-detail-h, 38%); min-height: 180px; border: 1px solid var(--gx-border); border-radius: 10px; background: var(--gx-panel); overflow: hidden; }
-.gx-detail-head { display: flex; align-items: center; gap: 8px; flex: none; height: 28px; padding: 0 10px; border-bottom: 1px solid var(--gx-border-soft); color: var(--gx-text-2); font-size: 11px; font-weight: 600; }
+.gx-detail-head { display: flex; align-items: center; gap: 8px; flex: none; height: calc(var(--gx-fs) * 2); padding: 0 10px; border-bottom: 1px solid var(--gx-border-soft); color: var(--gx-text-2); font-size: calc(var(--gx-fs) * 0.7857); font-weight: 600; }
 .gx-detail-head .gx-hash { color: var(--gx-text-2); }
 .gx-detail-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 10px 10px; box-sizing: border-box; }
-.gx-detail-subject { font-size: 13px; font-weight: 600; line-height: 1.4; word-break: break-word; }
-.gx-detail-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: var(--gx-caption); font-size: 10.5px; }
+.gx-detail-subject { font-size: calc(var(--gx-fs) * 0.9286); font-weight: 600; line-height: 1.4; word-break: break-word; }
+.gx-detail-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: var(--gx-caption); font-size: calc(var(--gx-fs) * 0.75); }
 .gx-detail-meta .gx-author { max-width: none; }
 .gx-parents { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-.gx-parents-label { color: var(--gx-caption); font-size: 10px; }
+.gx-parents-label { color: var(--gx-caption); font-size: calc(var(--gx-fs) * 0.7143); }
 .gx-parent {
   border: 1px solid var(--gx-border);
   border-radius: 5px;
   background: transparent;
   color: var(--gx-text-2);
   font-family: var(--gx-mono);
-  font-size: 10px;
+  font-size: calc(var(--gx-fs-code) * 0.9091);
   padding: 1px 5px;
   cursor: pointer;
 }
 .gx-parent:hover { color: var(--gx-accent); border-color: color-mix(in srgb, var(--gx-accent) 45%, transparent); }
-.gx-body-text { margin: 8px 0 0; padding: 6px 8px; border-radius: 6px; background: var(--gx-panel-2); color: var(--gx-text-2); font-family: var(--gx-mono); font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.gx-body-text { margin: 8px 0 0; padding: 6px 8px; border-radius: 6px; background: var(--gx-panel-2); color: var(--gx-text-2); font-family: var(--gx-mono); font-size: calc(var(--gx-fs-code) * 0.9545); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .gx-detail-files { margin-top: 10px; }
-.gx-detail-files-title { color: var(--gx-caption); font-size: 10px; letter-spacing: .02em; margin-bottom: 2px; }
+.gx-detail-files-title { color: var(--gx-caption); font-size: calc(var(--gx-fs) * 0.7143); letter-spacing: .02em; margin-bottom: 2px; }
 .gx-detail-group { margin-top: 4px; }
-.gx-detail-dir { color: var(--gx-caption); font-family: var(--gx-mono); font-size: 10px; }
+.gx-detail-dir { color: var(--gx-caption); font-family: var(--gx-mono); font-size: calc(var(--gx-fs-code) * 0.9091); }
 .gx-detail-file {
   display: grid;
-  grid-template-columns: 15px minmax(0, 1fr) auto;
+  grid-template-columns: calc(var(--gx-fs-code) * 1.3636) minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
   width: 100%;
-  height: 20px;
+  height: calc(var(--gx-fs) * 1.4286);
   padding: 0 2px;
   border: 0;
   border-radius: 4px;
@@ -566,7 +576,7 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
 }
 .gx-detail-file:hover { background: var(--gx-hover); }
 .gx-detail-file:focus-visible { outline: 2px solid var(--gx-accent); outline-offset: -2px; }
-.gx-detail-file .gx-file-name { font-size: 11px; }
+.gx-detail-file .gx-file-name { font-size: calc(var(--gx-fs) * 0.7857); }
 
 /* The hover card portals out of .gx-root, so it declares the shared token block
    above and carries its own fixed frame; pointer-events none keeps it from ever
@@ -584,7 +594,7 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   box-shadow: 0 10px 28px color-mix(in srgb, var(--gx-text) 22%, transparent);
   overflow: hidden;
   font-family: var(--gx-font);
-  font-size: 11px;
+  font-size: calc(var(--gx-fs) * 0.7857);
   line-height: 1.45;
 }
 .gx-preview-head {
@@ -592,13 +602,13 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   align-items: center;
   gap: 7px;
   flex: none;
-  height: 26px;
+  height: calc(var(--gx-fs) * 1.8571);
   padding: 0 10px;
   border-bottom: 1px solid var(--gx-border-soft);
   background: var(--gx-panel);
 }
 .gx-preview-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.gx-preview-rev { margin-left: auto; flex: none; color: var(--gx-caption); font-family: var(--gx-mono); font-size: 10px; }
+.gx-preview-rev { margin-left: auto; flex: none; color: var(--gx-caption); font-family: var(--gx-mono); font-size: calc(var(--gx-fs-code) * 0.9091); }
 .gx-preview-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; padding: 8px 10px; overflow: hidden; }
 .gx-preview-text {
   margin: 0;
@@ -606,12 +616,12 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   min-height: 0;
   color: var(--gx-text-2);
   font-family: var(--gx-mono);
-  font-size: 10.5px;
+  font-size: calc(var(--gx-fs-code) * 0.9545);
   line-height: 1.5;
   white-space: pre;
   overflow: hidden;
 }
-.gx-preview-note { flex: none; margin-top: 6px; color: var(--gx-caption); font-size: 10px; }
+.gx-preview-note { flex: none; margin-top: 6px; color: var(--gx-caption); font-size: calc(var(--gx-fs) * 0.7143); }
 /* A capped card can clip the fortieth line; fading the last rows tells the
    reader the text continues without pretending the card is the full file. */
 .gx-preview[data-clipped="true"] .gx-preview-text {
@@ -619,7 +629,7 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
 }
 .gx-preview-unavailable { display: flex; flex-direction: column; gap: 3px; color: var(--gx-text-2); }
-.gx-preview-unavailable strong { color: var(--gx-text); font-size: 11.5px; }
+.gx-preview-unavailable strong { color: var(--gx-text); font-size: calc(var(--gx-fs) * 0.8214); }
 
 .gx-empty {
   display: flex;
@@ -636,21 +646,27 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   color: var(--gx-text-2);
   text-align: center;
 }
-.gx-empty strong { color: var(--gx-text); font-size: 13px; font-weight: 600; }
-.gx-empty span { color: var(--gx-caption); font-size: 11px; max-width: 46ch; }
+.gx-empty strong { color: var(--gx-text); font-size: calc(var(--gx-fs) * 0.9286); font-weight: 600; }
+.gx-empty span { color: var(--gx-caption); font-size: calc(var(--gx-fs) * 0.7857); max-width: 46ch; }
 .gx-empty .gx-btn { margin-top: 4px; border-color: var(--gx-border); }
 .gx-empty-inline { min-height: 80px; margin: 8px; padding: 10px; }
-.gx-skeleton { padding: 12px; color: var(--gx-caption); font-size: 11px; }
+.gx-skeleton { padding: 12px; color: var(--gx-caption); font-size: calc(var(--gx-fs) * 0.7857); }
 
 /* Session header branch action. It renders outside .gx-root, so it cannot use
    the panel variables above: every value is an alias token with a readable
    fallback, which keeps light and dark themes on the shell's own colours. */
+.gx-branch-action, .gx-branch-panel {
+  /* Outside .gx-root: the trigger lives in the session header and the panel
+     portals to body, so neither inherits the root's font axes. */
+  --gx-fs: var(--dsh-content-font-size, 14px);
+  --gx-fs-code: var(--dsh-code-font-size, 11px);
+}
 .gx-branch-action { position: relative; display: inline-flex; align-items: center; }
 .gx-branch-trigger {
   align-items: center;
   display: inline-flex;
   gap: 4px;
-  min-height: 28px;
+  min-height: calc(var(--gx-fs) * 2);
   max-width: min(320px, 40vw);
   padding: 3px 2px;
   border: 0;
@@ -658,8 +674,8 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   background: 0 0;
   color: var(--dsw-alias-label-tertiary, inherit);
   font: inherit;
-  font-size: 12px;
-  line-height: 18px;
+  font-size: calc(var(--gx-fs) * 0.8571);
+  line-height: calc(var(--gx-fs) * 1.2857);
   cursor: pointer;
 }
 .gx-branch-trigger:hover,
@@ -678,7 +694,7 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   align-items: baseline;
   gap: 4px;
   flex: none;
-  font-size: 11px;
+  font-size: calc(var(--gx-fs) * 0.7857);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -720,7 +736,7 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
     var(--dsw-elevation-prominent, 0 8px 24px color-mix(in srgb, var(--dsw-alias-label-primary, currentColor) 16%, transparent)),
     inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, #fff) 6%, transparent);
   color: var(--dsw-alias-label-primary, inherit);
-  font-size: 13px;
+  font-size: calc(var(--gx-fs) * 0.9286);
   line-height: 1.45;
 }
 .gx-branch-list { display: flex; flex-direction: column; gap: 0; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
@@ -735,8 +751,8 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   min-width: 0;
   padding: 4px 8px 5px;
   color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit));
-  font-size: 11px;
-  line-height: 16px;
+  font-size: calc(var(--gx-fs) * 0.7857);
+  line-height: calc(var(--gx-fs) * 1.1429);
 }
 .gx-branch-scope-label { flex: none; }
 .gx-branch-scope-path { display: flex; flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
@@ -748,7 +764,7 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
 .gx-branch-search {
   flex: none;
   width: 100%;
-  height: 28px;
+  height: calc(var(--gx-fs) * 2);
   padding: 4px 8px;
   box-sizing: border-box;
   border: 0;
@@ -757,7 +773,7 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   background: transparent;
   color: var(--dsw-alias-label-primary, inherit);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(var(--gx-fs) * 0.9286);
   outline: none;
 }
 .gx-branch-search::placeholder { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); }
@@ -768,7 +784,7 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   gap: 6px;
   width: 100%;
   min-width: 0;
-  min-height: 30px;
+  min-height: calc(var(--gx-fs) * 2.1429);
   padding: 5px 8px;
   box-sizing: border-box;
   border: 0;
@@ -776,7 +792,7 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   background: transparent;
   color: var(--dsw-alias-label-primary, inherit);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(var(--gx-fs) * 0.9286);
   text-align: left;
   cursor: pointer;
 }
@@ -795,8 +811,8 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   border: 1px dashed color-mix(in srgb, currentColor 45%, transparent);
   border-radius: 999px;
   color: inherit;
-  font-size: 10px;
-  line-height: 15px;
+  font-size: calc(var(--gx-fs) * 0.7143);
+  line-height: calc(var(--gx-fs) * 1.0714);
   white-space: nowrap;
 }
 .gx-branch-row-name {
@@ -815,8 +831,8 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
   border-radius: 999px;
   color: inherit;
-  font-size: 10px;
-  line-height: 15px;
+  font-size: calc(var(--gx-fs) * 0.7143);
+  line-height: calc(var(--gx-fs) * 1.0714);
   opacity: .85;
 }
 /* The automatic stash can leave changes parked when applying them back hit a
@@ -832,13 +848,13 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   border-radius: var(--dsw-radius-md, 8px);
   background: color-mix(in srgb, var(--dsw-alias-state-warn-primary, currentColor) 12%, transparent);
   color: var(--dsw-alias-state-warn-primary, currentColor);
-  font-size: 12px;
+  font-size: calc(var(--gx-fs) * 0.8571);
 }
 .gx-branch-warning-text { font-weight: 500; }
 .gx-branch-warning-detail {
   word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
+  font-size: var(--gx-fs-code);
 }
 .gx-branch-error {
   display: flex;
@@ -850,7 +866,7 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   border-radius: var(--dsw-radius-md, 8px);
   background: color-mix(in srgb, var(--dsw-alias-state-error-primary, currentColor) 12%, transparent);
   color: var(--dsw-alias-state-error-primary, currentColor);
-  font-size: 12px;
+  font-size: calc(var(--gx-fs) * 0.8571);
 }
 .gx-branch-error-text { flex: 1; min-width: 0; word-break: break-word; }
 .gx-branch-retry {
@@ -861,12 +877,12 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 11px;
+  font-size: calc(var(--gx-fs) * 0.7857);
   cursor: pointer;
 }
 .gx-branch-retry:hover { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 10%, transparent)); }
-.gx-branch-hint { padding: 8px 9px; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); font-size: 12px; }
-.gx-branch-nomatch { padding: 12px 9px; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); font-size: 12px; text-align: center; }
+.gx-branch-hint { padding: 8px 9px; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); font-size: calc(var(--gx-fs) * 0.8571); }
+.gx-branch-nomatch { padding: 12px 9px; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); font-size: calc(var(--gx-fs) * 0.8571); text-align: center; }
 
 
 @media (max-width: 720px) {

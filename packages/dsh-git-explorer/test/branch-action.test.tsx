@@ -472,7 +472,7 @@ describe("header branch worktree reading", () => {
 
   it("pins the trigger width and the reading style", () => {
     expect(GIT_STYLES).toMatch(/\.gx-branch-trigger \{[^}]*max-width: min\(320px, 40vw\)/u);
-    expect(GIT_STYLES).toMatch(/\.gx-branch-dirty \{[^}]*font-size: 11px/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-dirty \{[^}]*font-size: calc\(var\(--gx-fs\) \* 0\.7857\)/u);
     expect(GIT_STYLES).toMatch(/\.gx-branch-dirty \{[^}]*font-variant-numeric: tabular-nums/u);
     expect(GIT_STYLES).toMatch(/\.gx-branch-add \{[^}]*--dsw-alias-state-success-primary/u);
     expect(GIT_STYLES).toMatch(/\.gx-branch-del \{[^}]*--dsw-alias-state-error-primary/u);

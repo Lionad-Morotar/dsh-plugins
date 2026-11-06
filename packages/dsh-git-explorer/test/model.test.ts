@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { DESIGN_TEXT_SIZE } from "../src/client/font-scale.ts";
 import { GIT_STYLES } from "../src/client/styles.ts";
 
 import {
@@ -279,7 +280,12 @@ describe("row height sources", () => {
     // The virtual window multiplies the constant while the browser lays rows out
     // with the variable. If they disagree, the cursor's reveal lands on a
     // neighbour and the mounted slice is short or long by the difference; this is
-    // the only place the two declarations are compared.
-    expect(GIT_STYLES).toContain(`--gx-row-h: ${String(HISTORY_ROW_HEIGHT)}px;`);
+    // the only place the two declarations are compared. The stylesheet derives
+    // the row height from the host's text size at the constant's own ratio, with
+    // the design row height as the floor the TypeScript helper also applies.
+    const ratio = (HISTORY_ROW_HEIGHT / DESIGN_TEXT_SIZE).toFixed(4);
+    expect(GIT_STYLES).toContain(
+      `--gx-row-h: max(${String(HISTORY_ROW_HEIGHT)}px, calc(var(--gx-fs) * ${ratio}));`,
+    );
   });
 });
