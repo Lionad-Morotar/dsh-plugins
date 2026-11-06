@@ -1,14 +1,22 @@
 /**
- * Browser-half entry: claim `.md` / `.markdown` in the file explorer's
- * renderer registry.
+ * Browser-half entry: claim the text files the workbench should let a reader edit.
+ *
+ * Two renderers come out of this row, and they are two claims rather than one
+ * because they present the document differently: Markdown gets the cursor-block
+ * decoration layer, everything else gets syntax highlighting and no decoration.
  *
  * The registry is another plugin's service, so this row injects `fsExplorer`
  * and does nothing at all when the explorer is absent: an unclaimed file is
- * better than a boot failure. The contribution's `load()` stays synchronous —
+ * better than a boot failure. The contributions' `load()` stays synchronous —
  * only the body is mounted for files this plugin won, and the CodeMirror chunk
  * is fetched by the body itself.
+ *
+ * The text claim is an allow-list, never a catch-all. The explorer's own
+ * `builtin.source` is the catch-all at priority -1000 and has to stay the answer
+ * for every file this plugin cannot edit; see `claims.ts` for why.
  */
-import { MarkdownBody, configureBody } from "./body.tsx";
+import { MarkdownBody, TextEditorBody, configureBody } from "./body.tsx";
+import { claimsTextFile, TEXT_NAMES, TEXT_SUFFIXES } from "./claims.ts";
 import { boot, editorChunkRoute, loadEditorChunk, type LoaderRequire } from "./chunk-loader.ts";
 import type { DocumentStoreFace, FsExplorerService, RendererContribution } from "./contracts.ts";
 import { EN, ZH, translatorFor, type Translate } from "./copy.ts";
@@ -40,8 +48,39 @@ export const MARKDOWN_RENDERER: RendererContribution = {
   load: () => Promise.resolve({ Body: MarkdownBody, renderer: "markdown" }),
 };
 
-/** Disposer of the renderer currently registered; a repeat apply replaces it. */
-let registeredRenderer: (() => void) | undefined;
+/**
+ * The suffixes the text-editor claim lists.
+ *
+ * Dotted because that is the registry's spelling. The list comes from
+ * `claims.ts` rather than being written out again here, so the claim the
+ * registry sees and the claim the tests assert cannot drift apart.
+ */
+const TEXT_EXTENSIONS: readonly string[] = TEXT_SUFFIXES.map(suffix => `.${suffix}`);
+
+/**
+ * The editable claim for every text file that is not Markdown.
+ *
+ * Priority 5 sits between Markdown's 10 and the explorer's catch-all at -1000:
+ * it beats the read-only source view, and loses to the Markdown claim for the
+ * suffixes both could be read as. The suffix list is an allow-list, so a binary
+ * family or an unknown extension keeps the renderer it already had.
+ *
+ * The names dimension carries the suffix-less files an editor opens. They have
+ * no dot to match on, so listing them as suffixes would never reach them: a
+ * `Makefile` claim spelled `.makefile` matches nothing. Both lists come from
+ * `claims.ts`, so the claim the registry sees and the claim the tests assert
+ * cannot drift apart.
+ */
+export const TEXT_RENDERER: RendererContribution = {
+  id: "text-editor",
+  label: "Text",
+  match: { extensions: TEXT_EXTENSIONS, names: TEXT_NAMES },
+  priority: 5,
+  load: () => Promise.resolve({ Body: TextEditorBody, renderer: "text-editor" }),
+};
+
+/** Disposer of the renderers currently registered; a repeat apply replaces them. */
+let registeredRenderers: (() => void)[] = [];
 
 /** Disposer of the dictionary currently sitting in the host's locale table. */
 let registeredLocale: (() => void) | undefined;
@@ -92,14 +131,14 @@ function installLocale(ctx: ClientContextLike): () => void {
 }
 
 /**
- * Register the Markdown renderer.
+ * Register both renderers.
  *
  * @param ctx - client context carrying the explorer service.
- * @returns the disposer that unregisters the renderer, dictionary and styles.
+ * @returns the disposer that unregisters the renderers, dictionary and styles.
  */
 export function apply(ctx: ClientContextLike): () => void {
-  registeredRenderer?.();
-  registeredRenderer = undefined;
+  for (const dispose of registeredRenderers) dispose();
+  registeredRenderers = [];
   registeredLocale?.();
   registeredLocale = undefined;
 
@@ -112,12 +151,12 @@ export function apply(ctx: ClientContextLike): () => void {
   const offStyles = insertStyles();
   const offLocale = installLocale(ctx);
   registeredLocale = offLocale;
-  const offRenderer = service.registerRenderer(MARKDOWN_RENDERER);
-  registeredRenderer = offRenderer;
+  const offRenderers = [service.registerRenderer(MARKDOWN_RENDERER), service.registerRenderer(TEXT_RENDERER)];
+  registeredRenderers = offRenderers;
 
   return () => {
-    offRenderer();
-    if (registeredRenderer === offRenderer) registeredRenderer = undefined;
+    for (const dispose of offRenderers) dispose();
+    if (registeredRenderers === offRenderers) registeredRenderers = [];
     offLocale();
     if (registeredLocale === offLocale) registeredLocale = undefined;
     offStyles();

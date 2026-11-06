@@ -72,6 +72,40 @@ describe("renderer matching", () => {
     expect(registry.resolve({ path: "models/scan.tif" })).toBeUndefined();
   });
 
+  it("matches a suffix-less name through the names dimension", () => {
+    // A name with no dot has no suffix to match, so a suffix-only claim can
+    // never reach it. That is what left Makefile read-only while the editor
+    // believed it had claimed it.
+    const registry = createRendererRegistry();
+    registry.register(contributionOf("editor", { match: { names: ["Makefile", "dockerfile"] }, priority: 5 }));
+
+    expect(registry.resolve({ path: "Makefile" })?.id).toBe("editor");
+    expect(registry.resolve({ path: "build/Makefile" })?.id).toBe("editor");
+    expect(registry.resolve({ path: "Dockerfile" })?.id).toBe("editor");
+    // Compared on the basename, lowercased, like every other dimension.
+    expect(registry.resolve({ path: "deploy/DOCKERFILE" })?.id).toBe("editor");
+    expect(registry.resolve({ path: "README" })).toBeUndefined();
+  });
+
+  it("does not let a names claim reach a file that has a suffix", () => {
+    // `Makefile` is a name; `Makefile.bak` is a different file with a suffix, and
+    // a name claim must not swallow it.
+    const registry = createRendererRegistry();
+    registry.register(contributionOf("editor", { match: { names: ["makefile"] }, priority: 5 }));
+
+    expect(registry.resolve({ path: "Makefile" })?.id).toBe("editor");
+    expect(registry.resolve({ path: "Makefile.bak" })).toBeUndefined();
+  });
+
+  it("does not let a names claim reach a dotfile", () => {
+    // A leading dot names a dotfile rather than a suffix, but it is still not
+    // the bare name the claim lists.
+    const registry = createRendererRegistry();
+    registry.register(contributionOf("editor", { match: { names: ["gitignore"] }, priority: 5 }));
+
+    expect(registry.resolve({ path: ".gitignore" })).toBeUndefined();
+  });
+
   it("treats a dimension-less match as the catch-all", () => {
     const registry = createRendererRegistry();
     registry.register(contributionOf("source", { match: {}, priority: -1000 }));
@@ -238,6 +272,64 @@ describe("built-in renderers", () => {
     // the built-ins must refuse rather than carry an editor in the entry.
     await expect(registry.resolve({ path: "README.md" })?.load()).rejects.toThrow("loader require");
     await expect(registry.resolve({ path: "asset.glb" })?.load()).rejects.toThrow("loader require");
+  });
+
+  it("lets an editor claim a suffix-less name the catch-all used to hold", () => {
+    // The end-to-end shape of the bug this dimension fixes: an editor that lists
+    // `Makefile` as a name must actually win it from the catch-all. Asserting the
+    // helper alone is what let the claim look correct while the file stayed
+    // read-only, so this goes through the real registry.
+    const registry = createRendererRegistry();
+    for (const contribution of createBuiltinRenderers()) install(registry, contribution);
+    registry.register(
+      contributionOf("text-editor", {
+        match: { extensions: [".ts"], names: ["makefile", "dockerfile"] },
+        priority: 5,
+      }),
+    );
+
+    expect(registry.resolve({ path: "Makefile" })?.id).toBe("text-editor");
+    expect(registry.resolve({ path: "build/Dockerfile" })?.id).toBe("text-editor");
+    // A name the editor did not list still falls through to the catch-all.
+    expect(registry.resolve({ path: "LICENSE" })?.id).toBe("builtin.source");
+  });
+
+  it("keeps the source catch-all as the answer when no editor plugin is installed", async () => {
+    // This is the uninstall story: without dsh-fs-markdown a .ts still opens,
+    // just read-only. A catch-all that lost to nothing would leave the pane blank.
+    const registry = createRendererRegistry();
+    for (const contribution of createBuiltinRenderers()) install(registry, contribution);
+
+    const winner = registry.resolve({ path: "src/main.ts" });
+    expect(winner?.id).toBe("builtin.source");
+    expect(winner?.priority).toBe(-1000);
+  });
+
+  it("lets an editor plugin outrank the source catch-all without touching it", () => {
+    // The seam this depends on: a plugin claims the text suffixes at a priority
+    // between the catch-all and the Markdown renderer, and the built-in table is
+    // not modified to make room for it.
+    const registry = createRendererRegistry();
+    for (const contribution of createBuiltinRenderers()) install(registry, contribution);
+    registry.register(contributionOf("text-editor", { match: { extensions: [".ts", ".json"] }, priority: 5 }));
+
+    expect(registry.resolve({ path: "src/main.ts" })?.id).toBe("text-editor");
+    expect(registry.resolve({ path: "a.json" })?.id).toBe("text-editor");
+    // A suffix the plugin did not claim still falls through to the catch-all.
+    expect(registry.resolve({ path: "a.py" })?.id).toBe("builtin.source");
+    // And the built-in Markdown renderer keeps its own suffixes.
+    expect(registry.resolve({ path: "README.md" })?.id).toBe("builtin.markdown");
+  });
+
+  it("never lets a text claim take a binary family file", () => {
+    // Family matching is a separate dimension: a png resolves to its family
+    // renderer whatever a text plugin lists, because the plugin lists suffixes.
+    const registry = createRendererRegistry();
+    for (const contribution of createBuiltinRenderers()) install(registry, contribution);
+    registry.register(contributionOf("text-editor", { match: { extensions: [".ts"] }, priority: 5 }));
+
+    expect(registry.resolve({ path: "a.png" })?.id).toBe("builtin.family.image");
+    expect(registry.resolve({ path: "a.pdf" })?.id).toBe("builtin.family.pdf");
   });
 });
 

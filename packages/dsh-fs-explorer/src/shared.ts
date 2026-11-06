@@ -78,4 +78,6 @@ export const FAMILY_CHUNKS = {
   scene3d: "client.scene3d.js",
   raster: "client.raster.js",
   cad: "client.cad.js",
+  image: "client.image.js",
+  pdf: "client.pdf.js",
 } as const satisfies Record<PreviewFamily, string>;

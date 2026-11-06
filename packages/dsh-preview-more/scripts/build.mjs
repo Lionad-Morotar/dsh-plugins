@@ -38,6 +38,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { dracoDefines, dracoPlugin, loadDracoPayloads } from "dsh-preview-viewers/build/draco-plugin.mjs";
+import { loadPdfWorkerPayload, pdfDefines, pdfWorkerPlugin } from "dsh-preview-viewers/build/pdf-worker-plugin.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "..");
@@ -45,8 +46,21 @@ const libRoot = join(packageRoot, "lib");
 const require = createRequire(join(packageRoot, "package.json"));
 const manifest = require(join(packageRoot, "package.json"));
 
-/** Renderer families, each one lazy chunk. Mirrors the shared src/formats.ts. */
-const CHUNKS = ["scene3d", "raster", "cad"];
+/**
+ * Renderer families, each one lazy chunk. Mirrors the shared src/formats.ts.
+ *
+ * Deliberately the whole catalogue rather than `familiesFor("sidebar")`: this
+ * package carries a chunk for every family the shared package can draw, so the
+ * chunk table means "what this plugin can render" and the catalogue's `claims`
+ * means "what this surface should offer". The entry registers only the three
+ * the sidebar claims, which leaves `client.image.js` and `client.pdf.js`
+ * unreachable at runtime. That is the accepted cost of keeping one invariant
+ * here and in dsh-fs-explorer instead of two surface-parameterised ones; the
+ * bytes sit on disk unloaded (the loader fetches a chunk only when a
+ * registration asks for it), and a family that gains a sidebar claim later
+ * finds its chunk already built.
+ */
+const CHUNKS = ["scene3d", "raster", "cad", "image", "pdf"];
 
 /**
  * Reserved URL the never-fetched Draco decoder paths resolve against.
@@ -106,7 +120,7 @@ async function assertChunksCoverCatalogue() {
 const LICENSE_BANNER = [
   "/*! dsh-preview-more | MIT",
   " * Bundles third-party code: three.js and utif (MIT),",
-  " * dxf-viewer (MPL-2.0), Google Draco (Apache-2.0).",
+  " * dxf-viewer (MPL-2.0), Google Draco and pdf.js (Apache-2.0).",
   " * Full license texts: see THIRD-PARTY-NOTICES.md in this package.",
   " */",
 ].join("\n");
@@ -119,6 +133,10 @@ const SIZE_BUDGETS = {
   "client.raster.js": 40 * 1024,
   // dxf-viewer carries its own three scene.
   "client.cad.js": 560 * 1024,
+  // No engine: the browser decodes these itself, so the chunk is the surface.
+  "client.image.js": 40 * 1024,
+  // pdf.js main library plus its inlined worker.
+  "client.pdf.js": 600 * 1024,
 };
 
 /**
@@ -152,10 +170,11 @@ ${code}${handover}
  * @param format - `esm` for the Node host half, `cjs` for the browser halves.
  * @param external - specifiers left to the platform (React, virtual modules).
  * @param loader - esbuild loader overrides, e.g. text files.
- * @param plugins - esbuild plugins, e.g. the Draco virtual module.
+ * @param plugins - esbuild plugins, e.g. the Draco or pdf.js worker virtual module.
+ * @param define - extra compile-time overrides for one family's engine.
  * @returns minified bundle text.
  */
-async function bundle(entry, format, { external = [], loader = {}, plugins = [] } = {}) {
+async function bundle(entry, format, { external = [], loader = {}, plugins = [], define = {} } = {}) {
   const result = await build({
     entryPoints: [entry],
     bundle: true,
@@ -184,6 +203,7 @@ async function bundle(entry, format, { external = [], loader = {}, plugins = [] 
     define: {
       "process.env.NODE_ENV": JSON.stringify("production"),
       ...dracoDefines(DRACO_RESERVED_URL),
+      ...define,
     },
     logLevel: "silent",
   });
@@ -239,10 +259,18 @@ async function main(checkOnly) {
   // loader calling it the first time they drift.
   const viewersRequire = createRequire(require.resolve("dsh-preview-viewers/package.json"));
   const payloads = await loadDracoPayloads((specifier) => viewersRequire.resolve(specifier));
+  // The worker has to come from the same pdfjs-dist the main library is bundled
+  // from, for the same reason the Draco payload does: two halves of one message
+  // protocol cannot be allowed to drift apart at the next upgrade.
+  const pdfWorker = await loadPdfWorkerPayload((specifier) => viewersRequire.resolve(specifier));
   for (const family of CHUNKS) {
     const code = await bundle(join(packageRoot, "src", "client", "chunks", `${family}.tsx`), "cjs", {
       external: ["react", "react/jsx-runtime"],
-      plugins: family === "scene3d" ? [dracoPlugin(payloads)] : [],
+      plugins: [
+        ...(family === "scene3d" ? [dracoPlugin(payloads)] : []),
+        ...(family === "pdf" ? [pdfWorkerPlugin(pdfWorker)] : []),
+      ],
+      define: family === "pdf" ? pdfDefines() : {},
     });
     const file = `client.${family}.js`;
     await emit(file, wrap(`${manifest.name}/${file}`, code));

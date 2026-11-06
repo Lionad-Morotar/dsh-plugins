@@ -96,6 +96,21 @@ describe("family routing", () => {
     expect(isBinaryFamily("a.ts")).toBe(false);
     expect(isBinaryFamily("a.md")).toBe(false);
   });
+
+  it("routes an image to the image family instead of the text pager's binary refusal", () => {
+    // The pager asks the host for lines and refuses anything that is not UTF-8,
+    // so a png reaching it would spend a read to arrive at "not a text file".
+    // Claiming the suffix before the pager runs is the whole point of the
+    // family, so this is asserted per suffix rather than through the catalogue
+    // loop above, which would pass even if the family were empty.
+    for (const suffix of ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"]) {
+      expect(isBinaryFamily(`shots/hero.${suffix}`), suffix).toBe(true);
+      expect(familyOf(`shots/hero.${suffix}`), suffix).toBe("image");
+    }
+    // The suffixes the pager does handle stay with it.
+    expect(isBinaryFamily("notes.md")).toBe(false);
+    expect(isBinaryFamily("src/main.ts")).toBe(false);
+  });
 });
 
 describe("createPreviewLoader", () => {  it("reads one page, advances the offset and stops at eof", async () => {

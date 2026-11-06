@@ -22,7 +22,7 @@
  */
 import type { ComponentType, ReactElement } from "react";
 
-import { claimedExtensions, families, familyOf, type PreviewFamily } from "dsh-preview-viewers/formats.ts";
+import { claimedExtensions, familiesFor, familyOf, type PreviewFamily } from "dsh-preview-viewers/formats.ts";
 import { insertStyles } from "dsh-preview-viewers/styles.ts";
 
 import { registerBetterSidebarViewers } from "./better-sidebar.ts";
@@ -189,8 +189,12 @@ export const clientPlugin = {
     });
 
     // Derived from the catalogue rather than listed here, so adding a format
-    // touches the shared formats.ts and nothing else.
-    for (const family of families()) {
+    // touches the shared formats.ts and nothing else. The surface is named
+    // explicitly because the catalogue also feeds the workbench, which claims
+    // two families this sidebar must not: the host's own image and PDF previews
+    // carry a zoom viewport and a selectable text layer, and an `extension`-band
+    // claim here would win those files and lose the reader both.
+    for (const family of familiesFor("sidebar")) {
       const extensions = claimedExtensions().filter((suffix) => familyOf("x." + suffix) === family);
       if (extensions.length === 0) continue;
       const id = ID_PREFIX + family;
