@@ -21,7 +21,14 @@ export const FS_STYLES = `
   position: relative;
   --fx-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --fx-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  --fx-row-h: 22px;
+  /* The host's own axes: body text for the interface, code size for monospace
+     text. Both keep the design baseline as their fallback so a host that
+     writes neither still gets the sizes this panel shipped with. */
+  --fx-fs: var(--dsh-content-font-size, 14px);
+  --fx-fs-code: var(--dsh-code-font-size, 11px);
+  /* The one row height the virtual window and this sheet share; the floor
+     keeps a row clickable below the design baseline, matching the TS helper. */
+  --fx-row-h: max(22px, calc(var(--fx-fs) * 1.5714));
   --fx-indent: 12px;
   --fx-text: var(--dsw-alias-label-primary, inherit);
   --fx-text-2: var(--dsw-alias-label-secondary, inherit);
@@ -71,7 +78,7 @@ export const FS_STYLES = `
   color: var(--fx-text);
   background: var(--dsw-alias-bg-base, transparent);
   font-family: var(--fx-font);
-  font-size: 12px;
+  font-size: calc(var(--fx-fs) * 0.8571);
   line-height: 1.45;
   padding-bottom: calc(var(--dsh-composer-height, 140px) + 12px);
 }
@@ -81,22 +88,22 @@ export const FS_STYLES = `
   align-items: center;
   gap: 8px;
   flex: none;
-  min-height: 38px;
+  min-height: calc(var(--fx-fs) * 2.7143);
   padding: 6px 12px;
   border-bottom: 1px solid var(--fx-border-soft);
 }
 .fx-head-icon { display: inline-flex; color: var(--fx-folder); flex: none; }
-.fx-title { margin: 0; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.fx-title { margin: 0; font-size: calc(var(--fx-fs) * 0.9286); font-weight: 600; white-space: nowrap; }
 .fx-scope {
   display: inline-flex;
   align-items: center;
-  height: 18px;
+  height: calc(var(--fx-fs-code) * 1.6364);
   padding: 0 7px;
   border: 1px solid var(--fx-border);
   border-radius: 999px;
   color: var(--fx-caption);
   font-family: var(--fx-mono);
-  font-size: 10.5px;
+  font-size: calc(var(--fx-fs-code) * 0.9545);
   white-space: nowrap;
   flex: none;
 }
@@ -120,7 +127,7 @@ export const FS_STYLES = `
   align-items: center;
   gap: 4px;
   flex: none;
-  height: 24px;
+  height: calc(var(--fx-fs) * 1.7143);
   max-width: 160px;
   padding: 0 8px;
   border: 1px solid transparent;
@@ -128,7 +135,7 @@ export const FS_STYLES = `
   background: transparent;
   color: var(--fx-text-2);
   font: inherit;
-  font-size: 11.5px;
+  font-size: calc(var(--fx-fs) * 0.8214);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -137,7 +144,7 @@ export const FS_STYLES = `
 .fx-bookmark[aria-expanded="true"] { background: var(--fx-active); color: var(--fx-text); }
 .fx-bookmark-name { overflow: hidden; text-overflow: ellipsis; }
 .fx-bookmark-chevron { display: inline-flex; color: var(--fx-caption); flex: none; }
-.fx-bookmark-empty { color: var(--fx-caption); font-size: 11px; white-space: nowrap; }
+.fx-bookmark-empty { color: var(--fx-caption); font-size: calc(var(--fx-fs) * 0.7857); white-space: nowrap; }
 
 /* Flyouts are fixed and placed from the chip's own rect: .fx-root sets
    overflow: hidden, so an absolutely positioned card would be clipped at the
@@ -158,7 +165,7 @@ export const FS_STYLES = `
   flex-direction: column;
   gap: 1px;
   font-family: var(--fx-font);
-  font-size: 12px;
+  font-size: calc(var(--fx-fs) * 0.8571);
 }
 /* A nested card is fixed and placed from its own row's rect, exactly like the
    first level: the inline px coordinates are the whole position, so there is no
@@ -194,15 +201,15 @@ export const FS_STYLES = `
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: calc(var(--fx-fs) * 1.2857);
+  height: calc(var(--fx-fs) * 1.2857);
   padding: 0;
   border: 0;
   border-radius: 4px;
   background: transparent;
   color: var(--fx-caption);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(var(--fx-fs) * 0.8571);
   line-height: 1;
   cursor: pointer;
   opacity: 0;
@@ -217,17 +224,17 @@ export const FS_STYLES = `
 /* The management menu is fixed and placed from its button's rect, for the same
    reason the flyouts are: the header clips its overflow. */
 .fx-bookmark-manage-menu {
-  position: fixed; z-index: 75; min-width: 150px; padding: 4px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 1px; font-family: var(--fx-font); font-size: 12px; }
+  position: fixed; z-index: 75; min-width: 150px; padding: 4px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 1px; font-family: var(--fx-font); font-size: calc(var(--fx-fs) * 0.8571); }
 
 /* The destination picker: one card, one level at a time. */
 .fx-bookmark-picker {
-  position: absolute; z-index: 65; top: 44px; left: 12px; width: 280px; max-height: 60vh; overflow-y: auto; padding: 10px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 8px; font-family: var(--fx-font); font-size: 12px; }
+  position: absolute; z-index: 65; top: calc(var(--fx-fs) * 3.1429); left: 12px; width: 280px; max-height: 60vh; overflow-y: auto; padding: 10px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 8px; font-family: var(--fx-font); font-size: calc(var(--fx-fs) * 0.8571); }
 .fx-bookmark-picker-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.fx-bookmark-picker-head strong { font-size: 12px; font-weight: 600; }
-.fx-bookmark-picker-target { color: var(--fx-caption); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-bookmark-picker-head strong { font-size: calc(var(--fx-fs) * 0.8571); font-weight: 600; }
+.fx-bookmark-picker-target { color: var(--fx-caption); font-size: calc(var(--fx-fs) * 0.7857); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fx-bookmark-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
 .fx-bookmark-crumb {
-  padding: 2px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--fx-text-2); font: inherit; font-size: 11px; cursor: pointer; }
+  padding: 2px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--fx-text-2); font: inherit; font-size: calc(var(--fx-fs) * 0.7857); cursor: pointer; }
 .fx-bookmark-crumb:hover { background: var(--fx-hover); color: var(--fx-text); }
 .fx-bookmark-crumb + .fx-bookmark-crumb::before { content: "/"; color: var(--fx-caption); margin-right: 4px; }
 .fx-bookmark-picker-list {
@@ -240,7 +247,7 @@ export const FS_STYLES = `
   gap: 8px;
   flex: none;
   color: var(--fx-caption);
-  font-size: 11px;
+  font-size: calc(var(--fx-fs) * 0.7857);
   font-variant-numeric: tabular-nums;
 }
 .fx-head-meta b { color: var(--fx-text-2); font-weight: 600; }
@@ -254,7 +261,7 @@ export const FS_STYLES = `
   border-bottom: 1px solid var(--fx-border-soft);
   background: var(--fx-panel-2);
   color: var(--fx-text-2);
-  font-size: 11px;
+  font-size: calc(var(--fx-fs) * 0.7857);
   line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;
@@ -277,7 +284,7 @@ export const FS_STYLES = `
   box-shadow: 0 8px 24px color-mix(in srgb, currentColor 16%, transparent);
   color: var(--fx-text);
   font-family: var(--fx-font);
-  font-size: 12px;
+  font-size: calc(var(--fx-fs) * 0.8571);
 }
 .fx-menu-sub {
   position: absolute;
@@ -304,7 +311,7 @@ export const FS_STYLES = `
 .fx-menu-item[aria-haspopup="menu"]::after { content: " ›"; float: right; color: var(--fx-caption); }
 /* The reason a row cannot run, shown on the row itself: the host Menu's data rows
    have no disabledReason, and a greyed row with no explanation reads as broken. */
-.fx-menu-reason { display: block; color: var(--fx-caption); font-size: 11px; line-height: 1.4; }
+.fx-menu-reason { display: block; color: var(--fx-caption); font-size: calc(var(--fx-fs) * 0.7857); line-height: 1.4; }
 
 /* The name card. Anchored to the tree rather than centered on the page: the
    reader right-clicked a row, and a modal would take the tree away at exactly
@@ -312,7 +319,7 @@ export const FS_STYLES = `
 .fx-name-prompt {
   position: absolute;
   z-index: 55;
-  top: 44px;
+  top: calc(var(--fx-fs) * 3.1429);
   left: 12px;
   width: 268px;
   padding: 10px;
@@ -324,7 +331,7 @@ export const FS_STYLES = `
   flex-direction: column;
   gap: 8px;
   font-family: var(--fx-font);
-  font-size: 12px;
+  font-size: calc(var(--fx-fs) * 0.8571);
 }
 .fx-name-prompt-head {
   display: flex;
@@ -332,10 +339,10 @@ export const FS_STYLES = `
   justify-content: space-between;
   gap: 8px;
 }
-.fx-name-prompt-head strong { font-size: 12px; font-weight: 600; }
+.fx-name-prompt-head strong { font-size: calc(var(--fx-fs) * 0.8571); font-weight: 600; }
 .fx-name-prompt-parent {
   color: var(--fx-caption);
-  font-size: 11px;
+  font-size: calc(var(--fx-fs) * 0.7857);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -352,9 +359,9 @@ export const FS_STYLES = `
 }
 .fx-name-input:focus { outline: 2px solid var(--fx-accent); outline-offset: -1px; }
 .fx-name-input[aria-invalid="true"] { border-color: var(--dsw-alias-state-error-primary, var(--fx-border)); }
-.fx-name-prompt-error { color: var(--dsw-alias-state-error-primary, var(--fx-text-2)); font-size: 11px; line-height: 1.4; }
+.fx-name-prompt-error { color: var(--dsw-alias-state-error-primary, var(--fx-text-2)); font-size: calc(var(--fx-fs) * 0.7857); line-height: 1.4; }
 .fx-name-prompt-actions { display: flex; justify-content: flex-end; gap: 6px; }
-.fx-btn-text, .fx-btn-primary { width: auto; padding: 0 10px; height: 24px; }
+.fx-btn-text, .fx-btn-primary { width: auto; padding: 0 10px; height: calc(var(--fx-fs) * 1.7143); }
 .fx-btn-primary {
   border-color: var(--fx-accent);
   background: var(--fx-accent);
@@ -366,7 +373,7 @@ export const FS_STYLES = `
   align-items: center;
   justify-content: center;
   width: 24px;
-  height: 24px;
+  height: calc(var(--fx-fs) * 1.7143);
   padding: 0;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -402,21 +409,21 @@ export const FS_STYLES = `
   align-items: center;
   gap: 6px;
   flex: none;
-  min-height: 30px;
+  min-height: calc(var(--fx-fs) * 2.1429);
   padding: 0 8px;
   border-bottom: 1px solid var(--fx-border-soft);
 }
 .fx-search-input {
   flex: 1 1 auto;
   min-width: 0;
-  height: 22px;
+  height: calc(var(--fx-fs) * 1.5714);
   padding: 0 6px;
   border: 1px solid var(--fx-border-soft);
   border-radius: 5px;
   background: transparent;
   color: var(--fx-text);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(var(--fx-fs) * 0.8571);
   outline: none;
 }
 .fx-search-input:focus-visible { border-color: var(--fx-accent); }
@@ -426,13 +433,13 @@ export const FS_STYLES = `
   align-items: center;
   gap: 4px;
   flex: none;
-  height: 16px;
+  height: calc(var(--fx-fs-code) * 1.4545);
   padding: 0 5px;
   border-radius: 4px;
   background: color-mix(in oklab, currentColor 10%, transparent);
   color: var(--fx-caption);
   font-family: var(--fx-mono);
-  font-size: 9.5px;
+  font-size: calc(var(--fx-fs-code) * 0.8636);
   white-space: nowrap;
 }
 /* The fallback answers a strictly smaller question than the reader asked, so it
@@ -442,7 +449,7 @@ export const FS_STYLES = `
   flex: none;
   color: var(--fx-caption);
   font-family: var(--fx-mono);
-  font-size: 10.5px;
+  font-size: calc(var(--fx-fs-code) * 0.9545);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -454,7 +461,7 @@ export const FS_STYLES = `
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--fx-caption);
-  font-size: 10.5px;
+  font-size: calc(var(--fx-fs) * 0.75);
   white-space: nowrap;
 }
 .fx-pane-handle {
@@ -497,7 +504,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   display: flex;
   align-items: stretch;
   flex: none;
-  height: 32px;
+  height: calc(var(--fx-fs) * 2.2857);
   overflow-x: auto;
   overflow-y: hidden;
   border-bottom: 1px solid var(--fx-border-soft);
@@ -535,7 +542,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 11px;
+  font-size: calc(var(--fx-fs) * 0.7857);
   cursor: pointer;
 }
 .fx-tab-main:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -2px; }
@@ -548,8 +555,8 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   border-radius: 4px;
   color: var(--fx-caption);
   font-family: var(--fx-mono);
-  font-size: 9px;
-  line-height: 13px;
+  font-size: calc(var(--fx-fs-code) * 0.8182);
+  line-height: calc(var(--fx-fs-code) * 1.1818);
 }
 /* The unsaved dot sits where an editor puts it: after the caption, before the
    close button, so sweeping for the close target does not land on it. */
@@ -565,8 +572,8 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 18px;
-  height: 18px;
+  width: calc(var(--fx-fs) * 1.2857);
+  height: calc(var(--fx-fs) * 1.2857);
   margin-right: 4px;
   padding: 0;
   border: 0;
@@ -574,7 +581,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   background: transparent;
   color: var(--fx-caption);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fx-fs);
   line-height: 1;
   cursor: pointer;
   opacity: 0;
@@ -678,13 +685,13 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 15px;
+  width: calc(var(--fx-fs-code) * 1.6364);
+  height: calc(var(--fx-fs-code) * 1.3636);
   flex: none;
   border-radius: 4px;
   background: color-mix(in oklab, currentColor 13%, transparent);
   font-family: var(--fx-mono);
-  font-size: 8.5px;
+  font-size: calc(var(--fx-fs-code) * 0.7727);
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1;
@@ -698,20 +705,20 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-badge[data-icon="archive"] { color: var(--fx-archive); }
 .fx-badge[data-icon="file"] { color: var(--fx-file); }
 
-.fx-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.fx-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: calc(var(--fx-fs) * 0.8571); }
 .fx-row[data-kind="directory"] .fx-name { font-weight: 500; }
 .fx-tag {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 14px;
+  height: calc(var(--fx-fs-code) * 1.2727);
   padding: 0 4px;
   flex: none;
   margin-left: 2px;
   border-radius: 4px;
   background: color-mix(in oklab, currentColor 13%, transparent);
   font-family: var(--fx-mono);
-  font-size: 8.5px;
+  font-size: calc(var(--fx-fs-code) * 0.7727);
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1;
@@ -731,14 +738,14 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 15px;
-  height: 15px;
+  width: calc(var(--fx-fs-code) * 1.3636);
+  height: calc(var(--fx-fs-code) * 1.3636);
   flex: none;
   margin-left: 2px;
   border-radius: 4px;
   background: color-mix(in oklab, currentColor 15%, transparent);
   font-family: var(--fx-mono);
-  font-size: 9px;
+  font-size: calc(var(--fx-fs-code) * 0.8182);
   font-weight: 700;
   line-height: 1;
 }
@@ -749,7 +756,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   flex: none;
   margin-left: 2px;
   font-family: var(--fx-mono);
-  font-size: 10px;
+  font-size: calc(var(--fx-fs-code) * 0.9091);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -769,7 +776,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   gap: 4px;
   flex: none;
   font-family: var(--fx-mono);
-  font-size: 10px;
+  font-size: calc(var(--fx-fs-code) * 0.9091);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -781,7 +788,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   min-width: 5ch;
   color: var(--fx-caption);
   font-family: var(--fx-mono);
-  font-size: 10px;
+  font-size: calc(var(--fx-fs-code) * 0.9091);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -796,7 +803,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   height: var(--fx-row-h);
   padding-right: 8px;
   color: var(--fx-caption);
-  font-size: 10.5px;
+  font-size: calc(var(--fx-fs) * 0.75);
   white-space: nowrap;
   box-sizing: border-box;
 }
@@ -821,7 +828,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   background: transparent;
   color: var(--fx-text-2);
   font: inherit;
-  font-size: 10.5px;
+  font-size: calc(var(--fx-fs) * 0.75);
   cursor: pointer;
 }
 .fx-linkbtn:hover { background: var(--fx-hover); color: var(--fx-text); }
@@ -832,11 +839,11 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   align-items: center;
   gap: 8px;
   flex: none;
-  height: 24px;
+  height: calc(var(--fx-fs) * 1.7143);
   padding: 0 12px;
   border-top: 1px solid var(--fx-border-soft);
   color: var(--fx-caption);
-  font-size: 10.5px;
+  font-size: calc(var(--fx-fs) * 0.75);
   font-variant-numeric: tabular-nums;
 }
 .fx-foot b { color: var(--fx-text-2); font-weight: 600; }
@@ -873,8 +880,8 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   color: var(--fx-text-2);
   text-align: center;
 }
-.fx-empty strong { color: var(--fx-text); font-size: 13px; font-weight: 600; }
-.fx-empty span { color: var(--fx-caption); font-size: 11px; max-width: 46ch; }
+.fx-empty strong { color: var(--fx-text); font-size: calc(var(--fx-fs) * 0.9286); font-weight: 600; }
+.fx-empty span { color: var(--fx-caption); font-size: calc(var(--fx-fs) * 0.7857); max-width: 46ch; }
 .fx-empty .fx-btn { margin-top: 4px; width: auto; padding: 0 10px; border-color: var(--fx-border); }
 .fx-editor-empty {
   display: flex;
@@ -891,8 +898,8 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   text-align: center;
 }
 .fx-editor-glyph { color: var(--fx-folder); opacity: .7; }
-.fx-editor-empty strong { color: var(--fx-text); font-size: 13px; font-weight: 600; }
-.fx-editor-empty > span { color: var(--fx-caption); font-size: 11px; max-width: 48ch; }
+.fx-editor-empty strong { color: var(--fx-text); font-size: calc(var(--fx-fs) * 0.9286); font-weight: 600; }
+.fx-editor-empty > span { color: var(--fx-caption); font-size: calc(var(--fx-fs) * 0.7857); max-width: 48ch; }
 .fx-empty-keys {
   display: flex;
   flex-wrap: wrap;
@@ -903,7 +910,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 }
 .fx-kbd {
   font-family: var(--fx-mono);
-  font-size: 9.5px;
+  font-size: calc(var(--fx-fs-code) * 0.8636);
   line-height: 1.4;
   padding: 1px 5px;
   border: 1px solid var(--fx-border);
@@ -918,7 +925,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   flex: 1;
   padding: 16px;
   color: var(--fx-caption);
-  font-size: 11px;
+  font-size: calc(var(--fx-fs) * 0.7857);
 }
 
 .fx-preview {
@@ -934,7 +941,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   align-items: center;
   gap: 8px;
   flex: none;
-  height: 34px;
+  height: calc(var(--fx-fs) * 2.4286);
   padding: 0 10px;
   border-bottom: 1px solid var(--fx-border-soft);
   min-width: 0;
@@ -946,7 +953,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--fx-mono);
-  font-size: 11px;
+  font-size: var(--fx-fs-code);
   color: var(--fx-text-2);
 }
 .fx-preview-link {
@@ -955,7 +962,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-preview-range {
   flex: none;
   font-family: var(--fx-mono);
-  font-size: 10.5px;
+  font-size: calc(var(--fx-fs-code) * 0.9545);
   color: var(--fx-caption);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -963,14 +970,14 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-preview-total { opacity: .7; }
 .fx-preview-actions { display: flex; align-items: center; gap: 4px; flex: none; }
 .fx-pbtn {
-  height: 22px;
+  height: calc(var(--fx-fs) * 1.5714);
   padding: 0 8px;
   border: 1px solid var(--fx-border-soft);
   border-radius: 5px;
   background: transparent;
   color: var(--fx-text-2);
   font: inherit;
-  font-size: 10.5px;
+  font-size: calc(var(--fx-fs) * 0.75);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -983,19 +990,19 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   padding: 6px 10px;
   border-bottom: 1px solid var(--fx-border-soft);
   color: var(--fx-caption);
-  font-size: 10.5px;
+  font-size: calc(var(--fx-fs) * 0.75);
 }
 .fx-conflict {
   display: flex;
   align-items: center;
   gap: 8px;
   flex: none;
-  min-height: 30px;
+  min-height: calc(var(--fx-fs) * 2.1429);
   padding: 4px 10px;
   border-bottom: 1px solid var(--fx-border-soft);
   background: color-mix(in oklab, var(--fx-modified) 14%, transparent);
   color: var(--fx-text);
-  font-size: 11px;
+  font-size: calc(var(--fx-fs) * 0.7857);
 }
 .fx-conflict strong { font-weight: 600; }
 .fx-conflict-hint { color: var(--fx-text-2); }
@@ -1004,19 +1011,19 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   padding: 4px 10px;
   border-bottom: 1px solid var(--fx-border-soft);
   color: var(--fx-deleted);
-  font-size: 10.5px;
+  font-size: calc(var(--fx-fs) * 0.75);
 }
 .fx-close-confirm {
   display: flex;
   align-items: center;
   gap: 8px;
   flex: none;
-  min-height: 34px;
+  min-height: calc(var(--fx-fs) * 2.4286);
   padding: 4px 10px;
   border-bottom: 1px solid var(--fx-border-soft);
   background: var(--fx-panel-2);
   color: var(--fx-text);
-  font-size: 11px;
+  font-size: calc(var(--fx-fs) * 0.7857);
 }
 .fx-close-confirm-text,
 .fx-close-confirm-error {
@@ -1041,21 +1048,21 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   align-items: center;
   gap: 6px;
   flex: none;
-  height: 30px;
+  height: calc(var(--fx-fs) * 2.1429);
   padding: 0 10px;
   border-bottom: 1px solid var(--fx-border-soft);
 }
 .fx-find-input {
   flex: 1 1 auto;
   min-width: 0;
-  height: 22px;
+  height: calc(var(--fx-fs) * 1.5714);
   padding: 0 6px;
   border: 1px solid var(--fx-border-soft);
   border-radius: 5px;
   background: transparent;
   color: var(--fx-text);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(var(--fx-fs) * 0.8571);
   outline: none;
 }
 .fx-find-input:focus-visible { border-color: var(--fx-accent); }
@@ -1065,7 +1072,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   min-width: 7ch;
   color: var(--fx-caption);
   font-family: var(--fx-mono);
-  font-size: 10.5px;
+  font-size: calc(var(--fx-fs-code) * 0.9545);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -1074,7 +1081,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-preview-hint {
   max-width: 60ch;
   font-family: var(--fx-mono);
-  font-size: 10px;
+  font-size: calc(var(--fx-fs-code) * 0.9091);
   color: var(--fx-caption);
   overflow-wrap: anywhere;
 }
@@ -1092,7 +1099,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   overflow: auto;
   padding: 12px 16px 40px;
   font-family: var(--fx-mono);
-  font-size: 12px;
+  font-size: calc(var(--fx-fs-code) * 1.0909);
   line-height: 1.55;
   white-space: pre;
   tab-size: 4;
@@ -1102,7 +1109,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   max-width: 72ch;
   margin: 0 auto;
   padding: 18px 24px 64px;
-  font-size: 13px;
+  font-size: calc(var(--fx-fs) * 0.9286);
   line-height: 1.72;
   color: var(--fx-text);
   overflow-wrap: anywhere;
@@ -1155,13 +1162,13 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-md-img {
   display: inline-flex;
   align-items: center;
-  height: 20px;
+  height: calc(var(--fx-fs-code) * 1.8182);
   padding: 0 8px;
   border: 1px solid var(--fx-border-soft);
   border-radius: 5px;
   color: var(--fx-caption);
   font-family: var(--fx-mono);
-  font-size: 10.5px;
+  font-size: calc(var(--fx-fs-code) * 0.9545);
 }
 .fx-md input[type="checkbox"] { margin-right: .45em; vertical-align: middle; }
 

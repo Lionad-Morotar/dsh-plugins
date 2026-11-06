@@ -15,6 +15,7 @@ import {
   type BridgeContextLike,
 } from "./bridge.ts";
 import { EN, ZH, tabLabel } from "./copy.ts";
+import { attachFontScale } from "./font-scale.ts";
 import {
   createDocumentOpener,
   createDocumentSaver,
@@ -222,6 +223,9 @@ export function apply(ctx: ClientContextLike): () => void {
   registeredDictionaries = offLocale;
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
   const offStyles = insertStyles(typeof document === "undefined" ? undefined : document);
+  // Optional: without the host's theme service the panel keeps the sizes the
+  // host wrote on `body`, so this never blocks the view from mounting.
+  const offFontScale = attachFontScale(ctx);
   const View = createFsExplorerView({
     workbench,
     version: workbench.version,
@@ -264,6 +268,7 @@ export function apply(ctx: ClientContextLike): () => void {
     offBridge();
     if (registeredBridge === offBridge) registeredBridge = undefined;
     offStyles();
+    offFontScale();
     offLocale();
     if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
   };

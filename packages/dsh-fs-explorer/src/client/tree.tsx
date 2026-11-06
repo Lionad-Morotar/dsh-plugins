@@ -21,6 +21,7 @@ import {
 
 import type { ContextMenuAnchor } from "./context-menu.ts";
 import type { Translate } from "./copy.ts";
+import { useRowHeight } from "./font-scale.ts";
 import {
   adoptsOpenFile,
   badgeFor,
@@ -34,7 +35,12 @@ import {
 import { statusBadge, statusLabelKey, statusTone } from "./status.ts";
 import { entriesInScope, liveTypeaheadQuery, typeaheadScopeKey, typeaheadStep } from "./typeahead.ts";
 
-/** Row height shared by the virtual window, the CSS and the scroll math. */
+/**
+ * Row height at the design font size; {@link useRowHeight} scales it to the
+ * host's type scale. The virtual window, the CSS and the scroll math all read
+ * that one value, because a row one pixel taller than its offset would clip the
+ * text and drift the cursor a row away after a few screens.
+ */
 export const TREE_ROW_HEIGHT = 22;
 
 /** The entry half of {@link TreeRow}. */
@@ -393,6 +399,9 @@ export function TreeBody({
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
+  // The host's type scale can change while the panel is mounted, and the
+  // virtual window, the CSS and the scroll arithmetic must all read one height.
+  const rowHeight = useRowHeight(TREE_ROW_HEIGHT);
   // The keyboard cursor is an index into `rows` and only ever rests on entry
   // rows; status placeholders (loading, failed, truncated) are skipped.
   const [cursor, setCursor] = useState<number | undefined>(undefined);
@@ -469,11 +478,11 @@ export function TreeBody({
     const next = revealScrollTop({
       scrollTop: element.scrollTop,
       viewport: element.clientHeight,
-      rowHeight: TREE_ROW_HEIGHT,
+      rowHeight,
       index: cursor,
     });
     if (next !== element.scrollTop) element.scrollTop = next;
-  }, [cursor]);
+  }, [cursor, rowHeight]);
 
   const moveCursor = useCallback(
     (index: number, focus = true): void => {
@@ -624,8 +633,8 @@ export function TreeBody({
       if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
         event.preventDefault();
         const box = scroller.current?.getBoundingClientRect();
-        const top = box === undefined ? 0 : box.top + cursor * TREE_ROW_HEIGHT - (scroller.current?.scrollTop ?? 0);
-        openRowMenu(row, { x: box?.left ?? 0, y: top + TREE_ROW_HEIGHT }, scroller.current ?? undefined);
+        const top = box === undefined ? 0 : box.top + cursor * rowHeight - (scroller.current?.scrollTop ?? 0);
+        openRowMenu(row, { x: box?.left ?? 0, y: top + rowHeight }, scroller.current ?? undefined);
         return;
       }
       if (event.key === "Home") {
@@ -676,7 +685,7 @@ export function TreeBody({
       // the preview, which is the whole point of the jump.
       if (landed.kind !== "directory") onSelect(landed.path);
     },
-    [cursor, entryIndexes, moveCursor, onToggle, onSelect, openRowMenu, rows],
+    [cursor, entryIndexes, moveCursor, onToggle, onSelect, openRowMenu, rowHeight, rows],
   );
 
   useEffect(() => {
@@ -698,11 +707,11 @@ export function TreeBody({
     if (element === null) return;
     const index = rows.findIndex(row => row.type === "entry" && row.path === selectedPath);
     if (index < 0) return;
-    const top = index * TREE_ROW_HEIGHT;
-    if (top < element.scrollTop || top + TREE_ROW_HEIGHT > element.scrollTop + element.clientHeight) {
+    const top = index * rowHeight;
+    if (top < element.scrollTop || top + rowHeight > element.scrollTop + element.clientHeight) {
       element.scrollTop = Math.max(0, top - element.clientHeight / 2);
     }
-  }, [selectedPath, rows]);
+  }, [selectedPath, rows, rowHeight]);
 
   // Arrival: the view hands down where the keyboard should start on entry.
   // The highlight is the cursor, not a second focus ring, so an arrow key
@@ -723,7 +732,7 @@ export function TreeBody({
       const next = revealScrollTop({
         scrollTop: element.scrollTop,
         viewport: element.clientHeight === 0 ? 480 : element.clientHeight,
-        rowHeight: TREE_ROW_HEIGHT,
+        rowHeight,
         index,
       });
       // The scroll state, not the DOM property, drives the window this render
@@ -737,7 +746,7 @@ export function TreeBody({
     }
     focusTreeEntry(element);
     onEntryFocusSettled?.();
-  }, [entryFocus, rows, onEntryFocusSettled]);
+  }, [entryFocus, rows, onEntryFocusSettled, rowHeight]);
 
   const handleScroll = (event: UIEvent<HTMLDivElement>): void => {
     setScrollTop(event.currentTarget.scrollTop);
@@ -746,13 +755,18 @@ export function TreeBody({
   const window = computeTreeWindow(rows, {
     scrollTop,
     height: height === 0 ? 480 : height,
-    rowHeight: TREE_ROW_HEIGHT,
+    rowHeight,
   });
+  // The window positions rows by an integer, so the stylesheet has to size them
+  // by that same integer; publishing it above every row leaves the sheet's
+  // ratio form as the no-JavaScript fallback only.
+  const geometryStyle = { "--fx-row-h": `${String(rowHeight)}px` } as CSSProperties;
 
   return (
     <div
       className="fx-scroll"
       ref={scroller}
+      style={geometryStyle}
       onScroll={handleScroll}
       onKeyDown={handleTreeKeyDown}
       onContextMenu={handleBlankContextMenu}
@@ -761,9 +775,9 @@ export function TreeBody({
       role="tree"
       aria-label={t("view.tree")}
     >
-      <div className="fx-vlist" style={{ height: rows.length * TREE_ROW_HEIGHT }}>
+      <div className="fx-vlist" style={{ height: rows.length * rowHeight }}>
         {window.rows.map((row, offset) => {
-          const top = (window.startIndex + offset) * TREE_ROW_HEIGHT;
+          const top = (window.startIndex + offset) * rowHeight;
           return row.type === "entry" ? (
             <TreeRowView
               key={row.path}
