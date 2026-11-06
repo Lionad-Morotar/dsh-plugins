@@ -183,7 +183,8 @@ export function TreeRowView({
       data-status={row.status}
       data-path={row.path}
       data-testid="fx-row"
-      title={row.path}
+      {...(row.ignored === true ? { "data-ignored": "true" } : {})}
+      title={row.ignored === true ? `${row.path} · ${t("status.ignored")}` : row.path}
       style={style}
       onClick={() => {
         onRowActivate(row.path);
@@ -286,7 +287,7 @@ export function StatusRowView({ row, top, t, onRetry }: StatusRowViewProps) {
     row.state === "loading"
       ? t("state.loadingDirectory")
       : row.state === "empty"
-        ? t("state.emptyDirectory")
+        ? row.label ?? t("state.emptyDirectory")
         : row.state === "failed"
           ? row.message ?? t("state.failedDirectory")
           : row.label ?? t("state.truncated");

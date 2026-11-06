@@ -645,6 +645,14 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   background: var(--fx-active);
   box-shadow: inset 2px 0 0 var(--fx-accent);
 }
+/* An ignored entry stays listed but reads as background: dimmed enough to sort
+   itself behind tracked files, lifted on hover and on the keyboard cursor so the
+   row the reader is on is always legible. Opacity rather than a colour so the
+   dimming works on every theme and keeps the row's own status colours. */
+.fx-row[data-ignored="true"] { opacity: .55; }
+.fx-row[data-ignored="true"]:hover,
+.fx-row[data-ignored="true"][data-cursor="true"],
+.fx-row[data-ignored="true"][data-selected="true"] { opacity: .8; }
 .fx-chevron {
   display: inline-flex;
   align-items: center;

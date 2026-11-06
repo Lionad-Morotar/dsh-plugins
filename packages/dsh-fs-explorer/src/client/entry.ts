@@ -23,6 +23,7 @@ import {
   type DocumentStore,
 } from "./document-session.ts";
 import { LOCALE_NAMESPACE, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
+import { indexIgnoredPaths, isIgnoredPath } from "./ignored.ts";
 import { KEYMAP, createEscapeHandler } from "./keyboard.ts";
 import { createFileReferencesResolver } from "./tree-search.ts";
 import {
@@ -290,6 +291,8 @@ export const __test = {
   createEscapeHandler,
   KEYMAP,
   tabLabel,
+  indexIgnoredPaths,
+  isIgnoredPath,
   normalizeListing,
   normalizeStatusSnapshot,
   buildWorkspaceMap,
