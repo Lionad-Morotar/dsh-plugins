@@ -437,6 +437,18 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
 /* Right alignment moves to the flex container now that the text is a child box
    rather than the cell's own inline content. */
 .gx-colhead-time, .gx-colhead-hash { justify-content: flex-end; }
+/* The working-tree row carries a resting band, not just a selected one. The
+   reference graph reads this line as a summary header above the commits: the
+   reader scans for "is anything uncommitted" before reading any single row, and
+   a row that only differs once selected is invisible during that scan. The band
+   is the layer-2 panel colour rather than a literal grey, so it keeps its
+   contrast in both themes.
+   It is deliberately a single-class rule placed after .gx-row: that puts it
+   over the row's own transparent while staying under .gx-row:hover and
+   .gx-row[data-selected="true"], which both outrank it on specificity, so
+   hover and selection still paint over the band without any !important. The
+   cursor's outline is a separate property and is untouched. */
+.gx-uncommitted { background: var(--gx-panel-2); }
 /* The working-tree row reads as a peer of the commits, but its label is what
    says so: the row carries no hash, so the weight has to do the work. */
 .gx-uncommitted-label { font-weight: 600; color: var(--gx-text); }

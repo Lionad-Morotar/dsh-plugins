@@ -11,7 +11,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { HistoryPane } from "../src/client/history-pane.tsx";
+import { HistoryPane, UNCOMMITTED } from "../src/client/history-pane.tsx";
 import {
   DEFAULT_HISTORY_COLUMN_WIDTHS,
   HISTORY_COLUMNS_KEY,
@@ -630,5 +630,74 @@ describe("HistoryPane columns", () => {
       separator.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, clientX: 300, bubbles: true }));
     });
     expect(document.body.classList.contains("gx-col-resizing")).toBe(false);
+  });
+});
+
+describe("the uncommitted row's resting band", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  async function mountDirty(selectedHash: string | undefined): Promise<void> {
+    const list = commits(4);
+    await act(async () => {
+      root.render(
+        createElement(HistoryPane, {
+          commits: list,
+          graph: list.map(() => ({ lane: 0, color: 0, merge: false, segments: [] })),
+          selectedHash,
+          headHash: list[0]?.hash ?? null,
+          total: list.length,
+          hasMore: false,
+          loadingMore: false,
+          loadError: undefined,
+          searching: false,
+          search: "",
+          t,
+          onSelect: () => undefined,
+          onLoadMore: () => undefined,
+          onSearch: () => undefined,
+          workingTree: {
+            groups: [
+              {
+                dir: "src",
+                files: [{ path: "src/a.ts", status: "modified", staged: false, isDirectory: false }],
+              },
+            ],
+            stats: new Map([["src/a.ts", { additions: 2, deletions: 1 }]]),
+            fileCount: 1,
+          },
+          onSelectUncommitted: () => undefined,
+        }),
+      );
+    });
+  }
+
+  it("carries its band without being selected", async () => {
+    await mountDirty(undefined);
+    const row = host.querySelector<HTMLElement>('[data-testid="git-uncommitted-row"]');
+    if (row === null) throw new Error("uncommitted row missing");
+    // The band is a resting style, not a selection effect: a row that only
+    // differs once selected cannot be found while scanning the list. This pins
+    // the row as unselected so nobody later swaps the band for `data-selected`.
+    expect(row.dataset.selected).toBe("false");
+    expect(row.classList.contains("gx-uncommitted")).toBe(true);
+  });
+
+  it("still reports selection when the working tree is the selected row", async () => {
+    await mountDirty(UNCOMMITTED);
+    const row = host.querySelector<HTMLElement>('[data-testid="git-uncommitted-row"]');
+    if (row === null) throw new Error("uncommitted row missing");
+    expect(row.dataset.selected).toBe("true");
   });
 });
