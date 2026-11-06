@@ -46,6 +46,14 @@ export interface EditorBodyProps extends RendererBodyProps {
   onChange(text: string): void;
   /** Write the draft; bound to the session so ⌘S needs no pane round-trip. */
   readonly onSave?: () => void;
+  /**
+   * Whether the cursor-block decoration layer is on.
+   *
+   * The planner behind it understands Markdown only, so every other text file
+   * passes false: running it over TypeScript would hide characters it mistook
+   * for Markdown markers. Absent means on, which is what Markdown wants.
+   */
+  readonly decorate?: boolean;
 }
 
 /** One rendered failure, after transport envelopes are folded away. */
@@ -101,7 +109,11 @@ export interface RendererContribution {
   /** Stable identity; a second registration of the same id is refused. */
   readonly id: string;
   readonly label: string;
-  readonly match: { readonly extensions?: readonly string[] };
+  readonly match: {
+    readonly extensions?: readonly string[];
+    /** Whole basenames, for the files that have no suffix to match on. */
+    readonly names?: readonly string[];
+  };
   /** Larger wins; ties break on id. */
   readonly priority?: number;
   load(): Promise<RendererModule>;

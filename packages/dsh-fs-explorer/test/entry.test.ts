@@ -118,6 +118,8 @@ describe("fs explorer client entry", () => {
     expect(typeof clientPlugin.__test.createEscapeHandler).toBe("function");
     expect(typeof clientPlugin.__test.consumeViewRequest).toBe("function");
     expect(typeof clientPlugin.__test.tabLabel).toBe("function");
+    expect(typeof clientPlugin.__test.indexIgnoredPaths).toBe("function");
+    expect(typeof clientPlugin.__test.isIgnoredPath).toBe("function");
     expect(Array.isArray(clientPlugin.__test.KEYMAP)).toBe(true);
   });
 

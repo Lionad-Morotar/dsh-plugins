@@ -163,6 +163,9 @@ async function locatePath(deps, request, signal) {
   }
 }
 
+// src/host/ignored.ts
+import { spawn } from "node:child_process";
+
 // src/host/workspace.ts
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -390,6 +393,149 @@ async function createWorkspaceEntry(deps, request, signal) {
   }
 }
 
+// src/host/ignored.ts
+var MAX_IGNORED_ENTRIES = 2e4;
+var GIT_IGNORED_TIMEOUT_MS = 1e4;
+var MAX_STDOUT_BYTES = 8 * 1024 * 1024;
+var MAX_STDERR_BYTES = 4096;
+var LS_FILES_ARGV = [
+  "ls-files",
+  "--others",
+  "--ignored",
+  "--exclude-standard",
+  "--directory",
+  "-z"
+];
+function messageOf3(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function createGitRunner() {
+  return {
+    run: (argv, options) => new Promise((settle) => {
+      if (options.signal?.aborted === true) {
+        settle({ code: null, stdout: "", stderr: "aborted before git started" });
+        return;
+      }
+      let child;
+      try {
+        child = spawn("git", [...argv], {
+          cwd: options.cwd,
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"]
+        });
+      } catch (error) {
+        settle({ code: null, stdout: "", stderr: messageOf3(error) });
+        return;
+      }
+      const chunks = [];
+      let bytes = 0;
+      let stderr = "";
+      let truncated = false;
+      let timedOut = false;
+      let settled = false;
+      const stop = () => {
+        clearTimeout(timer);
+        options.signal?.removeEventListener("abort", onAbort);
+      };
+      const finish = (code) => {
+        if (settled) return;
+        settled = true;
+        stop();
+        settle({
+          code,
+          stdout: Buffer.concat(chunks).toString("utf8"),
+          stderr,
+          ...truncated ? { truncated: true } : {},
+          ...timedOut ? { timedOut: true } : {}
+        });
+      };
+      const kill = () => {
+        child.kill("SIGKILL");
+      };
+      const onAbort = () => kill();
+      const timer = setTimeout(() => {
+        timedOut = true;
+        kill();
+      }, GIT_IGNORED_TIMEOUT_MS);
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      child.on("error", (error) => {
+        if (settled) return;
+        settled = true;
+        stop();
+        settle({ code: null, stdout: "", stderr: messageOf3(error) });
+      });
+      child.stdout?.on("data", (chunk) => {
+        if (truncated) return;
+        bytes += chunk.length;
+        if (bytes > MAX_STDOUT_BYTES) {
+          truncated = true;
+          chunks.push(chunk);
+          kill();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      child.stderr?.on("data", (chunk) => {
+        if (stderr.length >= MAX_STDERR_BYTES) return;
+        stderr += chunk.toString("utf8").slice(0, MAX_STDERR_BYTES - stderr.length);
+      });
+      child.on("close", (code) => finish(code));
+    })
+  };
+}
+function noIgnored() {
+  return { ok: true, ignored: { root: null, entries: [], truncated: false } };
+}
+function parseIgnored(stdout, cut) {
+  const segments = stdout.split("\0");
+  if (cut && !stdout.endsWith("\0")) segments.pop();
+  const entries = [];
+  const seen = /* @__PURE__ */ new Set();
+  let truncated = cut;
+  for (const segment of segments) {
+    const entry = segment.replace(/\/+$/u, "");
+    if (entry === "" || entry === "." || seen.has(entry)) continue;
+    if (entries.length >= MAX_IGNORED_ENTRIES) {
+      truncated = true;
+      break;
+    }
+    seen.add(entry);
+    entries.push(entry);
+  }
+  return { entries, truncated };
+}
+async function listIgnoredPaths(deps, request, signal) {
+  void request;
+  const options = { cwd: deps.cwd, signal };
+  let probe;
+  try {
+    probe = await deps.git.run(["rev-parse", "--show-toplevel"], options);
+  } catch {
+    return noIgnored();
+  }
+  if (probe.timedOut === true) {
+    return fail2("io-error", `git rev-parse did not finish within ${String(GIT_IGNORED_TIMEOUT_MS)}ms`);
+  }
+  if (probe.code !== 0) return noIgnored();
+  const root = probe.stdout.trim() === "" ? null : probe.stdout.trim();
+  let listing;
+  try {
+    listing = await deps.git.run(LS_FILES_ARGV, options);
+  } catch (error) {
+    return fail2("io-error", messageOf3(error));
+  }
+  if (listing.timedOut === true) {
+    return fail2("io-error", `git ls-files did not finish within ${String(GIT_IGNORED_TIMEOUT_MS)}ms`);
+  }
+  if (listing.truncated !== true && listing.code !== 0) {
+    const reason = listing.stderr.trim();
+    return fail2("io-error", reason === "" ? `git ls-files exited with ${String(listing.code)}` : reason);
+  }
+  const parsed = parseIgnored(listing.stdout, listing.truncated === true);
+  const ignored = { root, entries: parsed.entries, truncated: parsed.truncated };
+  return { ok: true, ignored };
+}
+
 // src/bookmarks.ts
 var BOOKMARK_DOMAIN_NAME = "dsh_fs_explorer";
 var BOOKMARK_TABLE_NAME = "bookmarks";
@@ -503,8 +649,8 @@ function describe() {
   return { name: PACKAGE_NAME, slot: VIEW_SLOT, id: VIEW_ID, order: VIEW_ORDER };
 }
 function realWorkspaceEnv() {
-  const spawn = (command, args, options) => nodeSpawn(command, [...args], options);
-  return { platform: process.platform, env: process.env, spawn, release: osRelease() };
+  const spawn2 = (command, args, options) => nodeSpawn(command, [...args], options);
+  return { platform: process.platform, env: process.env, spawn: spawn2, release: osRelease(), git: createGitRunner() };
 }
 function readService(ctx, service) {
   const reader = ctx;
@@ -566,8 +712,8 @@ __publicField(FsExplorerDocumentsService, "inject", inject);
 __publicField(FsExplorerDocumentsService, "Config", Schema.object({
   maxBytes: Schema.number().default(DEFAULT_DOCUMENTS_CONFIG.maxBytes).description("\u5355\u4EFD\u53EF\u8BFB\u53D6\u4E0E\u4FDD\u5B58\u7684\u6587\u6863\u5B57\u8282\u4E0A\u9650")
 }));
-var _saveBookmarks_dec, _loadBookmarks_dec, _create_dec, _reveal_dec, _info_dec, _capabilities_dec, _a2, _init2;
-var FsExplorerWorkspaceService = class extends (_a2 = TypertRemoteService, _capabilities_dec = [Remote("capabilities")], _info_dec = [Remote("info")], _reveal_dec = [Remote("reveal")], _create_dec = [Remote("create")], _loadBookmarks_dec = [Remote("loadBookmarks")], _saveBookmarks_dec = [Remote("saveBookmarks")], _a2) {
+var _saveBookmarks_dec, _loadBookmarks_dec, _ignored_dec, _create_dec, _reveal_dec, _info_dec, _capabilities_dec, _a2, _init2;
+var FsExplorerWorkspaceService = class extends (_a2 = TypertRemoteService, _capabilities_dec = [Remote("capabilities")], _info_dec = [Remote("info")], _reveal_dec = [Remote("reveal")], _create_dec = [Remote("create")], _ignored_dec = [Remote("ignored")], _loadBookmarks_dec = [Remote("loadBookmarks")], _saveBookmarks_dec = [Remote("saveBookmarks")], _a2) {
   constructor(ctx, env) {
     super(ctx, WORKSPACE_SERVICE);
     __runInitializers(_init2, 5, this);
@@ -620,6 +766,13 @@ var FsExplorerWorkspaceService = class extends (_a2 = TypertRemoteService, _capa
     const deps = await this.deps(request.sessionId);
     if ("ok" in deps) return deps;
     return createWorkspaceEntry(deps, request, signal);
+  }
+  async ignored(request, signal) {
+    const deps = await this.deps(request.sessionId);
+    if ("ok" in deps) return deps;
+    const git = this.env.git;
+    if (git === void 0) return fail2("io-error", "this host has no git runner");
+    return listIgnoredPaths({ cwd: deps.cwd, git }, request, signal);
   }
   bookmarkStore() {
     this.storePromise ??= openBookmarkStore(this.storageDomain).catch(() => {
@@ -682,6 +835,7 @@ __decorateElement(_init2, 1, "capabilities", _capabilities_dec, FsExplorerWorksp
 __decorateElement(_init2, 1, "info", _info_dec, FsExplorerWorkspaceService);
 __decorateElement(_init2, 1, "reveal", _reveal_dec, FsExplorerWorkspaceService);
 __decorateElement(_init2, 1, "create", _create_dec, FsExplorerWorkspaceService);
+__decorateElement(_init2, 1, "ignored", _ignored_dec, FsExplorerWorkspaceService);
 __decorateElement(_init2, 1, "loadBookmarks", _loadBookmarks_dec, FsExplorerWorkspaceService);
 __decorateElement(_init2, 1, "saveBookmarks", _saveBookmarks_dec, FsExplorerWorkspaceService);
 __decoratorMetadata(_init2, FsExplorerWorkspaceService);

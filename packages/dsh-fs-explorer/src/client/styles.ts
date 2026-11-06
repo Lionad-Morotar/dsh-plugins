@@ -378,6 +378,10 @@ export const FS_STYLES = `
 .fx-btn:hover:not(:disabled) { background: var(--fx-hover); color: var(--fx-text); border-color: var(--fx-border-soft); }
 .fx-btn:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -2px; }
 .fx-btn:disabled { opacity: .4; cursor: default; }
+/* The ignored-entries toggle in its "rows are hidden" state: the glyph already
+   carries the strike-through, so the button only steps back to read as off. */
+.fx-btn[data-on="false"] { opacity: .6; }
+.fx-btn[data-on="false"]:hover:not(:disabled) { opacity: 1; }
 
 .fx-main { display: flex; flex-direction: row; flex: 1; min-height: 0; }
 .fx-tree-pane {
@@ -645,6 +649,14 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   background: var(--fx-active);
   box-shadow: inset 2px 0 0 var(--fx-accent);
 }
+/* An ignored entry stays listed but reads as background: dimmed enough to sort
+   itself behind tracked files, lifted on hover and on the keyboard cursor so the
+   row the reader is on is always legible. Opacity rather than a colour so the
+   dimming works on every theme and keeps the row's own status colours. */
+.fx-row[data-ignored="true"] { opacity: .55; }
+.fx-row[data-ignored="true"]:hover,
+.fx-row[data-ignored="true"][data-cursor="true"],
+.fx-row[data-ignored="true"][data-selected="true"] { opacity: .8; }
 .fx-chevron {
   display: inline-flex;
   align-items: center;

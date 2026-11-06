@@ -302,6 +302,7 @@ describe("FsExplorerWorkspaceService create endpoint", () => {
       "info",
       "reveal",
       "create",
+      "ignored",
       "loadBookmarks",
       "saveBookmarks",
     ]);

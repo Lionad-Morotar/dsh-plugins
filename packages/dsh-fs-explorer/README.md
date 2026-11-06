@@ -28,7 +28,8 @@
 
 ## 核心能力
 
-- 目录树：每层按需调用 `workspaceFiles.list(sessionId, path)`，根节点用 `"."`。目录优先、同类按名称自然排序（`file2` 在 `file10` 前），`node_modules` / `.git` / `dist` / `__pycache__` 在任何层级都不出现。
+- 目录树：每层按需调用 `workspaceFiles.list(sessionId, path)`，根节点用 `"."`。目录优先、同类按名称自然排序（`file2` 在 `file10` 前）。只有 `.git` 恒隐藏（版本库内部结构，任何 SCM 界面都不列）；被 git 忽略的条目默认照常出现并整体灰显，目录连同整棵子树继承灰显，悬停或光标落上去时回升到可读。头部工具条的开关可一键隐藏忽略项并记住偏好（`localStorage` 的 `dsh-fs-explorer.show-ignored`）。工作区不是 Git 仓库、宿主没有 git、或命令失败时降级为「不灰显」，不报错也不弹错误态。
+- 忽略清单：host 半在会话工作目录跑只读、argv-only 的 `git ls-files --others --ignored --exclude-standard --directory -z`（不拼 shell 字符串），收成工作区相对路径清单。`--directory` 把整目录折叠成一条，所以 `node_modules` 只出现一次而不是逐个文件列出；`-z` 是因为路径可能含换行。不加 `--full-name`：输出天然是 cwd 相对路径，与文件树的路径键空间一致，工作区是仓库子目录时也不会冒出 `pkg/` 前缀。超过 20000 条截断并置 `truncated`，stdout 采集上限 8 MiB，命令超时 10 秒。
 - 右键菜单：文件行、目录行与树空白处都能右键（`Shift+F10` / ContextMenu 键在光标行上同效）。菜单顶部是「新建文件」「新建文件夹」，落在被右击的目录里（文件行落到它所在的目录，空白处落到工作区根）；名称卡片校验后提交，新建文件随即打开，新建文件夹随即展开并把光标放上去。行上还有「在 Finder / 资源管理器中显示」、「复制路径 → 绝对路径 / 相对路径（工作区）」与「复制远端地址」。远端地址按 provider 生成 GitHub / GitLab / Gitee / Bitbucket / Codeberg 的文件与目录链接（GitLab 走 `/-/`，Bitbucket 与 Codeberg 走 `src`），未知 host 回退到 `/blob/`；remote URL 在这里归一化成 https 基址，ref 取当前分支、游离 HEAD 取提交哈希，路径段逐段编码但保留 `/`。仓库没有可用远端时该项禁用并说明原因。reveal 由本包 host 半按平台 spawn（darwin `open -R`、win32 `explorer.exe /select,`、linux `xdg-open <父目录>`、WSL 先 `wslpath -w`），路径先 `fs.resolve` + `fs.stat` + `fs.contains` 校验，工作区外与不存在的路径直接拒绝。宿主没装 UI 原语时菜单退化为本包自有的按钮卡片，不崩。动作结果用头部下的一条提示条反馈，4 秒自动消失。
 - 虚拟化：只挂视口内的行加少量 overscan，展开一个几千项的大目录不会把整棵树塞进 DOM。
 - 截断提示：宿主返回 `truncated` 时，目录下多一行"目录过大，仅显示前 N 项"。`workspaceFiles.list` 没有分页参数，所以这里只陈述事实，不画一个点了没用的"继续加载"。
@@ -41,7 +42,7 @@
 - 进入即就位：切到本视图时键盘焦点落在左侧树上，不用先点一下才能按方向键。标签栈为空的那次进入，如果工作区根目录有 README（`README` / `.md` / `.markdown` / `.mdx` / `.txt`，大小写不敏感），顺手把它打开——右栏从空白变成工作区门面，光标停在这一行上；没有 README 就只把焦点放在树上。标签栈里已经有面板时只接管焦点，不动读者已经开着的东西。嵌套的子目录 README 不算，那是读者没问的问题。
 - 错误态：未选会话、文件服务不可用、工作区为空、目录读失败、预览的删除 / 无权限 / 断链 / 非文本 / 超上限各有文案与恢复动作。指向普通文件的符号链接不算错误：预览跟随链接读取目标，路径栏在链接路径后标出真实地址，复制路径也拿的是真实地址。
 - 跨面板跳转：接受 `openView("fs-explorer", "path:<工作区相对路径>:<行号>")`，Git 变更面板点文件即按这个格式跳过来并打开对应行。工作区外的文件走 `abs:<绝对路径>:<行号>`：绝对路径不剥前导 `/`，树里没有对应行所以跳过 reveal，读取仍交给 `workspaceFiles.read(sessionId, 绝对路径)`（宿主明确接受绝对路径）。提交详情里的文件行走 `git:<hash>:<line>:<path>`：行号段必填，路径取剩余全部内容；面板按 `(revision, path)` 建标签，同一路径在不同提交下各占一条标签，标签带短哈希。提交版本的二进制家族文件显示“提交版本的二进制预览暂不支持”，不会读工作区当前文件。第四种拼写 `reveal:<工作区相对路径>` 只要光标、不要面板：展开祖先链并逐级读 listing，把树光标选到该行，目录则同时展开，但不 `stack.open`。侧边栏与正文引用里的目录都用它，因为把目录当面板打开会用一个空标签页换掉读者正在看的东西。`reveal:` 只认工作区相对路径，不解析行号段（光标停在行上，没有行内位置可言），也不支持绝对路径。
-- 地址桥：宿主原生打开面（聊天里的文件链接、工具行的 `file:line`、`@` 引用、present 卡片）都经 `ctx.sidebarRight.openResource(address)` 落到右侧栏 tab。本包在 `sidebarRightTabs` 注册一个「转发 tab」（`dsh-fs-explorer:bridge`，`dsh-resource://file/**`，extension 档），正文把 `dsh-resource://file/session/<sid>/<path>` 转成上面的 focus、切到本视图并自关，所以这些入口最终落在同一套树、标签栈与家族渲染器里。认领范围是允许清单：共享格式目录的家族后缀 + 文本后缀 + 无后缀白名单（Makefile / Dockerfile / LICENSE / README / CHANGELOG），宿主更强的后缀（pdf、Office、图片、csv 等）即使出现在清单里也不认领，留给内置预览。会话不一致时保留 tab 并打一条诊断，绝不把别的会话的文件开进当前视图。
+- 地址桥：宿主原生打开面（聊天里的文件链接、工具行的 `file:line`、`@` 引用、present 卡片）都经 `ctx.sidebarRight.openResource(address)` 落到右侧栏 tab。本包在 `sidebarRightTabs` 注册一个「转发 tab」（`dsh-fs-explorer:bridge`，`dsh-resource://file/**`，extension 档），正文把 `dsh-resource://file/session/<sid>/<path>` 转成上面的 focus、切到本视图并自关，所以这些入口最终落在同一套树、标签栈与家族渲染器里。认领范围是允许清单：共享格式目录的家族后缀 + 文本后缀 + 无后缀白名单（Makefile / Dockerfile / LICENSE / README / CHANGELOG），宿主更强的后缀（Office、csv 等）即使出现在清单里也不认领，留给内置预览。会话不一致时保留 tab 并打一条诊断，绝不把别的会话的文件开进当前视图。
 - 面板级搜索（树）：头部放大镜打开搜索条，只搜当前面板、不碰命令面板的全局入口。主路径走宿主的 `remote.fileReferences.list(agentId, query, signal)` 工作区模糊索引——与 `⌘P`、`@` 补全同源，所以能搜到从未展开过的深目录；结果行是扁平列表，名字后面跟一条变暗的目录前缀，方向键在结果间移动、回车打开文件并展开祖先链、`Esc` 清空并把键盘交还树。搜索条放在 `.fx-tree-pane` 内、`.fx-scroll` 之外：滚动容器上挂着树的键盘处理（含同级前缀跳转），输入框若嵌进去，每个字母都会被前缀跳转吃掉。宿主没挂 `fileReferences` 时退化为「只在已加载的目录里按名字过滤」并在搜索条上标出范围（`索引` / `已加载`），不报错也不空白；降级找的是已读过的目录台账而非当前可见行，否则大仓里几乎永远搜不到。
 - 面板级搜索（预览）：工具栏的「查找」在当前页内查找，命中计数写作「本页 n/m」——翻页器一次只持有一页（`PREVIEW_MAX_LINES = 200`），跨页搜索要改成分页流式全文扫描，不在本切片。代码面用编辑器选区（`revealRange` dispatch 一个 selection 并 `scrollIntoView`），Markdown 与纯文本面在渲染后的文本节点上建 `Range`，两者偏移空间不同：编辑器文档就是页文本，而 Markdown 的 `**粗**` 标记与图片占位在渲染后不占字符，用页文本偏移会指错位置。查找条因此只存「第几个命中」，映射留给各自的 provider。搜索不改文档、不产生草稿变更。
 - 焦点有两个来源：宿主经 `openView` 交下来的 `viewRequest`，以及 `workbench.viewFocus` 队列。后者给"宿主没交出 focus 能力"的调用方（如命令面板 `⌘↵` 与地址桥）用：视图挂载时取走等待的请求，挂载后收到新请求也立刻消费，所以懒挂载不会丢目标。地址桥先入队再切换：宿主回退到自己的视图切换器时不携带 focus，队列是那条路上唯一的通道。
@@ -93,6 +94,9 @@ const off = ctx.fsExplorer.registerRenderer({
 - 树搜索的降级路径只看已加载过的目录，范围严格小于工作区；搜索条上的 `索引` / `已加载` 是唯一能区分这两种答案的地方。索引缺席是合法的部署形态（`fileReferences` 是可选命名空间），不弹错误。
 - 预览查找只在当前页内，命中计数写「本页 n/m」。翻到新的一页后计数重算，原来第几个命中不跨页保留。二进制家族（`scene3d` / `raster` / `cad`）没有文本面，不显示查找按钮。
 - 每个打开的 3D / CAD 面板各持有一个 WebGL 上下文，隐藏只暂停绘制、不释放上下文。浏览器对同时存在的上下文有上限（常见约 16 个，超了丢最旧的），本包不做淘汰，所以同时开很多模型面板仍可能把更早的面板顶掉。
+- 忽略项不参与变更计数与徽标：灰显是「git 忽略」这一事实，不是工作区变更状态，所以忽略行不带状态字母、也不计入目录的变更数。
+- 隐藏态下，一个目录的子项若全是忽略项，目录行下面显示「已隐藏 N 个忽略项」，而不是「空目录」：读者是自己把它们藏起来的，说成空目录会误导。
+- 忽略信息不随文件系统变化自动刷新：新建或删掉一个被忽略的文件不会自己出现在清单里，走头部刷新重新取。清单只在切换会话、刷新或重挂载时拉取。
 - `workbench.viewFocus` 队列按视图 id 存一条请求，没有会话维度：请求入队后、目标视图挂载前若切换了会话，这条 focus 会被新会话的视图取走。目前只在切视图与切会话几乎同时发生时可见。
 - 右键菜单的「在 Finder 中显示」只在 host 半能 spawn 时可用：headless Linux（没有 `DISPLAY` / `WAYLAND_DISPLAY` 且不是 WSL）没有文件管理器，该项禁用并给出原因。web 部署同样走本包 host 半，因为它在读者自己的机器上；宿主 session 命名空间的 `openWorkspacePath` 在 web 上是关掉的，所以这里不依赖它。
 - 「复制绝对路径」需要 host 半先回答 `info`；通道缺席或 `info` 失败时该项禁用并说明原因，相对路径不受影响（它就是行自己的路径）。
@@ -117,6 +121,10 @@ node .nsl/chain/accept-s7-fs-panels.mjs   # 面板状态机、键位表、Esc �
 
 `lib/` 是提交进仓库的构建产物，profile 安装态不跑构建，所以改源码后必须重跑 `build`。陈旧的 `lib/` 会让插件在宿主里激活失败，而单插件激活失败会连带整个 Web 端启动中断。`pnpm --filter dsh-fs-explorer check:lib` 把这件事变成可自动判定的门（构建到内存后与磁盘 `lib/` 逐文件比对字节，不一致即失败，且不会删除 `lib/`），`test` 已经前置调用它。
 
+## 第三方组件
+
+`lib/` 里的家族 chunk 打包了五个第三方库：three.js（MIT）、utif（MIT）、dxf-viewer（MPL-2.0）、Google Draco（Apache-2.0）、pdf.js（Apache-2.0）。完整许可文本与源码地址见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。本包自身是 MIT。
+
 ## 结构
 
-`model.ts`（树、排序、图标、行窗口）、`panels.ts`（标签栈与会话注册表）、`preview.ts`（分页、家族判定与失败归类）、`status.ts`（porcelain 解析）都是无 DOM 的纯逻辑，判据脚本直接在 Node 里驱动；`view.tsx` 只做装配与宿主 seam；`wire.ts` 把直接服务与 Remote 载体两种数据面收窄成同一张脸（分页的 `read` 与整份的 `readBytes`）；`find.ts`（页内命中与文本布局）与 `tree-search.ts`（索引解析、结果行与降级过滤）是无 DOM 的纯逻辑，`find-surface.ts` 把编辑器与 DOM 两种 reveal 各自封装成一个 `FindSurface`；`context-menu.ts` 是右键菜单的纯函数（行、空白、能力、绝对路径、新建目标目录、远端链接 → 菜单项），`remote-url.ts` 是远端地址的纯转换（remote URL 归一化、provider 表、ref 与路径编码），`context-menu-view.tsx` 只负责把它画成宿主 `Menu` 或自有卡片，`name-prompt.tsx` 是新建的名称卡片与它的纯校验，`platform.ts` 捕获 loader 的 `require` 并解析 UI 原语，`workspace-face.ts` 是 `fsExplorerWorkspace` 的客户端脸（裸 RPC + 结果折叠）；`preview-chunk.ts` 是两条懒路由的唯一名字表，`chunks/` 下的三个入口只做共享渲染器的 props 适配。
+`model.ts`（树、排序、图标、行窗口）、`panels.ts`（标签栈与会话注册表）、`preview.ts`（分页、家族判定与失败归类）、`status.ts`（porcelain 解析）都是无 DOM 的纯逻辑，判据脚本直接在 Node 里驱动；`view.tsx` 只做装配与宿主 seam；`wire.ts` 把直接服务与 Remote 载体两种数据面收窄成同一张脸（分页的 `read` 与整份的 `readBytes`）；`find.ts`（页内命中与文本布局）与 `tree-search.ts`（索引解析、结果行与降级过滤）是无 DOM 的纯逻辑，`find-surface.ts` 把编辑器与 DOM 两种 reveal 各自封装成一个 `FindSurface`；`context-menu.ts` 是右键菜单的纯函数（行、空白、能力、绝对路径、新建目标目录、远端链接 → 菜单项），`remote-url.ts` 是远端地址的纯转换（remote URL 归一化、provider 表、ref 与路径编码），`context-menu-view.tsx` 只负责把它画成宿主 `Menu` 或自有卡片，`name-prompt.tsx` 是新建的名称卡片与它的纯校验，`platform.ts` 捕获 loader 的 `require` 并解析 UI 原语，`workspace-face.ts` 是 `fsExplorerWorkspace` 的客户端脸（裸 RPC + 结果折叠）；`ignored.ts` 是忽略索引与祖先判定（`indexIgnoredPaths` / `isIgnoredPath`，按段向上回查而不是字符串前缀，因为 `--directory` 把整目录折叠成一条、子项不会单独列出），host 半的 `host/ignored.ts` 是忽略清单端点与 argv-only 的 git runner；`preview-chunk.ts` 是两条懒路由的唯一名字表，`chunks/` 下的三个入口只做共享渲染器的 props 适配。

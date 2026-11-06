@@ -9,7 +9,8 @@
  */
 import { baseName } from "dsh-preview-viewers/address.ts";
 
-import { LISTING_TRUNCATED_LABEL } from "../shared.ts";
+import { hiddenIgnoredLabel, LISTING_TRUNCATED_LABEL } from "../shared.ts";
+import { isIgnoredPath, type IgnoredIndex } from "./ignored.ts";
 import {
   changeDiff,
   indexDirectoryChanges,
@@ -40,8 +41,16 @@ export interface TreeNode {
 /** The only two shapes the tree renders; `other` host entries read as files. */
 export type TreeKind = "directory" | "file";
 
-/** Directory names that never surface in the explorer. */
-export const NOISE_NAMES: ReadonlySet<string> = new Set(["node_modules", ".git", "dist", "__pycache__"]);
+/**
+ * Directory names that never surface in the explorer.
+ *
+ * Only the repository's own internals: `.git` is version-control machinery
+ * rather than an entry anyone browses, so no SCM surface lists it. Everything
+ * else that used to be filtered here (`node_modules`, `dist`, `__pycache__`) is
+ * a git-ignored directory, and ignoring is now a visible state the reader can
+ * toggle rather than a silent omission.
+ */
+export const NOISE_NAMES: ReadonlySet<string> = new Set([".git"]);
 
 /** Whether one basename is filtered out of every level. */
 export function isNoise(name: string): boolean {
@@ -556,6 +565,13 @@ export type TreeRow =
        * same information written out instead of laid out.
        */
       readonly directory?: string;
+      /**
+       * Whether git ignores this row, by itself or through an ancestor.
+       *
+       * Present only when true, so a consumer can test one field instead of
+       * comparing against a two-valued flag it has to remember the polarity of.
+       */
+      readonly ignored?: true;
     }
   | {
       readonly type: "status";
@@ -568,6 +584,22 @@ export type TreeRow =
     };
 
 /**
+ * How the tree treats git-ignored entries.
+ *
+ * `showIgnored` is read as "hide only on an explicit false": the feature's
+ * default state is visible and dimmed, and a caller that has no opinion (or an
+ * older one that passes no options at all) must keep seeing every row.
+ */
+export interface FlattenOptions {
+  /** The ignored index, or undefined when the host answered nothing. */
+  readonly ignored?: IgnoredIndex;
+  /** Whether ignored entries are listed; only `false` hides them. */
+  readonly showIgnored?: boolean;
+  /** Copy for a directory whose children were all hidden; defaults to the shared label. */
+  readonly hiddenLabel?: (count: number) => string;
+}
+
+/**
  * Flatten the loaded levels into the rows the virtual list mounts.
  *
  * A directory contributes its children only while expanded. Its own loading,
@@ -575,10 +607,18 @@ export type TreeRow =
  * so the tree has one row vocabulary and one scroll height. Working-tree
  * statuses come from the Git snapshot and do not depend on a level being
  * loaded, so a collapsed directory can still advertise its change count.
+ *
+ * Ignored entries are a third such state. Hidden, they are skipped before their
+ * subtree is visited, so a folded `node_modules` costs nothing to hide; a
+ * directory whose every child was hidden keeps a status row saying how many
+ * went away, because a folder that silently opens onto nothing reads as a bug.
+ * The root gets the same row for the same reason: an entirely ignored workspace
+ * would otherwise render as a blank pane.
  * @param levels - loaded directory levels keyed by workspace path (`""` is the root).
  * @param expanded - workspace paths currently open.
  * @param statuses - parsed `git status` map, or undefined when Git is unavailable.
  * @param tags - workspace identity map, or undefined when no manifest was read.
+ * @param options - the ignored index and whether to list ignored entries.
  * @returns visible rows in display order.
  */
 export function flattenTree(
@@ -586,16 +626,27 @@ export function flattenTree(
   expanded: ReadonlySet<string>,
   statuses?: StatusMap,
   tags?: ReadonlyMap<string, WorkspaceTag>,
+  options?: FlattenOptions,
 ): TreeRow[] {
   const rows: TreeRow[] = [];
   const statusIndex = indexDirectoryChanges(statuses);
+  const hideIgnored = options?.showIgnored === false;
+  const label = options?.hiddenLabel ?? hiddenIgnoredLabel;
 
   const visit = (path: string, depth: number): void => {
     const level = levels.get(path);
     if (level === undefined || level.status !== "ready") return;
+    let hidden = 0;
     for (const node of level.nodes) {
       const child = joinPath(path, node.name);
       const isDirectory = node.kind === "directory";
+      const ignored = isIgnoredPath(child, options?.ignored);
+      if (ignored && hideIgnored) {
+        // Counted before the subtree is visited: a hidden directory's children
+        // are hidden with it, and the reader is told about the row they lost.
+        hidden += 1;
+        continue;
+      }
       const open = isDirectory && expanded.has(child);
       // A file row's key is exact in the status map, so its marker answers both
       // the badge and the line counts; directories never carry counts.
@@ -616,6 +667,7 @@ export function flattenTree(
         ...(aggregate === undefined ? {} : { statusCount: aggregate.count, statusTone: aggregate.tone }),
         ...(diff === undefined ? {} : { diff }),
         ...(tag === undefined ? {} : { tag }),
+        ...(ignored ? { ignored: true as const } : {}),
       });
       if (!open) continue;
       const childLevel = levels.get(child);
@@ -649,6 +701,12 @@ export function flattenTree(
           label: describeListing({ entries: childLevel.nodes, truncated: true, total: childLevel.total }).label,
         });
       }
+    }
+    // A directory that had children and now shows none is not an empty
+    // directory: the reader hid them, and the row says so with the count. The
+    // root is included so an all-ignored workspace does not render blank.
+    if (hidden > 0 && level.nodes.length === hidden) {
+      rows.push({ type: "status", key: `${path}:hidden`, path, depth, state: "empty", label: label(hidden) });
     }
   };
 

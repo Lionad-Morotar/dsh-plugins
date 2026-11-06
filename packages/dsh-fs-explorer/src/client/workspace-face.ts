@@ -9,6 +9,10 @@
  * `document-session.ts` and adds one thing that file does not need: folding the
  * transport envelope and the endpoint union down to one result, because every
  * caller here paints a sentence from the failure code.
+ *
+ * The `ignored` listing is the one member that does not paint anything: the tree
+ * dims rows against it and hides them behind a toggle, so its absence or failure
+ * reads as "nothing is ignored" rather than as an error surface.
  */
 import { WORKSPACE_SERVICE } from "../shared.ts";
 import { parseBookmarkTree, type BookmarkTree } from "../bookmarks.ts";
@@ -41,6 +45,8 @@ export interface WorkspaceFace {
     request: { readonly sessionId: string; readonly tree: BookmarkTree },
     signal?: AbortSignal,
   ): Promise<unknown> | unknown;
+  /** Absent on a host that predates the ignored listing. */
+  ignored?(request: { readonly sessionId: string }, signal?: AbortSignal): Promise<unknown> | unknown;
 }
 
 /** The client context slice the resolver probes. */
@@ -111,6 +117,7 @@ export function createRpcWorkspaceFace(call: WorkspaceRpcCall): WorkspaceFace {
     create: invoke("create"),
     loadBookmarks: invoke("loadBookmarks"),
     saveBookmarks: invoke("saveBookmarks"),
+    ignored: invoke("ignored"),
   };
 }
 
@@ -239,6 +246,16 @@ export type BookmarkSaveOutcome =
   | { readonly ok: false; readonly error: WorkspaceError };
 
 /**
+ * What one ignored listing answered.
+ *
+ * An empty `entries` is an ordinary answer, not a failure: a working directory
+ * outside a repository ignores nothing, and the tree simply dims no row.
+ */
+export type IgnoredOutcome =
+  | { readonly ok: true; readonly entries: readonly string[]; readonly truncated: boolean }
+  | { readonly ok: false; readonly error: WorkspaceError };
+
+/**
  * Fold one `capabilities` answer down to the two facts a menu row needs.
  * @param response - whatever the endpoint resolved to.
  * @returns the capabilities, or the failure to paint.
@@ -342,6 +359,28 @@ export function normalizeBookmarkSave(response: unknown): BookmarkSaveOutcome {
   return { ok: true };
 }
 
+/**
+ * Fold one `ignored` answer down to the paths the tree dims.
+ *
+ * Entries that are not non-empty strings are dropped rather than trusted: the
+ * list crossed a wire and every entry becomes a key some row is tested against,
+ * so a stray number or a blank would only add an entry that can never match.
+ * `truncated` is read strictly, because a truthy string would claim a cut that
+ * did not happen.
+ * @param response - whatever the endpoint resolved to.
+ * @returns the entries, or the failure to paint.
+ */
+export function normalizeIgnored(response: unknown): IgnoredOutcome {
+  const result = unwrap(response);
+  if (result === undefined) return { ok: false, error: { code: "io-error", message: "" } };
+  if (result.ok === false) return { ok: false, error: errorOf(result.error) };
+  const ignored = isRecord(result.ignored) ? result.ignored : undefined;
+  if (ignored === undefined) return { ok: false, error: { code: "io-error", message: "" } };
+  const raw = Array.isArray(ignored.entries) ? ignored.entries : [];
+  const entries = raw.filter((entry): entry is string => typeof entry === "string" && entry !== "");
+  return { ok: true, entries, truncated: ignored.truncated === true };
+}
+
 /** The calls the view makes, already folded and never throwing. */
 export interface WorkspaceClient {
   capabilities(sessionId: string, signal?: AbortSignal): Promise<CapabilitiesOutcome>;
@@ -369,6 +408,15 @@ export interface WorkspaceClient {
    */
   loadBookmarks?(sessionId: string, signal?: AbortSignal): Promise<BookmarkLoadOutcome>;
   saveBookmarks?(sessionId: string, tree: BookmarkTree, signal?: AbortSignal): Promise<BookmarkSaveOutcome>;
+  /**
+   * The paths git ignores under one session's working directory.
+   *
+   * Absent on a host that predates the endpoint: the tree then dims nothing and
+   * offers no toggle, which is the same state as a workspace outside a
+   * repository. A failure is equally quiet, because the listing only ever
+   * decorates rows the reader can already see.
+   */
+  ignored?(sessionId: string, signal?: AbortSignal): Promise<IgnoredOutcome>;
 }
 
 /** The failure a missing channel answers with. */
@@ -418,5 +466,11 @@ export function createWorkspaceClient(ctx: WorkspaceContextLike): WorkspaceClien
         if (typeof save !== "function") return { ok: false, error: UNAVAILABLE };
         return save.call(face, { sessionId, tree }, signal);
       }, normalizeBookmarkSave),
+    ignored: (sessionId, signal) =>
+      guard(face => {
+        const ignored = face.ignored;
+        if (typeof ignored !== "function") return { ok: false, error: UNAVAILABLE };
+        return ignored.call(face, { sessionId }, signal);
+      }, normalizeIgnored),
   };
 }

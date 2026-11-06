@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { families } from "dsh-preview-viewers/formats.ts";
+import { families, familiesFor } from "dsh-preview-viewers/formats.ts";
 
 import { FAMILY_CHUNKS, PACKAGE_NAME, PREVIEW_CHUNK } from "../src/shared.ts";
 
@@ -55,6 +55,19 @@ describe("chunk routing", () => {
 
   it("covers exactly the families the catalogue declares", () => {
     expect(Object.keys(FAMILY_CHUNKS).sort()).toEqual([...families()].sort());
+  });
+
+  it("still builds a chunk for every family the workbench claims", () => {
+    // The sidebar stopped claiming image and pdf, and this table must not shrink
+    // with it: the workbench claims all five, so all five chunks have to exist or
+    // a png opened in the tree would fetch a file nobody built.
+    expect([...familiesFor("workbench")].sort()).toEqual([...families()].sort());
+    for (const family of familiesFor("workbench")) {
+      expect(FAMILY_CHUNKS[family], family).toBe(`client.${family}.js`);
+    }
+    // And the two the sidebar gave up are still built here.
+    expect(FAMILY_CHUNKS.image).toBe("client.image.js");
+    expect(FAMILY_CHUNKS.pdf).toBe("client.pdf.js");
   });
 
   it("keys a family chunk as <package>/<file>, the way the loader does", async () => {
