@@ -32,6 +32,15 @@ import {
   type ContextMenuRow,
 } from "./context-menu.ts";
 import { ContextMenu, type MenuAnchor } from "./context-menu-view.tsx";
+import {
+  fsReferencePayload,
+  insertFsReference,
+  referenceLabel,
+  type FsInsertionResult,
+  type FsReferenceInsert,
+  type FsReferenceSpan,
+  type ReferenceTargetFacts,
+} from "./reference.ts";
 import { BookmarkBar } from "./bookmark-bar.tsx";
 import { BookmarkPicker } from "./bookmark-picker.tsx";
 import { createBookmarkStore } from "./bookmarks-store.ts";
@@ -152,7 +161,32 @@ export interface ConversationViewProps {
   readonly sessionId?: string;
   readonly viewRequest?: ViewRequestLike | null;
   readonly completeViewRequest?: () => void;
+  /**
+   * The composer's standard props. `conversation.view` is a session-scope slot,
+   * so the host hands these to every entry; they are optional here because the
+   * view also mounts on hosts and in tests that publish neither.
+   */
+  readonly inputActions?: ReferenceInputActions;
 }
+
+/** The slice of the composer face the reference rows read. */
+export interface ReferenceInputActions {
+  captureInsertion?(): { readonly start: number; readonly end: number; readonly draftRev: number };
+  insertText?(text: string, span: { readonly start: number; readonly end: number; readonly draftRev: number }): boolean;
+}
+
+/** What the view needs from the entry to make the reference rows work. */
+export interface ReferenceWiring {
+  /** The session input facade's structured-reference write, or undefined. */
+  readonly insertReference?: (insert: FsReferenceInsert, span: FsReferenceSpan) => boolean;
+  /** Return the keyboard to the composer after a write. */
+  readonly focus?: () => void;
+  /** Surface a failure where the reader will see it. */
+  readonly notify?: (level: "info" | "error", text: string) => void;
+}
+
+/** Resolve the reference writer for one session, or undefined when it cannot. */
+export type ReferenceWiringResolver = (sessionId: string) => ReferenceWiring | undefined;
 
 /** What one view mount closes over. */
 export interface ViewWiring {
@@ -192,6 +226,8 @@ export interface ViewWiring {
    * mount the namespace after this view.
    */
   readonly fileReferences?: () => FileReferencesFace | undefined;
+  /** The session input facade, probed per click; absent on hosts without one. */
+  readonly reference?: ReferenceWiringResolver;
 }
 
 /**
@@ -393,6 +429,7 @@ export function createFsExplorerView({
   locate,
   workspace: resolveWorkspace,
   fileReferences: resolveReferences,
+  reference: resolveReference,
 }: ViewWiring) {
   // One registry per registered view: the host mounts and unmounts this
   // component on every view switch, while the factory itself lives on.
@@ -1609,6 +1646,65 @@ export function createFsExplorerView({
     const closeTabMenu = useCallback((): void => setTabMenu(null), []);
 
     /**
+     * What the composer can take right now, read when a menu opens.
+     *
+     * `undefined` is a real answer: a host without the input plane never hands
+     * the view `inputActions`, and the rows then say so instead of offering a
+     * click that cannot land.
+     */
+    const referenceTarget = useCallback((): ReferenceTargetFacts | undefined => {
+      const actions = props.inputActions;
+      if (sessionId === undefined || actions === undefined) return undefined;
+      const facade = resolveReference?.(sessionId);
+      return {
+        session: true,
+        insertReference: typeof facade?.insertReference === "function",
+      };
+    }, [props.inputActions, resolveReference, sessionId]);
+
+    /**
+     * Write one path into the composer as a structured reference.
+     *
+     * The span comes from the composer's own capture, the chip from the session
+     * facade, and plain text is the last resort. The facade is resolved per
+     * click rather than per mount because it throws once the session's
+     * generation is released, and a stale closure would keep throwing at a
+     * composer that no longer exists.
+     */
+    const insertReferenceFor = useCallback(
+      (path: string, name: string, kind: "file" | "directory"): void => {
+        const actions = props.inputActions;
+        if (sessionId === undefined || actions === undefined) {
+          announce(t("notice.referenceFailed"), "error");
+          return;
+        }
+        const facade = resolveReference?.(sessionId);
+        const payload = fsReferencePayload(path, name, kind);
+        const result: FsInsertionResult = insertFsReference(
+          {
+            captureSpan: () => {
+              const span = actions.captureInsertion?.();
+              return span === undefined ? undefined : { start: span.start, end: span.end, draftRev: span.draftRev };
+            },
+            insertReference: (insert, span) => facade?.insertReference?.(insert, span) ?? false,
+            insertText: (text, span) => actions.insertText?.(text, span) ?? false,
+          },
+          payload,
+        );
+        if (result === "failed") {
+          announce(t("notice.referenceFailed"), "error");
+          facade?.notify?.("error", t("notice.referenceFailed"));
+          return;
+        }
+        facade?.focus?.();
+        // Only the plain-text channel is worth a notice: the chip is visible in
+        // the composer, and a toast for the normal case would be noise.
+        if (result === "text") announce(t("notice.referenced").replace("{name}", payload.label), "ok");
+      },
+      [announce, props.inputActions, resolveReference, sessionId, t],
+    );
+
+    /**
      * Run one row of the strip's menu.
      *
      * The menu closes first: closing tabs republishes the strip under it, and a
@@ -1619,6 +1715,18 @@ export function createFsExplorerView({
         const menu = tabMenu;
         setTabMenu(null);
         if (menu === null) return;
+        if (id === TAB_MENU_ACTION.reference) {
+          // The strip is re-read: the menu can stay open while another gesture
+          // reorders it, and the tab it named may be gone by now.
+          const panel = stack.snapshot().panels.find(candidate => candidate.key === menu.key);
+          if (panel === undefined) return;
+          // A tab is a file unless the tree says otherwise. The lookup is the
+          // only place the kind is known, and a tab opened from search may not
+          // be in a loaded level at all, which is why the fallback is a file.
+          const entry = listedEntries(levelsRef.current).find(candidate => candidate.path === panel.path);
+          insertReferenceFor(panel.path, referenceLabel(panel.path), entry?.kind === "directory" ? "directory" : "file");
+          return;
+        }
         if (id === TAB_MENU_ACTION.close) {
           requestClose(menu.key);
           return;
@@ -1627,7 +1735,7 @@ export function createFsExplorerView({
         if (scope === undefined) return;
         closeSequence(closeBatch(stack.snapshot().panels, menu.key, scope));
       },
-      [closeSequence, requestClose, stack, tabMenu],
+      [closeSequence, insertReferenceFor, requestClose, stack, tabMenu],
     );
 
     // The Escape handler reads this flag rather than the state, so the menu
@@ -1725,6 +1833,10 @@ export function createFsExplorerView({
           });
           return;
         }
+        if (id === MENU_ACTION.reference) {
+          insertReferenceFor(row.path, row.name, row.kind);
+          return;
+        }
         if (id !== MENU_ACTION.reveal) return;
         if (workspace === undefined) {
           announce(revealFailureText({ code: "unsupported", message: "" }), "error");
@@ -1739,7 +1851,7 @@ export function createFsExplorerView({
           announce(t("notice.revealed").replace("{manager}", manager), "ok");
         });
       },
-      [announce, capabilities, contextMenu, remoteLinks, revealFailureText, sessionId, t, workspace],
+      [announce, capabilities, contextMenu, insertReferenceFor, remoteLinks, revealFailureText, sessionId, t, workspace],
     );
 
     /**
@@ -1818,18 +1930,22 @@ export function createFsExplorerView({
                         path: contextMenu.row.path,
                         kind: contextMenu.row.kind,
                       },
+                inputTarget: referenceTarget(),
               },
               t,
             ),
-      [capabilities, contextMenu, remoteLinks, t, workspace],
+      [capabilities, contextMenu, referenceTarget, remoteLinks, t, workspace],
     );
 
     // The strip's rows. Rebuilt from the live snapshot so a tab that closed
     // while the menu was up cannot be acted on, and so the batch rows describe
     // the strip the reader is looking at.
     const tabMenuEntries: readonly ContextMenuEntry[] = useMemo(
-      () => (tabMenu === null ? [] : buildTabMenu({ panels: panels.panels, key: tabMenu.key }, t)),
-      [panels.panels, t, tabMenu],
+      () =>
+        tabMenu === null
+          ? []
+          : buildTabMenu({ panels: panels.panels, key: tabMenu.key, inputTarget: referenceTarget() }, t),
+      [panels.panels, referenceTarget, t, tabMenu],
     );
     // Opening a result does what opening a row in the tree does, plus the
     // reveal the tree would already have: the ancestors open so the file keeps

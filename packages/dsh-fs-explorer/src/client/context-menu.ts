@@ -14,6 +14,7 @@
  */
 import type { WorkspaceCapabilities } from "../host/types.ts";
 import type { PanelEntry } from "./panels.ts";
+import { referenceBlockReason, type ReferenceTargetFacts } from "./reference.ts";
 import type { RemoteLink } from "./remote-url.ts";
 
 /**
@@ -36,6 +37,8 @@ export const MENU_ACTION = {
    */
   copyRemote: "copy.remote",
   addBookmark: "add.bookmark",
+  /** Insert this row's path into the composer as a structured reference. */
+  reference: "reference.input",
 } as const;
 
 /** Where a context menu opens, in viewport coordinates. */
@@ -54,6 +57,8 @@ export const TAB_MENU_ACTION = {
   close: "tab.close",
   closeOthers: "tab.close.others",
   closeRight: "tab.close.right",
+  /** Insert this tab's path into the composer; shared with the tree's row. */
+  reference: MENU_ACTION.reference,
 } as const;
 
 /** One row of the menu, before the host primitive sees it. */
@@ -115,6 +120,16 @@ export interface ContextMenuInput {
   readonly bookmarkTarget:
     | { readonly name: string; readonly path: string; readonly kind: "file" | "directory" }
     | undefined;
+  /**
+   * What the composer can take, or undefined when the view could not read it.
+   *
+   * Read when the menu opens rather than when the row is clicked: the row has to
+   * paint its reason up front, and a menu that turns out to be a no-op is the
+   * failure mode this whole field exists to avoid. Optional so a caller that
+   * predates the reference row reads as a host with no composer, which is
+   * exactly what the row then says.
+   */
+  readonly inputTarget?: ReferenceTargetFacts | undefined;
 }
 
 /**
@@ -195,6 +210,17 @@ export function buildContextMenu(
   };
   const relative: ContextMenuEntry = { id: MENU_ACTION.copyRelative, label: t("menu.copy.relative") };
 
+  // Referencing sits next to the copy rows because it is the same gesture with
+  // a different destination: the reader who wanted the path in the composer
+  // looks where the path already is. It needs a row (a path to name) and a
+  // composer to write into, and says which of the two is missing.
+  const referenceBlock = referenceBlockReason(input.inputTarget);
+  const reference: ContextMenuEntry = {
+    id: MENU_ACTION.reference,
+    label: t("menu.reference"),
+    ...(referenceBlock === undefined ? {} : { disabled: true, reason: t(`menu.reference.reason.${referenceBlock}`) }),
+  };
+
   // The remote row is top level, not a child of "copy path": the host `Menu`
   // opens exactly one level of submenu, so a row nested inside another submenu
   // would never open. It carries its own level instead, one row per remote.
@@ -218,6 +244,7 @@ export function buildContextMenu(
     reveal,
     { id: "menu.copy", label: t("menu.copy"), submenu: [absolute, relative] },
     remote,
+    reference,
     // Bookmarking needs a row to point at. The blank area has none, so the row
     // is absent there rather than disabled: an action that can never apply is
     // noise in a menu that is already long.
@@ -237,6 +264,23 @@ export interface TabMenuInput {
   readonly panels: readonly PanelEntry[];
   /** The tab the menu opened on. */
   readonly key: string;
+  /** What the composer can take, or undefined when the view could not read it. */
+  readonly inputTarget?: ReferenceTargetFacts | undefined;
+}
+
+/**
+ * Why one tab cannot be referenced, as a copy key.
+ *
+ * A commit-version tab shows a file that is not in the working tree, and an
+ * absolute tab names a path outside the workspace: neither is a workspace path,
+ * so `@<path>` would point the model at something that does not exist there.
+ * @param panel - the tab the menu opened on.
+ * @returns the reason key, or undefined when the tab's path is referable.
+ */
+export function tabReferenceBlockReason(panel: PanelEntry): "absolute" | "revision" | undefined {
+  if (panel.revision !== undefined) return "revision";
+  if (panel.absolute) return "absolute";
+  return undefined;
 }
 
 /**
@@ -254,7 +298,19 @@ export interface TabMenuInput {
 export function buildTabMenu(input: TabMenuInput, t: (key: string) => string): readonly ContextMenuEntry[] {
   const index = input.panels.findIndex(panel => panel.key === input.key);
   if (index < 0) return [];
+  const panel = input.panels[index] as PanelEntry;
+  // The tab's own path is checked first: a commit-version tab of an absolute
+  // path is both, and the revision is the more specific answer.
+  const tabBlock = tabReferenceBlockReason(panel);
+  const referenceBlock = referenceBlockReason(input.inputTarget);
+  const block = tabBlock ?? referenceBlock;
+  const reference: ContextMenuEntry = {
+    id: TAB_MENU_ACTION.reference,
+    label: t("menu.reference"),
+    ...(block === undefined ? {} : { disabled: true, reason: t(`menu.reference.reason.${block}`) }),
+  };
   return [
+    reference,
     { id: TAB_MENU_ACTION.close, label: t("menu.tab.close") },
     {
       id: TAB_MENU_ACTION.closeOthers,
