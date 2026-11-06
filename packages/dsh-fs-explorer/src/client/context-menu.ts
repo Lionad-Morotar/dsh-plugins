@@ -13,6 +13,7 @@
  * adapts these entries to whatever the host offers.
  */
 import type { WorkspaceCapabilities } from "../host/types.ts";
+import type { PanelEntry } from "./panels.ts";
 import type { RemoteLink } from "./remote-url.ts";
 
 /**
@@ -42,6 +43,18 @@ export interface ContextMenuAnchor {
   readonly x: number;
   readonly y: number;
 }
+
+/**
+ * Action ids the tab strip's menu dispatches on.
+ *
+ * Separate from {@link MENU_ACTION} because the two menus carry different
+ * targets: the tree's rows act on a path, the strip's act on the stack.
+ */
+export const TAB_MENU_ACTION = {
+  close: "tab.close",
+  closeOthers: "tab.close.others",
+  closeRight: "tab.close.right",
+} as const;
 
 /** One row of the menu, before the host primitive sees it. */
 export interface ContextMenuEntry {
@@ -215,5 +228,41 @@ export function buildContextMenu(
         ? {}
         : { disabled: true, reason: t("menu.addBookmark.reason") }),
     },
+  ];
+}
+
+/** Everything the tab strip's menu is built from. */
+export interface TabMenuInput {
+  /** The strip as the right-click saw it. */
+  readonly panels: readonly PanelEntry[];
+  /** The tab the menu opened on. */
+  readonly key: string;
+}
+
+/**
+ * Build the menu for a right-click on a tab.
+ *
+ * "Close others" stays visible and greys out on the last remaining tab, because
+ * its absence there would read as a missing feature; "close to the right" is
+ * dropped instead, following the host's own tab menu — an empty right side is a
+ * position, not an unavailable action, and the row would sit at the menu's end
+ * saying nothing.
+ * @param input - the strip and the tab the menu opened on.
+ * @param t - translator bound to this package's namespace.
+ * @returns the rows to render, in display order; empty when the tab is gone.
+ */
+export function buildTabMenu(input: TabMenuInput, t: (key: string) => string): readonly ContextMenuEntry[] {
+  const index = input.panels.findIndex(panel => panel.key === input.key);
+  if (index < 0) return [];
+  return [
+    { id: TAB_MENU_ACTION.close, label: t("menu.tab.close") },
+    {
+      id: TAB_MENU_ACTION.closeOthers,
+      label: t("menu.tab.closeOthers"),
+      ...(input.panels.length > 1 ? {} : { disabled: true, reason: t("menu.tab.closeOthers.reason") }),
+    },
+    ...(index === input.panels.length - 1
+      ? []
+      : [{ id: TAB_MENU_ACTION.closeRight, label: t("menu.tab.closeRight") }]),
   ];
 }

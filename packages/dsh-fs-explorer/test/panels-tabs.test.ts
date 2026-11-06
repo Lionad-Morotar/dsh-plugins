@@ -45,8 +45,12 @@ interface Harness {
  * The body's renderer is never reached on purpose: this file is about the chrome
  * around a draft, so the document session is acquired here and the view only
  * has to see it through the store.
+ *
+ * `paths` opens further files after the first one, one focus request each: the
+ * strip's menu needs a strip, and the view's only door into the stack is the
+ * request payload the host hands it.
  */
-async function mountView(options: { dirty: boolean }): Promise<Harness> {
+async function mountView(options: { dirty: boolean; paths?: readonly string[] }): Promise<Harness> {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -95,7 +99,27 @@ async function mountView(options: { dirty: boolean }): Promise<Harness> {
       }),
     );
   });
+  for (const path of options.paths ?? []) {
+    await act(async () => {
+      root.render(
+        createElement(View, {
+          sessionId: "s1",
+          viewRequest: { view: VIEW_ID, focus: `path:${path}:1` },
+          completeViewRequest: () => undefined,
+        }),
+      );
+    });
+  }
   await flush();
+  // Every opened panel mounts its preview body, and the body settles on a
+  // promise chain of its own. Draining one timer turn keeps those settlements
+  // inside `act`, where a batch that opens or closes several panels at once
+  // would otherwise leave them to land after the test.
+  await act(async () => {
+    await new Promise(resolve => {
+      setTimeout(resolve, 0);
+    });
+  });
 
   return Object.assign(harness, { store, session });
 }
@@ -210,6 +234,35 @@ describe("unsaved marker", () => {
       root.render(createElement(PanelEmpty, { t }));
     });
     expect(host.querySelector('[data-testid="fs-panel-empty"]')).not.toBeNull();
+  });
+
+  it("hands a secondary press to the strip's menu, naming the tab it landed on", async () => {
+    const calls: { key: string; x: number; y: number }[] = [];
+    await act(async () => {
+      root.render(
+        createElement(PanelTabs, {
+          panels: [panel("docs/a.md"), panel("docs/b.md")],
+          active: "docs/a.md",
+          t,
+          onActivate: () => undefined,
+          onClose: () => undefined,
+          onStep: () => undefined,
+          onTabMenu: (key, anchor) => calls.push({ key, x: anchor.x, y: anchor.y }),
+          documents: store,
+          sessionId: "s1",
+        }),
+      );
+    });
+
+    const chip = host.querySelectorAll<HTMLElement>('[data-testid="fs-tab"]')[1];
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 42, clientY: 7 });
+    act(() => {
+      chip?.dispatchEvent(event);
+    });
+
+    // The browser's own menu would cover the strip the reader is acting on.
+    expect(event.defaultPrevented).toBe(true);
+    expect(calls).toEqual([{ key: "docs/b.md", x: 42, y: 7 }]);
   });
 });
 
@@ -430,5 +483,123 @@ describe("the save chord outside the editor", () => {
 
     expect(event.defaultPrevented).toBe(false);
     expect(mounted.saves).toEqual([]);
+  });
+});
+
+describe("the strip's batch close", () => {
+  let mounted: Harness | null = null;
+
+  afterEach(async () => {
+    if (mounted === null) return;
+    await act(async () => {
+      mounted?.root.unmount();
+    });
+    mounted.host.remove();
+    mounted.session.dispose();
+    mounted = null;
+  });
+
+  function chips(): HTMLElement[] {
+    return [...(mounted?.host.querySelectorAll<HTMLElement>('[data-testid="fs-tab"]') ?? [])];
+  }
+
+  function paths(): string[] {
+    return chips().map(chip => chip.getAttribute("data-path") ?? "");
+  }
+
+  function openMenu(index: number): void {
+    const chip = chips()[index];
+    act(() => {
+      chip?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+    });
+  }
+
+  async function choose(action: string): Promise<void> {
+    const row = document.querySelector<HTMLElement>(`[data-testid="fx-menu-item"][data-action="${action}"]`);
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+  }
+
+  function testId(id: string): HTMLElement | null {
+    return mounted?.host.querySelector<HTMLElement>(`[data-testid="${id}"]`) ?? null;
+  }
+
+  /** Let a closed pane's preview settle before the test ends, inside `act`. */
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await new Promise(resolve => {
+        setTimeout(resolve, 0);
+      });
+      await Promise.resolve();
+    });
+  }
+
+  it("closes every other tab and keeps the one the menu opened on", async () => {
+    mounted = await mountView({ dirty: false, paths: ["b.md", "c.md"] });
+    expect(paths()).toEqual(["a.md", "b.md", "c.md"]);
+
+    openMenu(1);
+    await choose("tab.close.others");
+
+    expect(paths()).toEqual(["b.md"]);
+  });
+
+  it("closes only the tabs to the right of the one the menu opened on", async () => {
+    mounted = await mountView({ dirty: false, paths: ["b.md", "c.md"] });
+
+    openMenu(0);
+    await choose("tab.close.right");
+
+    expect(paths()).toEqual(["a.md"]);
+  });
+
+  it("asks about a dirty draft in the batch and drops it only once answered", async () => {
+    mounted = await mountView({ dirty: false, paths: ["b.md", "c.md"] });
+    const draft = mounted.store.acquire("s1", "b.md");
+    await act(async () => {
+      await draft.reload();
+      draft.setDraft("# b edited");
+    });
+
+    openMenu(0);
+    await choose("tab.close.others");
+    await settle();
+
+    // The clean right-hand tab is gone; the dirty one holds the run open.
+    expect(paths()).toEqual(["a.md", "b.md"]);
+    expect(testId("fs-close-confirm")).not.toBeNull();
+
+    await act(async () => {
+      testId("fs-close-discard")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+
+    expect(paths()).toEqual(["a.md"]);
+    expect(mounted.store.peek("s1", "b.md")).toBeUndefined();
+    await settle();
+  });
+
+  it("keeps a cancelled draft and still closes the rest of the batch", async () => {
+    mounted = await mountView({ dirty: false, paths: ["b.md", "c.md"] });
+    const draft = mounted.store.acquire("s1", "b.md");
+    await act(async () => {
+      await draft.reload();
+      draft.setDraft("# b edited");
+    });
+
+    openMenu(0);
+    await choose("tab.close.others");
+    await settle();
+    await act(async () => {
+      testId("fs-close-cancel")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle();
+
+    // Cancelling refuses one draft, not the batch: c.md still went away.
+    expect(paths()).toEqual(["a.md", "b.md"]);
+    expect(mounted.store.peek("s1", "b.md")).toMatchObject({ text: "# b edited", dirty: true });
+    await settle();
   });
 });

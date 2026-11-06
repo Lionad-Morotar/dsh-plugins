@@ -97,6 +97,27 @@ export function panelKey(path: string, revision?: string): string {
 /** Caller spelling `git:<revision>:<path>` for a commit version. The stored key uses NULs. */
 const GIT_KEY = /^git:([0-9a-f]{4,64}):(.+)$/iu;
 
+/** Which side of a tab a batch close takes, or every tab but it. */
+export type CloseScope = "others" | "right";
+
+/**
+ * The panels a batch close from one tab drops, in strip order.
+ *
+ * Order is the strip's, not the caller's: the caller closes them one by one,
+ * and each close republishes the stack, so a list read from one snapshot must
+ * stay meaningful while it is consumed.
+ * @param panels - the strip as the gesture saw it.
+ * @param key - the tab the gesture opened on.
+ * @param scope - `others` for every other tab, `right` for the ones after it.
+ * @returns the keys to close; empty when the tab is not in the strip.
+ */
+export function closeBatch(panels: readonly PanelEntry[], key: string, scope: CloseScope): readonly string[] {
+  const index = panels.findIndex(panel => panel.key === key);
+  if (index < 0) return [];
+  const targets = scope === "others" ? panels.filter((_, at) => at !== index) : panels.slice(index + 1);
+  return targets.map(panel => panel.key);
+}
+
 /**
  * Build one panel stack.
  * @returns the stack; its snapshot is stable between changes.

@@ -23,7 +23,9 @@ import {
 import type { Translate } from "./copy.ts";
 import {
   MENU_ACTION,
+  TAB_MENU_ACTION,
   buildContextMenu,
+  buildTabMenu,
   parentDirectory,
   type ContextMenuAnchor,
   type ContextMenuEntry,
@@ -71,7 +73,7 @@ import {
   type PaneWidthStorage,
 } from "./pane-width.ts";
 import { CloseConfirm, PanelEmpty, PanelTabs } from "./panel-tabs.tsx";
-import { consumeViewRequest, createPanelStackRegistry, panelTitle } from "./panels.ts";
+import { closeBatch, consumeViewRequest, createPanelStackRegistry, panelTitle } from "./panels.ts";
 import { headLabel, joinChangeStats, parseStatusZ, type FsGitHead, type StatusMap } from "./status.ts";
 import { PreviewPane, saveFailureReason } from "./preview-pane.tsx";
 import type { RendererRegistry } from "./renderer-registry.ts";
@@ -445,6 +447,7 @@ export function createFsExplorerView({
     // Read by the Escape handler, which is registered once and must not be
     // rebuilt every time the menu opens.
     const contextMenuOpen = useRef(false);
+    const tabMenuOpen = useRef(false);
 
     // The open context menu: which row it addresses (undefined for the blank
     // area), where it opened, and the absolute path `info` answered for it.
@@ -460,10 +463,17 @@ export function createFsExplorerView({
         }
       | null
     >(null);
+    // The strip's menu: which tab it addressed, where it opened and the chip the
+    // keyboard returns to. A second menu beside the tree's rather than a mode of
+    // it — the two carry different targets, and closing one must not close the
+    // other.
+    const [tabMenu, setTabMenu] = useState<
+      | { readonly key: string; readonly anchor: MenuAnchor; readonly trigger: HTMLElement }
+      | null
+    >(null);
     // What the host's desktop can do. Probed once per session, not per menu: the
     // answer is a property of the host, not of the click.
-    const [capabilities, setCapabilities] = useState<WorkspaceCapabilities | undefined>(undefined);
-    // One transient sentence under the header: what the last action did.
+    const [capabilities, setCapabilities] = useState<WorkspaceCapabilities | undefined>(undefined);    // One transient sentence under the header: what the last action did.
     const [notice, setNotice] = useState<{ readonly text: string; readonly tone: "ok" | "error" } | null>(null);
     const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -512,8 +522,12 @@ export function createFsExplorerView({
 
     // Closing a dirty panel is a question, not a gesture: the bar keeps the
     // panel path so every answer still addresses the tab the reader asked to
-    // drop, even if another tab became active meanwhile.
-    const [pendingClose, setPendingClose] = useState<{ readonly path: string } | null>(null);
+    // drop, even if another tab became active meanwhile. `rest` is what remains
+    // of a batch close (关闭其他 / 关闭右侧): a run stops at its first dirty
+    // draft because that draft needs its own answer, and the answer resumes it.
+    const [pendingClose, setPendingClose] = useState<
+      { readonly path: string; readonly rest: readonly string[] } | null
+    >(null);
     const [closeSaving, setCloseSaving] = useState(false);
     const [closeError, setCloseError] = useState<string | null>(null);
     // The Escape handler is registered once; the flag tells it a bar is open.
@@ -551,30 +565,64 @@ export function createFsExplorerView({
     );
 
     /**
-     * Close one panel, asking first when a draft would be lost.
+     * Close a run of panels, asking about every dirty draft it meets.
      *
-     * Every closing gesture — the tab button, Delete on the strip, Ctrl+W —
-     * lands here, so the one place that knows what a dirty draft means also
-     * decides when the bar has to appear.
+     * Every closing gesture — the tab button, Delete on the strip, Ctrl+W, both
+     * batch rows — lands here, so the one place that knows what a dirty draft
+     * means also decides when the bar has to appear. Clean panels leave at once;
+     * dirty ones queue and are asked one at a time in strip order, because a
+     * batch that spans several drafts must not drop one silently. Keys read from
+     * the snapshot the gesture saw are re-checked against the live strip, since
+     * an earlier close in the run can already have dropped a tab the caller
+     * listed.
+     */
+    const closeSequence = useCallback(
+      (keys: readonly string[]): void => {
+        const open = new Set(stack.snapshot().panels.map(entry => entry.key));
+        const pending: string[] = [];
+        for (const key of keys) {
+          if (!open.has(key)) continue;
+          const draft = sessionId === undefined ? undefined : documents?.peek(sessionId, key);
+          if (draft?.dirty === true) {
+            pending.push(key);
+            continue;
+          }
+          // Nobody is holding the draft any more, and a closed panel must not
+          // resurrect it on the next open of the same path.
+          if (sessionId !== undefined) documents?.forget(sessionId, key);
+          stack.close(key);
+        }
+        const head = pending[0];
+        setCloseError(null);
+        setPendingClose(head === undefined ? null : { path: head, rest: pending.slice(1) });
+      },
+      [documents, sessionId, stack],
+    );
+
+    /**
+     * Leave the answered panel and pick up the rest of the run.
+     * @param rest - the panels the batch still wants closed, in strip order.
+     */
+    const advanceClose = useCallback(
+      (rest: readonly string[]): void => {
+        setPendingClose(null);
+        setCloseError(null);
+        if (rest.length > 0) closeSequence(rest);
+      },
+      [closeSequence],
+    );
+
+    /**
+     * Close one panel, asking first when a draft would be lost.
+     * @param path - the panel to close; the active one when omitted.
      */
     const requestClose = useCallback(
       (path?: string): void => {
         const target = path ?? stack.snapshot().active ?? undefined;
         if (target === undefined) return;
-        const draft = sessionId === undefined ? undefined : documents?.peek(sessionId, target);
-        if (draft?.dirty === true) {
-          setCloseError(null);
-          setPendingClose({ path: target });
-          return;
-        }
-        setPendingClose(null);
-        setCloseError(null);
-        // Nobody is holding the draft any more, and a closed panel must not
-        // resurrect it on the next open of the same path.
-        if (sessionId !== undefined) documents?.forget(sessionId, target);
-        stack.close(target);
+        closeSequence([target]);
       },
-      [documents, sessionId, stack],
+      [closeSequence, stack],
     );
 
     /** Answer "save and close": the panel only leaves once the write landed. */
@@ -583,9 +631,9 @@ export function createFsExplorerView({
       if (target === null) return;
       const session = sessionId === undefined ? undefined : documents?.find(sessionId, target.path);
       if (session === undefined) {
-        setPendingClose(null);
         if (sessionId !== undefined) documents?.forget(sessionId, target.path);
         stack.close(target.path);
+        advanceClose(target.rest);
         return;
       }
       setCloseSaving(true);
@@ -602,27 +650,36 @@ export function createFsExplorerView({
           );
           return;
         }
-        setPendingClose(null);
         // The write landed, so the draft is the disk now; dropping the session
         // keeps a stale copy from shadowing the file the next time it opens.
         if (sessionId !== undefined) documents?.forget(sessionId, target.path);
         stack.close(target.path);
+        advanceClose(target.rest);
       });
-    }, [documents, pendingClose, sessionId, stack, t]);
+    }, [advanceClose, documents, pendingClose, sessionId, stack, t]);
 
     const discardAndClose = useCallback((): void => {
       const target = pendingClose;
-      setPendingClose(null);
       setCloseError(null);
-      if (target === null) return;
+      if (target === null) {
+        setPendingClose(null);
+        return;
+      }
       if (sessionId !== undefined) documents?.forget(sessionId, target.path);
       stack.close(target.path);
-    }, [documents, pendingClose, sessionId, stack]);
+      advanceClose(target.rest);
+    }, [advanceClose, documents, pendingClose, sessionId, stack]);
 
+    // Cancelling keeps the asked panel and still closes the rest: the reader
+    // refused one draft, not the batch they had just asked for.
     const cancelClose = useCallback((): void => {
-      setPendingClose(null);
-      setCloseError(null);
-    }, []);
+      const target = pendingClose;
+      if (target === null) {
+        setCloseError(null);
+        return;
+      }
+      advanceClose(target.rest);
+    }, [advanceClose, pendingClose]);
 
     /**
      * Read one directory level and write it into the ledger.
@@ -1088,7 +1145,8 @@ export function createFsExplorerView({
       if (typeof document === "undefined") return;
       const handler = createEscapeHandler({
         focusComposer,
-        hasModal: () => pendingCloseRef.current !== null || contextMenuOpen.current || hasOpenModal(document),
+        hasModal: () =>
+          pendingCloseRef.current !== null || contextMenuOpen.current || tabMenuOpen.current || hasOpenModal(document),
       });
       const listener = (event: KeyboardEvent): void => handler(event);
       document.addEventListener("keydown", listener, true);
@@ -1510,9 +1568,46 @@ export function createFsExplorerView({
 
     const closeContextMenu = useCallback((): void => setContextMenu(null), []);
 
+    /**
+     * Open the strip's menu for one tab.
+     *
+     * The tab is named by its key, which the strip hands back verbatim, so the
+     * menu addresses the tab the reader pressed rather than whichever one
+     * happens to be active. Actions read the strip again when they run: the
+     * menu can stay open while another gesture reorders it.
+     */
+    const openTabMenu = useCallback((key: string, anchor: MenuAnchor, trigger: HTMLElement): void => {
+      setTabMenu({ key, anchor, trigger });
+    }, []);
+
+    const closeTabMenu = useCallback((): void => setTabMenu(null), []);
+
+    /**
+     * Run one row of the strip's menu.
+     *
+     * The menu closes first: closing tabs republishes the strip under it, and a
+     * menu anchored to a tab that just left would point at nothing.
+     */
+    const runTabMenuAction = useCallback(
+      (id: string): void => {
+        const menu = tabMenu;
+        setTabMenu(null);
+        if (menu === null) return;
+        if (id === TAB_MENU_ACTION.close) {
+          requestClose(menu.key);
+          return;
+        }
+        const scope = id === TAB_MENU_ACTION.closeOthers ? "others" : id === TAB_MENU_ACTION.closeRight ? "right" : undefined;
+        if (scope === undefined) return;
+        closeSequence(closeBatch(stack.snapshot().panels, menu.key, scope));
+      },
+      [closeSequence, requestClose, stack, tabMenu],
+    );
+
     // The Escape handler reads this flag rather than the state, so the menu
     // closing never re-registers the document listener.
     contextMenuOpen.current = contextMenu !== null;
+    tabMenuOpen.current = tabMenu !== null;
 
     // The remote rows, rebuilt whenever the snapshot, the row or the absolute
     // path changes. `absolutePath` arrives asynchronously from `info`, so this
@@ -1701,6 +1796,14 @@ export function createFsExplorerView({
               t,
             ),
       [capabilities, contextMenu, remoteLinks, t, workspace],
+    );
+
+    // The strip's rows. Rebuilt from the live snapshot so a tab that closed
+    // while the menu was up cannot be acted on, and so the batch rows describe
+    // the strip the reader is looking at.
+    const tabMenuEntries: readonly ContextMenuEntry[] = useMemo(
+      () => (tabMenu === null ? [] : buildTabMenu({ panels: panels.panels, key: tabMenu.key }, t)),
+      [panels.panels, t, tabMenu],
     );
     // Opening a result does what opening a row in the tree does, plus the
     // reveal the tree would already have: the ancestors open so the file keeps
@@ -1956,6 +2059,7 @@ export function createFsExplorerView({
                   onActivate={key => stack.activate(key)}
                   onClose={requestClose}
                   onStep={delta => (delta === 1 ? stack.next() : stack.previous())}
+                  onTabMenu={openTabMenu}
                   documents={documents}
                   sessionId={sessionId}
                 />
@@ -2021,6 +2125,16 @@ export function createFsExplorerView({
             {...(contextMenu.trigger === undefined
               ? {}
               : { returnFocus: () => contextMenu.trigger ?? null })}
+          />
+        )}
+
+        {tabMenu === null || tabMenuEntries.length === 0 ? null : (
+          <ContextMenu
+            entries={tabMenuEntries}
+            anchor={tabMenu.anchor}
+            onSelect={runTabMenuAction}
+            onClose={closeTabMenu}
+            returnFocus={() => tabMenu.trigger}
           />
         )}
 

@@ -14,6 +14,7 @@
  */
 import { useEffect, useRef, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
+import type { ContextMenuAnchor } from "./context-menu.ts";
 import type { Translate } from "./copy.ts";
 import type { DocumentStore } from "./document-session.ts";
 import { badgeFor, iconFor } from "./model.ts";
@@ -49,6 +50,14 @@ export interface PanelTabsProps {
   readonly onActivate: (key: string) => void;
   readonly onClose: (key: string) => void;
   readonly onStep: (delta: 1 | -1) => void;
+  /**
+   * Open the strip's own menu for one tab.
+   *
+   * The menu itself lives in the view because only it owns the stack and the
+   * drafts; the strip only knows which chip was pressed. Absent keeps the
+   * browser's menu, which is what a host-inspection context wants.
+   */
+  readonly onTabMenu?: (key: string, anchor: ContextMenuAnchor, trigger: HTMLElement) => void;
   /** The shared drafts; absent renders the strip without unsaved dots. */
   readonly documents?: DocumentStore;
   readonly sessionId?: string;
@@ -88,6 +97,7 @@ export function PanelTabs({
   onActivate,
   onClose,
   onStep,
+  onTabMenu,
   documents,
   sessionId,
 }: PanelTabsProps) {
@@ -137,6 +147,17 @@ export function PanelTabs({
             data-active={selected ? "true" : "false"}
             data-dirty={dirty.has(panel.path) ? "true" : "false"}
             role="presentation"
+            onContextMenu={
+              onTabMenu === undefined
+                ? undefined
+                : event => {
+                    // The strip has no other secondary gesture, and the browser's
+                    // menu would cover the tab the reader is about to close.
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onTabMenu(panel.key, { x: event.clientX, y: event.clientY }, event.currentTarget);
+                  }
+            }
           >
             <button
               type="button"
