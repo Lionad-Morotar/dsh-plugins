@@ -6,7 +6,7 @@ window.__ModuleLoader__.load({
     var exports = module.exports;
 /*! dsh-fs-explorer | MIT
  * Bundles third-party code through dsh-preview-viewers: three.js and utif (MIT),
- * dxf-viewer (MPL-2.0), Google Draco (Apache-2.0).
+ * dxf-viewer (MPL-2.0), Google Draco and pdf.js (Apache-2.0).
  * Full license texts: see THIRD-PARTY-NOTICES.md in this package.
  */
 "use strict";var er=Object.defineProperty;var v6=Object.getOwnPropertyDescriptor;var x6=Object.getOwnPropertyNames;var b6=Object.prototype.hasOwnProperty;var S6=(i,e)=>{for(var t in e)er(i,t,{get:e[t],enumerable:!0})},M6=(i,e,t,n)=>{if(e&&typeof e=="object"||typeof e=="function")for(let r of x6(e))!b6.call(i,r)&&r!==t&&er(i,r,{get:()=>e[r],enumerable:!(n=v6(e,r))||n.enumerable});return i};var w6=i=>M6(er({},"__esModule",{value:!0}),i);var Df={};S6(Df,{FamilyView:()=>Pf,renderer:()=>If});module.exports=w6(Df);var Vt=require("react");var To=`var $jscomp=$jscomp||{};$jscomp.scope={};$jscomp.arrayIteratorImpl=function(h){var n=0;return function(){return n<h.length?{done:!1,value:h[n++]}:{done:!0}}};$jscomp.arrayIterator=function(h){return{next:$jscomp.arrayIteratorImpl(h)}};$jscomp.makeIterator=function(h){var n="undefined"!=typeof Symbol&&Symbol.iterator&&h[Symbol.iterator];return n?n.call(h):$jscomp.arrayIterator(h)};$jscomp.ASSUME_ES5=!1;$jscomp.ASSUME_NO_NATIVE_MAP=!1;$jscomp.ASSUME_NO_NATIVE_SET=!1;$jscomp.SIMPLE_FROUND_POLYFILL=!1;

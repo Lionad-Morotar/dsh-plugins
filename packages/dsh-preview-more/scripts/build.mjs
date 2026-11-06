@@ -107,7 +107,7 @@ async function assertChunksCoverCatalogue() {
 const LICENSE_BANNER = [
   "/*! dsh-preview-more | MIT",
   " * Bundles third-party code: three.js and utif (MIT),",
-  " * dxf-viewer (MPL-2.0), Google Draco (Apache-2.0).",
+  " * dxf-viewer (MPL-2.0), Google Draco and pdf.js (Apache-2.0).",
   " * Full license texts: see THIRD-PARTY-NOTICES.md in this package.",
   " */",
 ].join("\n");

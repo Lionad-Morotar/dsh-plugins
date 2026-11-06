@@ -41,7 +41,7 @@
 - 进入即就位：切到本视图时键盘焦点落在左侧树上，不用先点一下才能按方向键。标签栈为空的那次进入，如果工作区根目录有 README（`README` / `.md` / `.markdown` / `.mdx` / `.txt`，大小写不敏感），顺手把它打开——右栏从空白变成工作区门面，光标停在这一行上；没有 README 就只把焦点放在树上。标签栈里已经有面板时只接管焦点，不动读者已经开着的东西。嵌套的子目录 README 不算，那是读者没问的问题。
 - 错误态：未选会话、文件服务不可用、工作区为空、目录读失败、预览的删除 / 无权限 / 断链 / 非文本 / 超上限各有文案与恢复动作。指向普通文件的符号链接不算错误：预览跟随链接读取目标，路径栏在链接路径后标出真实地址，复制路径也拿的是真实地址。
 - 跨面板跳转：接受 `openView("fs-explorer", "path:<工作区相对路径>:<行号>")`，Git 变更面板点文件即按这个格式跳过来并打开对应行。工作区外的文件走 `abs:<绝对路径>:<行号>`：绝对路径不剥前导 `/`，树里没有对应行所以跳过 reveal，读取仍交给 `workspaceFiles.read(sessionId, 绝对路径)`（宿主明确接受绝对路径）。提交详情里的文件行走 `git:<hash>:<line>:<path>`：行号段必填，路径取剩余全部内容；面板按 `(revision, path)` 建标签，同一路径在不同提交下各占一条标签，标签带短哈希。提交版本的二进制家族文件显示“提交版本的二进制预览暂不支持”，不会读工作区当前文件。第四种拼写 `reveal:<工作区相对路径>` 只要光标、不要面板：展开祖先链并逐级读 listing，把树光标选到该行，目录则同时展开，但不 `stack.open`。侧边栏与正文引用里的目录都用它，因为把目录当面板打开会用一个空标签页换掉读者正在看的东西。`reveal:` 只认工作区相对路径，不解析行号段（光标停在行上，没有行内位置可言），也不支持绝对路径。
-- 地址桥：宿主原生打开面（聊天里的文件链接、工具行的 `file:line`、`@` 引用、present 卡片）都经 `ctx.sidebarRight.openResource(address)` 落到右侧栏 tab。本包在 `sidebarRightTabs` 注册一个「转发 tab」（`dsh-fs-explorer:bridge`，`dsh-resource://file/**`，extension 档），正文把 `dsh-resource://file/session/<sid>/<path>` 转成上面的 focus、切到本视图并自关，所以这些入口最终落在同一套树、标签栈与家族渲染器里。认领范围是允许清单：共享格式目录的家族后缀 + 文本后缀 + 无后缀白名单（Makefile / Dockerfile / LICENSE / README / CHANGELOG），宿主更强的后缀（pdf、Office、图片、csv 等）即使出现在清单里也不认领，留给内置预览。会话不一致时保留 tab 并打一条诊断，绝不把别的会话的文件开进当前视图。
+- 地址桥：宿主原生打开面（聊天里的文件链接、工具行的 `file:line`、`@` 引用、present 卡片）都经 `ctx.sidebarRight.openResource(address)` 落到右侧栏 tab。本包在 `sidebarRightTabs` 注册一个「转发 tab」（`dsh-fs-explorer:bridge`，`dsh-resource://file/**`，extension 档），正文把 `dsh-resource://file/session/<sid>/<path>` 转成上面的 focus、切到本视图并自关，所以这些入口最终落在同一套树、标签栈与家族渲染器里。认领范围是允许清单：共享格式目录的家族后缀 + 文本后缀 + 无后缀白名单（Makefile / Dockerfile / LICENSE / README / CHANGELOG），宿主更强的后缀（Office、csv 等）即使出现在清单里也不认领，留给内置预览。会话不一致时保留 tab 并打一条诊断，绝不把别的会话的文件开进当前视图。
 - 面板级搜索（树）：头部放大镜打开搜索条，只搜当前面板、不碰命令面板的全局入口。主路径走宿主的 `remote.fileReferences.list(agentId, query, signal)` 工作区模糊索引——与 `⌘P`、`@` 补全同源，所以能搜到从未展开过的深目录；结果行是扁平列表，名字后面跟一条变暗的目录前缀，方向键在结果间移动、回车打开文件并展开祖先链、`Esc` 清空并把键盘交还树。搜索条放在 `.fx-tree-pane` 内、`.fx-scroll` 之外：滚动容器上挂着树的键盘处理（含同级前缀跳转），输入框若嵌进去，每个字母都会被前缀跳转吃掉。宿主没挂 `fileReferences` 时退化为「只在已加载的目录里按名字过滤」并在搜索条上标出范围（`索引` / `已加载`），不报错也不空白；降级找的是已读过的目录台账而非当前可见行，否则大仓里几乎永远搜不到。
 - 面板级搜索（预览）：工具栏的「查找」在当前页内查找，命中计数写作「本页 n/m」——翻页器一次只持有一页（`PREVIEW_MAX_LINES = 200`），跨页搜索要改成分页流式全文扫描，不在本切片。代码面用编辑器选区（`revealRange` dispatch 一个 selection 并 `scrollIntoView`），Markdown 与纯文本面在渲染后的文本节点上建 `Range`，两者偏移空间不同：编辑器文档就是页文本，而 Markdown 的 `**粗**` 标记与图片占位在渲染后不占字符，用页文本偏移会指错位置。查找条因此只存「第几个命中」，映射留给各自的 provider。搜索不改文档、不产生草稿变更。
 - 焦点有两个来源：宿主经 `openView` 交下来的 `viewRequest`，以及 `workbench.viewFocus` 队列。后者给"宿主没交出 focus 能力"的调用方（如命令面板 `⌘↵` 与地址桥）用：视图挂载时取走等待的请求，挂载后收到新请求也立刻消费，所以懒挂载不会丢目标。地址桥先入队再切换：宿主回退到自己的视图切换器时不携带 focus，队列是那条路上唯一的通道。
@@ -116,6 +116,10 @@ node .nsl/chain/accept-s7-fs-panels.mjs   # 面板状态机、键位表、Esc �
 单包：`pnpm --filter dsh-fs-explorer test`（712 用例）、`typecheck`、`build`。
 
 `lib/` 是提交进仓库的构建产物，profile 安装态不跑构建，所以改源码后必须重跑 `build`。陈旧的 `lib/` 会让插件在宿主里激活失败，而单插件激活失败会连带整个 Web 端启动中断。`pnpm --filter dsh-fs-explorer check:lib` 把这件事变成可自动判定的门（构建到内存后与磁盘 `lib/` 逐文件比对字节，不一致即失败，且不会删除 `lib/`），`test` 已经前置调用它。
+
+## 第三方组件
+
+`lib/` 里的家族 chunk 打包了五个第三方库：three.js（MIT）、utif（MIT）、dxf-viewer（MPL-2.0）、Google Draco（Apache-2.0）、pdf.js（Apache-2.0）。完整许可文本与源码地址见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。本包自身是 MIT。
 
 ## 结构
 

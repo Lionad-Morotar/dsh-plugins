@@ -72,7 +72,7 @@ pnpm --filter dsh-preview-more typecheck
 
 ## 第三方组件
 
-`lib/` 里打包了四个第三方库：three.js（MIT）、utif（MIT）、dxf-viewer（MPL-2.0）、Google Draco（Apache-2.0）。完整许可文本与源码地址见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。本包自身是 MIT。
+`lib/` 里打包了五个第三方库：three.js（MIT）、utif（MIT）、dxf-viewer（MPL-2.0）、Google Draco（Apache-2.0）、pdf.js（Apache-2.0）。完整许可文本与源码地址见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。本包自身是 MIT。
 
 ## 边界
 

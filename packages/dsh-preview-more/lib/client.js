@@ -5,7 +5,7 @@ window.__ModuleLoader__.load({
     var exports = module.exports;
 /*! dsh-preview-more | MIT
  * Bundles third-party code: three.js and utif (MIT),
- * dxf-viewer (MPL-2.0), Google Draco (Apache-2.0).
+ * dxf-viewer (MPL-2.0), Google Draco and pdf.js (Apache-2.0).
  * Full license texts: see THIRD-PARTY-NOTICES.md in this package.
  */
 "use strict";var f=Object.defineProperty;var D=Object.getOwnPropertyDescriptor;var M=Object.getOwnPropertyNames;var j=Object.prototype.hasOwnProperty;var A=(e,t)=>{for(var r in t)f(e,r,{get:t[r],enumerable:!0})},V=(e,t,r,i)=>{if(t&&typeof t=="object"||typeof t=="function")for(let n of M(t))!j.call(e,n)&&n!==r&&f(e,n,{get:()=>t[n],enumerable:!(i=D(t,n))||i.enumerable});return e};var L=e=>V(f({},"__esModule",{value:!0}),e);var $={};A($,{boot:()=>_,clientPlugin:()=>E,default:()=>W,loadChunk:()=>g});module.exports=L($);var p=[{family:"scene3d",extensions:["glb","gltf","obj","stl","3mf"],titleKey:"scene3d.title",claims:["workbench","sidebar"]},{family:"raster",extensions:["tif","tiff","avif"],titleKey:"raster.title",claims:["workbench","sidebar"]},{family:"cad",extensions:["dxf"],titleKey:"cad.title",claims:["workbench","sidebar"]},{family:"image",extensions:["png","jpg","jpeg","gif","webp","bmp","ico","svg"],titleKey:"image.title",claims:["workbench"]},{family:"pdf",extensions:["pdf"],titleKey:"pdf.title",claims:["workbench"]}];function v(){return p.flatMap(e=>[...e.extensions])}function b(e){return p.filter(t=>t.claims.includes(e)).map(t=>t.family)}function x(e){return p.find(t=>t.family===e)?.extensions??[]}function P(e){let t=e.slice(e.lastIndexOf("/")+1),r=t.lastIndexOf(".");if(r<=0)return null;let i=t.slice(r+1).toLowerCase();return p.find(n=>n.extensions.includes(i))?.family??null}var y="dsh-preview-more",I=`

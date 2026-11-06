@@ -148,7 +148,7 @@ const SIZE_BUDGETS = {
 const ENGINE_BANNER = [
   "/*! dsh-fs-explorer | MIT",
   " * Bundles third-party code through dsh-preview-viewers: three.js and utif (MIT),",
-  " * dxf-viewer (MPL-2.0), Google Draco (Apache-2.0).",
+  " * dxf-viewer (MPL-2.0), Google Draco and pdf.js (Apache-2.0).",
   " * Full license texts: see THIRD-PARTY-NOTICES.md in this package.",
   " */",
 ].join("\n");
