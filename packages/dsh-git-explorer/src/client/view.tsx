@@ -21,7 +21,8 @@ import {
 import { ChangesPane } from "./changes-pane.tsx";
 import { getBranchStore, type BranchStoreFace } from "./branch-store.ts";
 import { DetailPane } from "./detail-pane.tsx";
-import { HistoryPane } from "./history-pane.tsx";
+import { WorkingTreePane } from "./working-tree-pane.tsx";
+import { HistoryPane, UNCOMMITTED } from "./history-pane.tsx";
 import { pageQuery } from "./history-query.ts";
 import type { Translate } from "./copy.ts";
 import { createCommitJump, createJump, groupChanges, layoutGraph, parseCommitFocus, type CommitJumpSeam, type GraphRow } from "./model.ts";
@@ -602,6 +603,13 @@ export function createGitExplorerView(wiring: ViewWiring) {
           pendingFocus.current = undefined;
           setSelected(previous => {
             if (focusHash !== undefined) return focusHash;
+            // The sentinel names the working tree, which this snapshot may have
+            // just found clean. It cannot survive that: the row it pointed at is
+            // gone, so the detail column falls back to a commit instead of
+            // summarising an empty tree. The test is the same one the row is
+            // built from, so the two cannot disagree about whether it exists.
+            const dirty = groupChanges(snapshot.status).length > 0;
+            if (previous === UNCOMMITTED) return dirty ? previous : snapshot.commits[0]?.hash;
             return previous !== undefined && snapshot.commits.some(commit => commit.hash === previous)
               ? previous
               : snapshot.commits[0]?.hash;
@@ -696,9 +704,10 @@ export function createGitExplorerView(wiring: ViewWiring) {
         const first = load.snapshot.commits;
         setCommits(first);
         setHasMore(first.length < load.snapshot.counts.commits);
-        setSelected(previous =>
-          previous !== undefined && first.some(commit => commit.hash === previous) ? previous : first[0]?.hash,
-        );
+        setSelected(previous => {
+          if (previous === UNCOMMITTED) return previous;
+          return previous !== undefined && first.some(commit => commit.hash === previous) ? previous : first[0]?.hash;
+        });
         return;
       }
       setSearching(true);
@@ -725,6 +734,7 @@ export function createGitExplorerView(wiring: ViewWiring) {
             setCommits(page.commits.map(commit => ({ ...commit, refs: refs.get(commit.hash) ?? [] })));
             setHasMore(page.hasMore);
             setSelected(previous => {
+              if (previous === UNCOMMITTED) return previous;
               if (previous !== undefined && page.commits.some(commit => commit.hash === previous)) return previous;
               return page.commits[0]?.hash;
             });
@@ -823,6 +833,13 @@ export function createGitExplorerView(wiring: ViewWiring) {
 
     const head = snapshot?.head;
     const changedCount = groups.reduce((sum, group) => sum + group.files.length, 0);
+    // The working tree as the history list and the detail column both need it:
+    // the list draws it as a row, the column summarises it when selected. Built
+    // once so the two cannot disagree about the file count.
+    const workingTree = useMemo(
+      () => (changedCount === 0 ? undefined : { groups, stats, fileCount: changedCount }),
+      [changedCount, groups, stats],
+    );
 
     return (
       <section
@@ -952,6 +969,8 @@ export function createGitExplorerView(wiring: ViewWiring) {
                 onSelect={setSelected}
                 onLoadMore={loadMore}
                 onSearch={setSearch}
+                workingTree={workingTree}
+                onSelectUncommitted={() => setSelected(UNCOMMITTED)}
                 {...(load.snapshot.counts.commits === 0
                   ? {
                       emptyTitle: t("state.emptyRepository.title"),
@@ -981,14 +1000,18 @@ export function createGitExplorerView(wiring: ViewWiring) {
                 onKeyDown={onRowHandleKeyDown}
                 onDoubleClick={resetDetailPane}
               />
-              <DetailPane
-                sessionId={sessionId}
-                hash={selected}
-                remote={remote}
-                t={t}
-                onSelect={setSelected}
-                onOpenFile={onOpenCommitFile}
-              />
+              {selected === UNCOMMITTED && workingTree !== undefined ? (
+                <WorkingTreePane groups={workingTree.groups} stats={workingTree.stats} t={t} onOpen={onOpenFile} />
+              ) : (
+                <DetailPane
+                  sessionId={sessionId}
+                  hash={selected}
+                  remote={remote}
+                  t={t}
+                  onSelect={setSelected}
+                  onOpenFile={onOpenCommitFile}
+                />
+              )}
             </div>
           </div>
         ) : null}

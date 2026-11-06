@@ -11,7 +11,7 @@ import {
   type UIEvent,
 } from "react";
 
-import { computeWindow, graphLaneCount, HISTORY_ROW_HEIGHT, relativeTime, revealRowIndex, type GraphRow } from "./model.ts";
+import { computeWindow, graphLaneCount, HISTORY_ROW_HEIGHT, relativeTime, revealRowIndex, type ChangeGroup, type GraphRow } from "./model.ts";
 import { cursorActionOf, nearTail, stepCursor } from "./cursor.ts";
 import type { Translate } from "./copy.ts";
 import type { GitCommitNode } from "../host/types.ts";
@@ -32,6 +32,23 @@ import type { PaneWidthStorage } from "./pane-width.ts";
 export { HISTORY_ROW_HEIGHT };
 /** How close to the last loaded row a cursor may walk before the list fetches. */
 const CURSOR_FETCH_AHEAD = 12;
+
+/**
+ * The selection value that stands for the working tree.
+ *
+ * Commit hashes are hexadecimal, so a word can never collide with one. The
+ * sentinel travels through the same `selectedHash` channel a commit uses, which
+ * is what lets a click, a keyboard move and a cross-panel jump all name the
+ * working tree without a second selection state to keep in sync.
+ */
+export const UNCOMMITTED = "uncommitted";
+
+/** What the synthetic first row needs to describe the working tree. */
+export interface WorkingTreeSummary {
+  readonly groups: readonly ChangeGroup[];
+  readonly stats: ReadonlyMap<string, { readonly additions: number | null; readonly deletions: number | null }>;
+  readonly fileCount: number;
+}
 
 /**
  * The graph column's width for a lane count, matching `GraphSvg`'s own sizing.
@@ -81,6 +98,13 @@ export interface HistoryPaneProps {
    * document's localStorage; tests inject a stand-in.
    */
   readonly columnStorage?: PaneWidthStorage | null;
+  /**
+   * The working tree, when it is dirty. Absent means clean, and the list is the
+   * commits alone with no row reserved for a tree that has nothing to show.
+   */
+  readonly workingTree?: WorkingTreeSummary;
+  /** Select the working tree; the view swaps the detail column for its summary. */
+  readonly onSelectUncommitted?: () => void;
 }
 
 function CommitRow({
@@ -134,6 +158,98 @@ function CommitRow({
       </span>
       <span className="gx-author">{commit.author}</span>
       <span className="gx-hash">{commit.hash.slice(0, 7)}</span>
+    </button>
+  );
+}
+
+/**
+ * The synthetic first row: the working tree, drawn in the same grid as a commit.
+ *
+ * It is a row rather than a banner because the reader walks it with the same
+ * keys and selects it with the same click; anything else would be a second
+ * navigation model for one line. The graph cell is a hollow ring so the eye can
+ * tell it from a commit dot before reading the label.
+ */
+function UncommittedRow({
+  summary,
+  laneCount,
+  top,
+  selected,
+  cursor,
+  t,
+  onSelect,
+}: {
+  readonly summary: WorkingTreeSummary;
+  readonly laneCount: number;
+  readonly top: number;
+  readonly selected: boolean;
+  readonly cursor: boolean;
+  readonly t: Translate;
+  readonly onSelect: () => void;
+}) {
+  const width = graphColumnWidth(laneCount);
+  const laneWidth = width / Math.max(1, laneCount);
+  // The ring sits on lane 0's centre, the same spot a commit node would take.
+  const cx = laneWidth / 2;
+  let additions = 0;
+  let deletions = 0;
+  let counted = 0;
+  for (const group of summary.groups) {
+    for (const file of group.files) {
+      const stat = summary.stats.get(file.path);
+      if (stat === undefined) continue;
+      additions += stat.additions ?? 0;
+      deletions += stat.deletions ?? 0;
+      counted += 1;
+    }
+  }
+  return (
+    <button
+      type="button"
+      className="gx-row gx-uncommitted"
+      style={{ top }}
+      data-selected={selected ? "true" : "false"}
+      data-cursor={cursor ? "true" : "false"}
+      data-testid="git-uncommitted-row"
+      title={t("uncommitted.hint")}
+      aria-label={t("uncommitted.hint")}
+      onClick={onSelect}
+    >
+      <svg
+        className="gx-graph"
+        width={width}
+        height={HISTORY_ROW_HEIGHT}
+        viewBox={`0 0 ${String(width)} ${String(HISTORY_ROW_HEIGHT)}`}
+        aria-hidden="true"
+        focusable="false"
+      >
+        <circle
+          data-testid="git-uncommitted-node"
+          cx={cx}
+          cy={HISTORY_ROW_HEIGHT / 2}
+          r={3.6}
+          fill="none"
+          stroke="var(--gx-accent)"
+          strokeWidth={1.6}
+          aria-hidden="true"
+        />
+      </svg>
+      <span className="gx-refs" data-testid="git-history-refs" />
+      <span className="gx-subject gx-uncommitted-label">
+        {`${t("uncommitted.label")} (${String(summary.fileCount)})`}
+      </span>
+      <span className="gx-time">
+        {/* A tree of only untracked paths has no line counts, so the cell stays
+            empty rather than reporting a misleading +0 -0. */}
+        {counted === 0 ? null : (
+          <>
+            <span className="gx-add">{`+${String(additions)}`}</span>{" "}
+            <span className="gx-del">{`-${String(deletions)}`}</span>
+          </>
+        )}
+      </span>
+      <span className="gx-author" />
+      <span className="gx-hash" />
     </button>
   );
 }
@@ -221,7 +337,7 @@ function ColumnHeader({
  * @returns the pane element.
  */
 export function HistoryPane(props: HistoryPaneProps) {
-  const { commits, graph, selectedHash, headHash, total, hasMore, loadingMore, loadError, searching, search, t, onSelect, onLoadMore, onSearch } = props;
+  const { commits, graph, selectedHash, headHash, total, hasMore, loadingMore, loadError, searching, search, t, onSelect, onLoadMore, onSearch, onSelectUncommitted } = props;
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
@@ -241,7 +357,23 @@ export function HistoryPane(props: HistoryPaneProps) {
   // what the detail pane follows; `selectedHash` can also change from a click or
   // a cross-panel jump, so the two are kept in sync in one direction only.
   const [cursor, setCursor] = useState<number | undefined>(undefined);
-  const cursorPath = cursor === undefined ? undefined : commits[cursor]?.hash;
+  // The row set the cursor indexes: the working tree first when it is dirty,
+  // then the commits. Every keyboard move, reveal and fetch decision reads this
+  // length, so the synthetic row cannot shift one of them by one.
+  const workingTree = props.workingTree;
+  const hasUncommitted = workingTree !== undefined && workingTree.fileCount > 0;
+  const rowOffset = hasUncommitted ? 1 : 0;
+  const rowCount = commits.length + rowOffset;
+  // The selection as a row index, so a sentinel and a hash resolve the same way.
+  const selectedIndex =
+    selectedHash === undefined
+      ? -1
+      : selectedHash === UNCOMMITTED
+        ? hasUncommitted
+          ? 0
+          : -1
+        : commits.findIndex(commit => commit.hash === selectedHash) + (hasUncommitted ? 1 : 0);
+  const cursorPath = cursor === undefined ? undefined : cursor < rowOffset ? UNCOMMITTED : commits[cursor - rowOffset]?.hash;
   const seenSelection = useRef<string | undefined>(undefined);
 
   useEffect(() => {
@@ -279,14 +411,16 @@ export function HistoryPane(props: HistoryPaneProps) {
   // A new page or a new query replaces the list under the cursor. The hash is
   // the identity that survives that, so the cursor is re-resolved from it and
   // dropped when the commit is no longer loaded rather than pointing at whatever
-  // row now happens to sit at the old index.
+  // row now happens to sit at the old index. The sentinel is an identity too:
+  // it resolves to row 0 while the working tree is dirty and to nothing once it
+  // is clean.
   useEffect(() => {
-    const hash = cursorPath;
-    if (hash === undefined) return;
-    const index = commits.findIndex(commit => commit.hash === hash);
+    const path = cursorPath;
+    if (path === undefined) return;
+    const index = path === UNCOMMITTED ? (hasUncommitted ? 0 : -1) : commits.findIndex(commit => commit.hash === path) + rowOffset;
     if (index !== cursor && index >= 0) setCursor(index);
     else if (index < 0) setCursor(undefined);
-  }, [commits, cursor, cursorPath]);
+  }, [commits, cursor, cursorPath, hasUncommitted, rowOffset]);
 
   // A click or a cross-panel jump moves the selection without the keyboard, and
   // the cursor should continue from where the reader is looking. It only follows
@@ -298,9 +432,8 @@ export function HistoryPane(props: HistoryPaneProps) {
     const moved = seenSelection.current !== selectedHash;
     seenSelection.current = selectedHash;
     if (!moved || cursor === undefined || selectedHash === undefined) return;
-    const index = commits.findIndex(commit => commit.hash === selectedHash);
-    if (index >= 0 && index !== cursor) setCursor(index);
-  }, [selectedHash, commits, cursor]);
+    if (selectedIndex >= 0 && selectedIndex !== cursor) setCursor(selectedIndex);
+  }, [selectedHash, commits, cursor, selectedIndex]);
 
   // Minimum-movement reveal, computed from the same row height the virtual
   // window mounts with; a formula that disagreed would land the cursor a row off
@@ -314,20 +447,24 @@ export function HistoryPane(props: HistoryPaneProps) {
       viewport: element.clientHeight === 0 ? 480 : element.clientHeight,
       rowHeight: HISTORY_ROW_HEIGHT,
       index: cursor,
-      rowCount: commits.length,
+      rowCount,
     });
     if (next === element.scrollTop) return;
     element.scrollTop = next;
     setScrollTop(next);
-  }, [cursor, commits.length]);
+  }, [cursor, rowCount]);
 
   // Walking into the tail asks for the next page, so the cursor keeps going
   // instead of stopping at the last loaded row. The scroll path above does the
-  // same for a pointer; both go through `maybeLoad`, which owns the guard.
+  // same for a pointer; both go through `maybeLoad`, which owns the guard. The
+  // proximity rule counts commits, not rows: the synthetic row is not a commit
+  // and must neither trigger a fetch early nor hold one back.
   useEffect(() => {
-    if (cursor === undefined || !nearTail(cursor, commits.length, CURSOR_FETCH_AHEAD)) return;
+    if (cursor === undefined) return;
+    const commitIndex = cursor - rowOffset;
+    if (commitIndex < 0 || !nearTail(commitIndex, commits.length, CURSOR_FETCH_AHEAD)) return;
     maybeLoad();
-  }, [cursor, commits.length, maybeLoad]);
+  }, [cursor, commits.length, maybeLoad, rowOffset]);
 
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>): void => {
@@ -341,25 +478,35 @@ export function HistoryPane(props: HistoryPaneProps) {
       });
       if (action === null) return;
       event.preventDefault();
-      // With no cursor yet, the walk starts from the commit the detail pane is
+      // With no cursor yet, the walk starts from the row the detail pane is
       // showing: the reader is looking at it, so "next" means the one below it.
-      const seed = cursor ?? commits.findIndex(commit => commit.hash === selectedHash);
-      const next = stepCursor(seed < 0 ? undefined : seed, action, commits.length);
+      const seed = cursor ?? (selectedIndex >= 0 ? selectedIndex : undefined);
+      const next = stepCursor(seed, action, rowCount);
       if (next === undefined) return;
       setCursor(next);
-      const commit = commits[next];
       // Moving the cursor is selecting: the detail pane is what the reader is
       // reading, and it must not need a second Enter to catch up.
+      if (next === 0 && hasUncommitted) {
+        onSelectUncommitted?.();
+        return;
+      }
+      const commit = commits[next - rowOffset];
       if (commit !== undefined) onSelect(commit.hash);
     },
-    [commits, cursor, onSelect, selectedHash],
+    [commits, cursor, hasUncommitted, onSelect, onSelectUncommitted, rowCount, rowOffset, selectedIndex],
   );
 
-  const slice = computeWindow(commits, {
-    scrollTop,
-    height: height === 0 ? 480 : height,
-    rowHeight: HISTORY_ROW_HEIGHT,
-  });
+  // The virtual window is computed over the row set, not the commit array: the
+  // synthetic row occupies a real slot, and a window derived from the commits
+  // alone would mount one row too few at the bottom.
+  const slice = computeWindow(
+    Array.from({ length: rowCount }, (_, index) => index),
+    {
+      scrollTop,
+      height: height === 0 ? 480 : height,
+      rowHeight: HISTORY_ROW_HEIGHT,
+    },
+  );
   const laneCount = Math.max(1, graphLaneCount(graph));
 
   // A pointer drag works in pixel deltas from the width the column had when the
@@ -519,21 +666,41 @@ export function HistoryPane(props: HistoryPaneProps) {
             onScroll={handleScroll}
             onKeyDown={handleKeyDown}
           >
-          <div className="gx-vlist" style={{ height: commits.length * HISTORY_ROW_HEIGHT }}>
-            {slice.rows.map((commit, offset) => {
-              const index = slice.startIndex + offset;
+          <div className="gx-vlist" style={{ height: rowCount * HISTORY_ROW_HEIGHT }}>
+            {slice.rows.map(rowIndex => {
+              const top = rowIndex * HISTORY_ROW_HEIGHT;
+              if (rowIndex === 0 && hasUncommitted && workingTree !== undefined) {
+                return (
+                  <UncommittedRow
+                    key="uncommitted"
+                    summary={workingTree}
+                    laneCount={laneCount}
+                    top={top}
+                    selected={selectedHash === UNCOMMITTED}
+                    cursor={cursor === 0}
+                    t={t}
+                    onSelect={() => {
+                      setCursor(0);
+                      onSelectUncommitted?.();
+                    }}
+                  />
+                );
+              }
+              const index = rowIndex - rowOffset;
+              const commit = commits[index];
+              if (commit === undefined) return null;
               return (
                 <CommitRow
                   key={commit.hash}
                   commit={commit}
                   row={graph[index]}
                   laneCount={laneCount}
-                  top={index * HISTORY_ROW_HEIGHT}
+                  top={top}
                   selected={commit.hash === selectedHash}
                   head={commit.hash === headHash}
-                  cursor={commit.hash === cursorPath}
+                  cursor={rowIndex === cursor}
                   onSelect={hash => {
-                    setCursor(index);
+                    setCursor(rowIndex);
                     onSelect(hash);
                   }}
                 />

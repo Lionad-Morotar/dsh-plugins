@@ -431,6 +431,13 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
 }
 .gx-colhead-cell { position: relative; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .gx-colhead-time, .gx-colhead-hash { text-align: right; }
+/* The working-tree row reads as a peer of the commits, but its label is what
+   says so: the row carries no hash, so the weight has to do the work. */
+.gx-uncommitted-label { font-weight: 600; color: var(--gx-text); }
+/* The line totals sit in the date column, where a commit shows its age. */
+.gx-uncommitted .gx-time { display: flex; justify-content: flex-end; gap: 4px; }
+.gx-uncommitted .gx-add { color: var(--gx-added); }
+.gx-uncommitted .gx-del { color: var(--gx-deleted); }
 /* The handle sits on the column's right edge and overhangs it, so the hit area
    straddles the boundary the pointer is aiming at. */
 .gx-col-handle {
