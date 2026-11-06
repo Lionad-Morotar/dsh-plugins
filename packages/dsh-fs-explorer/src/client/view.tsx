@@ -228,6 +228,14 @@ export interface ViewWiring {
   readonly fileReferences?: () => FileReferencesFace | undefined;
   /** The session input facade, probed per click; absent on hosts without one. */
   readonly reference?: ReferenceWiringResolver;
+  /**
+   * Whether the chip's trigger source is registered right now.
+   *
+   * A getter because registration can land after this view is built, and a
+   * boolean captured here would keep the menu rows disabled on a host that
+   * finished wiring the source a moment later.
+   */
+  readonly referenceSourceAvailable?: () => boolean;
 }
 
 /**
@@ -430,6 +438,7 @@ export function createFsExplorerView({
   workspace: resolveWorkspace,
   fileReferences: resolveReferences,
   reference: resolveReference,
+  referenceSourceAvailable,
 }: ViewWiring) {
   // One registry per registered view: the host mounts and unmounts this
   // component on every view switch, while the factory itself lives on.
@@ -1659,8 +1668,9 @@ export function createFsExplorerView({
       return {
         session: true,
         insertReference: typeof facade?.insertReference === "function",
+        source: referenceSourceAvailable?.() === true,
       };
-    }, [props.inputActions, resolveReference, sessionId]);
+    }, [props.inputActions, referenceSourceAvailable, resolveReference, sessionId]);
 
     /**
      * Write one path into the composer as a structured reference.
@@ -1688,6 +1698,9 @@ export function createFsExplorerView({
             },
             insertReference: (insert, span) => facade?.insertReference?.(insert, span) ?? false,
             insertText: (text, span) => actions.insertText?.(text, span) ?? false,
+            // Read per write: the source can be disposed between the menu that
+            // enabled this row and this click.
+            canInsertReference: referenceSourceAvailable?.() === true,
           },
           payload,
         );

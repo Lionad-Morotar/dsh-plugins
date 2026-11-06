@@ -55,7 +55,7 @@ describe("buildContextMenu", () => {
         createParent: "docs",
         remoteLinks: undefined,
         bookmarkTarget: undefined,
-        inputTarget: { session: true, insertReference: true },
+        inputTarget: { session: true, insertReference: true, source: true },
       },
       t,
     );

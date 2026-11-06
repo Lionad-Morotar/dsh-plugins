@@ -80,6 +80,11 @@ export interface FsInsertionDeps {
   readonly captureSpan: () => FsReferenceSpan | undefined;
   readonly insertReference: (insert: FsReferenceInsert, span: FsReferenceSpan) => boolean;
   readonly insertText: (text: string, span: FsReferenceSpan) => boolean;
+  /**
+   * Whether a chip would survive to send time. Read per write: a source can be
+   * disposed after the menu that enabled this row was built.
+   */
+  readonly canInsertReference: boolean;
 }
 
 /** Which channel took the reference, or that neither did. */
@@ -205,11 +210,15 @@ export function insertFsReference(deps: FsInsertionDeps, payload: FsReferencePay
     clipboardText: payload.clipboardText,
     appearance: payload.kind === "fs.directory" ? "folder" : "file",
   };
-  const first = deps.captureSpan();
-  if (first !== undefined) {
-    if (deps.insertReference(insert, first)) return "reference";
-    const second = deps.captureSpan();
-    if (second !== undefined && deps.insertReference(insert, second)) return "reference";
+  // No registered source means no codec at send time, so the chip path is
+  // skipped entirely rather than attempted and refused later.
+  if (deps.canInsertReference) {
+    const first = deps.captureSpan();
+    if (first !== undefined) {
+      if (deps.insertReference(insert, first)) return "reference";
+      const second = deps.captureSpan();
+      if (second !== undefined && deps.insertReference(insert, second)) return "reference";
+    }
   }
   // No span at all means the composer has no caret to write at; the text path
   // asks once more because the editor may have settled in between.
@@ -231,10 +240,16 @@ export interface ReferenceTargetFacts {
   readonly session: boolean;
   /** The facade exposes `insertReference`; without it the write degrades to text. */
   readonly insertReference: boolean;
+  /**
+   * This package's trigger source is registered, so a chip would find a codec
+   * at send time. A chip without one is refused by the host and strands the
+   * draft, which is worse than the plain text this row could write instead.
+   */
+  readonly source: boolean;
 }
 
 /** Why the reference row cannot run, as a copy key. */
-export type ReferenceBlockReason = "noSession" | "noReference";
+export type ReferenceBlockReason = "noSession" | "noReference" | "noReferenceSource";
 
 /**
  * Decide whether the reference row may run.
@@ -251,6 +266,7 @@ export type ReferenceBlockReason = "noSession" | "noReference";
 export function referenceBlockReason(facts: ReferenceTargetFacts | undefined): ReferenceBlockReason | undefined {
   if (facts === undefined || !facts.session) return "noSession";
   if (!facts.insertReference) return "noReference";
+  if (!facts.source) return "noReferenceSource";
   return undefined;
 }
 
@@ -336,12 +352,34 @@ function isInputTriggers(value: unknown): value is InputTriggersFace {
  * @param ctx - the client context.
  * @returns a disposer for whatever was registered.
  */
-export function registerFsReferenceSource(ctx: ReferenceContextLike): () => void {
+/**
+ * What a registration left behind.
+ *
+ * `available` is a getter rather than a boolean because the `inject` path
+ * registers asynchronously: a host whose trigger service arrives after this
+ * plugin would otherwise be frozen at "no source" for the life of the page.
+ */
+export interface ReferenceSourceHandle {
+  /** Whether a chip written now would find a codec at send time. */
+  readonly available: boolean;
+  /** Drop the registration; idempotent. */
+  dispose(): void;
+}
+
+export function registerFsReferenceSource(ctx: ReferenceContextLike): ReferenceSourceHandle {
   const source = createFsReferenceSource();
   let dispose: (() => void) | undefined;
   const release = (): void => {
     dispose?.();
     dispose = undefined;
+  };
+  // The handle reports the live registration rather than a snapshot of it:
+  // the inject path may not have run yet when this object is built.
+  const handle: ReferenceSourceHandle = {
+    get available() {
+      return dispose !== undefined;
+    },
+    dispose: release,
   };
   if (typeof ctx.inject === "function") {
     try {
@@ -351,7 +389,7 @@ export function registerFsReferenceSource(ctx: ReferenceContextLike): () => void
           return release;
         }, "dsh-fs-explorer: reference source");
       });
-      return release;
+      return handle;
     } catch {
       // A refused injection is the same as a host without the service; the
       // `get` probe below is still worth one attempt.
@@ -361,10 +399,10 @@ export function registerFsReferenceSource(ctx: ReferenceContextLike): () => void
     const direct = ctx.get?.("inputTriggers");
     if (isInputTriggers(direct)) {
       dispose = direct.registerSource(source);
-      return release;
+      return handle;
     }
   } catch {
     // Unknown service name; the source stays unregistered.
   }
-  return release;
+  return handle;
 }

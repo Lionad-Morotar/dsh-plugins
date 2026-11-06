@@ -26,6 +26,7 @@ import {
   type FsReferenceInsert,
   type FsReferenceSpan,
 } from "../src/client/reference.ts";
+import { createReferenceResolver } from "../src/client/entry.ts";
 import {
   MENU_ACTION,
   TAB_MENU_ACTION,
@@ -143,6 +144,7 @@ describe("insertFsReference", () => {
       readonly spans?: readonly (FsReferenceSpan | undefined)[];
       readonly reference?: readonly boolean[];
       readonly text?: readonly boolean[];
+      readonly canInsertReference?: boolean;
     } = {},
   ): FsInsertionDeps & { readonly inserts: FsReferenceInsert[]; readonly texts: string[] } {
     const inserts: FsReferenceInsert[] = [];
@@ -165,6 +167,7 @@ describe("insertFsReference", () => {
         texts.push(value);
         return text[Math.min(textCall++, text.length - 1)] ?? false;
       },
+      canInsertReference: script.canInsertReference ?? true,
     };
   }
 
@@ -189,6 +192,13 @@ describe("insertFsReference", () => {
     expect(insertFsReference(d, fsReferencePayload("src/a.ts", "a.ts", "file"))).toBe("reference");
     expect(d.inserts).toHaveLength(2);
     expect(d.texts).toHaveLength(0);
+  });
+
+  it("never builds a chip when the source is not registered", () => {
+    const d = deps({ canInsertReference: false });
+    expect(insertFsReference(d, fsReferencePayload("src/a.ts", "a.ts", "file"))).toBe("text");
+    expect(d.inserts).toHaveLength(0);
+    expect(d.texts).toEqual(["@src/a.ts"]);
   });
 
   it("degrades to plain text when the chip path refuses twice", () => {
@@ -220,13 +230,21 @@ describe("insertFsReference", () => {
 
 describe("referenceBlockReason", () => {
   it("lets the row run when a session and the facade are both there", () => {
-    expect(referenceBlockReason({ session: true, insertReference: true })).toBeUndefined();
+    expect(referenceBlockReason({ session: true, insertReference: true, source: true })).toBeUndefined();
+  });
+
+  it("refuses the row when the source is not registered", () => {
+    // A chip with no codec is refused at send time and keeps the draft, so the
+    // row says why instead of writing one.
+    expect(referenceBlockReason({ session: true, insertReference: true, source: false })).toBe(
+      "noReferenceSource",
+    );
   });
 
   it("names the missing fact", () => {
     expect(referenceBlockReason(undefined)).toBe("noSession");
-    expect(referenceBlockReason({ session: false, insertReference: true })).toBe("noSession");
-    expect(referenceBlockReason({ session: true, insertReference: false })).toBe("noReference");
+    expect(referenceBlockReason({ session: false, insertReference: true, source: true })).toBe("noSession");
+    expect(referenceBlockReason({ session: true, insertReference: false, source: true })).toBe("noReference");
   });
 });
 
@@ -280,10 +298,14 @@ describe("registerFsReferenceSource", () => {
         return undefined;
       },
     };
-    const dispose = registerFsReferenceSource(ctx);
+    const handle = registerFsReferenceSource(ctx);
     expect(registerSource).toHaveBeenCalledTimes(1);
     expect(registerSource.mock.calls[0]?.[0]).toMatchObject({ name: "lionad.fs", trigger: "@" });
-    dispose();
+    // The handle reports the live registration, which is what the view reads
+    // when it decides whether a chip could be sent.
+    expect(handle.available).toBe(true);
+    handle.dispose();
+    expect(handle.available).toBe(false);
   });
 
   it("falls back to the resolver when injection is absent", () => {
@@ -318,8 +340,29 @@ describe("registerFsReferenceSource", () => {
   });
 });
 
-describe("buildContextMenu reference row", () => {
-  function menu(row: ContextMenuRow | undefined, inputTarget?: { session: boolean; insertReference: boolean }) {
+describe("createReferenceResolver", () => {
+  function host(facade: unknown) {
+    return {
+      get: (name: string) => {
+        if (name === "sessions") return { scope: () => ({ id: "actx" }) };
+        if (name === "conversation") return { input: { for: () => facade } };
+        return undefined;
+      },
+    };
+  }
+
+  it("does not expose a method the facade does not have", () => {
+    // A facade without `insertReference` is a real host shape. Wrapping it
+    // anyway would pass the menu's capability check and then throw on the
+    // write, which the plain-text fallback can never recover from.
+    const wiring = createReferenceResolver(host({ focus: vi.fn() }) as never)("s1"); expect(wiring).toBeDefined(); expect(wiring?.insertReference).toBeUndefined(); expect(typeof wiring?.focus).toBe("function"); expect(wiring?.notify).toBeUndefined(); }); it("exposes every method the facade really has", () => {
+    const wiring = createReferenceResolver(
+      host({ insertReference: vi.fn(() => true), focus: vi.fn(), notify: vi.fn() }) as never,
+    )("s1"); expect(typeof wiring?.insertReference).toBe("function"); expect(typeof wiring?.focus).toBe("function"); expect(typeof wiring?.notify).toBe("function"); }); }); describe("buildContextMenu reference row", () => {
+  function menu(
+    row: ContextMenuRow | undefined,
+    inputTarget?: { session: boolean; insertReference: boolean; source: boolean },
+  ) {
     return buildContextMenu(
       {
         row,
@@ -337,7 +380,7 @@ describe("buildContextMenu reference row", () => {
 
   it("offers an enabled row for a file and for a directory", () => {
     for (const row of [fileRow(), directoryRow()]) {
-      const entry = referenceEntry(menu(row, { session: true, insertReference: true }));
+      const entry = referenceEntry(menu(row, { session: true, insertReference: true, source: true }));
       expect(entry?.label).toBe("menu.reference");
       expect(entry?.disabled).toBeUndefined();
       expect(entry?.reason).toBeUndefined();
@@ -345,7 +388,7 @@ describe("buildContextMenu reference row", () => {
   });
 
   it("sits after the copy rows and before the bookmark row", () => {
-    const ids = menu(fileRow(), { session: true, insertReference: true }).map(entry => entry.id);
+    const ids = menu(fileRow(), { session: true, insertReference: true, source: true }).map(entry => entry.id);
     expect(ids.indexOf(MENU_ACTION.reference)).toBeGreaterThan(ids.indexOf(MENU_ACTION.copyRemote));
     expect(ids.indexOf(MENU_ACTION.reference)).toBeLessThan(ids.indexOf(MENU_ACTION.addBookmark));
   });
@@ -357,18 +400,22 @@ describe("buildContextMenu reference row", () => {
   });
 
   it("is disabled with its own reason when the facade has no insertReference", () => {
-    const entry = referenceEntry(menu(fileRow(), { session: true, insertReference: false }));
+    const entry = referenceEntry(menu(fileRow(), { session: true, insertReference: false, source: true }));
     expect(entry?.disabled).toBe(true);
     expect(entry?.reason).toBe("menu.reference.reason.noReference");
   });
 
   it("does not appear on the tree's blank area", () => {
-    expect(referenceEntry(menu(undefined, { session: true, insertReference: true }))).toBeUndefined();
+    expect(referenceEntry(menu(undefined, { session: true, insertReference: true, source: true }))).toBeUndefined();
   });
 });
 
 describe("buildTabMenu reference row", () => {
-  function menu(panels: readonly PanelEntry[], key: string, inputTarget?: { session: boolean; insertReference: boolean }) {
+  function menu(
+    panels: readonly PanelEntry[],
+    key: string,
+    inputTarget?: { session: boolean; insertReference: boolean; source: boolean },
+  ) {
     return buildTabMenu(
       { panels, key, ...(inputTarget === undefined ? {} : { inputTarget }) },
       t,
@@ -376,7 +423,7 @@ describe("buildTabMenu reference row", () => {
   }
 
   it("offers an enabled row for a workspace tab", () => {
-    const entry = menu([panel("src/a.ts")], "src/a.ts", { session: true, insertReference: true }).find(
+    const entry = menu([panel("src/a.ts")], "src/a.ts", { session: true, insertReference: true, source: true }).find(
       row => row.id === TAB_MENU_ACTION.reference,
     );
     expect(entry?.disabled).toBeUndefined();
@@ -386,6 +433,7 @@ describe("buildTabMenu reference row", () => {
     const entry = menu([panel("/etc/hosts", { absolute: true })], "/etc/hosts", {
       session: true,
       insertReference: true,
+      source: true,
     }).find(row => row.id === TAB_MENU_ACTION.reference);
     expect(entry?.disabled).toBe(true);
     expect(entry?.reason).toBe("menu.reference.reason.absolute");
@@ -395,6 +443,7 @@ describe("buildTabMenu reference row", () => {
     const entry = menu([panel("src/a.ts", { revision: "abc1234" })], "src/a.ts", {
       session: true,
       insertReference: true,
+      source: true,
     }).find(row => row.id === TAB_MENU_ACTION.reference);
     expect(entry?.disabled).toBe(true);
     expect(entry?.reason).toBe("menu.reference.reason.revision");
@@ -407,6 +456,6 @@ describe("buildTabMenu reference row", () => {
   });
 
   it("still offers nothing at all for a tab the strip no longer holds", () => {
-    expect(menu([panel("src/a.ts")], "src/gone.ts", { session: true, insertReference: true })).toEqual([]);
+    expect(menu([panel("src/a.ts")], "src/gone.ts", { session: true, insertReference: true, source: true })).toEqual([]);
   });
 });
