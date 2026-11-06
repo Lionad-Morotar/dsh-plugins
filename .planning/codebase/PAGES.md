@@ -60,7 +60,7 @@
 | `dsh-fs-explorer` | `fs-explorer` | `dsh-fs-explorer` | `packages/dsh-fs-explorer/cordis.patch.yml` | 无；`dsh.client.inject: ["dsh-workbench-core"]` |
 | `dsh-git-explorer` | `git-explorer` | `dsh-git-explorer` | `packages/dsh-git-explorer/cordis.patch.yml` | 无；宿主半导出 Typert 命名空间 `gitExplorer`，客户端半 `dsh.client.inject: ["dsh-workbench-core"]` |
 | `dsh-term-dock` | `term-dock` | `dsh-term-dock` | `packages/dsh-term-dock/cordis.patch.yml` | 无；`dsh.client.inject: ["dsh-workbench-core"]`，占 `shell.bottom` |
-| `dsh-arch` | `arch` | `dsh-arch` | `packages/dsh-arch/cordis.patch.yml` | `/arch/api` 前缀路由（views / model / state），`dsh.client.inject: ["dsh-workbench-core"]`，会话顶栏 `conversation.view` 挂「架构」标签，另可选经面板种类挂进 term-dock 的 `shell.bottom` |
+| `dsh-arch` | `arch` | `dsh-arch` | `packages/dsh-arch/cordis.patch.yml` | `/arch/api` 前缀路由（views / model / state；`model` 响应除 `elements` / `relations` / `specification` 外还有两个可选 map：`elementSources`（元素在 `.c4` 的定义文件与 1-based 行号）与 `elementCode`（按 title→包内路径约定解析出的代码文件），老宿主不返回时客户端按缺失处理），`dsh.client.inject: ["dsh-workbench-core"]`，会话顶栏 `conversation.view` 挂「架构」标签，另可选经面板种类挂进 term-dock 的 `shell.bottom` |
 
 ## 客户端半边入口
 
@@ -69,7 +69,7 @@
 | 包 | 源码入口 | 产物 | 注册位置 |
 | -- | -------- | ---- | -------- |
 | `dsh-client-ui-skin-ascii-rest` | `src/client/entry.ts` | `lib/client.js` + `lib/client.gui.js` + 34 个 `lib/client.<scene>.js` | `slots.register({ name: "settings.section", id: SETTINGS_ID, order: 116 })`；`inject = ["slots", "theme"]` |
-| `dsh-jump` | `src/client/entry.ts` → `createRuntime` | `lib/client.js` | `slots.register({ name: "settings.general.item", id: "jump", order: 18 })`；服务经 `ctx` 软探测而非 `inject`，缺设置面时导航仍然可用 |
+| `dsh-jump` | `src/client/entry.ts` → `createRuntime` | `lib/client.js` | `slots.register({ name: "settings.section", id: "jump", order: 25 })`（整页三行：点击 / 聚焦 / 引用模式）；另在 `conversation.input.overlay` 注册 `id: jump.session-bridge`、`order: 95` 的无渲染桥，发布 `{ sessionId, inputActions }` 供引用模式写入；服务经 `ctx` 软探测而非 `inject`，缺设置面时导航仍然可用 |
 | `dsh-better-keybindings` | `src/client/entry.ts` | `lib/client.js` | 不注册 slot：只挂一个捕获阶段 `keydown` |
 | `dsh-preview-more` | `src/client/entry.ts` | `lib/client.js` + 按需 chunk（五个家族都建，但只注册认领面为 `sidebar` 的三个） | `slots.register({ name: "sidebar.right.tab.document", key, locale })`，`readFile` 经 `inject` 注入；3D / CAD / HDR 渲染器分块懒加载，图片与 PDF 按格式目录的 `claims` 让回宿主内置预览 |
 | `dsh-slash-commands` | `src/client/entry.ts` | `lib/client.js` | 不经命令注册表：用 `ctx.effect` 注册有界剪贴板、`/resume` 贡献与行首顿号折叠监听（capture 阶段 `beforeinput`，`execCommand` 写回）；`inject = ["commandUi", "sessions", "workspaces", "uiWorkspace"]` |
@@ -86,6 +86,19 @@
 | `dsh-arch` | `src/client/entry.ts` | `lib/client.js` + `lib/client.diagram.js` | `slots.register({ name: "conversation.view", id: "arch", order: 120 })` 会话标签（文件 100、Git 110 之后），另经 `workbench.registerDockPanelKind` 可选注册 kind `arch`；SVG 渲染器在懒 chunk；宿主半 `lib/index.js` 提供 `/arch/api` 三路由；`inject = ["slots", "locale", "workbench"]` |
 
 宿主 0.2.2 的共享菜单另有两个 keyed slot：`contextMenu.content` 是菜单的内容槽（`scope: root`，按 target 的 kind 取 key，宿主菜单覆盖层负责渲染），本仓不注册它——工作区菜单走 `ctx.contextMenus.register` 的数据动作；`contextMenu.icon` 是内联的图标槽，动作按 `icon.key` 取，`dsh-workspace-open-local` 注册 `open-local.application`。
+
+### 引用 source（四包，`@` 触发）
+
+四个包各注册一个 `inputTriggers` source，只做发送时的身份：`candidates()` 恒返回空数组，因此不参与宿主的 `@` 菜单（那个菜单属于宿主的文件引用），也不占菜单行。发送时宿主按 source 名查 `codec.serialize`，查不到就拒绝发送并保留草稿，所以 chip 与 source 必须同包同版本发行。
+
+| 包 | source `name` | trigger | chip 的 `ref` | 模型文本 |
+| -- | ------------- | ------- | ------------- | -------- |
+| `dsh-git-explorer` | `lionad.git` | `@` | JSON：`hash` / `subject` / `refs` / `author` / `date` / `short` | `[git commit <完整 hash>] <subject> · <refs> · <作者> · <YYYY-MM-DD>`，空段整段省略 |
+| `dsh-fs-explorer` | `lionad.fs` | `@` | JSON：`path` / `label` / `kind` | `@<工作区相对路径>`，目录带尾斜杠；刻意复用宿主自己的文件引用语义 |
+| `dsh-arch` | `lionad.arch` | `@` | JSON：`id` / `title` / `kind` / `technology` / `c4File` / `c4Line` / `codeFile` | `[arch element <id>] <title> · <kind> · <technology> · def <c4>:<行号> · code <代码文件>`，段按可用性取舍 |
+| `dsh-jump` | `lionad.jump` | `@` | JSON：`tag` / `id` / `testId` / `classes` / `role` / `ariaLabel` / `text` | `[ui element] <tag> data-testid="…" id="…" role=… aria-label="…" class="…" text="…"` |
+
+四者的 `codec.serialize` 都从 chip 的 JSON `ref` 重建文本，解析失败回退 `[git commit <ref>]` / `@<ref>` / `[arch element <ref>]` / `[ui element <ref>]` 而不抛错：抛出会被宿主当成发送失败并保留草稿，一颗坏 chip 就会让整条草稿发不出去。写入通道四包同形：span 只取槽位 props 的 `captureInsertion()`，chip 走 `conversation.input.for(sessions.scope(id)).insertReference(...)`，失败换新 span 重试一次，再失败降级 `insertText(clipboardText)`。`inputTriggers` / `sessions` / `conversation` 全部软探测，缺任何一个只降级不报错。
 
 ### 右栏地址桥（`dsh-fs-explorer`，可选）
 

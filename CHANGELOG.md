@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+### 新功能
+
+- 引用模式：设置页第三行，独立和弦，默认关闭（没有和弦时该模式不可达）。点一下和弦按钮再按组合键即可录制，
+  行内另有「关闭引用模式」把它解绑回未启用；「恢复默认」对引用行同样等于解绑，因为这一行没有出厂和弦可回。
+- 按引用和弦进入的是同一轮标签（同一套候选与多键语义），但选中目标不点击、不聚焦、不改页面焦点：元素的可定位
+  描述会作为结构化 chip 插进当前会话的输入框。描述按 `data-testid` > `id` > 最多 3 个有含义的 class 取身份，
+  文本空白折叠并截断 80 字；模型读到的是一行事实，例如
+  `[ui element] <button> data-testid="gx-reference" role=button aria-label="引用" class="gx-btn" text="引用"`。
+- 引用需要会话：插件是 root 级，靠 `conversation.input.overlay` 上的无渲染桥拿到 `{ sessionId, inputActions }`。
+  没有会话、或宿主没有该 slot 时插入返回 `no-session`，什么都不点。
+- 兼容：宿主缺 `insertReference` 时降级 `inputActions.insertText(clipboardText)`；两条通道都不可用则静默丢弃这次
+  选择，不会退化成一次点击。`inputTriggers` / `sessions` / `conversation` 都是软探测，缺任何一个只降级不报错。
+
 ## [dsh-jump 0.1.0] - 2026-10-28
 
 首发。给 DeepSeek Harness Web GUI 的键盘跳跃导航：按下组合键，视口里每个可交互
