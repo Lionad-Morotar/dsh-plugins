@@ -20,7 +20,8 @@ import {
 
 import { ChangesPane } from "./changes-pane.tsx";
 import { getBranchStore, type BranchStoreFace } from "./branch-store.ts";
-import { DetailPane } from "./detail-pane.tsx";
+import { DetailPane, type ReferenceInputActions } from "./detail-pane.tsx";
+import { insertCommitReference, type CommitReferencePayload, type ReferenceInsert, type ReferenceInsertionResult, type ReferenceSpan } from "./reference.ts";
 import { WorkingTreePane } from "./working-tree-pane.tsx";
 import { HistoryPane, UNCOMMITTED } from "./history-pane.tsx";
 import { pageQuery } from "./history-query.ts";
@@ -103,7 +104,28 @@ export interface ConversationViewProps {
   readonly openView?: (view: string, focus: string) => void;
   readonly viewRequest?: ViewRequestLike | null;
   readonly completeViewRequest?: () => void;
+  /**
+   * The composer's standard props. `conversation.view` is a session-scope slot,
+   * so the host hands these to every entry; they are optional here because the
+   * view also mounts on hosts and in tests that publish neither.
+   */
+  readonly inputActions?: ReferenceInputActions;
+  /** Selector hook over the session input machine; absent on hosts without one. */
+  readonly useInput?: <S>(selector: (state: { readonly phase: string }) => S) => S;
 }
+
+/** What the view needs from the entry to make the reference button work. */
+export interface ReferenceWiring {
+  /** The session input facade's structured-reference write, or undefined. */
+  readonly insertReference?: (insert: ReferenceInsert, span: ReferenceSpan) => boolean;
+  /** Return the keyboard to the composer after a write. */
+  readonly focus?: () => void;
+  /** Surface a failure where the reader will see it. */
+  readonly notify?: (level: "info" | "error", text: string) => void;
+}
+
+/** Resolve the reference writer for one session, or undefined when it cannot. */
+export type ReferenceWiringResolver = (sessionId: string) => ReferenceWiring | undefined;
 
 /** What one view mount closes over. */
 export interface ViewWiring {
@@ -111,6 +133,8 @@ export interface ViewWiring {
   readonly version: number;
   readonly t: Translate;
   readonly remote: RemoteResolver;
+  /** The session input facade, probed per click; absent on hosts without one. */
+  readonly reference?: ReferenceWiringResolver;
 }
 
 /** The state a fresh mount paints before the snapshot request settles. */
@@ -247,12 +271,19 @@ function repoName(root: string): string {
  * @returns the component registered into `conversation.view`.
  */
 export function createGitExplorerView(wiring: ViewWiring) {
-  const { workbench, version, t, remote: resolveRemote } = wiring;
+  const { workbench, version, t, remote: resolveRemote, reference: resolveReference } = wiring;
 
   function GitExplorerView(props: ConversationViewProps) {
     const sessionId = props.sessionId ?? workbench.currentSessionId();
     const sessionRef = useRef(sessionId);
     sessionRef.current = sessionId;
+    // The composer's phase, read through the host's own selector hook so a
+    // sending composer repaints the button. The hook is a standard prop of this
+    // slot, but a host or a test that omits it must not break the mount: the
+    // fallback is a constant selector, so the hook is always called and a host
+    // without an input machine simply reports no phase.
+    const useInput = props.useInput ?? (() => undefined);
+    const phase = useInput(state => state.phase);
     // Resolve once per mount: the Remote namespace is a stable service, and a
     // fresh proxy identity on every render would restart the snapshot effect.
     const remote = useMemo(() => resolveRemote(), [resolveRemote]);
@@ -823,6 +854,31 @@ export function createGitExplorerView(wiring: ViewWiring) {
       if (sessionId !== undefined && selected !== undefined) commitJump(selected, path, line);
     };
 
+    // One reference write: the span comes from the composer's own capture, the
+    // chip from the session facade, and plain text is the last resort. The
+    // facade is resolved per click rather than per mount because it throws once
+    // the session's generation is released, and a stale closure would keep
+    // throwing at a composer that no longer exists.
+    const onReference = (payload: CommitReferencePayload): ReferenceInsertionResult => {
+      const actions = props.inputActions;
+      if (sessionId === undefined || actions === undefined) return "failed";
+      const facade = resolveReference?.(sessionId);
+      const result = insertCommitReference(
+        {
+          captureSpan: () => {
+            const span = actions.captureInsertion?.();
+            return span === undefined ? undefined : { start: span.start, end: span.end, draftRev: span.draftRev };
+          },
+          insertReference: (insert, span) => facade?.insertReference?.(insert, span) ?? false,
+          insertText: (text, span) => actions.insertText?.(text, span) ?? false,
+        },
+        payload,
+      );
+      if (result !== "failed") facade?.focus?.();
+      else facade?.notify?.("error", t("reference.failed"));
+      return result;
+    };
+
     const refresh = useCallback((): void => setReloadToken(token => token + 1), []);
     const retry = (): void => setReloadToken(token => token + 1);
 
@@ -840,6 +896,16 @@ export function createGitExplorerView(wiring: ViewWiring) {
       () => (changedCount === 0 ? undefined : { groups, stats, fileCount: changedCount }),
       [changedCount, groups, stats],
     );
+
+    // The refs a commit carries are only on the history row, not on the detail
+    // payload, so the reference reads them from the loaded page. A commit
+    // selected through a jump may sit outside that page: the reference then
+    // simply has no refs, which the payload spells by leaving the segment out.
+    const selectedRefs = useMemo(() => {
+      if (selected === undefined) return undefined;
+      const row = commits.find(commit => commit.hash === selected);
+      return row === undefined ? undefined : row.refs.map(ref => ref.name);
+    }, [commits, selected]);
 
     return (
       <section
@@ -1010,6 +1076,10 @@ export function createGitExplorerView(wiring: ViewWiring) {
                   t={t}
                   onSelect={setSelected}
                   onOpenFile={onOpenCommitFile}
+                  refs={selectedRefs}
+                  {...(props.inputActions === undefined ? {} : { inputActions: props.inputActions })}
+                  {...(phase === undefined ? {} : { phase })}
+                  onReference={onReference}
                 />
               )}
             </div>

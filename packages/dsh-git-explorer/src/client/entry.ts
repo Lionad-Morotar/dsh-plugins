@@ -22,7 +22,8 @@ import { createBranchAction } from "./branch-action.tsx";
 import { createBranchStore } from "./branch-store.ts";
 import { computeWindow, createJump, formatCommitDetail, groupChanges } from "./model.ts";
 import { insertStyles } from "./styles.ts";
-import { createGitExplorerView, type WorkbenchFace } from "./view.tsx";
+import { registerGitReferenceSource, type ReferenceContextLike, type ReferenceInsert, type ReferenceSpan } from "./reference.ts";
+import { createGitExplorerView, type ReferenceWiring, type ReferenceWiringResolver, type WorkbenchFace } from "./view.tsx";
 import { createRpcRemoteFace, type GitRemoteFace, type RemoteResolver, type RpcCall } from "./wire.ts";
 
 export { boot } from "./platform.ts";
@@ -45,7 +46,6 @@ export interface ClientContextLike {
   /** Cordis's scoped injection, used to follow an optional host service. */
   inject?: FontScaleContextLike["inject"];
 }
-
 /**
  * Services this plugin waits for before applying.
  *
@@ -117,6 +117,50 @@ export function createRpcCall(ctx: ClientContextLike): RpcCall | undefined {
   return (endpoint, payload, signal) => rpc.call("/api", `${GIT_SERVICE}/${endpoint}`, payload, signal);
 }
 
+/**
+ * Build the per-session reference writer.
+ *
+ * Every service is read on each call. Two reasons: the facade is per session
+ * generation and throws once that generation is released, so caching one would
+ * hand a stale composer to the next click; and this resolver is built during
+ * `apply`, which can run before `sessions` and `conversation` are up, so
+ * capturing them there would freeze a legitimate absence into a permanent one.
+ * @param ctx - client context, read through the non-throwing resolver.
+ * @returns a resolver that answers undefined when the input plane is absent.
+ */
+export function createReferenceResolver(ctx: ClientContextLike): ReferenceWiringResolver {
+  return (sessionId: string): ReferenceWiring | undefined => {
+    const sessions = ctx.get?.("sessions") as { scope?(sessionId: string): unknown } | undefined;
+    const conversation = ctx.get?.("conversation") as
+      | { input?: { for(actx: unknown): SessionInputFace } }
+      | undefined;
+    if (sessions?.scope === undefined || conversation?.input?.for === undefined) return undefined;
+    let facade: SessionInputFace;
+    try {
+      const actx = sessions.scope(sessionId);
+      if (actx === undefined) return undefined;
+      facade = conversation.input.for(actx);
+    } catch {
+      // The controller refuses a Context whose generation was released: the
+      // session was switched away from between the render and this click.
+      return undefined;
+    }
+    if (facade === undefined || facade === null) return undefined;
+    return {
+      insertReference: (insert, span) => facade.insertReference(insert, span),
+      focus: () => facade.focus(),
+      notify: (level, text) => facade.notify(level, text),
+    };
+  };
+}
+
+/** The slice of the session input facade the reference writer calls. */
+interface SessionInputFace {
+  insertReference(insert: ReferenceInsert, span: ReferenceSpan): boolean;
+  focus(): void;
+  notify(level: "info" | "error", text: string): void;
+}
+
 /** Disposer of the dictionary currently sitting in the host's locale table.
 * A repeat apply on one host process (the desktop sync pass followed by the
 * mount pass) meets the same table, and the table refuses a second
@@ -144,6 +188,11 @@ export function apply(ctx: ClientContextLike): () => void {
   // host wrote on `body`, so this never blocks the header action from mounting.
   const offFontScale = attachFontScale(ctx);
   const remote = createRemoteResolver(ctx);
+  const reference = createReferenceResolver(ctx);
+  // The chip's send-time identity. Without it the chip still lands in the draft,
+  // but the host would reject the send for a missing codec, so the writer only
+  // reaches for a chip when this registration succeeded.
+  const offReferenceSource = registerGitReferenceSource(ctx as ReferenceContextLike);
 
   const BranchAction = createBranchAction({ store: createBranchStore(remote), t });
   ctx.slots.inject(HEADER_SLOT, () =>
@@ -160,7 +209,13 @@ export function apply(ctx: ClientContextLike): () => void {
 
   const workbench = ctx.workbench;
   if (workbench !== undefined && workbench !== null) {
-    const View = createGitExplorerView({ workbench, version: workbench.version, t, remote });
+    const View = createGitExplorerView({
+      workbench,
+      version: workbench.version,
+      t,
+      remote,
+      reference,
+    });
     ctx.slots.inject(VIEW_SLOT, () =>
       ctx.slots.register(
         {
@@ -178,6 +233,7 @@ export function apply(ctx: ClientContextLike): () => void {
   return () => {
     offStyles();
     offFontScale();
+    offReferenceSource();
     offLocale();
     if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
   };

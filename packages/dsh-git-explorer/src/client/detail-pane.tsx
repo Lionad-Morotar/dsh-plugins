@@ -14,6 +14,12 @@ import {
 import type { Translate } from "./copy.ts";
 import type { GitBlobPage, GitCommitDetail, GitCommitFile, GitCommitResult, GitShowResult } from "../host/types.ts";
 import { describeFailure, unwrapTransport, type GitRemoteFace } from "./wire.ts";
+import {
+  commitReferencePayload,
+  referenceAvailability,
+  type CommitReferencePayload,
+  type ReferenceInsertionResult,
+} from "./reference.ts";
 
 type DetailState =
   | { readonly kind: "idle" }
@@ -51,6 +57,24 @@ export interface DetailPaneProps {
   readonly onSelect: (hash: string) => void;
   /** Open one changed file of this commit in the file workbench. */
   readonly onOpenFile?: (path: string, line?: number) => void;
+  /** Ref names pointing at the selected commit, for the reference payload. */
+  readonly refs?: readonly string[];
+  /**
+   * The composer's write face, or undefined on a host that publishes none.
+   * Only `captureInsertion` is read from it: the span is the one coordinate a
+   * chip insert may use, and it cannot be reconstructed from the draft text.
+   */
+  readonly inputActions?: ReferenceInputActions;
+  /** The composer's phase, or undefined when the host publishes no input state. */
+  readonly phase?: string;
+  /** Writes one reference; absent when the entry could not build a writer. */
+  readonly onReference?: (payload: CommitReferencePayload) => ReferenceInsertionResult;
+}
+
+/** The slice of the composer face the reference button reads. */
+export interface ReferenceInputActions {
+  captureInsertion?(): { readonly start: number; readonly end: number; readonly draftRev: number };
+  insertText?(text: string, span: { readonly start: number; readonly end: number; readonly draftRev: number }): boolean;
 }
 
 function FileStat({ additions, deletions }: { readonly additions: number | null; readonly deletions: number | null }) {
@@ -187,10 +211,25 @@ function PreviewCard({
  * @param props - session, selected hash, the Remote face and copy.
  * @returns the detail pane element.
  */
-export function DetailPane({ sessionId, hash, remote, t, onSelect, onOpenFile }: DetailPaneProps) {
+export function DetailPane({
+  sessionId,
+  hash,
+  remote,
+  t,
+  onSelect,
+  onOpenFile,
+  refs,
+  inputActions,
+  phase,
+  onReference,
+}: DetailPaneProps) {
   const [state, setState] = useState<DetailState>({ kind: "idle" });
   const [retryToken, setRetryToken] = useState(0);
   const cache = useRef(new Map<string, GitCommitDetail>());
+  // The write is synchronous, so a state flag would never paint between the two
+  // clicks of a double click. A ref is the guard that actually holds: it is
+  // already set when the second click arrives.
+  const referencing = useRef(false);
 
   const [preview, setPreview] = useState<PreviewState>({ kind: "idle" });
   const previewCache = useRef(createPreviewCache<GitBlobPage>(PREVIEW_CACHE_SIZE));
@@ -346,12 +385,48 @@ export function DetailPane({ sessionId, hash, remote, t, onSelect, onOpenFile }:
       : { hash: hash ?? "", parents: [], author: "", time: Math.floor(Date.now() / 1000), subject: "" },
   );
 
+  const availability = referenceAvailability({
+    sessionId,
+    hasComposer: inputActions !== undefined && typeof inputActions.captureInsertion === "function",
+    phase,
+  });
+  const canReference = availability.enabled && state.kind === "ready" && onReference !== undefined;
+  const referenceReason = availability.enabled
+    ? state.kind === "ready"
+      ? undefined
+      : t("detail.empty")
+    : t(availability.reasonKey);
+
+  const onReferenceClick = (): void => {
+    if (!canReference || referencing.current || state.kind !== "ready" || onReference === undefined) return;
+    referencing.current = true;
+    try {
+      const result = onReference(commitReferencePayload(state.detail, head.shortHash, refs ?? []));
+      // A failed write leaves the draft untouched; the reader needs to know the
+      // button did nothing rather than assume the chip is somewhere off-screen.
+      if (result === "failed") window.console?.warn?.(`[dsh-git-explorer] ${t("reference.failed")}`);
+    } finally {
+      referencing.current = false;
+    }
+  };
+
   return (
     <section className="gx-detail" data-testid="git-detail">
       <header className="gx-detail-head">
         <span>{t("detail.title")}</span>
         {hash === undefined ? null : <span className="gx-hash">{head.shortHash}</span>}
         <span className="gx-spacer" style={{ flex: 1 }} />
+        <button
+          type="button"
+          className="gx-refbtn"
+          disabled={!canReference}
+          aria-disabled={!canReference}
+          title={referenceReason ?? t("reference.hint")}
+          data-testid="gx-reference-commit"
+          onClick={onReferenceClick}
+        >
+          {t("reference.action")}
+        </button>
       </header>
       <div className="gx-detail-body" ref={bodyRef}>
         {state.kind === "idle" ? (
