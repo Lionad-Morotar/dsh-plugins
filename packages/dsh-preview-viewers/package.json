@@ -19,8 +19,12 @@
     "./chunks/scene3d.tsx": "./src/chunks/scene3d.tsx",
     "./chunks/cad.tsx": "./src/chunks/cad.tsx",
     "./chunks/raster.tsx": "./src/chunks/raster.tsx",
+    "./chunks/image.tsx": "./src/chunks/image.tsx",
     "./build/draco-plugin.mjs": "./build/draco-plugin.mjs",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./pdf.ts": "./src/pdf.ts",
+    "./chunks/pdf.tsx": "./src/chunks/pdf.tsx",
+    "./build/pdf-worker-plugin.mjs": "./build/pdf-worker-plugin.mjs"
   },
   "files": [
     "src",
@@ -32,6 +36,7 @@
   },
   "dependencies": {
     "dxf-viewer": "^1.0.50",
+    "pdfjs-dist": "5.7.284",
     "three": "^0.186.1",
     "utif": "^3.1.0"
   },

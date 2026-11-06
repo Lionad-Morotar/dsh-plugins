@@ -20,6 +20,11 @@ DeepSeek Harness 右侧栏的文件预览补全：把宿主内置预览管不了
 
 以下格式刻意不接管：docx、pdf、png、svg、xlsx 等宿主渲染得更好，重复注册只会遮住更好的实现。
 
+这条界线现在写在共享格式目录里，而不是本包的代码里：`PREVIEW_FORMATS` 的每条带一个 `claims` 声明，
+本包只注册声明了 `sidebar` 的家族。图片与 PDF 只声明了 `workbench`，因为工作台是文件主面、要自己出图，
+而侧栏里宿主的实现更好（图片有共享缩放视口，PDF 有可选文本层）。本包仍为这两个家族构建 chunk，
+chunk 表描述的是「能画什么」，`claims` 描述的是「该在哪画」。
+
 ## 安装
 
 profile 依赖方式：
@@ -67,7 +72,7 @@ pnpm --filter dsh-preview-more typecheck
 
 ## 第三方组件
 
-`lib/` 里打包了四个第三方库：three.js（MIT）、utif（MIT）、dxf-viewer（MPL-2.0）、Google Draco（Apache-2.0）。完整许可文本与源码地址见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。本包自身是 MIT。
+`lib/` 里打包了五个第三方库：three.js（MIT）、utif（MIT）、dxf-viewer（MPL-2.0）、Google Draco（Apache-2.0）、pdf.js（Apache-2.0）。完整许可文本与源码地址见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。本包自身是 MIT。
 
 ## 边界
 

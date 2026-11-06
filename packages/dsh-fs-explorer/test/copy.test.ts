@@ -27,6 +27,7 @@ const SURFACE_KEYS = [
   "scene3d.facts",
   "cad.fit",
   "cad.layers",
+  "image.title",
 ];
 
 describe("surface dictionary", () => {

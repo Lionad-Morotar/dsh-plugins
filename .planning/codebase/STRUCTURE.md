@@ -95,14 +95,15 @@ dsh-plugins/
     │       ├── index.js                 # 92 B，ESM 宿主
     │       └── client.js                # 6664 B，ModuleLoader 工厂
     ├── dsh-preview-viewers/             # 共享预览渲染器源码包（内部，无 lib、无 Loader row、不进索引）
-    │   ├── src/formats.ts               # 格式目录，唯一事实源：家族、后缀、chunk 名
+    │   ├── src/formats.ts               # 格式目录，唯一事实源：家族、后缀、chunk 名与认领面（workbench / sidebar）
     │   ├── src/address.ts  locale.ts    # dsh-resource 地址解析 / {name} 占位符格式化
     │   ├── src/contracts.ts  mount.ts   # 两种挂载形态的 props 契约 / 共享挂载生命周期
-    │   ├── src/scene3d.ts  cad.ts  raster.ts  # three / dxf-viewer / utif 三个引擎
-    │   ├── src/chunks/*.tsx             # 三个 React 面，每个同时导出 Body 与 Viewer
+    │   ├── src/scene3d.ts  cad.ts  raster.ts  image.ts  pdf.ts  # three / dxf-viewer / utif / pdf.js 四个引擎（image 无引擎，浏览器自解码）
+    │   ├── src/chunks/*.tsx             # 五个 React 面，每个同时导出 Body 与 Viewer
     │   ├── src/styles.ts                # 共用样式表
     │   ├── build/draco-plugin.mjs       # Draco 解码器内联的 esbuild 插件
-    │   ├── test/                        # 13 个 *.test.ts（77 用例）
+    │   ├── build/pdf-worker-plugin.mjs  # pdf.js worker 内联的 esbuild 插件
+    │   ├── test/                        # 18 个 *.test.ts（134 用例）
     │   └── tsconfig.json  vitest.config.ts
     └── dsh-slash-commands/              # 三端 slash 命令（host 半边 + web/desktop client 半边）
         ├── scripts/build.mjs            # host ESM 产物 + client CJS 套 ModuleLoader 工厂
@@ -145,7 +146,7 @@ dsh-plugins/
 **`packages/dsh-better-keybindings/src/client/`：** 5 个 ts：`app.ts` 是唯一的窗口事件接线与 DOM 副作用汇点（光标补齐、半屏翻页、排除会话滚动容器的写入），`keys.ts`/`caret.ts`/`reveal.ts` 全为纯逻辑（映射、光标原语、盒模型与翻页落点算术），`entry.ts` 只组装插件对象。
 **`packages/dsh-slash-commands/src/`：** 11 个 ts，按命令与运行半边分文件。宿主侧 7 个：`arguments.ts`/`history.ts`/`clipboard.ts`/`command.ts` 归 `/copy`，`rename.ts`/`rename-command.ts` 归 `/rename`，`index.ts` 是宿主装配点（声明 `inject = ["commands", "sessionTitle"]`、按终端能力分派哪条命令注册）。客户端侧 4 个，全在 `src/client/`：`entry.ts` 是客户端装配点（声明 `inject = ["commandUi", "sessions", "workspaces", "uiWorkspace"]`，用 `ctx.effect` 注册有界剪贴板与 `/resume` 两件事），`resume.ts` 是 `/resume` 的全部纯判定（行集、范围、切换派发，DOM-free），`resume-command.ts` 只做接线（打开时读 `ctx.sessions.list` 与 `ctx.workspaces.list` 的快照），`clipboard-shim.ts` 是有界剪贴板写入。行数：宿主侧 `index.ts` 163、`command.ts` 203、`clipboard.ts` 165、`rename-command.ts` 153、`history.ts` 115、`arguments.ts` 56、`rename.ts` 35；客户端侧 `resume.ts` 225（四文件里最大，行集/范围/派发全在这里）、`clipboard-shim.ts` 203、`resume-command.ts` 182、`entry.ts` 73。
 
-**`packages/dsh-preview-viewers/src/`：** 共享预览渲染器的源码包，无 `lib`、无 Loader row、不进市场索引，`exports` 直指 `src/`。`formats.ts` 是格式目录的唯一事实源（家族、后缀、标题键与 chunk 名），`address.ts` 解析 `dsh-resource://file/session/<id>/<path>`，三个引擎按家族分开（`scene3d.ts` 触 canvas，`cad.ts` 把字节转成 blob URL 交给 dxf-viewer，`raster.ts` 纯解码、无 DOM），`contracts.ts` 收窄两种挂载形态的 props，`chunks/*.tsx` 每个同时导出原生 `Body` 与侧栏 `Viewer`。两个消费者（`dsh-preview-more`、`dsh-fs-explorer`）在构建期用 esbuild 把源码打进各自的分块，运行期互不 import。
+**`packages/dsh-preview-viewers/src/`：** 共享预览渲染器的源码包，无 `lib`、无 Loader row、不进市场索引，`exports` 直指 `src/`。`formats.ts` 是格式目录的唯一事实源（家族、后缀、标题键、chunk 名与认领面），`address.ts` 解析 `dsh-resource://file/session/<id>/<path>`，四个引擎按家族分开（`scene3d.ts` 触 canvas，`cad.ts` 把字节转成 blob URL 交给 dxf-viewer，`raster.ts` 纯解码、无 DOM，`pdf.ts` 放页码与 fit-width 算术、引擎在 chunk 里），图片家族无引擎、浏览器自解码，`contracts.ts` 收窄两种挂载形态的 props，`chunks/*.tsx` 每个同时导出原生 `Body` 与侧栏 `Viewer`。目录同时声明认领面：图片与 PDF 只由工作台认领，侧栏让回宿主内置预览（宿主那两套有缩放视口与可选文本层），`familiesFor(surface)` 是按面取家族的入口。两个消费者（`dsh-preview-more`、`dsh-fs-explorer`）在构建期用 esbuild 把源码打进各自的分块，运行期互不 import。
 
 ## 关键文件位置
 
@@ -190,7 +191,7 @@ dsh-plugins/
 - 新开一项设置行：slot 与 order 在 `runtime.ts`（当前 `settings.general.item` / 18，17 已被 ui-chat 占用），注册必须走 `ctx.inject(["slots"], …)`
 - 只改文案 → `copy.ts` 两份字典成对改（不要碰 `locale/*.json`，那里只有市场用的 2 个 meta 键）
 **新场景：** 不加代码——升级上游 commit 后重跑 `build:catalog` + `pnpm build`，目录与分块自动跟上
-**新预览格式 / 新渲染家族：** 只改 `packages/dsh-preview-viewers/src/formats.ts` 的家族、后缀与标题键，再在两个消费者的构建里补齐：`dsh-preview-more` 的 `CHUNKS` 与 `dsh-fs-explorer` 的 `FAMILY_CHUNKS` 都按这份目录断言，漏一处是构建失败而不是运行期 404；chunk 的 gzip 上限留在各自包的 `SIZE_BUDGETS`
+**新预览格式 / 新渲染家族：** 只改 `packages/dsh-preview-viewers/src/formats.ts` 的家族、后缀、标题键与认领面（`claims`），再在两个消费者的构建里补齐：`dsh-preview-more` 的 `CHUNKS` 与 `dsh-fs-explorer` 的 `FAMILY_CHUNKS` 都按这份目录断言，漏一处是构建失败而不是运行期 404；chunk 的 gzip 上限留在各自包的 `SIZE_BUDGETS`。注册面按 `familiesFor(surface)` 取，所以新家族不会因为目录变大而自动被某个消费面接管
 **新设置项：** `ascii-rest-scenes/src/options.ts`（默认值 + normalize 函数）→ `client/store.ts` 消费 → `client/page.ts`/`gui.ts` 出 UI，测试随 `options.test.ts`
 **新 locale 文案：** `locale/zh.json` + `locale/en.json` 成对增删。皮肤是界面文案，当前各 39 键；三个可投稿包只有市场用的 `meta.title`/`meta.description` 两个键，界面文案不在 `locale/` 而在源码内的字典（`dsh-jump/src/client/copy.ts`）
 **新增市场投稿包：** 只有可被装到别人机器上的包才投稿，纯逻辑层（`ascii-rest-scenes`）与皮肤（`private: true`）不进索引。步骤：
