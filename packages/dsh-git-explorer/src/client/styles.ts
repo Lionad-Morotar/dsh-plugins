@@ -429,8 +429,22 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
   letter-spacing: .02em;
   white-space: nowrap;
 }
-.gx-colhead-cell { position: relative; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.gx-colhead-time, .gx-colhead-hash { text-align: right; }
+/* The cell stretches the full header height and centres its label. It must not
+   clip: the handle hangs across the column boundary, and overflow hidden here
+   would cut off the half that sits over the next column, leaving a 4px sliver
+   to grab. The label below is what truncates the text instead. */
+.gx-colhead-cell {
+  position: relative;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: visible;
+}
+.gx-colhead-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Right alignment moves to the flex container now that the text is a child box
+   rather than the cell's own inline content. */
+.gx-colhead-time, .gx-colhead-hash { justify-content: flex-end; }
 /* The working-tree row reads as a peer of the commits, but its label is what
    says so: the row carries no hash, so the weight has to do the work. */
 .gx-uncommitted-label { font-weight: 600; color: var(--gx-text); }
@@ -439,13 +453,15 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
 .gx-uncommitted .gx-add { color: var(--gx-added); }
 .gx-uncommitted .gx-del { color: var(--gx-deleted); }
 /* The handle sits on the column's right edge and overhangs it, so the hit area
-   straddles the boundary the pointer is aiming at. */
+   straddles the boundary the pointer is aiming at. It spans the header's full
+   height: a handle only as tall as the text line would leave the top and bottom
+   of the boundary dead, and the reader aims at the boundary, not at the glyphs. */
 .gx-col-handle {
   position: absolute;
   top: 0;
   right: -5px;
   bottom: 0;
-  width: 9px;
+  width: 11px;
   cursor: col-resize;
   touch-action: none;
 }
@@ -461,7 +477,7 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
   opacity: 0;
 }
 .gx-col-handle:hover::before { opacity: .55; }
-/* The handle is 9px wide, so the default focus ring collapses into noise; the
+/* The handle is 11px wide, so the default focus ring collapses into noise; the
    keyboard focus reuses the hover line instead, like the column divider. */
 .gx-col-handle:focus-visible { outline: none; }
 .gx-col-handle:focus-visible::before { opacity: .55; }

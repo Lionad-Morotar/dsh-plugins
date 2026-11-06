@@ -302,7 +302,11 @@ function ColumnHeader({
         const spec = cell.id === "graph" || cell.id === "subject" ? undefined : specOf(cell.id);
         return (
           <span key={cell.id} className={`gx-colhead-cell gx-colhead-${cell.id}`}>
-            {t(cell.key)}
+            {/* The label is its own box so the cell can stop clipping. The cell
+                has to overflow visibly for the handle to straddle the column
+                boundary, which means the cell can no longer be what truncates
+                the text; this inner span does that instead. */}
+            <span className="gx-colhead-label">{t(cell.key)}</span>
             {spec === undefined ? null : (
               <span
                 className="gx-col-handle"

@@ -443,6 +443,34 @@ describe("HistoryPane columns", () => {
     ]);
   });
 
+  it("puts each header label in its own box so the cell can stop clipping", async () => {
+    await mount();
+    const cells = [...host.querySelectorAll<HTMLElement>(".gx-colhead-cell")];
+    expect(cells).toHaveLength(6);
+    for (const cell of cells) {
+      const label = cell.querySelector<HTMLElement>(":scope > .gx-colhead-label");
+      // The text lives in the inner box: the cell itself must overflow visibly
+      // so the handle can straddle the column boundary, which means the cell can
+      // no longer be what truncates the label.
+      expect(label).not.toBeNull();
+      expect(label?.textContent).not.toBe("");
+    }
+  });
+
+  it("keeps each handle a child of its own header cell", async () => {
+    await mount();
+    for (const id of ["refs", "time", "author", "hash"]) {
+      const handle = host.querySelector<HTMLElement>(`[data-testid="gx-col-handle-${id}"]`);
+      if (handle === null) throw new Error(`handle ${id} missing`);
+      const cell = handle.parentElement;
+      expect(cell?.className).toContain("gx-colhead-cell");
+      expect(cell?.className).toContain(`gx-colhead-${id}`);
+      // The handle is a sibling of the label, not a wrapper around it: the cell's
+      // own box is what the handle is positioned against.
+      expect(handle.previousElementSibling?.className).toBe("gx-colhead-label");
+    }
+  });
+
   it("keeps the header out of the scrolling container", async () => {
     await mount();
     const head = host.querySelector<HTMLElement>('[data-testid="git-history-colhead"]');
