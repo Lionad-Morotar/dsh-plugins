@@ -188,7 +188,8 @@
 **Community Draft 0.15（dsh-std）：** 外部标准草案，schema 与宿主期望版本同步演进；本仓没有本地校验器，靠宿主准入的实际表现兜底
 **DSH 宿主契约（`@deepseek-ai/dsh` 地板见各包 `engines.dsh`，上限统一 `<0.3.0-0`；`@deepseek-ai/cordis` ^4.0.1）：** 18 个包声明 `engines.dsh`，部分另把宿主包写成 optional peer；实际用到的 `ModuleLoader`、`theme`、`commands`、`tuiPluginHost`、`commandUi`、`sessions`、`workspaces`、`uiWorkspace`、`slots`、`locale`、`contextMenus` 都没有版本检测；坏掉的表现是启动失败或静默回落，不是编译错误。`dsh-slash-commands` 的客户端半边连 peer 都不声明，宿主面全部手写成结构类型，所以宿主改签名时它连 package.json 层面的提示都没有。`dsh-jump` 的设置行依赖 `slots.inject`、`slots.register({name,id,order}, component)` 与 `locale.getSnapshot().active` 三处宿主签名，前两处取不到时整行静默消失、导航仍可用。0.2.2 新增的 `contextMenus` 是客户端 root 服务：`dsh-workspace-open-local` 把它列进 `inject`，老宿主解析不到依赖时插件静默不挂载，该包 `engines.dsh` 已抬到 `>=0.2.2-rc.1`。Session Projection 的 `register()` 在 0.2.2 改为返回 thenable，旧同步写法仍是官方兼容路径，本仓 5 处注册暂不迁移
 **系统剪贴板工具：** `pbcopy`/`clip`/`wl-copy`/`xclip`/`xsel`/`tmux` 由运行环境提供；缺失被显式区分成 `MISSING_TOOL`（已有测试），但「到底有没有落到系统剪贴板」在本机无法自动化验证
-**`@deepseek-ai/dsh-plugin-market-index` 0.2.2-rc.1（根 devDependency）：** 它是索引校验的唯一来源，装不上时 `scripts/build-market-index.mjs:108-110` 只打一行 `skipping validation` 就继续，索引照样写出、`--check` 照样 exit 0；`check:market` 只校验一个可投稿包（`dsh-jump`）的清单，不校验这个校验器是否在场
+**`@deepseek-ai/dsh-plugin-market-index` 0.2.1-rc.4（根 devDependency）：** 它是索引校验的唯一来源，装不上时 `scripts/build-market-index.mjs:108-110` 只打一行 `skipping validation` 就继续，索引照样写出、`--check` 照样 exit 0；`check:market` 只校验一个可投稿包（`dsh-jump`）的清单，不校验这个校验器是否在场
+**`@deepseek-ai/dsh-plugin-market-index` / `@deepseek-ai/dsh-typert-protocol` 的 0.2.2 升级已评估暂缓：** 新版把 peer 抬到 `@deepseek-ai/cordis ~4.1.0` 与 0.2.2 链路，与仓里现存的 cordis 4.0.5 并存时 pnpm 会把整棵 DSH 运行时依赖图（lockfile 约 +860 个包条目）拖进 dev 依赖树，收益只是版本对齐；typert 三版运行时代码逐字节相同、宿主按鸭子类型读取远程元数据，暂缓不影响正确性。真要升级时先评估 lockfile 体积与 cordis 双实例
 **`refs/deepseek-harness-for-vs-code`（git submodule，`ignore = all`）：** 只读参考仓，不参与构建与测试；指针是本地领先 origin/main 20 个提交的 main（`9d1c7f3`，`v1.0.0-20-g9d1c7f3`），上游未推送前新克隆取不到这一目录
 
 ## 缺失的关键能力

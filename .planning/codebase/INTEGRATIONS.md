@@ -12,7 +12,7 @@
   - Auth：无，运行期零网络请求
 
 **DSH 市场索引与社区目录（构建期发布面，`scripts/` 三个根脚本）：**
-- `@deepseek-ai/dsh-plugin-market-index` 0.2.2-rc.1（根 devDependency，传递依赖 `@deepseek-ai/dsh-package-manifest@0.2.2-rc.1` + `semver ^7.8.5`，peer `@deepseek-ai/cordis ~4.1.0`）
+- `@deepseek-ai/dsh-plugin-market-index` 0.2.1-rc.4（根 devDependency，传递依赖 `@deepseek-ai/dsh-package-manifest@0.2.1-rc.4` + `semver ^7.8.5`，peer `@deepseek-ai/cordis ~4.0.5`）
   - 用法：`scripts/build-market-index.mjs` 动态 `import()` 它，拿 `parseMarketIndex(index, INDEX_URL)` 按宿主 format 1 规则重解析刚生成的 `market/index.json`，再用 `marketInstallTarget(name, version)` 打印解析出的安装 spec。校验失败即抛，脚本不会写出坏索引
   - 索引里的绝对 URL 由脚本常量提供：`INDEX_URL = https://raw.githubusercontent.com/Lionad-Morotar/dsh-plugins/main/market/index.json`（相对 icon 引用与条目身份都相对它解析）、`REPO_URL = https://github.com/Lionad-Morotar/dsh-plugins`
   - Auth：无，纯本地 npm 包，不发网络请求

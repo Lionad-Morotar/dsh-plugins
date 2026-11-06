@@ -26,7 +26,7 @@
 
 **包管理器：**
 - pnpm 10.15.0（`packageManager` 字段钉死；`pnpm-workspace.yaml`：`packages: ["packages/*"]`，`onlyBuiltDependencies: [esbuild]`）
-- Lockfile：`pnpm-lock.yaml` 存在，已含 `@deepseek-ai/dsh-plugin-market-index@0.2.2-rc.1`（其传递依赖 `@deepseek-ai/dsh-package-manifest@0.2.2-rc.1` 与 `semver ^7.8.5`，peer 为 `@deepseek-ai/cordis ~4.1.0`）
+- Lockfile：`pnpm-lock.yaml` 存在，已含 `@deepseek-ai/dsh-plugin-market-index@0.2.1-rc.4`（其传递依赖 `@deepseek-ai/dsh-package-manifest@0.2.1-rc.4` 与 `semver ^7.8.5`，peer 为 `@deepseek-ai/cordis ~4.0.5`）
 
 ## 框架
 
@@ -46,7 +46,7 @@
 **构建/开发：**
 - esbuild ^0.28.2——唯一打包器，四个 `scripts/build.mjs` 直调 `build()` API、无配置文件。根 devDependencies 声明一份，皮肤 / jump / better-keybindings / slash-commands 四包各自再声明（`packages/ascii-rest-scenes` 不打包，不声明）
 - tsc——仅类型检查（`tsconfig.base.json` 设 `noEmit: true`）
-- `@deepseek-ai/dsh-plugin-market-index` 0.2.2-rc.1——根 devDependency，只在 `scripts/build-market-index.mjs` 里动态 import：用它的 `parseMarketIndex` 把刚生成的索引按宿主的 format-1 规则重解析一遍，再用 `marketInstallTarget` 打印每个条目解析出的安装 spec。未安装时脚本只 warn 不失败，因此这是「能写出来」与「宿主认不认」之间的唯一自动门
+- `@deepseek-ai/dsh-plugin-market-index` 0.2.1-rc.4——根 devDependency，只在 `scripts/build-market-index.mjs` 里动态 import：用它的 `parseMarketIndex` 把刚生成的索引按宿主的 format-1 规则重解析一遍，再用 `marketInstallTarget` 打印每个条目解析出的安装 spec。未安装时脚本只 warn 不失败，因此这是「能写出来」与「宿主认不认」之间的唯一自动门
 
 ## 关键依赖
 
