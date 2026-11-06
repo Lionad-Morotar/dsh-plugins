@@ -16,7 +16,12 @@ export const MARKDOWN_STYLES = `
 .fmd-source-editor {
   --fmd-font: var(--dsw-font-sans, inherit);
   --fmd-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  /* The editor is a document surface, so its prose follows the same role the
+     conversation body uses and the desktop font-size shortcuts (⌘+/⌘-) scale
+     both. Code points at the code role instead; inline code sits 1px above it,
+     which is the host's own rule for the chat renderer. */
   --fmd-fs: var(--dsh-content-font-size, 14px);
+  --fmd-fs-code: var(--dsh-code-font-size, 11px);
   --fmd-text: var(--dsw-alias-label-primary, inherit);
   --fmd-text-2: var(--dsw-alias-label-secondary, inherit);
   --fmd-caption: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit));
@@ -42,7 +47,7 @@ export const MARKDOWN_STYLES = `
   overscroll-behavior: contain;
   padding: 18px 24px 64px;
   font-family: var(--fmd-font);
-  font-size: 13px;
+  font-size: var(--fmd-fs);
   line-height: 1.72;
   scrollbar-width: thin;
 }
@@ -60,7 +65,7 @@ export const MARKDOWN_STYLES = `
 .fmd-editor .cm-focused .cm-selectionBackground {
   background: color-mix(in srgb, var(--fmd-accent) 22%, transparent);
 }
-.fmd-source-editor .cm-scroller { font-family: var(--fmd-mono); font-size: 12px; line-height: 1.55; }
+.fmd-source-editor .cm-scroller { font-family: var(--fmd-mono); font-size: calc(var(--fmd-fs-code) + 1px); line-height: 1.55; }
 .fmd-h1, .fmd-h2, .fmd-h3, .fmd-h4, .fmd-h5, .fmd-h6 {
   font-weight: 600;
   line-height: 1.3;
@@ -76,7 +81,7 @@ export const MARKDOWN_STYLES = `
   border-radius: 4px;
   background: color-mix(in srgb, currentColor 9%, transparent);
   font-family: var(--fmd-mono);
-  font-size: .92em;
+  font-size: calc(var(--fmd-fs-code) + 1px);
 }
 .fmd-link { color: var(--fmd-accent); text-decoration: none; }
 .fmd-link:hover { text-decoration: underline; }
@@ -85,7 +90,7 @@ export const MARKDOWN_STYLES = `
 .fmd-code-block {
   background: var(--fmd-panel);
   font-family: var(--fmd-mono);
-  font-size: .94em;
+  font-size: var(--fmd-fs-code);
 }
 .fmd-source {
   display: block;
@@ -99,7 +104,7 @@ export const MARKDOWN_STYLES = `
   scrollbar-width: thin;
   color: var(--dsw-alias-label-primary, inherit);
   font-family: var(--fmd-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-  font-size: 12px;
+  font-size: calc(var(--fmd-fs-code) + 1px);
   line-height: 1.55;
   white-space: pre;
   tab-size: 4;
@@ -111,7 +116,7 @@ export const MARKDOWN_STYLES = `
   gap: 8px;
   padding: 18px 24px;
   color: var(--dsw-alias-label-secondary, inherit);
-  font-size: 12px;
+  font-size: calc(var(--fmd-fs) * 0.8571);
 }
 .fmd-state[role="status"] { flex-direction: row; align-items: center; gap: 8px; }
 .fmd-spinner {
@@ -125,7 +130,7 @@ export const MARKDOWN_STYLES = `
   animation: fmd-spin .8s linear infinite;
 }
 @keyframes fmd-spin { to { transform: rotate(360deg); } }
-.fmd-state strong { color: var(--dsw-alias-label-primary, inherit); font-size: 13px; font-weight: 600; }
+.fmd-state strong { color: var(--dsw-alias-label-primary, inherit); font-size: calc(var(--fmd-fs) * 0.9286); font-weight: 600; }
 .fmd-state p { margin: 0; max-width: 56ch; line-height: 1.6; }
 .fmd-retry {
   height: 24px;
@@ -135,7 +140,7 @@ export const MARKDOWN_STYLES = `
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 11px;
+  font-size: calc(var(--fmd-fs) * 0.7857);
   cursor: pointer;
 }
 .fmd-retry:hover { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent)); }
@@ -190,7 +195,7 @@ export const MARKDOWN_STYLES = `
   border-bottom: 1px solid var(--fmd-border, color-mix(in srgb, currentColor 12%, transparent));
   background: var(--fmd-panel, color-mix(in srgb, currentColor 4%, transparent));
   color: var(--fmd-caption, inherit);
-  font-size: 11px;
+  font-size: calc(var(--fmd-fs) * 0.7857);
 }
 .fmd-readonly .fmd-source { flex: 1; min-height: 0; }
 `;
