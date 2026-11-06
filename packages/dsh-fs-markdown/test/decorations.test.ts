@@ -192,9 +192,17 @@ describe("planDecorations", () => {
     expect(result.some(range => range.style === "heading1")).toBe(true);
   });
 
-  it("only marks table lines as monospace and never hides cell text", () => {
+  it("leaves an inactive table to the block widget and never styles its cells", () => {
     const text = "| a | **b** |\n| --- | --- |\n| 1 | 2 |\n";
-    const result = plan(text);
+
+    // The editor replaces the whole table with a widget; emitting marks here
+    // would overlap that replacement.
+    expect(plan(text)).toEqual([]);
+  });
+
+  it("marks the source of the table the selection touches as monospace", () => {
+    const text = "| a | **b** |\n| --- | --- |\n| 1 | 2 |\n";
+    const result = plan(text, { from: 28, to: 28 });
 
     expectContract(text, result);
     expect(result.filter(range => range.kind === "hide")).toEqual([]);
@@ -202,6 +210,29 @@ describe("planDecorations", () => {
       { from: 0, to: 13, kind: "style", style: "code-block" },
       { from: 14, to: 27, kind: "style", style: "code-block" },
       { from: 28, to: 37, kind: "style", style: "code-block" },
+    ]);
+    // Cell markers stay literal: the active table is edited as source.
+    expect(result.some(range => range.style === "strong")).toBe(false);
+  });
+
+  it("recognizes a table that omits its outer pipes", () => {
+    const text = "a | b\n--- | ---\nc | d\n";
+    expect(plan(text)).toEqual([]);
+    expect(plan(text, { from: 0, to: 0 }).filter(range => range.style === "code-block")).toHaveLength(3);
+  });
+
+  it("keeps a table inside a fence as a fenced code block", () => {
+    const text = "```md\n| a |\n| --- |\n| 1 |\n```\n";
+    const result = plan(text);
+
+    expectContract(text, result);
+    // The widget must not claim these lines: the fence owns them.
+    expect(result).toEqual([
+      { from: 0, to: 5, kind: "hide" },
+      { from: 6, to: 11, kind: "style", style: "code-block" },
+      { from: 12, to: 19, kind: "style", style: "code-block" },
+      { from: 20, to: 25, kind: "style", style: "code-block" },
+      { from: 26, to: 29, kind: "hide" },
     ]);
   });
 

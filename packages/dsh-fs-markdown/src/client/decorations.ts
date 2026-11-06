@@ -13,6 +13,9 @@
  * unrepresentable rather than defensive at the call site.
  */
 
+import { frontmatterLast, isBlankLine, isEscaped, pairFences, splitLines, type Line } from "./lines.ts";
+import { planTables, tableIntersects, type TableBlock } from "./tables.ts";
+
 /** What happens to a planned range. */
 export type DecorationKind = "hide" | "style";
 
@@ -40,13 +43,6 @@ export interface PlanRange {
   readonly style?: DecorationStyle;
 }
 
-/** One physical line; `end` excludes the line terminator. */
-interface Line {
-  readonly start: number;
-  readonly end: number;
-  readonly text: string;
-}
-
 /** A run of lines the planner treats as one unit for activation. */
 interface Block {
   readonly start: number;
@@ -62,64 +58,9 @@ interface LinkParts {
   readonly end: number;
 }
 
-const FENCE_OPEN = /^ {0,3}(`{3,})(.*)$/u;
-const FENCE_CLOSE = /^ {0,3}(`{3,})\s*$/u;
 const HEADING = /^(#{1,6})(\s+)/u;
 const QUOTE = /^(>\s?)/u;
 const LIST_ITEM = /^(\s*)([-*+]|\d+\.)\s/u;
-
-function isBlank(text: string): boolean {
-  return text.trim() === "";
-}
-
-/** Split into lines while keeping absolute offsets stable for CRLF input. */
-function splitLines(text: string): Line[] {
-  const lines: Line[] = [];
-  let start = 0;
-  while (start <= text.length) {
-    const newline = text.indexOf("\n", start);
-    const rawEnd = newline === -1 ? text.length : newline;
-    const end = rawEnd > start && text[rawEnd - 1] === "\r" ? rawEnd - 1 : rawEnd;
-    lines.push({ start, end, text: text.slice(start, end) });
-    if (newline === -1) break;
-    start = newline + 1;
-  }
-  return lines;
-}
-
-/** Whether the line opens a fence, and how long its backtick run is. */
-function fenceOpener(line: Line): number | null {
-  const match = FENCE_OPEN.exec(line.text);
-  return match === null ? null : (match[1] ?? "").length;
-}
-
-/** Whether the line closes a fence opened with `width` backticks. */
-function fenceCloser(line: Line, width: number): boolean {
-  const match = FENCE_CLOSE.exec(line.text);
-  return match !== null && (match[1] ?? "").length >= width;
-}
-
-/** The separator row of a GFM table, e.g. `| --- | :---: |`. */
-function isTableSeparator(text: string): boolean {
-  const trimmed = text.trim();
-  return trimmed.includes("|") && /^[|\s:-]+$/u.test(trimmed) && /-+/u.test(trimmed);
-}
-
-/** Whether this line belongs to a table, including the header's separator. */
-function isTableLine(lines: readonly Line[], index: number): boolean {
-  const line = lines[index];
-  if (line === undefined) return false;
-  if (line.text.trimStart().startsWith("|")) return true;
-  const previous = lines[index - 1];
-  return previous !== undefined && isTableSeparator(previous.text);
-}
-
-/** Whether `index` is preceded by an odd number of backslashes. */
-function isEscaped(text: string, index: number): boolean {
-  let count = 0;
-  for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor -= 1) count += 1;
-  return count % 2 === 1;
-}
 
 function runLength(text: string, from: number, to: number, char: string): number {
   let cursor = from;
@@ -320,15 +261,29 @@ function scanInline(text: string, from: number, to: number, active: boolean, bui
   }
 }
 
+/**
+ * Plan the inline marks inside one stretch of text.
+ *
+ * The table widget uses this to paint emphasis, code spans and link labels in a
+ * cell without going through CodeMirror: markers disappear and the remaining
+ * text is grouped by the style it should carry. It is the same scanner the
+ * editor uses, so a cell and a paragraph cannot disagree about what `**x**`
+ * means.
+ * @param text - the whole document, so offsets stay absolute.
+ * @param from - first character of the stretch.
+ * @param to - end of the stretch, exclusive.
+ * @returns sorted, non-overlapping hide and style ranges.
+ */
+export function planInline(text: string, from: number, to: number): readonly PlanRange[] {
+  const builder = new PlanBuilder();
+  scanInline(text, from, to, false, builder);
+  return builder.finish();
+}
+
 /** Emit one ordinary (non-fence) line's ranges. */
 function planLine(text: string, lines: readonly Line[], index: number, active: boolean, builder: PlanBuilder): void {
   const line = lines[index];
-  if (line === undefined || isBlank(line.text)) return;
-
-  if (isTableLine(lines, index)) {
-    builder.style(line.start, line.end, "code-block");
-    return;
-  }
+  if (line === undefined || isBlankLine(line.text)) return;
 
   const quote = QUOTE.exec(line.text);
   if (quote !== null) {
@@ -373,44 +328,27 @@ export function planDecorations(
 ): readonly PlanRange[] {
   const lines = splitLines(text);
   const builder = new PlanBuilder();
-
   // Rule 11: a frontmatter block is presentation-neutral. It stays literal in
   // both modes, so it is excluded before any other rule can claim its lines.
-  let frontmatterLast = -1;
-  if (lines[0]?.text.trim() === "---") {
-    for (let index = 1; index < lines.length; index += 1) {
-      if (lines[index]?.text.trim() === "---") {
-        frontmatterLast = index;
-        break;
-      }
-    }
-  }
-
+  const frontmatterEnd = frontmatterLast(lines);
   // Fences pair before blocks are formed, because a blank line inside a fence
-  // must not split it. An unclosed fence stays ordinary text rather than
-  // swallowing the rest of the document.
-  const fenceEnds = new Map<number, number>();
-  for (let index = frontmatterLast + 1; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (line === undefined || line.text.trim() === "") continue;
-    const width = fenceOpener(line);
-    if (width === null) continue;
-    for (let close = index + 1; close < lines.length; close += 1) {
-      const candidate = lines[close];
-      if (candidate !== undefined && fenceCloser(candidate, width)) {
-        fenceEnds.set(index, close);
-        index = close;
-        break;
-      }
-    }
+  // must not split it.
+  const fenceEnds = pairFences(lines, frontmatterEnd + 1);
+
+  // A table that is not being edited is replaced by a block widget, so its
+  // lines emit no ranges here. Only the table the reader is editing keeps its
+  // source, which is what the monospace range below marks.
+  const tableByLine = new Map<number, TableBlock>();
+  for (const table of planTables(text)) {
+    for (let cursor = table.firstLine; cursor <= table.lastLine; cursor += 1) tableByLine.set(cursor, table);
   }
 
   const blocks: Block[] = [];
-  let index = frontmatterLast + 1;
+  let index = frontmatterEnd + 1;
   while (index < lines.length) {
     const line = lines[index];
     if (line === undefined) break;
-    if (line.text.trim() === "") {
+    if (isBlankLine(line.text)) {
       index += 1;
       continue;
     }
@@ -423,7 +361,7 @@ export function planDecorations(
     let last = index;
     while (last + 1 < lines.length) {
       const next = lines[last + 1];
-      if (next === undefined || next.text.trim() === "" || fenceEnds.has(last + 1)) break;
+      if (next === undefined || isBlankLine(next.text) || fenceEnds.has(last + 1)) break;
       last += 1;
     }
     blocks.push({ start: line.start, end: lines[last]?.end ?? line.end, first: index, last, fence: false });
@@ -449,6 +387,13 @@ export function planDecorations(
       continue;
     }
     for (let cursor = block.first; cursor <= block.last; cursor += 1) {
+      const line = lines[cursor];
+      if (line === undefined) continue;
+      const table = tableByLine.get(cursor);
+      if (table !== undefined) {
+        if (tableIntersects(table, active)) builder.style(line.start, line.end, "code-block");
+        continue;
+      }
       planLine(text, lines, cursor, blockActive, builder);
     }
   }

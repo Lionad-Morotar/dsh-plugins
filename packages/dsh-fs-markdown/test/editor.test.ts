@@ -169,6 +169,66 @@ describe("EditorBody", () => {
     expect(saves).toBe(1);
   });
 
+  it("renders an inactive table as a table widget with inline marks and alignment", async () => {
+    await show({ text: "# t\n\n| a | **b** | `c` |\n| --- | :---: | --- |\n| 1 | 2 | 3 |\n\nplain" });
+
+    const table = host.querySelector<HTMLTableElement>(".fmd-table");
+    expect(table).not.toBeNull();
+    const header = table?.querySelectorAll<HTMLElement>("thead th") ?? [];
+    expect(header).toHaveLength(3);
+    expect(header[0]?.textContent).toBe("a");
+    // Cell marks go through the same inline scanner as a paragraph.
+    expect(header[1]?.querySelector(".fmd-strong")?.textContent).toBe("b");
+    expect(header[2]?.querySelector(".fmd-code")?.textContent).toBe("c");
+    expect(header[1]?.style.textAlign).toBe("center");
+    expect(table?.querySelectorAll("tbody td")).toHaveLength(3);
+    // The source lines are replaced rather than painted under the widget.
+    expect(text()).not.toContain("| --- |");
+  });
+
+  it("shows the source of the table the selection enters", async () => {
+    const doc = "# t\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n";
+    await show({ text: doc });
+    expect(host.querySelector(".fmd-table")).not.toBeNull();
+
+    await act(async () => {
+      view().dispatch({ selection: { anchor: doc.indexOf("| a |") } });
+    });
+
+    expect(host.querySelector(".fmd-table")).toBeNull();
+    expect(text()).toContain("| --- |");
+  });
+
+  it("moves the selection to the clicked cell's first character", async () => {
+    // A table at position 0 would be active from the start; lead with a heading
+    // so the table is painted and the click has a widget to land on.
+    const doc = "# t\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n";
+    await show({ text: doc });
+    const second = host.querySelectorAll<HTMLElement>("tbody td")[1];
+    expect(second).not.toBeUndefined();
+
+    await act(async () => {
+      second?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    });
+
+    expect(view().state.selection.main.anchor).toBe(doc.indexOf("2"));
+    // The dispatch reveals the source, which is the editing surface.
+    expect(host.querySelector(".fmd-table")).toBeNull();
+  });
+
+  it("renders a table that ends the document without a trailing newline", async () => {
+    await show({ text: "# t\n\n| a | b |\n| --- | --- |\n| 1 | 2 |" });
+
+    expect(host.querySelector(".fmd-table")).not.toBeNull();
+    expect(host.querySelectorAll(".fmd-table tbody td")).toHaveLength(2);
+  });
+
+  it("does not render a table inside a fenced block", async () => {
+    await show({ text: "```md\n| a |\n| --- |\n```\n" });
+    expect(host.querySelector(".fmd-table")).toBeNull();
+    expect(text()).toContain("| --- |");
+  });
+
   it("keeps one view and only switches decorations between modes", async () => {
     await show();
     const editorView = view();

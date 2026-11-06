@@ -16,6 +16,7 @@ export const MARKDOWN_STYLES = `
 .fmd-source-editor {
   --fmd-font: var(--dsw-font-sans, inherit);
   --fmd-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --fmd-fs: var(--dsh-content-font-size, 14px);
   --fmd-text: var(--dsw-alias-label-primary, inherit);
   --fmd-text-2: var(--dsw-alias-label-secondary, inherit);
   --fmd-caption: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit));
@@ -139,6 +140,41 @@ export const MARKDOWN_STYLES = `
 }
 .fmd-retry:hover { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent)); }
 .fmd-retry:focus-visible { outline: 2px solid var(--fmd-accent, currentColor); outline-offset: -2px; }
+/* A rendered table replaces its source lines as one block widget. The wrapper
+   owns horizontal overflow so a wide table scrolls inside the reading column
+   instead of widening it, and the table keeps the chat renderer's table rhythm
+   (a size below the prose size) so Markdown reads the same in both surfaces. */
+.fmd-table-block {
+  padding: 2px 0 12px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+.fmd-table {
+  border-collapse: collapse;
+  border-spacing: 0;
+  width: max-content;
+  max-width: 100%;
+  font-size: var(--dsh-content-font-size-secondary, calc(var(--fmd-fs) - 1px));
+  line-height: 1.55;
+}
+.fmd-table th,
+.fmd-table td {
+  padding: 5px 10px;
+  border: 1px solid var(--fmd-border);
+  vertical-align: top;
+  text-align: left;
+}
+.fmd-table th {
+  background: var(--fmd-panel);
+  font-weight: 600;
+}
+/* Inline code is one token, not a place to break a package name at every
+   slash and hyphen; the wide table scrolls instead of shredding identifiers. */
+.fmd-table .fmd-code {
+  white-space: nowrap;
+}
+
 /* The read-only degradation: the note sits above the text rather than over it,
    so a reader can still select and copy what they cannot edit. */
 .fmd-readonly {

@@ -28,29 +28,15 @@ import { Decoration, EditorView, drawSelection, keymap, type KeyBinding } from "
 import { tags } from "@lezer/highlight";
 import { useEffect, useRef, type ReactElement } from "react";
 
+import { CLASS_NAMES } from "../classes.ts";
 import type { EditorBodyProps } from "../contracts.ts";
-import { planDecorations, type DecorationStyle } from "../decorations.ts";
+import { planDecorations } from "../decorations.ts";
 import { languageOf, type EditorLanguage } from "../language.ts";
+import { TableWidget } from "../table-widget.ts";
+import { planTables, tableIntersects } from "../tables.ts";
 
 /** Marks a document replacement this component made itself, not the reader. */
 const ExternalChange = Annotation.define<boolean>();
-
-/** Planner vocabulary to the CSS class the stylesheet defines. */
-const CLASS_NAMES: Readonly<Record<DecorationStyle, string>> = {
-  heading1: "fmd-h1",
-  heading2: "fmd-h2",
-  heading3: "fmd-h3",
-  heading4: "fmd-h4",
-  heading5: "fmd-h5",
-  heading6: "fmd-h6",
-  strong: "fmd-strong",
-  em: "fmd-em",
-  code: "fmd-code",
-  link: "fmd-link",
-  quote: "fmd-quote",
-  "list-marker": "fmd-list-marker",
-  "code-block": "fmd-code-block",
-};
 
 /**
  * Colours come from the shell's tokens so the editor follows the theme.
@@ -109,11 +95,21 @@ function languageExtension(language: EditorLanguage): Extension {
 function decorationExtension(enabled: boolean): Extension {
   return EditorView.decorations.compute(["doc", "selection"], state => {
     if (!enabled) return Decoration.none;
-    const ranges = planDecorations(state.doc.toString(), state.selection.main).map(range =>
+    const text = state.doc.toString();
+    const selection = state.selection.main;
+    const ranges = planDecorations(text, selection).map(range =>
       range.kind === "hide"
         ? Decoration.replace({}).range(range.from, range.to)
         : Decoration.mark({ class: CLASS_NAMES[range.style ?? "code"] }).range(range.from, range.to),
     );
+    // Every table the selection does not touch is painted as a block widget in
+    // place of its source. The planner leaves those lines unstyled, so a
+    // replacement and a mark can never overlap on the same line.
+    for (const table of planTables(text)) {
+      if (tableIntersects(table, selection)) continue;
+      ranges.push(Decoration.replace({ widget: new TableWidget(table, text), block: true }).range(table.from, table.to));
+    }
+    ranges.sort((left, right) => left.from - right.from);
     return Decoration.set(ranges, true);
   });
 }
