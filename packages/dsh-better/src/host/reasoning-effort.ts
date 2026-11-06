@@ -67,8 +67,10 @@ export interface EffortSnapshot {
   readonly model: string;
   readonly levels: readonly EffortLevel[];
   readonly defaultEffort: string | undefined;
-  /** The level in effect: an explicit choice first, the model default otherwise. */
+  /** The level in effect: a valid explicit choice first, the model default otherwise. */
   readonly currentEffort: string | undefined;
+  /** The level the session records, valid or not; undefined when it records none. */
+  readonly recordedEffort: string | undefined;
   /** Whether the session records an explicit level (false means the adapter default). */
   readonly explicit: boolean;
 }
@@ -171,13 +173,19 @@ const OUTPUT_SCHEMA: JsonObject = {
 /**
  * Read the session's effort state against the model's advertised ladder.
  *
- * The ladder decides whether a level can be reported at all. A session can still
- * record a level for a model that no longer advertises one (retired model,
- * degraded provider, drifted config), but nothing downstream consumes it, so
- * echoing it would put `levels: []` and `effort: "high"` in the same value and
- * contradict the tool's own conclusion that there is nothing to switch. With a
- * ladder present the behaviour is unchanged: an explicit choice wins, and a
- * session that records none inherits the model default.
+ * A recorded level only counts as the level in effect when the model still
+ * advertises it. Two different failures hide behind a recorded value that the
+ * ladder does not carry: a model with no ladder at all, where nothing downstream
+ * consumes the level and reporting it would contradict the tool's own conclusion
+ * that there is nothing to switch; and a model that still has a ladder but has
+ * dropped this rung, where the host fails the next request with
+ * `UNSUPPORTED_REASONING_EFFORT`. In both cases `currentEffort` is undefined, so
+ * the value never claims a level the model cannot run.
+ *
+ * `recordedEffort` keeps the raw value either way, because the repair path needs
+ * it: `planEffortChange` compares against what the session records, not against
+ * what is in effect, so a request for a valid level still writes and fixes the
+ * session instead of being swallowed as a no-op.
  * @param llm - the host llm service, used only for model info.
  * @param selection - the session's current provider/model/effort selection.
  * @returns the snapshot; the model-info failure propagates untouched.
@@ -186,15 +194,18 @@ export async function readEffortSnapshot(llm: EffortLlmFace, selection: EffortSe
   const info = await llm.resolveModelInfo(selection.provider, selection.model);
   const reasoning = info.reasoning;
   const levels = reasoning?.efforts ?? [];
-  const explicit = selection.reasoningEffort !== undefined;
+  const recordedEffort = selection.reasoningEffort;
+  const explicit = recordedEffort !== undefined;
+  const recordedValid = recordedEffort !== undefined && levels.some(level => level.id === recordedEffort);
   return {
     provider: selection.provider,
     model: selection.model,
     levels,
     defaultEffort: reasoning?.defaultEffort,
-    // An inherited default is the level in effect just as much as a pinned one:
-    // asking for it back must not cost a cache flush.
-    currentEffort: levels.length === 0 ? undefined : explicit ? selection.reasoningEffort : reasoning?.defaultEffort,
+    // A valid pin wins; a session that records nothing inherits the model
+    // default; a pin the model dropped leaves no level in effect at all.
+    currentEffort: recordedValid ? recordedEffort : recordedEffort === undefined ? reasoning?.defaultEffort : undefined,
+    recordedEffort,
     explicit,
   };
 }
@@ -205,12 +216,22 @@ export async function readEffortSnapshot(llm: EffortLlmFace, selection: EffortSe
  * Pure on purpose: the decision is the part worth testing, and it must not be
  * able to touch the session while it is being made.
  *
+ * The comparison is against the recorded level, not the effective one. Those
+ * differ exactly when the session holds a level the model dropped, and that is
+ * the case where a write is mandatory: the host would fail the next request, so
+ * asking for a valid level has to repair the session rather than no-op because
+ * the retired value is not what the caller asked for.
  * @param snapshot - the state read before the request.
  * @param requested - the level id the caller asked for.
  * @returns `noop` when the level already matches, `change` otherwise.
  */
 export function planEffortChange(snapshot: EffortSnapshot, requested: string): EffortPlan {
-  return requested === snapshot.currentEffort
+  if (snapshot.recordedEffort !== undefined) {
+    return snapshot.recordedEffort === requested
+      ? { kind: "noop" }
+      : { kind: "change", reasoningEffort: requested };
+  }
+  return snapshot.currentEffort === requested
     ? { kind: "noop" }
     : { kind: "change", reasoningEffort: requested };
 }
@@ -238,10 +259,20 @@ function renderRead(value: SetEffortToolValue): string {
   if (value.levels.length === 0) {
     return `${value.provider}/${value.model} does not expose reasoning effort levels, so there is nothing to switch. Nothing changed.`;
   }
-  const inEffect = value.effort ?? "(none)";
+  if (value.effort === null) {
+    // A ladder exists but nothing usable is in effect, which only happens when
+    // the session records a level this model dropped. Saying "nothing selected"
+    // would understate it: the next request fails until a valid level is set.
+    return [
+      `The level this session records is not in effect: ${value.provider}/${value.model} does not advertise it, so no reasoning effort applies.`,
+      "The next model request will fail until a level from the list below is set.",
+      `Available: ${ladderText(value.levels)}.`,
+      "Nothing changed.",
+    ].join(" ");
+  }
   const fallback = value.defaultEffort === null ? "no default" : `model default: ${value.defaultEffort}`;
   return [
-    `Reasoning effort in effect: ${inEffect} (${fallback}).`,
+    `Reasoning effort in effect: ${value.effort} (${fallback}).`,
     `Available: ${ladderText(value.levels)}.`,
     "Nothing changed.",
   ].join(" ");

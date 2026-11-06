@@ -110,6 +110,8 @@ describe("planEffortChange", () => {
       levels: FOUR,
       defaultEffort: "high",
       currentEffort,
+      // No explicit pin: these cases are about the inherited-default path.
+      recordedEffort: undefined,
       explicit: false,
     };
   }
@@ -306,6 +308,76 @@ describe("execute: a session pinned to a level its model no longer has", () => {
 
     await expect(tool.execute({ effort: "high" }, { agent })).rejects.toThrow(/does not support/);
     expect(select).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A narrower stale case: the model still advertises a ladder, but the level the
+ * session records is not on it. The host fails the next request with
+ * `UNSUPPORTED_REASONING_EFFORT`, so this is not a cosmetic mismatch.
+ *
+ * Two things follow, and both are asserted here. The read must not name the
+ * retired level as the one in effect, because it is not. And a request for any
+ * valid level must write, even though the recorded value differs from nothing
+ * the model knows: that write is what repairs the session. A no-op there would
+ * leave the session permanently broken while reporting success.
+ */
+describe("execute: a session recording a level the model dropped", () => {
+  /** `low/high` with `low` as the default, the ladder the stale session faces. */
+  const TWO: EffortLevel[] = [
+    { id: "low", name: "Low" },
+    { id: "high", name: "High" },
+  ];
+
+  /** A session still pinned to a level this ladder no longer carries. */
+  function staleAgent(): { agent: EffortAgentLike; select: ReturnType<typeof vi.fn<(selection: EffortSelection) => void>> } {
+    return agentOn(selectionOn("retired"));
+  }
+
+  it("does not report the retired level as the one in effect", async () => {
+    const tool = createSetEffortTool({ llm: ladderLlm(TWO, "low") });
+    const { agent, select } = staleAgent();
+
+    const value = await tool.execute({}, { agent });
+    const text = textOf(tool, {}, value);
+
+    expect(select).not.toHaveBeenCalled();
+    expect(value).toMatchObject({ changed: false, effort: null });
+    expect((value as { levels: unknown[] }).levels).toHaveLength(2);
+    // The render has to say why there is no level in effect; the model needs to
+    // know the session is broken, not merely that nothing is selected.
+    expect(text).toMatch(/does not advertise|not in effect/);
+  });
+
+  it("repairs the session when a valid level is requested", async () => {
+    const tool = createSetEffortTool({ llm: ladderLlm(TWO, "low") });
+    const { agent, select } = staleAgent();
+
+    const value = await tool.execute({ effort: "low" }, { agent });
+
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(select).toHaveBeenCalledWith({ provider: "deepseek-account", model: "deepseek-v4", reasoningEffort: "low" });
+    expect(value).toMatchObject({ changed: true, effort: "low" });
+  });
+
+  it("still rejects the retired id as unknown, listing what the model has", async () => {
+    const tool = createSetEffortTool({ llm: ladderLlm(TWO, "low") });
+    const { agent, select } = staleAgent();
+
+    const failure = tool.execute({ effort: "retired" }, { agent });
+
+    await expect(failure).rejects.toThrow(/Available/);
+    expect(select).not.toHaveBeenCalled();
+  });
+
+  it("keeps a valid recorded level a no-op on the same request", async () => {
+    const tool = createSetEffortTool({ llm: ladderLlm(TWO, "low") });
+    const { agent, select } = agentOn(selectionOn("high"));
+
+    const value = await tool.execute({ effort: "high" }, { agent });
+
+    expect(select).not.toHaveBeenCalled();
+    expect(value).toMatchObject({ changed: false, effort: "high" });
   });
 });
 
