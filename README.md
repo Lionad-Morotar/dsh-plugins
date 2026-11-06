@@ -63,7 +63,7 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 git clone --recurse-submodules <repo>   # 或在已克隆的仓库里跑 git submodule update --init
 pnpm install
 pnpm build      # 产出 lib/（包内分块 + 主入口），lib 是要提交的，profile 直接读它
-pnpm test       # 十七个包递归
+pnpm test       # 所有包递归
 pnpm typecheck
 ```
 
@@ -75,18 +75,29 @@ pnpm typecheck
 
 ## 市场分发
 
-`dsh-jump` 用于投进 DSH 插件市场与 awesome 社区目录（`dsh-better-keybindings`、`dsh-slash-commands`、`dsh-session-timing`、`dsh-better`、`dsh-command-panel`、`dsh-repo-harness` 仍在日常验证中，以 `private: true` 声明自用，清单检查器会断言它们保持 private）。索引与条目都是生成物，从包自身的 `package.json` 与 `locale` 派生，别手改：
+`dsh-jump` 用于投进 DSH 插件市场与 awesome 社区目录（其余自用包仍在日常验证中，以 `private: true` 声明，清单检查器会断言它们保持 private）。索引与条目都是生成物，从包自身的 `package.json` 与 `locale` 派生，别手改：
 
 ```sh
 pnpm check:market            # 校验可投稿包的对外暴露面（宿主真正读取的字段），并断言自用包保持 private
-pnpm build:market            # 重算 market/index.json，安装来源钉当前 commit
+pnpm build:market            # 重算 market/index.json，安装来源取 npm 上的精确版本
 pnpm check:market-index      # 只校验不写盘
 pnpm build:awesome dsh-jump  # 重算 market/awesome/<owner>__<repo>--<subdir>.yml
 ```
 
-`check:market` 断言的是「别人装得动」这件事本身：`engines.dsh` 是显式的 `>=floor <ceiling` 区间且容纳本机运行态、icon 能经 `exports` 解析到、`dsh.bundle.patch` 是 `./` 相对路径且在 `files` 里、`locale/en.json` 有标题与描述、`npm pack` 产物不含 `src/` 与 `test/`、不带 install 生命周期脚本。任一失败即为不可发布，不是不整齐。
+`check:market` 断言的是「别人装得动」这件事本身：`engines.dsh` 是显式的 `>=floor <ceiling` 区间且容纳当前桌面运行时（版本优先从 app.asar 的 `dsh/package.json` 读，`DSH_RUNTIME_VERSION` 可覆盖，`dsh --version` 只作兜底；所有声明了 `engines.dsh` 的包都验这一条）、icon 能经 `exports` 解析到、`dsh.bundle.patch` 是 `./` 相对路径且在 `files` 里、`locale/en.json` 有标题与描述、`npm pack` 产物不含 `src/` 与 `test/`、不带 install 生命周期脚本。任一失败即为不可发布，不是不整齐。
 
-改过包元数据或发版后要重跑 `pnpm build:market`：索引里的安装来源是 `git+<repo>#<commit>&path:/packages/<name>`，commit 取自生成时刻的 HEAD，放着不重算就会指向旧提交。
+改过包元数据或发版后要重跑 `pnpm build:market`：当前索引的安装来源是 npm registry 上的精确版本（`--source git` 时才会写成 `git+<repo>#<commit>&path:/packages/<name>`），放着不重算就会继续钉在旧版本。
+
+## 跟随宿主运行时
+
+桌面宿主升级后先跑一轮兼容性巡检，再决定改哪些包。本轮（0.2.1-rc.5 → 0.2.2-rc.1）的入口：
+
+- 巡检报告：`docs/reports/261106/upstream-0.2.2-rc.1.md`
+- 基线状态：`temp/upstream-check/state.json`（记录已评估的上游 tag、安装态版本、结论摘要与上一份报告）
+
+这两个路径按本机全局 gitignore 不入库，只在本地 checkout 内可读。
+
+`pnpm check:market` 比较的运行时版本优先取桌面 app.asar 内的 `dsh/package.json`，其次 `Info.plist`，`dsh --version` 只作兜底；输出会标明来源，例如 `against desktop runtime 0.2.2-rc.1 (asar)`。要临时验证别的版本，设 `DSH_RUNTIME_VERSION`；app 不在默认路径时设 `DSH_DESKTOP_APP`。
 
 ## 更新上游 ascii.rest
 

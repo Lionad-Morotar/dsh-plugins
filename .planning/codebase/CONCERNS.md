@@ -1,11 +1,11 @@
 # 代码库关注点（Codebase Concerns）
 
-更新: 2026-10-27
+更新: 2026-11-06
 
 ## 技术债
 
 **~~市场索引把安装钉在一个旧提交上，而那个提交还没推到远端~~（已修复，pin 形态已废弃）：**
-- 现状：`market/index.json` 三个 plugin 的 `source` 全是 `{"type":"git","commit":"6b3e04d88a…","path":"packages/<name>"}`，而仓库 HEAD 是 `2aea6ad`（实测 `git rev-parse HEAD`）。`git diff 6b3e04d..HEAD` 只动了 `market/`、`.planning/`、根 `README.md` 与 `packages/dsh-jump/README.md`，所以按旧 pin 装到的代码与 HEAD 功能等价，但索引的承诺已经落后一位
+- 原状：`market/index.json` 三个 plugin 的 `source` 全是 `{"type":"git","commit":"6b3e04d88a…","path":"packages/<name>"}`，而仓库 HEAD 是 `2aea6ad`（实测 `git rev-parse HEAD`）。`git diff 6b3e04d..HEAD` 只动了 `market/`、`.planning/`、根 `README.md` 与 `packages/dsh-jump/README.md`，所以按旧 pin 装到的代码与 HEAD 功能等价，但索引的承诺已经落后一位
 - 更硬的一条：`6b3e04d` 根本不在远端。`git merge-base --is-ancestor 6b3e04d origin/main` 为假，`origin/main` 停在 `e4598a1`（2026-10-20），本地领先 55 个提交；索引一旦被托管，陌生人拿到的是一个拉不到的 commit。`market/awesome/*.yml` 同病：三条条目的 `icon` 指向 `raw.githubusercontent.com/.../main/packages/*/assets/icon-180.png`，而 `git cat-file -e origin/main:packages/dsh-jump/assets/icon-180.png` 失败——这些 URL 今天返回 404
 - 文件：`market/index.json`（三处 `commit`）、`market/awesome/*.yml`（三处 `icon`）、`scripts/build-market-index.mjs:49-51`（pin 直接取 `HEAD`）、`scripts/build-awesome-entry.mjs`
 - 影响：高——这是对外发布承诺，不是内部整洁；失败发生在订阅方的机器上，且没有任何脚本在提交后自动重算（`build:market` 必须手动跑）
@@ -21,7 +21,7 @@
 **皮肤包的 `dshCompatibility` 是不可解析的字符串：**
 - 现状：`packages/dsh-client-ui-skin-ascii-rest/skin.json:19` 是 `"dshCompatibility": "0.2.1rc2"`；同一个包的 `engines.dsh` 与 `peerDependencies["@deepseek-ai/dsh"]` 是显式区间 `>=0.2.0-rc.2 <0.3.0-0`。同一件事两种写法
 - 核实结论：这个字段不是 semver——`semver.valid("0.2.1rc2")` 返回 `null`（`0.2.1-rc.2` 才合法），所以它无法参与任何区间比较。宿主准入也不看它：皮肤管理器的 `evaluateSkinCompatibility` 只从 `peerDependencies` 里筛 `@deepseek-ai/dsh*` 的区间做 `satisfies`（`zRefs/dsh-plugins-collect/deep-whale/skin-manager/src/compatibility.ts:69-113`；本机安装的 `@smalltailqwq/dsh-client-ui-skin-deep-whale-manager@0.1.7` 里是同一份逻辑，`lib/index.js:942-960`），`dshCompatibility` 只落成一句展示文案（该包 `lib/client.js:1818-1820` 与 `:2195-2206` 的 `copy.compatibility(...)`）
-- 为什么没有测试拦：`check-market-manifest.mjs` 的 `PUBLISHABLE` 只有三个 web 包（第 23 行），皮肤包不在其中；皮肤的 `bundle.test.ts` 也不读 `skin.json`
+- 为什么没有测试拦：`check-market-manifest.mjs` 的 `PUBLISHABLE` 只有 `dsh-jump`，皮肤包不在其中；皮肤的 `bundle.test.ts` 也不读 `skin.json`
 - 影响：低——不会让安装失败，只会让设置页显示一句无法被程序验证的适配声明，并与真实 peer 区间各自漂移
 - 修复路径：要么改成 `0.2.1-rc.2` 这种可解析形态（仍需人维护），要么从 `engines.dsh` 派生展示文案，去掉独立字段
 
@@ -186,9 +186,9 @@
 **ascii.rest（github:bas3line/ascii）：** 单作者上游、git 依赖无版本语义；pin 住时零风险，升级才受影响；它就是产品内容本身，无迁移方案，commit pin + 构建期校验已是合理姿势
 **lil-gui ^0.21：** 稳定低风险；隔离在独立分块，移除只影响调参面板
 **Community Draft 0.15（dsh-std）：** 外部标准草案，schema 与宿主期望版本同步演进；本仓没有本地校验器，靠宿主准入的实际表现兜底
-**DSH 宿主契约（`@deepseek-ai/dsh` >=0.2.0-rc.2 <0.3.0-0、`@deepseek-ai/cordis` ^4.0.1）：** 三个 web 面插件都声明成 optional peer，实际用到的 `ModuleLoader`、`theme`、`commands`、`tuiPluginHost`、`commandUi`、`sessions`、`workspaces`、`uiWorkspace`、`slots`、`locale` 都没有版本检测；坏掉的表现是启动失败或静默回落，不是编译错误。`dsh-slash-commands` 的客户端半边连 peer 都不声明，宿主面全部手写成结构类型，所以宿主改签名时它连 package.json 层面的提示都没有。本轮新增一处软失败点：`dsh-jump` 的设置行依赖 `slots.inject`、`slots.register({name,id,order}, component)` 与 `locale.getSnapshot().active` 三处宿主签名，前两处取不到时整行静默消失、导航仍可用
+**DSH 宿主契约（`@deepseek-ai/dsh` 地板见各包 `engines.dsh`，上限统一 `<0.3.0-0`；`@deepseek-ai/cordis` ^4.0.1）：** 18 个包声明 `engines.dsh`，部分另把宿主包写成 optional peer；实际用到的 `ModuleLoader`、`theme`、`commands`、`tuiPluginHost`、`commandUi`、`sessions`、`workspaces`、`uiWorkspace`、`slots`、`locale`、`contextMenus` 都没有版本检测；坏掉的表现是启动失败或静默回落，不是编译错误。`dsh-slash-commands` 的客户端半边连 peer 都不声明，宿主面全部手写成结构类型，所以宿主改签名时它连 package.json 层面的提示都没有。`dsh-jump` 的设置行依赖 `slots.inject`、`slots.register({name,id,order}, component)` 与 `locale.getSnapshot().active` 三处宿主签名，前两处取不到时整行静默消失、导航仍可用。0.2.2 新增的 `contextMenus` 是客户端 root 服务：`dsh-workspace-open-local` 把它列进 `inject`，老宿主解析不到依赖时插件静默不挂载，该包 `engines.dsh` 已抬到 `>=0.2.2-rc.1`。Session Projection 的 `register()` 在 0.2.2 改为返回 thenable，旧同步写法仍是官方兼容路径，本仓 5 处注册暂不迁移
 **系统剪贴板工具：** `pbcopy`/`clip`/`wl-copy`/`xclip`/`xsel`/`tmux` 由运行环境提供；缺失被显式区分成 `MISSING_TOOL`（已有测试），但「到底有没有落到系统剪贴板」在本机无法自动化验证
-**`@deepseek-ai/dsh-plugin-market-index` 0.2.1-rc.4（根 devDependency）：** 它是索引校验的唯一来源，装不上时 `scripts/build-market-index.mjs:108-110` 只打一行 `skipping validation` 就继续，索引照样写出、`--check` 照样 exit 0；`check:market` 只校验三个包的清单，不校验这个校验器是否在场
+**`@deepseek-ai/dsh-plugin-market-index` 0.2.2-rc.1（根 devDependency）：** 它是索引校验的唯一来源，装不上时 `scripts/build-market-index.mjs:108-110` 只打一行 `skipping validation` 就继续，索引照样写出、`--check` 照样 exit 0；`check:market` 只校验一个可投稿包（`dsh-jump`）的清单，不校验这个校验器是否在场
 **`refs/deepseek-harness-for-vs-code`（git submodule，`ignore = all`）：** 只读参考仓，不参与构建与测试；指针是本地领先 origin/main 20 个提交的 main（`9d1c7f3`，`v1.0.0-20-g9d1c7f3`），上游未推送前新克隆取不到这一目录
 
 ## 缺失的关键能力
@@ -202,7 +202,7 @@
 - 问题：dsh-jump 的断言全在 jsdom + 桩矩形上，真实浏览器里的布局、`checkVisibility`、滚动后的快照行为都没有覆盖；dsh-slash-commands 的注册路径全用假 `ctx`，真实宿主（`tuiPluginHost`、准入、按插件授权）没有一条自动化用例
 - 阻碍：a5414cc 那类「装上去 web 起不来」的缺陷只能靠人工重启发现；归属是否生效也只能靠日志与人工
 - 备注：两个包都在真实 profile 里装过（`~/.dsh/profiles/web`、`~/.dsh/profiles/dsh-tui`），属于人工验证而非测试。`/resume` 的宿主弹层重开语义（含搜索词跨重开）同样只有假宿主用例，真机行为靠人工验
-- 市场侧没有任何真机验证：三个脚本本机跑通（`pnpm check:market` 输出 `market manifest check passed … against dsh 0.2.1-rc.2`，`pnpm check:market-index` exit 0），但「宿主真的能按索引条目装上」这一步从未在干净 profile 里走过一次，而且受制于索引 pin 未推送（见技术债第一条）
+- 市场侧没有任何真机验证：三个脚本本机跑通（`pnpm check:market` 输出 `market manifest check passed for dsh-jump against desktop runtime 0.2.2-rc.1 (asar)`，`pnpm check:market-index` exit 0），但「宿主真的能按索引条目装上」这一步从未在干净 profile 里走过一次，而且索引产物与远端的一致性仍靠人工跑 `build:market`（见技术债第一条）
 
 ## 测试覆盖缺口
 
@@ -234,4 +234,6 @@
 - **「五包测试环境/版本不一致」**：不成立。同用 vitest ^3.2.0（实测同跑 v3.2.7）。皮肤包的 `vitest.config.ts` 注释说明 bundle 测试要手工扮演模块加载器，vitest 自带 jsdom 会装出第二个 window；dsh-jump 与 better-keybindings 用 node 环境 + 显式 `new JSDOM` 出于同一理由；dsh-slash-commands 用 node 环境，宿主半边本就不碰 DOM，客户端半边的 `document` 与 scheduler 从参数注入，所以也不需要 jsdom；`ascii-rest-scenes` 零配置。
 - **「README 说明文档大面积过期」**：不成立。只有测试数字一处过期，且本轮已同步为 40 文件 529 用例；34 场景数与 `catalog.generated.ts` 实测一致，安装 / 升级流程描述与当前脚本行为一致。数字本身易漂移的问题单列在技术债，不构成「文档大面积过期」。
 - **「`docs/` 全被 gitignore 命中、`verify-docs-index` 的 docsCandidates=0 是债务」**：判定为不成立，属用户个人约定。命中来自全局 `~/.gitignore_global`（`**/docs/debug`、`**/docs/qa`、`**/docs/reports`、`**/docs/reviews`、`**/docs/tdd`、`**/docs/thoughts`，`git check-ignore -v` 逐条指向该文件），`git ls-files docs` 为 0 而 `find docs -type f` 有 34 个文件；这些目录装的是过程产物（调试记录、评审意见、TDD 笔记），按用户全局约定本就不入库。`verify-docs-index.mjs` 自己也把零候选视为「两条不变量空真，降级为 warning 不阻断」（该脚本第 20、232 行）。它唯一的副作用是仓内文档引用不可解析：上一版 CONCERNS 指向的 `docs/reports/261023/dsh-slash-commands-command.md` 从来不存在，实际文件是 `dsh-tui-copy-command.md`，本轮已改正。
+- **「0.2.2-rc.1 会打断现有插件」**：不成立。巡检核对 20 个 slot id、18 个 `data-*` DOM 锚点与 25 个注入服务名全部仍在，4 个宿主半投影（`sessionInterruption` / `sessionActivity` / `sessionCompaction` / `skillUsage`）在真机投影缓存里实证存活；只有两处跟随（工作区菜单迁移到 `contextMenus`、`dsh-better` 附件栏补 `readFileDrag`），不是破坏。详见 `docs/reports/261106/upstream-0.2.2-rc.1.md`
+- **「工作区菜单只能继续靠 DOM 锚定」**：随 0.2.2 失效。宿主改成共享覆盖层加三个入口（「…」/ 右键 / `Shift+F10`）后，旧锚定会漏掉首次右键、把 A 工作区的目录串进 B 的菜单，并在宿主另外 6 种语言下静默消失；已迁移到 `contextMenus.register`，`menu-anchor` / `menu-shield` / `workspaces-probe` 与对应样式删除
 - **「`settings-page.ts` 的样式插入与移除不对称」**：按代码判定为「单实例对称、多实例有已知取舍」，不记为待修缺陷。`insertPageStyles` 按 `style[data-plugin-css="dsh-jump/page.css"]` 去重，命中时返回 `() => undefined`；`test/settings-page.test.ts` 的「inserts once and removes on teardown」显式断言「第二次的拆除不能清掉第一个的样式」。`runtime.ts` 的拆除顺序是先撤页面、再撤样式，所以单实例下不会出现「页面还在、样式没了」。代价只落在「同一页面激活两份本插件」这种宿主并不提供的情形：第二份的拆除是空操作，第一份拆除时会把仍在服役的第二份样式一起摘掉。
