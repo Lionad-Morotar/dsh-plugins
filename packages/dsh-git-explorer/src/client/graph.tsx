@@ -3,7 +3,14 @@ import type { GraphRow } from "./model.ts";
 
 /** Widest the graph column grows before lanes start compressing. */
 const MAX_WIDTH = 116;
-const MIN_WIDTH = 16;
+/**
+ * Narrowest the graph column gets, which the header label decides rather than
+ * the lane count. One lane asks for 12px, and at that width the column header
+ * truncates "Graph" to "Gr…" in every linear-history repository, which is most
+ * of them. 36px is the label at 10px/600 plus a 4px margin on each side, and it
+ * is wider than the Chinese "图表", so both dictionaries fit.
+ */
+const MIN_WIDTH = 36;
 
 /**
  * Colour variable for one lane colour index.
