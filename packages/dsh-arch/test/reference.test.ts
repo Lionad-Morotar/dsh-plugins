@@ -9,6 +9,8 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+import { createInsertReference } from "../src/client/entry.ts";
+
 import {
   ARCH_REFERENCE_SOURCE,
   archRefClipboardText,
@@ -134,6 +136,7 @@ describe("insertArchReference", () => {
       readonly spans?: readonly (ArchReferenceSpan | undefined)[];
       readonly reference?: readonly boolean[];
       readonly text?: readonly boolean[];
+      readonly canInsertReference?: boolean;
     } = {},
   ): ArchInsertionDeps & { readonly inserts: ArchReferenceInsert[]; readonly texts: string[] } {
     const inserts: ArchReferenceInsert[] = [];
@@ -156,6 +159,7 @@ describe("insertArchReference", () => {
         texts.push(value);
         return text[Math.min(textCall++, text.length - 1)] ?? false;
       },
+      canInsertReference: script.canInsertReference ?? true,
     };
   }
 
@@ -173,6 +177,13 @@ describe("insertArchReference", () => {
     expect(insertArchReference(d, payload)).toBe("reference");
     expect(d.inserts).toHaveLength(2);
     expect(d.texts).toHaveLength(0);
+  });
+
+  it("never builds a chip when the source is not registered", () => {
+    const d = deps({ canInsertReference: false });
+    expect(insertArchReference(d, payload)).toBe("text");
+    expect(d.inserts).toHaveLength(0);
+    expect(d.texts).toEqual([`[arch element ${ID}]`]);
   });
 
   it("degrades to plain text when the chip path refuses twice", () => {
@@ -198,6 +209,41 @@ describe("insertArchReference", () => {
     const d = deps({ spans: [undefined] });
     expect(insertArchReference(d, payload)).toBe("failed");
     expect(d.texts).toHaveLength(0);
+  });
+});
+
+describe("createInsertReference", () => {
+  function ctxWith(facade: unknown) {
+    return {
+      get: (name: string) => {
+        if (name === "sessions") return { scope: () => ({ id: "actx" }) };
+        if (name === "conversation") return { input: { for: () => facade } };
+        return undefined;
+      },
+    } as never;
+  }
+
+  const actions = {
+    captureInsertion: () => ({ start: 0, end: 0, draftRev: 1 }),
+    insertText: vi.fn(() => true),
+  };
+
+  it("falls back to plain text when the facade has no insertReference", () => {
+    // A facade without `insertReference` is a real host shape. The old wrapper
+    // exposed the method anyway, so the write threw a TypeError and the
+    // plain-text fallback was unreachable.
+    const insert = createInsertReference(ctxWith({ focus: vi.fn() }));
+    const payload = archReferencePayload(ID, FACTS, SOURCE, CODE);
+    expect(insert("s1", payload, actions, true)).toBe("text");
+    expect(actions.insertText).toHaveBeenCalled();
+  });
+
+  it("never builds a chip when the source is not registered", () => {
+    const insertReference = vi.fn(() => true);
+    const insert = createInsertReference(ctxWith({ insertReference, focus: vi.fn() }));
+    const payload = archReferencePayload(ID, FACTS, SOURCE, CODE);
+    expect(insert("s1", payload, actions, false)).toBe("text");
+    expect(insertReference).not.toHaveBeenCalled();
   });
 });
 
@@ -236,10 +282,14 @@ describe("registerArchReferenceSource", () => {
         return undefined;
       },
     };
-    const dispose = registerArchReferenceSource(ctx);
+    const handle = registerArchReferenceSource(ctx);
     expect(registerSource).toHaveBeenCalledTimes(1);
     expect(registerSource.mock.calls[0]?.[0]).toMatchObject({ name: "lionad.arch", trigger: "@" });
-    dispose();
+    // The handle reports the live registration, which is what the view reads
+    // when it decides whether to draw the button.
+    expect(handle.available).toBe(true);
+    handle.dispose();
+    expect(handle.available).toBe(false);
   });
 
   it("falls back to the resolver when injection is absent", () => {

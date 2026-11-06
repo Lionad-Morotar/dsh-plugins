@@ -41,6 +41,8 @@ export type InsertReferenceSeam = (
   sessionId: string,
   payload: ArchReferencePayload,
   actions: InputActionsFace,
+  /** Whether the chip's trigger source is registered, so a chip could be sent. */
+  sourceAvailable: boolean,
 ) => ArchInsertionResult;
 
 /** What one view mount closes over. */
@@ -49,6 +51,14 @@ export interface ArchViewWiring {
   readonly chrome: Omit<ArchChromeOptions, "sessionId">;
   /** The session input facade, probed per click; absent on hosts without one. */
   readonly insertReference?: InsertReferenceSeam;
+  /**
+   * Whether the chip's trigger source is registered right now.
+   *
+   * A getter because registration can land after this view is built, and a
+   * boolean captured here would keep the button hidden on a host that finished
+   * wiring the source a moment later.
+   */
+  readonly referenceSourceAvailable?: () => boolean;
 }
 
 /**
@@ -80,7 +90,7 @@ export async function fetchArchReferencePayload(
  * @param wiring - the chrome seams the entry already composed.
  * @returns a component the slot registry can mount.
  */
-export function createArchView({ chrome, insertReference }: ArchViewWiring) {
+export function createArchView({ chrome, insertReference, referenceSourceAvailable }: ArchViewWiring) {
   function ArchView(props: ConversationViewProps): ReactElement {
     const hostRef = useRef<HTMLDivElement>(null);
     const sessionId = props.sessionId;
@@ -99,18 +109,23 @@ export function createArchView({ chrome, insertReference }: ArchViewWiring) {
       const host = hostRef.current;
       if (host === null) return;
       const seam: NodeReferenceSeam = {
-        available: sessionId !== undefined && hasComposer,
+        // The source is part of the capability, not just the composer: a chip
+        // with no codec is refused at send time and strands the draft, so the
+        // button is not drawn at all when the source is missing.
+        available: sessionId !== undefined && hasComposer && referenceSourceAvailable?.() === true,
         async insert(nodeId: string): Promise<void> {
           const actions = actionsRef.current;
           if (sessionId === undefined || actions === undefined || insertReference === undefined) return;
           const current = chromeRef.current;
           const payload = await fetchArchReferencePayload(sessionId, nodeId, current.fetchImpl ?? fetch);
           if (payload === undefined) return;
-          insertReference(sessionId, payload, actions);
+          // Read again here: the source can be disposed between the paint that
+          // drew the button and this click.
+          insertReference(sessionId, payload, actions, referenceSourceAvailable?.() === true);
         },
       };
       return mountArchChrome(host, { ...chromeRef.current, sessionId, nodeReference: seam });
-    }, [sessionId, hasComposer, insertReference]);
+    }, [sessionId, hasComposer, insertReference, referenceSourceAvailable]);
 
     return (
       <div

@@ -199,7 +199,7 @@ function chromeSeams(t: (key: string) => string) {
  * @returns a writer that reports `failed` rather than throwing.
  */
 export function createInsertReference(ctx: ArchClientContext): InsertReferenceSeam {
-  return (sessionId, payload, actions) => {
+  return (sessionId, payload, actions, sourceAvailable) => {
     let facade: SessionInputFace | undefined;
     try {
       const sessions = ctx.get?.("sessions") as { scope?(id: string): unknown } | undefined;
@@ -223,6 +223,7 @@ export function createInsertReference(ctx: ArchClientContext): InsertReferenceSe
         },
         insertReference: (insert, span) => facade?.insertReference?.(insert, span) ?? false,
         insertText: (text, span) => actions.insertText?.(text, span) ?? false,
+        canInsertReference: sourceAvailable,
       },
       payload,
     );
@@ -257,10 +258,13 @@ export function apply(ctx: ArchClientContext): () => void {
 
   // The chip's send-time identity. Registered before the view so a draft that
   // already holds a chip can be sent the moment the tab paints.
-  const offReferenceSource = registerArchReferenceSource(ctx as ReferenceContextLike);
+  const referenceSource = registerArchReferenceSource(ctx as ReferenceContextLike);
   const View = createArchView({
     chrome: chromeSeams(t),
     insertReference: createInsertReference(ctx),
+    // A getter, not a snapshot: the inject path may register the source after
+    // this view is built.
+    referenceSourceAvailable: () => referenceSource.available,
   });
   ctx.slots.inject(VIEW_SLOT, () =>
     ctx.slots.register(
@@ -295,7 +299,7 @@ export function apply(ctx: ArchClientContext): () => void {
   }
 
   return () => {
-    offReferenceSource();
+    referenceSource.dispose();
     offKind();
     offLocale();
     if (registeredDictionaries === offLocale) registeredDictionaries = undefined;

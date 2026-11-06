@@ -83,6 +83,11 @@ export interface ArchInsertionDeps {
   readonly captureSpan: () => ArchReferenceSpan | undefined;
   readonly insertReference: (insert: ArchReferenceInsert, span: ArchReferenceSpan) => boolean;
   readonly insertText: (text: string, span: ArchReferenceSpan) => boolean;
+  /**
+   * Whether a chip would survive to send time. Read per write: a source can be
+   * disposed after the button that offered this write was painted.
+   */
+  readonly canInsertReference: boolean;
 }
 
 /** Which channel took the reference, or that neither did. */
@@ -255,11 +260,15 @@ export function insertArchReference(
     clipboardText: payload.clipboardText,
     appearance: "session",
   };
-  const first = deps.captureSpan();
-  if (first !== undefined) {
-    if (deps.insertReference(insert, first)) return "reference";
-    const second = deps.captureSpan();
-    if (second !== undefined && deps.insertReference(insert, second)) return "reference";
+  // No registered source means no codec at send time, so the chip path is
+  // skipped entirely rather than attempted and refused later.
+  if (deps.canInsertReference) {
+    const first = deps.captureSpan();
+    if (first !== undefined) {
+      if (deps.insertReference(insert, first)) return "reference";
+      const second = deps.captureSpan();
+      if (second !== undefined && deps.insertReference(insert, second)) return "reference";
+    }
   }
   // No span at all means the composer has no caret to write at; the text path
   // asks once more because the editor may have settled in between.
@@ -346,12 +355,34 @@ function isInputTriggers(value: unknown): value is InputTriggersFace {
  * @param ctx - the client context.
  * @returns a disposer for whatever was registered.
  */
-export function registerArchReferenceSource(ctx: ReferenceContextLike): () => void {
+/**
+ * What a registration left behind.
+ *
+ * `available` is a getter rather than a boolean because the `inject` path
+ * registers asynchronously: a host whose trigger service arrives after this
+ * plugin would otherwise be frozen at "no source" for the life of the page.
+ */
+export interface ReferenceSourceHandle {
+  /** Whether a chip written now would find a codec at send time. */
+  readonly available: boolean;
+  /** Drop the registration; idempotent. */
+  dispose(): void;
+}
+
+export function registerArchReferenceSource(ctx: ReferenceContextLike): ReferenceSourceHandle {
   const source = createArchReferenceSource();
   let dispose: (() => void) | undefined;
   const release = (): void => {
     dispose?.();
     dispose = undefined;
+  };
+  // The handle reports the live registration rather than a snapshot of it:
+  // the inject path may not have run yet when this object is built.
+  const handle: ReferenceSourceHandle = {
+    get available() {
+      return dispose !== undefined;
+    },
+    dispose: release,
   };
   if (typeof ctx.inject === "function") {
     try {
@@ -361,7 +392,7 @@ export function registerArchReferenceSource(ctx: ReferenceContextLike): () => vo
           return release;
         }, "dsh-arch: reference source");
       });
-      return release;
+      return handle;
     } catch {
       // A refused injection is the same as a host without the service; the
       // `get` probe below is still worth one attempt.
@@ -371,10 +402,10 @@ export function registerArchReferenceSource(ctx: ReferenceContextLike): () => vo
     const direct = ctx.get?.("inputTriggers");
     if (isInputTriggers(direct)) {
       dispose = direct.registerSource(source);
-      return release;
+      return handle;
     }
   } catch {
     // Unknown service name; the source stays unregistered.
   }
-  return release;
+  return handle;
 }
