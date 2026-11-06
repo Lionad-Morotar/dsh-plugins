@@ -78,6 +78,16 @@ export interface ReferenceInsertionDeps {
   readonly captureSpan: () => ReferenceSpan | undefined;
   readonly insertReference: (insert: ReferenceInsert, span: ReferenceSpan) => boolean;
   readonly insertText: (text: string, span: ReferenceSpan) => boolean;
+  /**
+   * Whether a chip would survive to send time.
+   *
+   * The host serializes a chip by looking its source's codec up by name and
+   * rejects the submission when it is missing, keeping the draft. A chip whose
+   * source never registered is therefore worse than plain text: it strands the
+   * draft. Read per write, because a source can be disposed after the entry
+   * probed it.
+   */
+  readonly canInsertReference: boolean;
 }
 
 /** Which channel took the reference, or that neither did. */
@@ -264,11 +274,15 @@ export function insertCommitReference(
     clipboardText: payload.clipboardText,
     appearance: "session",
   };
-  const first = deps.captureSpan();
-  if (first !== undefined) {
-    if (deps.insertReference(insert, first)) return "reference";
-    const second = deps.captureSpan();
-    if (second !== undefined && deps.insertReference(insert, second)) return "reference";
+  // No registered source means no codec at send time, so the chip path is
+  // skipped entirely rather than attempted and refused later.
+  if (deps.canInsertReference) {
+    const first = deps.captureSpan();
+    if (first !== undefined) {
+      if (deps.insertReference(insert, first)) return "reference";
+      const second = deps.captureSpan();
+      if (second !== undefined && deps.insertReference(insert, second)) return "reference";
+    }
   }
   // No span at all means the composer has no caret to write at; the text path
   // asks once more because the editor may have settled in between.
@@ -284,6 +298,8 @@ export interface ReferenceAvailabilityInput {
   readonly hasComposer: boolean;
   /** The input phase, or undefined on a host that does not publish one. */
   readonly phase: string | undefined;
+  /** Whether this package's trigger source registered, so a chip can be sent. */
+  readonly sourceAvailable: boolean;
 }
 
 /** Whether the reference button may be pressed, and why not when it may not. */
@@ -308,6 +324,9 @@ export type ReferenceAvailability =
 export function referenceAvailability(input: ReferenceAvailabilityInput): ReferenceAvailability {
   if (input.sessionId === undefined) return { enabled: false, reasonKey: "reference.disabled.noSession" };
   if (!input.hasComposer) return { enabled: false, reasonKey: "reference.disabled.noComposer" };
+  // Without the source a chip would be inserted and then refused at send time,
+  // which is the one outcome worse than plain text: the draft is stranded.
+  if (!input.sourceAvailable) return { enabled: false, reasonKey: "reference.disabled.noSource" };
   // An unpublished phase is not evidence of a busy composer: a host that does
   // not expose one is trusted to refuse the write itself.
   if (input.phase !== undefined && input.phase !== "plain") {
@@ -398,12 +417,34 @@ function isInputTriggers(value: unknown): value is InputTriggersFace {
  * @param ctx - the client context.
  * @returns a disposer for whatever was registered.
  */
-export function registerGitReferenceSource(ctx: ReferenceContextLike): () => void {
+/**
+ * What a registration left behind.
+ *
+ * `available` is a getter rather than a boolean because the `inject` path
+ * registers asynchronously: a host whose trigger service arrives after this
+ * plugin would otherwise be frozen at "no source" for the life of the page.
+ */
+export interface ReferenceSourceHandle {
+  /** Whether a chip written now would find a codec at send time. */
+  readonly available: boolean;
+  /** Drop the registration; idempotent. */
+  dispose(): void;
+}
+
+export function registerGitReferenceSource(ctx: ReferenceContextLike): ReferenceSourceHandle {
   const source = createGitReferenceSource();
   let dispose: (() => void) | undefined;
   const release = (): void => {
     dispose?.();
     dispose = undefined;
+  };
+  // The handle reports the live registration rather than a snapshot of it:
+  // the inject path may not have run yet when this object is built.
+  const handle: ReferenceSourceHandle = {
+    get available() {
+      return dispose !== undefined;
+    },
+    dispose: release,
   };
   if (typeof ctx.inject === "function") {
     try {
@@ -413,7 +454,7 @@ export function registerGitReferenceSource(ctx: ReferenceContextLike): () => voi
           return release;
         }, "dsh-git-explorer: commit reference source");
       });
-      return release;
+      return handle;
     } catch {
       // A refused injection is the same as a host without the service; the
       // `get` probe below is still worth one attempt.
@@ -423,10 +464,10 @@ export function registerGitReferenceSource(ctx: ReferenceContextLike): () => voi
     const direct = ctx.get?.("inputTriggers");
     if (isInputTriggers(direct)) {
       dispose = direct.registerSource(source);
-      return release;
+      return handle;
     }
   } catch {
     // Unknown service name; the source stays unregistered.
   }
-  return release;
+  return handle;
 }

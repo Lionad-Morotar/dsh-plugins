@@ -131,6 +131,7 @@ describe("insertCommitReference", () => {
       readonly spans?: readonly (ReferenceSpan | undefined)[];
       readonly reference?: readonly boolean[];
       readonly text?: readonly boolean[];
+      readonly canInsertReference?: boolean;
     } = {},
   ): ReferenceInsertionDeps & { readonly inserts: ReferenceInsert[]; readonly texts: string[] } {
     const inserts: ReferenceInsert[] = [];
@@ -155,6 +156,7 @@ describe("insertCommitReference", () => {
         texts.push(value);
         return text[Math.min(textCall++, text.length - 1)] ?? false;
       },
+      canInsertReference: script.canInsertReference ?? true,
     };
   }
 
@@ -172,6 +174,15 @@ describe("insertCommitReference", () => {
     expect(insertCommitReference(d, payloadOf())).toBe("reference");
     expect(d.inserts).toHaveLength(2);
     expect(d.texts).toHaveLength(0);
+  });
+
+  it("never builds a chip when the source is not registered", () => {
+    // The chip path is skipped outright: a chip with no codec is worse than
+    // plain text because the host refuses the send and keeps the draft.
+    const d = deps({ canInsertReference: false });
+    expect(insertCommitReference(d, payloadOf())).toBe("text");
+    expect(d.inserts).toHaveLength(0);
+    expect(d.texts).toEqual([`[git commit ${SHORT}]`]);
   });
 
   it("degrades to plain text when the chip path refuses twice", () => {
@@ -203,28 +214,36 @@ describe("insertCommitReference", () => {
 
 describe("referenceAvailability", () => {
   it("enables the button for a plain composer on a session", () => {
-    expect(referenceAvailability({ sessionId: "s1", hasComposer: true, phase: "plain" })).toEqual({
+    expect(referenceAvailability({ sessionId: "s1", hasComposer: true, phase: "plain", sourceAvailable: true })).toEqual({
       enabled: true,
     });
   });
 
   it("names a reason for each way the write cannot happen", () => {
-    expect(referenceAvailability({ sessionId: undefined, hasComposer: true, phase: "plain" })).toEqual({
+    expect(referenceAvailability({ sessionId: undefined, hasComposer: true, phase: "plain", sourceAvailable: true })).toEqual({
       enabled: false,
       reasonKey: "reference.disabled.noSession",
     });
-    expect(referenceAvailability({ sessionId: "s1", hasComposer: false, phase: "plain" })).toEqual({
+    expect(referenceAvailability({ sessionId: "s1", hasComposer: false, phase: "plain", sourceAvailable: true })).toEqual({
       enabled: false,
       reasonKey: "reference.disabled.noComposer",
     });
-    expect(referenceAvailability({ sessionId: "s1", hasComposer: true, phase: "sending" })).toEqual({
+    expect(referenceAvailability({ sessionId: "s1", hasComposer: true, phase: "sending", sourceAvailable: true })).toEqual({
       enabled: false,
       reasonKey: "reference.disabled.busy",
     });
   });
 
+  it("refuses the button when the source is not registered", () => {
+    // A chip whose codec never registered is refused at send time and keeps the
+    // draft, so the button must not offer the write at all.
+    expect(
+      referenceAvailability({ sessionId: "s1", hasComposer: true, phase: "plain", sourceAvailable: false }),
+    ).toEqual({ enabled: false, reasonKey: "reference.disabled.noSource" });
+  });
+
   it("treats an unpublished phase as unknown rather than busy", () => {
-    expect(referenceAvailability({ sessionId: "s1", hasComposer: true, phase: undefined })).toEqual({
+    expect(referenceAvailability({ sessionId: "s1", hasComposer: true, phase: undefined, sourceAvailable: true })).toEqual({
       enabled: true,
     });
   });
@@ -268,10 +287,14 @@ describe("registerGitReferenceSource", () => {
         return undefined;
       },
     };
-    const dispose = registerGitReferenceSource(ctx);
+    const handle = registerGitReferenceSource(ctx);
     expect(registerSource).toHaveBeenCalledTimes(1);
     expect(registerSource.mock.calls[0]?.[0]).toMatchObject({ name: "lionad.git", trigger: "@" });
-    dispose();
+    // The handle reports the live registration, which is what the entry reads
+    // when it decides whether a chip could be sent.
+    expect(handle.available).toBe(true);
+    handle.dispose();
+    expect(handle.available).toBe(false);
   });
 
   it("falls back to the resolver when injection is absent", () => {
@@ -357,6 +380,26 @@ describe("createReferenceResolver", () => {
     const { ctx } = host({ scope: () => undefined });
     expect(createReferenceResolver(ctx as never)("s1")).toBeUndefined();
   });
+
+  it("does not expose a method the facade does not have", () => {
+    // A facade without `insertReference` is a real host shape. Wrapping it
+    // anyway would pass the caller's capability check and then throw on the
+    // write, which the plain-text fallback can never recover from.
+    const { ctx } = host({ facade: { focus: vi.fn() } });
+    const wiring = createReferenceResolver(ctx as never)("s1");
+    expect(wiring).toBeDefined();
+    expect(wiring?.insertReference).toBeUndefined();
+    expect(typeof wiring?.focus).toBe("function");
+    expect(wiring?.notify).toBeUndefined();
+  });
+
+  it("exposes every method the facade really has", () => {
+    const { ctx } = host();
+    const wiring = createReferenceResolver(ctx as never)("s1");
+    expect(typeof wiring?.insertReference).toBe("function");
+    expect(typeof wiring?.focus).toBe("function");
+    expect(typeof wiring?.notify).toBe("function");
+  });
 });
 
 describe("DetailPane reference button", () => {
@@ -425,9 +468,20 @@ describe("DetailPane reference button", () => {
     const button = await mount({
       inputActions: { captureInsertion: () => ({ start: 0, end: 0, draftRev: 1 }) },
       phase: "sending",
+      sourceAvailable: true,
     });
     expect(button.disabled).toBe(true);
     expect(button.title).toBe("reference.disabled.busy");
+  });
+
+  it("is disabled with a reason when the source is not registered", async () => {
+    const button = await mount({
+      inputActions: { captureInsertion: () => ({ start: 0, end: 0, draftRev: 1 }) },
+      phase: "plain",
+      sourceAvailable: false,
+    });
+    expect(button.disabled).toBe(true);
+    expect(button.title).toBe("reference.disabled.noSource");
   });
 
   it("writes exactly one payload per click", async () => {
@@ -435,6 +489,7 @@ describe("DetailPane reference button", () => {
     const button = await mount({
       inputActions: { captureInsertion: () => ({ start: 0, end: 0, draftRev: 1 }) },
       phase: "plain",
+      sourceAvailable: true,
       onReference,
       refs: ["main"],
     });

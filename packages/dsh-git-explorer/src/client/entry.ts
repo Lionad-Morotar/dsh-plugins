@@ -146,19 +146,31 @@ export function createReferenceResolver(ctx: ClientContextLike): ReferenceWiring
       return undefined;
     }
     if (facade === undefined || facade === null) return undefined;
+    // Only the methods the facade really has are wrapped. A host can hand back a
+    // facade without `insertReference` (an older composer, a partial stub); a
+    // wrapper that always provides it passes the caller's capability check and
+    // then throws on the write, which is the one path the plain-text fallback
+    // can never reach.
+    const insertReference = facade.insertReference;
+    const focus = facade.focus;
+    const notify = facade.notify;
     return {
-      insertReference: (insert, span) => facade.insertReference(insert, span),
-      focus: () => facade.focus(),
-      notify: (level, text) => facade.notify(level, text),
+      ...(typeof insertReference === "function"
+        ? { insertReference: (insert, span) => insertReference.call(facade, insert, span) }
+        : {}),
+      ...(typeof focus === "function" ? { focus: () => focus.call(facade) } : {}),
+      ...(typeof notify === "function"
+        ? { notify: (level, text) => notify.call(facade, level, text) }
+        : {}),
     };
   };
 }
 
 /** The slice of the session input facade the reference writer calls. */
 interface SessionInputFace {
-  insertReference(insert: ReferenceInsert, span: ReferenceSpan): boolean;
-  focus(): void;
-  notify(level: "info" | "error", text: string): void;
+  insertReference?(insert: ReferenceInsert, span: ReferenceSpan): boolean;
+  focus?(): void;
+  notify?(level: "info" | "error", text: string): void;
 }
 
 /** Disposer of the dictionary currently sitting in the host's locale table.
@@ -192,7 +204,7 @@ export function apply(ctx: ClientContextLike): () => void {
   // The chip's send-time identity. Without it the chip still lands in the draft,
   // but the host would reject the send for a missing codec, so the writer only
   // reaches for a chip when this registration succeeded.
-  const offReferenceSource = registerGitReferenceSource(ctx as ReferenceContextLike);
+  const referenceSource = registerGitReferenceSource(ctx as ReferenceContextLike);
 
   const BranchAction = createBranchAction({ store: createBranchStore(remote), t });
   ctx.slots.inject(HEADER_SLOT, () =>
@@ -215,6 +227,9 @@ export function apply(ctx: ClientContextLike): () => void {
       t,
       remote,
       reference,
+      // A getter, not a snapshot: the inject path may register the source after
+      // this view is built.
+      referenceSourceAvailable: () => referenceSource.available,
     });
     ctx.slots.inject(VIEW_SLOT, () =>
       ctx.slots.register(
@@ -233,7 +248,7 @@ export function apply(ctx: ClientContextLike): () => void {
   return () => {
     offStyles();
     offFontScale();
-    offReferenceSource();
+    referenceSource.dispose();
     offLocale();
     if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
   };

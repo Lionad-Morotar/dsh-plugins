@@ -135,6 +135,14 @@ export interface ViewWiring {
   readonly remote: RemoteResolver;
   /** The session input facade, probed per click; absent on hosts without one. */
   readonly reference?: ReferenceWiringResolver;
+  /**
+   * Whether the chip's trigger source is registered right now.
+   *
+   * A getter because registration can land after this view is built, and a
+   * boolean captured here would keep the button disabled on a host that
+   * finished wiring the source a moment later.
+   */
+  readonly referenceSourceAvailable?: () => boolean;
 }
 
 /** The state a fresh mount paints before the snapshot request settles. */
@@ -271,7 +279,14 @@ function repoName(root: string): string {
  * @returns the component registered into `conversation.view`.
  */
 export function createGitExplorerView(wiring: ViewWiring) {
-  const { workbench, version, t, remote: resolveRemote, reference: resolveReference } = wiring;
+  const {
+    workbench,
+    version,
+    t,
+    remote: resolveRemote,
+    reference: resolveReference,
+    referenceSourceAvailable,
+  } = wiring;
 
   function GitExplorerView(props: ConversationViewProps) {
     const sessionId = props.sessionId ?? workbench.currentSessionId();
@@ -871,6 +886,9 @@ export function createGitExplorerView(wiring: ViewWiring) {
           },
           insertReference: (insert, span) => facade?.insertReference?.(insert, span) ?? false,
           insertText: (text, span) => actions.insertText?.(text, span) ?? false,
+          // Read per write: the source can be disposed between the render that
+          // enabled the button and this click.
+          canInsertReference: referenceSourceAvailable?.() === true,
         },
         payload,
       );
@@ -1079,6 +1097,7 @@ export function createGitExplorerView(wiring: ViewWiring) {
                   refs={selectedRefs}
                   {...(props.inputActions === undefined ? {} : { inputActions: props.inputActions })}
                   {...(phase === undefined ? {} : { phase })}
+                  sourceAvailable={referenceSourceAvailable?.() === true}
                   onReference={onReference}
                 />
               )}

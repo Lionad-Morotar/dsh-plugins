@@ -67,6 +67,13 @@ export interface DetailPaneProps {
   readonly inputActions?: ReferenceInputActions;
   /** The composer's phase, or undefined when the host publishes no input state. */
   readonly phase?: string;
+  /**
+   * Whether the chip's trigger source is registered.
+   *
+   * Without it a chip would be inserted and then refused at send time, which
+   * strands the draft, so the button says why instead of offering the write.
+   */
+  readonly sourceAvailable?: boolean;
   /** Writes one reference; absent when the entry could not build a writer. */
   readonly onReference?: (payload: CommitReferencePayload) => ReferenceInsertionResult;
 }
@@ -221,6 +228,7 @@ export function DetailPane({
   refs,
   inputActions,
   phase,
+  sourceAvailable,
   onReference,
 }: DetailPaneProps) {
   const [state, setState] = useState<DetailState>({ kind: "idle" });
@@ -389,6 +397,7 @@ export function DetailPane({
     sessionId,
     hasComposer: inputActions !== undefined && typeof inputActions.captureInsertion === "function",
     phase,
+    sourceAvailable: sourceAvailable === true,
   });
   const canReference = availability.enabled && state.kind === "ready" && onReference !== undefined;
   const referenceReason = availability.enabled
