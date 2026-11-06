@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import type { GatewayRpc } from "../src/client/wire.ts";
 import {
   createGitExplorerFace,
+  createHostShutdownFace,
   createNativeOpenFace,
   createPathExplorerFace,
   createSessionOpenFace,
@@ -129,6 +130,26 @@ describe("createNativeOpenFace", () => {
     });
     expect(calls).toEqual([
       { scope: "/api", endpoint: "nativeOpen/open", payload: { args: { request: { path: "/h/x.md" } } } },
+    ]);
+  });
+});
+
+describe("createHostShutdownFace", () => {
+  it("routes the capability probe and the confirmed request onto the hostShutdown namespace", async () => {
+    const calls: Array<{ scope: string; endpoint: string; payload: unknown }> = [];
+    const rpc: GatewayRpc = {
+      call: async (scope, endpoint, payload) => {
+        calls.push({ scope, endpoint, payload });
+        return { ok: true, value: endpoint.endsWith("/available") ? true : "requested" };
+      },
+    };
+    const face = createHostShutdownFace(rpc);
+
+    await expect(face.available()).resolves.toEqual({ ok: true, value: true });
+    await expect(face.request()).resolves.toEqual({ ok: true, value: "requested" });
+    expect(calls).toEqual([
+      { scope: "/api", endpoint: "hostShutdown/available", payload: { args: {} } },
+      { scope: "/api", endpoint: "hostShutdown/request", payload: { args: {} } },
     ]);
   });
 });

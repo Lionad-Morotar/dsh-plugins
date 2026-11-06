@@ -550,15 +550,6 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   }
 
   /**
-   * Whether the host half's remote shutdown face is in hand.
-   *
-   * The face is the whole availability story: `appExit` lives only on the host
-   * process's Cordis tree, so no client-context read can ever see it (the
-   * defect this seam once had). The injected face arrives and leaves through
-   * the injection below, and a composition that misses it simply costs one
-   * row — no caching, no stale row after a namespace goes away.
-   */
-  /**
    * The quit face, injected namespace first and the raw gateway caller after.
    *
    * `remote.hostShutdown` is never generated for a third-party package, so the
@@ -575,6 +566,47 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   }
 
   /**
+   * Whether the host answered that it can quit; `undefined` while it has not.
+   *
+   * Holding the face is not the capability: the Desktop shell mounts this
+   * package's host half like any other composition while owning quitting
+   * itself, so the only honest gate is the host's own `appExit` probe. The
+   * answer is asked once and kept for the runtime's lifetime — a launcher does
+   * not change under a live page, and a host that cannot answer is a host that
+   * cannot quit.
+   */
+  let shutdownCapable: boolean | undefined;
+
+  /** The one in-flight (or finished) capability probe. */
+  let shutdownProbe: Promise<void> | undefined;
+
+  /**
+   * Ask the host once whether it can quit, and re-list rows when it can.
+   *
+   * Kicked off by row composition rather than at mount: a missing connection
+   * channel is retried on the next open instead of being remembered as "cannot
+   * quit", and a panel that is already on screen gets the row as soon as the
+   * answer lands rather than on its next open.
+   */
+  function probeShutdownCapability(): void {
+    if (shutdownProbe !== undefined || shutdownCapable !== undefined) return;
+    const face = hostShutdownFace();
+    if (face === undefined) return;
+    shutdownProbe = (async () => {
+      let capable = false;
+      try {
+        const answer = await face.available();
+        capable = answer.ok && answer.value === true;
+      } catch {
+        // An unreachable shutdown half is not a quittable host.
+      }
+      if (disposed) return;
+      shutdownCapable = capable;
+      if (capable) scheduleLoad(0);
+    })();
+  }
+
+  /**
    * The panel's own rows, ahead of the host's slash commands.
    *
    * Built synchronously so the command mode can show content on the very first
@@ -584,9 +616,10 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
    * appear the next time the panel opens.
    */
   function composeCommandRows(hostRows: readonly PanelRow[]): PanelRow[] {
+    probeShutdownCapability();
     const entries = availableCatalog(actionContext(), {
       seatSurfaces: deps.config?.seatSurfaces !== false,
-      hostShutdown: hostShutdownFace() !== undefined,
+      hostShutdown: shutdownCapable === true,
       hostCommands: knownHostCommands,
     });
     const shortcuts = services.shortcuts();

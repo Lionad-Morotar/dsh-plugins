@@ -97,6 +97,12 @@ interface HarnessOptions {
   /** The remote shutdown face; null keeps the namespace out of the context. */
   readonly hostShutdown?: HostShutdownRemote | null;
   /**
+   * What the host answers to the quit-capability probe: `true`/`false`, a
+   * promise the case settles itself (to pin the late-answer path), or
+   * `"reject"` for a half that cannot be reached.
+   */
+  readonly shutdownCapability?: boolean | Promise<boolean> | "reject";
+  /**
    * The session catalogue rows; an array swaps the list snapshots answer with,
    * a record replaces the whole sessions fake (for cases that need a live one).
    */
@@ -125,6 +131,7 @@ interface Harness {
   };
   readonly input: SessionInput;
   readonly inserted: string[];
+  readonly shutdownAvailable: ReturnType<typeof vi.fn>;
   readonly shutdownRequest: ReturnType<typeof vi.fn>;
   readonly sidebar: {
     readonly openResource: ReturnType<typeof vi.fn>;
@@ -174,7 +181,12 @@ function harness(options: HarnessOptions = {}): Harness {
   };
 
   const shutdownRequest = vi.fn(async () => ({ ok: true as const, value: "requested" as const }));
-  const shutdownFace: HostShutdownRemote = { request: shutdownRequest };
+  const shutdownAvailable = vi.fn(async () => {
+    const answer = options.shutdownCapability ?? true;
+    if (answer === "reject") throw new Error("shutdown half unreachable");
+    return { ok: true as const, value: await answer };
+  });
+  const shutdownFace: HostShutdownRemote = { available: shutdownAvailable, request: shutdownRequest };
 
   const fakes: Record<string, unknown> = {
     sessions: {
@@ -300,6 +312,7 @@ function harness(options: HarnessOptions = {}): Harness {
     inserted,
     verbs: runtime.__test.verbs,
     store: runtime.__test.store,
+    shutdownAvailable,
     shutdownRequest,
     sidebar: { openResource: sidebarOpenResource, openTab: sidebarOpenTab },
   };
@@ -472,31 +485,85 @@ describe("client command contributions", () => {
 });
 
 describe("quit row availability", () => {
-  /** The quit row exists only where the remote shutdown face is in hand. */
+  /**
+   * The quit row is listed on the host's own answer, never on the remote face
+   * being reachable: the Desktop shell mounts the same face and cannot quit.
+   */
   function quitRow(h: Harness): boolean {
     return h.store.getSnapshot().rows.some(row => row.action.kind === "request-shutdown");
   }
 
-  it("lists the quit row when the remote shutdown face is mounted", async () => {
-    const h = harness();
+  /** Open command mode and let the catalogue round trip settle. */
+  async function openCommands(h: Harness): Promise<void> {
     runCommand(h, "command-panel.commands");
     await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
-    expect(quitRow(h)).toBe(true);
+  }
+
+  it("lists the quit row once the host answers that it can quit", async () => {
+    const h = harness();
+    await openCommands(h);
+    await vi.waitFor(() => expect(quitRow(h)).toBe(true));
+    expect(h.shutdownAvailable).toHaveBeenCalledTimes(1);
+    h.runtime.dispose();
+  });
+
+  it("hides the quit row where the host cannot quit, though the face answers", async () => {
+    // The Desktop shell case: the namespace is mounted, `appExit` is not, and a
+    // row whose every press ends in "unavailable" would be a lie.
+    const h = harness({ shutdownCapability: false });
+    await openCommands(h);
+    await vi.waitFor(() => expect(h.shutdownAvailable).toHaveBeenCalledTimes(1));
+    expect(quitRow(h)).toBe(false);
+    h.runtime.dispose();
+  });
+
+  it("adds the quit row when the answer lands after the first frame", async () => {
+    let settle: (value: boolean) => void = () => undefined;
+    const late = new Promise<boolean>((resolve) => {
+      settle = resolve;
+    });
+    const h = harness({ shutdownCapability: late });
+    await openCommands(h);
+    expect(quitRow(h)).toBe(false);
+
+    settle(true);
+    await vi.waitFor(() => expect(quitRow(h)).toBe(true));
+    h.runtime.dispose();
+  });
+
+  it("keeps the quit row out when the capability probe cannot reach the host", async () => {
+    const h = harness({ shutdownCapability: "reject" });
+    await openCommands(h);
+    await vi.waitFor(() => expect(h.shutdownAvailable).toHaveBeenCalledTimes(1));
+    expect(quitRow(h)).toBe(false);
+    h.runtime.dispose();
   });
 
   it("keeps the quit row hidden without the remote face, though the context reads no appExit", async () => {
     const h = harness({ hostShutdown: null });
-    runCommand(h, "command-panel.commands");
-    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    await openCommands(h);
     // The fake context's get answers undefined for everything, so this case
     // also pins that the row never came from a client-context appExit probe.
     expect(quitRow(h)).toBe(false);
+    h.runtime.dispose();
+  });
+
+  it("asks the capability once, not once per open", async () => {
+    const h = harness();
+    await openCommands(h);
+    await vi.waitFor(() => expect(quitRow(h)).toBe(true));
+
+    runCommand(h, "command-panel.commands");
+    await vi.waitFor(() => expect(h.store.getSnapshot().open).toBe(false));
+    await openCommands(h);
+    expect(h.shutdownAvailable).toHaveBeenCalledTimes(1);
+    h.runtime.dispose();
   });
 
   it("arms on the first accept and fires the remote shutdown on the second", async () => {
     const h = harness();
-    runCommand(h, "command-panel.commands");
-    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    await openCommands(h);
+    await vi.waitFor(() => expect(quitRow(h)).toBe(true));
 
     h.verbs.accept(h.store.getSnapshot().rows.find(row => row.action.kind === "request-shutdown")!);
     // Still open after arming, and the host has heard nothing yet.
@@ -510,8 +577,8 @@ describe("quit row availability", () => {
 
   it("keeps the armed row reachable under a query: it stays, the highlight stays, the second enter fires", async () => {
     const h = harness();
-    runCommand(h, "command-panel.commands");
-    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+    await openCommands(h);
+    await vi.waitFor(() => expect(quitRow(h)).toBe(true));
 
     // A query that matches the quit row's own label but not its confirmation
     // wording: arming must not let the relabel take the row out of the list.

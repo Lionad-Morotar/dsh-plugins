@@ -20,4 +20,10 @@ describe("host bundle wire signatures", () => {
     expect(bundle).toMatch(/async resolve\(request, signal\)/);
     expect(bundle).not.toMatch(/async resolve\(\s*[a-zA-Z$_]\s*,/);
   });
+
+  it("ships the quit capability probe beside the request endpoint", async () => {
+    const bundle = await readFile(join(libRoot, "index.js"), "utf8");
+    expect(bundle).toMatch(/async available\(\)/);
+    expect(bundle).toMatch(/async request\(\)/);
+  });
 });

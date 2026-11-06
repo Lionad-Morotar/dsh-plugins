@@ -135,8 +135,11 @@ function harness(options: HarnessOptions = {}): Harness {
     if (options.shutdownError !== undefined) return { ok: false, error: { code: options.shutdownError.code } };
     return { ok: true, value: options.shutdownResult ?? "requested" };
   });
+  const shutdownAvailable = vi.fn(async (): Promise<RemoteResult<boolean>> => ({ ok: true, value: true }));
   const shutdownFace: HostShutdownRemote | undefined =
-    options.shutdownFace === null ? undefined : (options.shutdownFace ?? { request: shutdownRequest });
+    options.shutdownFace === null
+      ? undefined
+      : (options.shutdownFace ?? { available: shutdownAvailable, request: shutdownRequest });
 
   const deps: ActionDeps = {
     sessions: () => sessions,
@@ -401,25 +404,25 @@ describe("request-shutdown", () => {
     expect(h.notices).toEqual([]);
   });
 
-  it("keeps the panel open and says why when the remote face answers unavailable", async () => {
+  it("keeps the panel open and says the host did not confirm when the capability is gone", async () => {
     const h = harness({ shutdownResult: "unavailable" });
     await runCatalogAction({ kind: "request-shutdown" }, h.deps);
     expect(h.shutdownRequest).toHaveBeenCalledTimes(1);
-    expect(h.notices).toEqual([{ text: copy.actions.shutdownUnavailable, tone: "error" }]);
+    expect(h.notices).toEqual([{ text: copy.actions.shutdownFailed, tone: "error" }]);
     expect(h.closed()).toBe(0);
   });
 
   it("keeps the panel open when the transport rejects, without throwing", async () => {
     const h = harness({ shutdownThrows: new Error("socket gone") });
     await runCatalogAction({ kind: "request-shutdown" }, h.deps);
-    expect(h.notices).toEqual([{ text: copy.actions.shutdownUnavailable, tone: "error" }]);
+    expect(h.notices).toEqual([{ text: copy.actions.shutdownFailed, tone: "error" }]);
     expect(h.closed()).toBe(0);
   });
 
   it("keeps the panel open on a business failure too", async () => {
     const h = harness({ shutdownError: { code: "typert/refused" } });
     await runCatalogAction({ kind: "request-shutdown" }, h.deps);
-    expect(h.notices).toEqual([{ text: copy.actions.shutdownUnavailable, tone: "error" }]);
+    expect(h.notices).toEqual([{ text: copy.actions.shutdownFailed, tone: "error" }]);
     expect(h.closed()).toBe(0);
   });
 

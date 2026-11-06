@@ -370,12 +370,11 @@ function toggleTheme(deps: ActionDeps): void {
 /**
  * Quit the whole host through the remote shutdown face.
  *
- * Only reached after the panel's own confirmation, and only when the runtime
- * saw the namespace at all. The host half answers business results, the
- * transport answers carrier failures, and both fold into the same two
- * outcomes: `requested` means the host is already tearing down and closing the
- * panel is the last thing left to do; anything else keeps it open with the
- * reason on the notice line instead of failing silently.
+ * The row is listed only after the host answered that it can quit, so the two
+ * failure sentences say different things: no face at all is the capability
+ * being absent, while a host that took the call and did not confirm is a
+ * transport or business failure that leaves DSH running. Both keep the panel
+ * open instead of failing silently.
  */
 async function requestQuit(deps: ActionDeps): Promise<void> {
   const face = deps.shutdownRequest();
@@ -393,7 +392,7 @@ async function requestQuit(deps: ActionDeps): Promise<void> {
     // A rejecting transport is an unreachable host, not a caller error: the
     // panel stays open either way, so the reason is all that differs.
   }
-  deps.notify(deps.copy().actions.shutdownUnavailable, "error");
+  deps.notify(deps.copy().actions.shutdownFailed, "error");
 }
 
 function insertCommand(name: string, deps: ActionDeps): void {

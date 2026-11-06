@@ -102,6 +102,8 @@ export interface Copy {
     readonly themeSwitched: (dark: boolean) => string;
     /** The host combination offers no `appExit`, so the quit cannot run. */
     readonly shutdownUnavailable: string;
+    /** The host was asked to quit and did not confirm it. */
+    readonly shutdownFailed: string;
     readonly failed: (what: string, code: string | undefined) => string;
   };
 }
@@ -211,6 +213,7 @@ const ZH: Copy = {
     restoreFailed: code => `恢复会话失败${code === undefined || code === "" ? "" : `：${code}`}`,
     themeSwitched: dark => (dark ? "已切到深色主题" : "已切到浅色主题"),
     shutdownUnavailable: "当前宿主组合没有关闭能力，无法退出 DSH",
+    shutdownFailed: "退出请求没有得到宿主确认，DSH 仍在运行",
     failed: (what, code) => `${what}失败${code === undefined || code === "" ? "" : `：${code}`}`,
   },
   age: elapsed => {
@@ -328,6 +331,7 @@ const EN: Copy = {
     restoreFailed: code => `Restore failed${code === undefined || code === "" ? "" : `: ${code}`}`,
     themeSwitched: dark => (dark ? "Switched to the dark theme" : "Switched to the light theme"),
     shutdownUnavailable: "This host combination has no shutdown capability, so DSH cannot be quit",
+    shutdownFailed: "The quit request was not confirmed by the host; DSH is still running",
     failed: (what, code) => `${what} failed${code === undefined || code === "" ? "" : `: ${code}`}`,
   },
   age: elapsed => {

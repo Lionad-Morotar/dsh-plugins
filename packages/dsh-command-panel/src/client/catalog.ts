@@ -73,9 +73,9 @@ export interface CatalogEntry {
    */
   readonly seat?: boolean;
   /**
-   * Quits the whole host through its `appExit`; listed only when the remote
-   * shutdown face is in hand. Like `seat`, a host without it loses one row and
-   * nothing else.
+   * Quits the whole host through its `appExit`; listed only after the host half
+   * answered that it can quit. Like `seat`, a host without it loses one row and
+   * nothing else — the Desktop shell owns quitting itself and answers false.
    */
   readonly hostShutdown?: boolean;
   /**
@@ -225,7 +225,7 @@ function satisfied(requirement: Requirement, context: ActionContext): boolean {
 export interface AvailabilityOptions {
   /** Turn off the seat-backed entries (settings, shortcut reference). */
   readonly seatSurfaces: boolean;
-  /** Whether the remote shutdown face is in hand; off hides the quit row. */
+  /** Whether the host answered that it can quit; unknown or false keeps the row out. */
   readonly hostShutdown?: boolean;
   /** Host slash commands known to exist for this session. */
   readonly hostCommands?: ReadonlySet<string>;

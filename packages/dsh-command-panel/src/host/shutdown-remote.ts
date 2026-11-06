@@ -18,16 +18,34 @@ import type { Context } from "@deepseek-ai/cordis";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 import { SHUTDOWN_SERVICE, type ShutdownRequestResult } from "../shared.ts";
-import { requestShutdown } from "./shutdown.ts";
+import { requestShutdown, shutdownAvailable } from "./shutdown.ts";
 
+/**
+ * The Gateway does not invoke a Remote method on the service instance: it calls
+ * it with a tracked, shadowed proxy as `this` (Cordis `createTraceable`), and a
+ * real `#private` field is unreachable through that proxy — every remote call
+ * died with "Cannot read from private field" while direct calls passed. Both
+ * endpoints therefore read `this.ctx`, the one property the proxy overlays with
+ * the invocation-scoped Context.
+ */
 export class HostShutdownService extends TypertRemoteService {
   static inject: string[] = [];
 
-  readonly #ctx: Context;
-
   constructor(ctx: Context) {
     super(ctx, SHUTDOWN_SERVICE);
-    this.#ctx = ctx;
+  }
+
+  /**
+   * Whether this host can be asked to quit at all.
+   *
+   * The client lists the quit row only after this answers true, so a host that
+   * owns quitting elsewhere (the Desktop shell) shows no row instead of one
+   * whose every press ends in "unavailable". Read-only and idempotent: it is
+   * asked once per panel runtime, never per commit.
+   */
+  @Remote("available")
+  async available(): Promise<boolean> {
+    return shutdownAvailable(this.ctx);
   }
 
   /**
@@ -38,7 +56,7 @@ export class HostShutdownService extends TypertRemoteService {
    */
   @Remote("request")
   async request(): Promise<ShutdownRequestResult> {
-    return requestShutdown(this.#ctx);
+    return requestShutdown(this.ctx);
   }
 }
 

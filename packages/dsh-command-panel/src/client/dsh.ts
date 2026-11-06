@@ -150,20 +150,24 @@ export function isPathExplorerFace(value: unknown): value is PathExplorerRemote 
 // ── Host shutdown (this package's host half) ───────────────────────────────
 
 /**
- * The one endpoint the quit row calls.
+ * The two endpoints of this package's shutdown half.
  *
  * The answer travels from the host process, where `appExit` actually lives;
  * the client half never names that capability itself, so a host without the
- * namespace simply never hands the row out.
+ * namespace simply never hands the row out. `available` is the listing gate —
+ * presence of the namespace is not the same as the capability, because the
+ * Desktop shell mounts the same host half while owning quitting itself.
  */
 export interface HostShutdownRemote {
+  available(signal?: AbortSignal): Promise<RemoteResult<boolean>>;
   request(signal?: AbortSignal): Promise<RemoteResult<ShutdownRequestResult>>;
 }
 
 /** Whether a value structurally answers the hostShutdown face. */
 export function isHostShutdownFace(value: unknown): value is HostShutdownRemote {
   if (value === null || typeof value !== "object") return false;
-  return typeof (value as Record<string, unknown>).request === "function";
+  const record = value as Record<string, unknown>;
+  return typeof record.request === "function" && typeof record.available === "function";
 }
 
 /**

@@ -102,6 +102,8 @@ async function invoke(
 /** The hostShutdown face over the raw channel. */
 export function createHostShutdownFace(rpc: GatewayRpc): HostShutdownRemote {
   return {
+    available: signal =>
+      invoke(rpc, SHUTDOWN_SERVICE, "available", {}, signal) as Promise<RemoteResult<boolean>>,
     request: signal =>
       invoke(rpc, SHUTDOWN_SERVICE, "request", {}, signal) as Promise<RemoteResult<ShutdownRequestResult>>,
   };

@@ -44,7 +44,6 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
 var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
 var __privateIn = (member, obj) => Object(obj) !== obj ? __typeError('Cannot use the "in" operator on this value') : member.has(obj);
 var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read from private field"), getter ? getter.call(obj) : member.get(obj));
-var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
 var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
 var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
 
@@ -297,11 +296,27 @@ __publicField(PathExplorerService, "inject", []);
 import { Remote as Remote3, TypertRemoteService as TypertRemoteService3 } from "@deepseek-ai/dsh-typert-protocol";
 
 // src/host/shutdown.ts
-function requestShutdown(ctx) {
+function appExitOf(ctx) {
   try {
     const exit = ctx.get?.("appExit", false);
-    if (typeof exit !== "function") return "unavailable";
-    exit(0);
+    return typeof exit === "function" ? exit : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function shutdownAvailable(ctx) {
+  return appExitOf(ctx) !== void 0;
+}
+function requestShutdown(ctx) {
+  const exit = appExitOf(ctx);
+  if (exit === void 0) return "unavailable";
+  try {
+    setTimeout(() => {
+      try {
+        exit(0);
+      } catch {
+      }
+    }, 0);
     return "requested";
   } catch {
     return "unavailable";
@@ -309,20 +324,21 @@ function requestShutdown(ctx) {
 }
 
 // src/host/shutdown-remote.ts
-var _request_dec, _a3, _ctx, _init3;
-var HostShutdownService = class extends (_a3 = TypertRemoteService3, _request_dec = [Remote3("request")], _a3) {
+var _request_dec, _available_dec, _a3, _init3;
+var HostShutdownService = class extends (_a3 = TypertRemoteService3, _available_dec = [Remote3("available")], _request_dec = [Remote3("request")], _a3) {
   constructor(ctx) {
     super(ctx, SHUTDOWN_SERVICE);
     __runInitializers(_init3, 5, this);
-    __privateAdd(this, _ctx);
-    __privateSet(this, _ctx, ctx);
+  }
+  async available() {
+    return shutdownAvailable(this.ctx);
   }
   async request() {
-    return requestShutdown(__privateGet(this, _ctx));
+    return requestShutdown(this.ctx);
   }
 };
 _init3 = __decoratorStart(_a3);
-_ctx = new WeakMap();
+__decorateElement(_init3, 1, "available", _available_dec, HostShutdownService);
 __decorateElement(_init3, 1, "request", _request_dec, HostShutdownService);
 __decoratorMetadata(_init3, HostShutdownService);
 __publicField(HostShutdownService, "inject", []);
