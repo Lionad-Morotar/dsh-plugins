@@ -119,7 +119,7 @@ describe("core client entry", () => {
 
     const service = services.get("workbench") as WorkbenchService | undefined;
     expect(service).toBeDefined();
-    expect(service?.version).toBe(2);
+    expect(service?.version).toBe(3);
     expect((ctx as { workbench?: WorkbenchService }).workbench).toBe(service);
 
     const provideIndex = calls.findIndex(call => call.type === "provide");
@@ -188,6 +188,33 @@ describe("core client entry", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("claims the host close-page fallback while applied and restores it on dispose", async () => {
+    const { ctx, services } = createContext();
+    const host = { ...shortcutService("desktop"), closes: 0, closeWindow: () => Promise.resolve() };
+    const close = (): Promise<void> => {
+      host.closes += 1;
+      return Promise.resolve();
+    };
+    host.closeWindow = close;
+    ctx.shortcuts = host;
+
+    const dispose = apply(ctx as never);
+    const service = services.get("workbench") as WorkbenchService | undefined;
+    const off = service?.registerPageCloser(() => true);
+
+    // The wrapped method is what the host's `page.close` fallback calls; the
+    // claim must keep the window open.
+    await host.closeWindow();
+    expect(host.closes).toBe(0);
+    expect(host.closeWindow).not.toBe(close);
+
+    off?.();
+    dispose();
+    await host.closeWindow();
+    expect(host.closeWindow).toBe(close);
+    expect(host.closes).toBe(1);
   });
 
   it("watches the host chat tab on every runtime, because the host owns that click", () => {

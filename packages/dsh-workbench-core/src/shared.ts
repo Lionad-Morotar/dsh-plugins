@@ -22,5 +22,9 @@ export const WORKBENCH_SERVICE = "workbench";
  * 2: `views.onChatShown` was added, and the entry now drives composer focus
  * from it, so a chat return observed by the seam no longer leaves the keyboard
  * on the clicked tab.
+ *
+ * 3: `registerPageCloser` was added so a mounted view can claim the host's
+ * close-page fallback (⌘W) before it closes the window. Cores older than this
+ * still show every view; they just cannot intercept the chord.
  */
-export const WORKBENCH_VERSION = 2;
+export const WORKBENCH_VERSION = 3;

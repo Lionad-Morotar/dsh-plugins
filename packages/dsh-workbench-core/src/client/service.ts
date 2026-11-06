@@ -15,6 +15,7 @@
 import { createHostAdapters, type WorkbenchAdapters } from "./adapters.ts";
 import { createDockVisibility, type DockVisibility } from "./dock-visibility.ts";
 import { WORKBENCH_COMMANDS, type WorkbenchCommandSpec } from "./keymap.ts";
+import type { PageCloser } from "./page-close.ts";
 import { createPanelLedger, type PanelDescriptor, type PanelStore } from "./panels.ts";
 import { readCurrentSessionId } from "./session.ts";
 import { createViewFocusQueue, type ViewFocusQueue } from "./view-focus.ts";
@@ -123,14 +124,38 @@ export interface WorkbenchService {
    * @param visible - whether the dock should occupy its slot.
    */
   setDockVisible(visible: boolean): void;
+  /**
+   * Claim the host's close-page gesture for a page this view is showing.
+   *
+   * Desktop turns ⌘W (Ctrl+W on Windows) into the host's `page.close` command:
+   * it closes the focused right-sidebar page and, when there is none, closes the
+   * window. A conversation view is not a sidebar page, so a workbench view
+   * registers here to take that fallback for its own page — one open file panel.
+   * The claim runs only when the host is about to close the window; returning
+   * `true` means this view consumed the gesture, `false` leaves the host
+   * behaviour untouched.
+   *
+   * A host without the fallback answers an inert disposer, so callers need no
+   * version probe.
+   * @param closer - claims the gesture; `true` when it was consumed.
+   * @returns disposer releasing the claim.
+   */
+  registerPageCloser(closer: PageCloser): () => void;
+}
+
+/** What a caller may hand the service at construction, beyond the context. */
+export interface WorkbenchServiceOptions {
+  /** The host page-close seam the entry installed; absent leaves ⌘W with the host. */
+  readonly pageClose?: { register(closer: PageCloser): () => void };
 }
 
 /**
  * Create the service for one client mount.
  * @param ctx - the client context the row was applied to.
- * @returns the service; it captures nothing but `ctx` itself.
+ * @param options - host seams the entry installed outside the context.
+ * @returns the service; it captures nothing but `ctx` and those seams.
  */
-export function createWorkbenchService(ctx: unknown): WorkbenchService {
+export function createWorkbenchService(ctx: unknown, options: WorkbenchServiceOptions = {}): WorkbenchService {
   const panels = createPanelLedger();
   const adapters = createHostAdapters(ctx, typeof document === "undefined" ? undefined : document);
   const dockRows: DockDescriptor[] = [];
@@ -199,6 +224,7 @@ export function createWorkbenchService(ctx: unknown): WorkbenchService {
     dockVisibility,
     dockVisible: () => dockVisibility.get(),
     setDockVisible: visible => dockVisibility.set(visible),
+    registerPageCloser: closer => options.pageClose?.register(closer) ?? (() => {}),
   };
 
   return service;

@@ -116,9 +116,12 @@ export const WORKBENCH_COMMANDS: readonly WorkbenchCommandSpec[] = [
     labelKey: "keymap.closePanel",
     group: "files",
     scope: "panel",
+    // Desktop's primary path is the host's own `page.close` (⌘W / Ctrl+W); the
+    // workbench claims its fallback through the page-close seam. This row is
+    // the panel-local chord the listener still answers when that seam is absent.
     desktop: { code: "KeyW", modifiers: ["control"] },
     web: null,
-    webNote: "浏览器会先接管 Ctrl+W 关闭标签页",
+    webNote: "web 上 ⌘W 与 Ctrl+W 都会被浏览器接管（关闭标签页）",
     webAlternative: "点击面板标签上的关闭按钮",
   },
 ];

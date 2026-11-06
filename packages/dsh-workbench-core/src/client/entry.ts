@@ -21,6 +21,7 @@ import {
 import { EN, ZH } from "./copy.ts";
 import { installChatTabFocus } from "./chat-tab.ts";
 import { createComposerFocus, focusComposerFor, type FocusScheduler } from "./focus.ts";
+import { acquirePageCloseFallback } from "./page-close.ts";
 import {
   LOCALE_NAMESPACE,
   SECTION_ID,
@@ -50,6 +51,15 @@ export function boot(require: LoaderRequire): void {
   loaderRequire = require;
 }
 
+/** The host shortcut service face: command registry, catalog, and the window tail. */
+export interface ShortcutServiceLike extends ShortcutRegistryLike, ShortcutsLike {
+  /**
+   * The host's window-close fallback, called by `page.close` when it has no
+   * right-sidebar page to close. The page-close seam wraps it.
+   */
+  closeWindow?(): Promise<void>;
+}
+
 /** The slice of the client context this entry uses. */
 export interface ClientContextLike {
   readonly slots: {
@@ -66,7 +76,7 @@ export interface ClientContextLike {
   /** Cordis service lookup, the safe way to probe a service this plugin may not own. */
   get?(name: string): unknown;
   /** Host shortcut registry; the settings matrix reads its catalog. */
-  readonly shortcuts?: ShortcutRegistryLike & ShortcutsLike;
+  readonly shortcuts?: ShortcutServiceLike;
   /** Session service; the composer focus hook reaches a session scope through it. */
   readonly sessions?: { scope?(sessionId: string): unknown };
   readonly logger?: { warn?(message: string): void };
@@ -80,7 +90,7 @@ export interface ClientContextLike {
  * predate the service or guard the property; a missing service degrades to the
  * "未安装" state instead of taking down the section.
  */
-export function readShortcutService(ctx: ClientContextLike): (ShortcutRegistryLike & ShortcutsLike) | undefined {
+export function readShortcutService(ctx: ClientContextLike): ShortcutServiceLike | undefined {
   try {
     if (ctx.shortcuts !== undefined && ctx.shortcuts !== null) return ctx.shortcuts;
   } catch {
@@ -88,7 +98,7 @@ export function readShortcutService(ctx: ClientContextLike): (ShortcutRegistryLi
   }
   try {
     const viaGet = typeof ctx.get === "function" ? ctx.get("shortcuts") : undefined;
-    if (viaGet !== undefined && viaGet !== null) return viaGet as ShortcutRegistryLike & ShortcutsLike;
+    if (viaGet !== undefined && viaGet !== null) return viaGet as ShortcutServiceLike;
   } catch {
     // Absent service: the section still mounts and reports the missing groups.
   }
@@ -185,7 +195,17 @@ function installWebShortcutRouter(
 let registeredDictionaries: (() => void) | undefined;
 
 export function apply(ctx: ClientContextLike): () => void {
-  const service = createWorkbenchService(ctx);
+  const shortcuts = readShortcutService(ctx);
+  const reportShortcutProblem = (message: string): void => {
+    // The host logger sink is invisible in a browser DevTools session; a
+    // console twin keeps shortcut registration diagnosable on real machines.
+    console.warn(`[dsh-workbench-core] ${message}`);
+    ctx.logger?.warn?.(`${LOCALE_NAMESPACE}: ${message}`);
+  };
+  // The host's ⌘W closes the window when no right-sidebar page is focused; the
+  // workbench claims that fallback while a view has a page of its own open.
+  const pageClose = shortcuts === undefined ? undefined : acquirePageCloseFallback(shortcuts, reportShortcutProblem);
+  const service = createWorkbenchService(ctx, pageClose === undefined ? {} : { pageClose });
   const offService = ctx.provide?.(WORKBENCH_SERVICE, service);
   if (offService === undefined) {
     // Without the service the three feature packages stay pending, which is a
@@ -198,19 +218,13 @@ export function apply(ctx: ClientContextLike): () => void {
   registeredDictionaries?.();
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
   registeredDictionaries = offLocale;
-  const shortcuts = readShortcutService(ctx);
   console.info(
     `[dsh-workbench-core] shortcuts service ${shortcuts === undefined ? "absent" : `present (runtime=${shortcuts.runtime ?? "unknown"})`}`,
   );
   // The global commands are registered before the section renders: the section
   // reads the host catalog, so a command registered after the first paint would
   // appear only on the next catalog push.
-  const offCommands = registerWorkbenchCommands(shortcuts, service, t, message => {
-    // The host logger sink is invisible in a browser DevTools session; a
-    // console twin keeps shortcut registration diagnosable on real machines.
-    console.warn(`[dsh-workbench-core] ${message}`);
-    ctx.logger?.warn?.(`${LOCALE_NAMESPACE}: ${message}`);
-  });
+  const offCommands = registerWorkbenchCommands(shortcuts, service, t, reportShortcutProblem);
   // Web only: the host refuses these three chords, so the bundle listens for
   // them itself in the capture phase. Registering the host defaults stays
   // desktop-only either way.
@@ -220,10 +234,6 @@ export function apply(ctx: ClientContextLike): () => void {
   // in settings takes effect without a remount.
   const viewDigits = createViewDigitPreference();
   const tabStrip = createTabStripRuntime();
-  const reportShortcutProblem = (message: string): void => {
-    console.warn(`[dsh-workbench-core] ${message}`);
-    ctx.logger?.warn?.(`${LOCALE_NAMESPACE}: ${message}`);
-  };
   const offDigitCommands = registerViewDigitCommands(
     shortcuts,
     service,
@@ -310,6 +320,7 @@ export function apply(ctx: ClientContextLike): () => void {
     offDigitCommands();
     offKeyRouter();
     offCommands();
+    pageClose?.release();
     offLocale();
     if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
     offService?.();
@@ -335,6 +346,7 @@ export const __test = {
   switchToViewTab,
   listViewTabs,
   focusComposerFor,
+  acquirePageCloseFallback,
 };
 
 /** The plugin object the loader mounts. */

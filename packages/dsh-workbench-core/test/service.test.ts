@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createComposerOverlayAdapter, probeService } from "../src/client/adapters.ts";
 import { readCurrentSessionId } from "../src/client/session.ts";
@@ -9,7 +9,7 @@ const emptyContext = { get: () => undefined };
 describe("workbench service", () => {
   it("exposes the contract version and the command table", () => {
     const service = createWorkbenchService(emptyContext);
-    expect(service.version).toBe(2);
+    expect(service.version).toBe(3);
     expect(service.shortcuts.catalog()).toBe(service.keymap);
     expect(service.keymap.map(command => command.id)).toEqual([
       "workbench.files.toggle",
@@ -19,6 +19,24 @@ describe("workbench service", () => {
       "workbench.panel.previous",
       "workbench.panel.close",
     ]);
+  });
+
+  it("forwards page-close claims to the host seam it was built with", () => {
+    const register = vi.fn(() => () => {});
+    const service = createWorkbenchService(emptyContext, { pageClose: { register } });
+    const closer = () => true;
+
+    service.registerPageCloser(closer);
+
+    expect(register).toHaveBeenCalledWith(closer);
+  });
+
+  it("answers an inert claim when the host offers no close fallback", async () => {
+    const service = createWorkbenchService(emptyContext);
+    const off = service.registerPageCloser(() => true);
+
+    expect(typeof off).toBe("function");
+    expect(() => off()).not.toThrow();
   });
 
   it("keeps the panel ledger ordered and supports activation", () => {

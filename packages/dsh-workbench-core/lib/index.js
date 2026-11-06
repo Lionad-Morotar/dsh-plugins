@@ -1,7 +1,7 @@
 // src/shared.ts
 var PACKAGE_NAME = "dsh-workbench-core";
 var WORKBENCH_SERVICE = "workbench";
-var WORKBENCH_VERSION = 2;
+var WORKBENCH_VERSION = 3;
 
 // src/index.ts
 var name = PACKAGE_NAME;
