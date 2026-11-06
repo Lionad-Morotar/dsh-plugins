@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { indexIgnoredPaths } from "../src/client/ignored.ts";
 import {
   adoptsOpenFile,
   ancestorChain,
@@ -21,7 +22,10 @@ function level(nodes: TreeLevel["nodes"], extra: Partial<TreeLevel> = {}): TreeL
 }
 
 describe("buildTree", () => {
-  it("puts directories first, sorts by name and filters noise directories", () => {
+  it("puts directories first, sorts by name and filters only the repository itself", () => {
+    // `.git` is version-control internals rather than an ignored entry, so no
+    // SCM surface lists it. Everything else that used to be hard-filtered is a
+    // git-ignored directory, and the tree now dims it instead of hiding it.
     const tree = buildTree([
       { name: "z.ts", kind: "file" },
       { name: "a", kind: "directory" },
@@ -31,7 +35,7 @@ describe("buildTree", () => {
       { name: "dist", kind: "directory" },
       { name: "__pycache__", kind: "directory" },
     ]);
-    expect(tree.map(node => node.name)).toEqual(["a", "b.md", "z.ts"]);
+    expect(tree.map(node => node.name)).toEqual(["__pycache__", "a", "dist", "node_modules", "b.md", "z.ts"]);
   });
 
   it("accepts the host's `type` field and keeps file sizes", () => {
@@ -275,6 +279,130 @@ describe("flattenTree", () => {
     expect(diffOf("scratch.ts")).toBeUndefined();
     // Directory rows aggregate; they never carry line counts.
     expect(diffOf("src")).toBeUndefined();
+  });
+
+  describe("ignored entries", () => {
+    // `logs` is a visible directory whose children are all ignored; that is the
+    // only way a directory can lose every child, since an ignored directory is
+    // hidden with its whole subtree before anything inside it is visited.
+    const levels = (): Map<string, TreeLevel> =>
+      new Map<string, TreeLevel>([
+        [
+          "",
+          level(
+            buildTree([
+              { name: "src", kind: "directory" },
+              { name: "logs", kind: "directory" },
+              { name: "node_modules", kind: "directory" },
+              { name: "README.md", kind: "file" },
+              { name: "x.log", kind: "file" },
+            ]),
+          ),
+        ],
+        ["logs", level(buildTree([{ name: "a.log", kind: "file" }, { name: "b.log", kind: "file" }]))],
+        [
+          "node_modules",
+          level(buildTree([{ name: ".bin", kind: "directory" }, { name: "left-pad", kind: "directory" }])),
+        ],
+        ["node_modules/.bin", level(buildTree([{ name: "tsc", kind: "file" }]))],
+      ]);
+
+    const index = indexIgnoredPaths(["node_modules", "x.log", "*.log", "logs/a.log", "logs/b.log"]);
+
+    it("marks ignored rows and leaves the rest alone", () => {
+      const rows = flattenTree(levels(), new Set(["node_modules"]), undefined, undefined, { ignored: index });
+      const ignoredOf = (name: string) => {
+        const row = rows.find(candidate => candidate.type === "entry" && candidate.name === name);
+        return row?.type === "entry" ? row.ignored : undefined;
+      };
+      expect(ignoredOf("node_modules")).toBe(true);
+      expect(ignoredOf("x.log")).toBe(true);
+      expect(ignoredOf("README.md")).toBeUndefined();
+      expect(ignoredOf("src")).toBeUndefined();
+      expect(ignoredOf("logs")).toBeUndefined();
+    });
+
+    it("inherits the mark down an ignored directory's children", () => {
+      const rows = flattenTree(levels(), new Set(["node_modules", "node_modules/.bin"]), undefined, undefined, {
+        ignored: index,
+      });
+      const tsc = rows.find(row => row.type === "entry" && row.name === "tsc");
+      expect(tsc?.type === "entry" ? tsc.ignored : undefined).toBe(true);
+    });
+
+    it("shows ignored entries by default", () => {
+      // Only an explicit `false` hides them: the feature's default state is
+      // visible and dimmed, so a caller with no opinion sees every row.
+      const rows = flattenTree(levels(), new Set(), undefined, undefined, { ignored: index });
+      expect(rows.map(row => (row.type === "entry" ? row.name : row.state))).toEqual([
+        "logs",
+        "node_modules",
+        "src",
+        "README.md",
+        "x.log",
+      ]);
+    });
+
+    it("drops an ignored row and its whole subtree when hidden", () => {
+      const rows = flattenTree(levels(), new Set(["node_modules", "node_modules/.bin"]), undefined, undefined, {
+        ignored: index,
+        showIgnored: false,
+      });
+      const names = rows.flatMap(row => (row.type === "entry" ? [row.name] : []));
+      expect(names).toEqual(["logs", "src", "README.md"]);
+      expect(names).not.toContain("tsc");
+      expect(names).not.toContain("x.log");
+    });
+
+    it("states how many entries a fully hidden directory lost", () => {
+      const rows = flattenTree(levels(), new Set(["logs"]), undefined, undefined, {
+        ignored: index,
+        showIgnored: false,
+      });
+      const status = rows.find(row => row.type === "status" && row.path === "logs");
+      expect(status?.type === "status" ? status.state : undefined).toBe("empty");
+      expect(status?.type === "status" ? status.label : undefined).toContain("2");
+    });
+
+    it("uses the caller's label when one is given", () => {
+      const rows = flattenTree(levels(), new Set(["logs"]), undefined, undefined, {
+        ignored: index,
+        showIgnored: false,
+        hiddenLabel: count => `hid ${String(count)}`,
+      });
+      const status = rows.find(row => row.type === "status" && row.path === "logs");
+      expect(status?.type === "status" ? status.label : undefined).toBe("hid 2");
+    });
+
+    it("keeps the root from going blank when every child is hidden", () => {
+      const onlyIgnored = new Map<string, TreeLevel>([
+        [
+          "",
+          level(buildTree([{ name: "node_modules", kind: "directory" }, { name: "x.log", kind: "file" }])),
+        ],
+      ]);
+      const rows = flattenTree(onlyIgnored, new Set(), undefined, undefined, {
+        ignored: index,
+        showIgnored: false,
+      });
+      expect(rows).toHaveLength(1);
+      const status = rows[0];
+      expect(status?.type === "status" ? status.state : undefined).toBe("empty");
+      expect(status?.type === "status" ? status.depth : undefined).toBe(0);
+      expect(status?.type === "status" ? status.label : undefined).toContain("2");
+    });
+
+    it("keeps the old four-argument shape unchanged", () => {
+      const rows = flattenTree(levels(), new Set());
+      expect(rows.map(row => (row.type === "entry" ? row.name : row.state))).toEqual([
+        "logs",
+        "node_modules",
+        "src",
+        "README.md",
+        "x.log",
+      ]);
+      expect(rows.every(row => row.type !== "entry" || row.ignored === undefined)).toBe(true);
+    });
   });
 });
 

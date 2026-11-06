@@ -16,6 +16,7 @@ import {
   createWorkspaceResolver,
   createWorkspaceRpc,
   normalizeCapabilities,
+  normalizeIgnored,
   normalizeInfo,
   normalizeReveal,
 } from "../src/client/workspace-face.ts";
@@ -170,6 +171,63 @@ describe("normalizeReveal", () => {
   });
 });
 
+describe("normalizeIgnored", () => {
+  it("unwraps the generated Remote envelope", () => {
+    expect(
+      normalizeIgnored({
+        ok: true,
+        value: { ok: true, ignored: { root: "/w", entries: ["node_modules", "x.log"], truncated: false } },
+      }),
+    ).toEqual({ ok: true, entries: ["node_modules", "x.log"], truncated: false });
+  });
+
+  it("reads a flat answer the same way", () => {
+    expect(
+      normalizeIgnored({ ok: true, ignored: { root: null, entries: ["dist"], truncated: true } }),
+    ).toEqual({ ok: true, entries: ["dist"], truncated: true });
+  });
+
+  it("reads a missing truncated flag as false", () => {
+    expect(normalizeIgnored({ ok: true, ignored: { root: "/w", entries: ["a"] } })).toEqual({
+      ok: true,
+      entries: ["a"],
+      truncated: false,
+    });
+  });
+
+  it("treats the host's degraded empty answer as an ordinary empty list", () => {
+    // `root: null` is what a working directory outside a repository answers; it
+    // is a fact, not a failure, and the tree simply dims nothing.
+    expect(normalizeIgnored({ ok: true, ignored: { root: null, entries: [], truncated: false } })).toEqual({
+      ok: true,
+      entries: [],
+      truncated: false,
+    });
+  });
+
+  it("drops entries that are not usable paths", () => {
+    expect(
+      normalizeIgnored({ ok: true, ignored: { root: "/w", entries: ["a", 7, null, "", "b"], truncated: false } }),
+    ).toEqual({ ok: true, entries: ["a", "b"], truncated: false });
+  });
+
+  it("carries a failure code through", () => {
+    expect(normalizeIgnored({ ok: false, error: { code: "no-workspace", message: "no session" } })).toEqual({
+      ok: false,
+      error: { code: "no-workspace", message: "no session" },
+    });
+  });
+
+  it("refuses an answer without an ignored block", () => {
+    expect(normalizeIgnored({ ok: true })).toEqual({ ok: false, error: { code: "io-error", message: "" } });
+    expect(normalizeIgnored({ ok: true, ignored: "nope" })).toEqual({
+      ok: false,
+      error: { code: "io-error", message: "" },
+    });
+    expect(normalizeIgnored(undefined)).toEqual({ ok: false, error: { code: "io-error", message: "" } });
+  });
+});
+
 describe("createWorkspaceClient", () => {
   it("answers a failure instead of throwing when the channel is missing", async () => {
     const client = createWorkspaceClient({ get: () => undefined });
@@ -207,5 +265,41 @@ describe("createWorkspaceClient", () => {
     const face = createRpcWorkspaceFace(call);
     await face.reveal({ sessionId: "s1", path: "a.md" });
     expect(call).toHaveBeenCalledWith("reveal", { args: { request: { sessionId: "s1", path: "a.md" } } }, undefined);
+  });
+
+  it("reaches the ignored endpoint through the RPC caller", async () => {
+    const call = vi.fn(async () => ({ ok: true, value: { ok: true, ignored: { root: null, entries: [] } } }));
+    const face = createRpcWorkspaceFace(call);
+    await face.ignored?.({ sessionId: "s1" });
+    expect(call).toHaveBeenCalledWith("ignored", { args: { request: { sessionId: "s1" } } }, undefined);
+  });
+
+  it("answers unsupported for ignored when the host has no such method", async () => {
+    // A host older than the endpoint exposes the face without `ignored`; the
+    // view reads that as "no ignore information" rather than as a crash.
+    const client = createWorkspaceClient({
+      fsExplorerWorkspace: {
+        capabilities: async () => ({}),
+        info: async () => ({}),
+        reveal: async () => ({}),
+      },
+    });
+    await expect(client.ignored?.("s1")).resolves.toMatchObject({
+      ok: false,
+      error: { code: "unsupported" },
+    });
+  });
+
+  it("folds the ignored answer for the caller", async () => {
+    const { ctx } = connection({
+      ok: true,
+      value: { ok: true, ignored: { root: "/w", entries: ["node_modules"], truncated: false } },
+    });
+    const client = createWorkspaceClient(ctx);
+    await expect(client.ignored?.("s1")).resolves.toEqual({
+      ok: true,
+      entries: ["node_modules"],
+      truncated: false,
+    });
   });
 });

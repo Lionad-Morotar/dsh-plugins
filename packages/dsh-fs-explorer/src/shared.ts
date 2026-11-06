@@ -44,6 +44,19 @@ export const WORKSPACE_SERVICE = "fsExplorerWorkspace";
 export const LISTING_TRUNCATED_LABEL = "目录过大，仅显示前";
 
 /**
+ * Fallback copy for a directory whose children are all hidden ignored entries.
+ *
+ * It lives beside {@link LISTING_TRUNCATED_LABEL} rather than in the client
+ * dictionary because `flattenTree` is pure and has no translator: the view may
+ * pass its own localized label, and this is what a caller without one gets.
+ * @param count - how many entries the directory lost.
+ * @returns the sentence the status row paints.
+ */
+export function hiddenIgnoredLabel(count: number): string {
+  return `已隐藏 ${String(count)} 个忽略项`;
+}
+
+/**
  * The one package-local chunk the preview's heavy half lives in.
  *
  * Three places name this file and none can import the others: this route table
