@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createDockState } from "../src/client/dock-state.ts";
+import { createDockState, shouldOpenForSession } from "../src/client/dock-state.ts";
 
 describe("dock state", () => {
   it("walks minimize, restore, full screen and split", () => {
@@ -92,5 +92,26 @@ describe("dock state", () => {
     off();
     dock.open("b");
     expect(seen).toBe(3);
+  });
+});
+
+describe("lazy panel opening", () => {
+  it("opens nothing while the dock is closed", () => {
+    expect(shouldOpenForSession({ visible: false, panels: [], sessionId: "s1" })).toBe(false);
+  });
+
+  it("opens the current session's panel once the dock is opened", () => {
+    expect(shouldOpenForSession({ visible: true, panels: [], sessionId: "s1" })).toBe(true);
+  });
+
+  it("does not reopen a panel the session already owns", () => {
+    const dock = createDockState();
+    dock.open("a", { sessionId: "s1" });
+    expect(shouldOpenForSession({ visible: true, panels: dock.snapshot().panels, sessionId: "s1" })).toBe(false);
+    expect(shouldOpenForSession({ visible: true, panels: dock.snapshot().panels, sessionId: "s2" })).toBe(true);
+  });
+
+  it("needs a session before it opens anything", () => {
+    expect(shouldOpenForSession({ visible: true, panels: [], sessionId: undefined })).toBe(false);
   });
 });

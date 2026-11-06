@@ -76,6 +76,27 @@ export interface DockState {
 export const DOCK_MAX_PANES = 2;
 
 /**
+ * Whether the dock must open its default panel for the session on screen.
+ *
+ * The dock only creates panels while it is actually open. A hidden dock that
+ * kept following the session would spawn one shell per conversation the reader
+ * browses, which is exactly the resource cost a lazily opened terminal is not
+ * allowed to pay. `⌘⇧M` is the only thing that makes this true, so a reader who
+ * never presses it never gets a process.
+ * @param input - current visibility, the panels the dock already owns, and the
+ *   session currently on screen.
+ * @returns true when a terminal panel must be opened for this session.
+ */
+export function shouldOpenForSession(input: {
+  readonly visible: boolean;
+  readonly panels: readonly DockPanel[];
+  readonly sessionId: string | undefined;
+}): boolean {
+  if (!input.visible || input.sessionId === undefined) return false;
+  return !input.panels.some(panel => panel.sessionId === input.sessionId);
+}
+
+/**
  * Derive a panel id that is not taken yet.
  * @param base - the id the sibling is modelled on.
  * @param taken - ids already in the dock.

@@ -20,7 +20,7 @@ import { createDockController, type DockVisibilitySource } from "./dock-controll
 import { CLOSE_ARM_MS, IDLE_ARM, isArmed, pressClose, reconcileArm, type CloseArm } from "./close-arm.ts";
 import { initialFocusGate, noteClaim, noteShown, type FocusGate } from "./focus-request.ts";
 import { dockAction, detectPlatform } from "./keyboard.ts";
-import { TERMINAL_PANEL_KIND, type DockPanel, type DockPanelKind, type DockState } from "./dock-state.ts";
+import { shouldOpenForSession, TERMINAL_PANEL_KIND, type DockPanel, type DockPanelKind, type DockState } from "./dock-state.ts";
 import { kindPickerChoices, planPanelBody, type PanelBodyPlan, type PanelKindDescriptor } from "./panel-body.ts";
 import type { DockHost } from "./host.ts";
 import type { TerminalRack } from "./rack.ts";
@@ -430,12 +430,13 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
 
     // A dock with no panel has nothing to show; opening one for the session the
     // user just switched to is the dock's own responsibility (there is no session
-    // props to carry it).
+    // props to carry it). Only while the dock is open: a hidden dock that kept
+    // following the session would start a shell for every conversation browsed,
+    // and a reader who never opens the terminal must not pay that.
     useEffect(() => {
-      if (sessionId === undefined) return;
-      if (dock.snapshot().panels.some(panel => panel.sessionId === sessionId)) return;
+      if (!shouldOpenForSession({ visible, panels: dock.snapshot().panels, sessionId })) return;
       dock.open(nextPanelId(TERMINAL_PANEL_KIND), { sessionId });
-    }, [dock, sessionId]);
+    }, [dock, sessionId, visible]);
 
     const closePanel = (id: string): void => {
       const panel = dock.snapshot().panels.find(entry => entry.id === id);

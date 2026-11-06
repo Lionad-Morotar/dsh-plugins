@@ -1,9 +1,10 @@
 /**
  * The one lazy route this package owns.
  *
- * xterm plus FitAddon are roughly half a megabyte of minified code. The dock is a
- * root surface registered on every page boot, so the heavy half lives in a
- * package-local chunk that is fetched the first time a terminal panel mounts.
+ * xterm plus FitAddon are roughly half a megabyte of minified code. The dock
+ * mounts only after `⌘⇧M` opens it, and the heavy half is one step further: it
+ * lives in a package-local chunk fetched the first time a terminal panel mounts,
+ * so a reader who never opens the dock fetches neither.
  *
  * The loader's `require.async` is the only way to reach a sibling file: it
  * resolves a relative specifier against this package's own bundle URL and puts
