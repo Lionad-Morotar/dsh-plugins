@@ -384,3 +384,99 @@ describe("execute: switching", () => {
     });
   });
 });
+
+/**
+ * The host-half wiring, driven through the exported registration function
+ * rather than through `apply`.
+ *
+ * `apply` also starts the web-server poll and the projection probes, so testing
+ * it here would drag a 15s timer and an unrelated seam into cases that are only
+ * about one tool. What matters is narrower: the tool is registered exactly once
+ * when the host has both services, and a host missing either one is left alone
+ * instead of being handed an error it cannot act on.
+ */
+describe("registerReasoningEffortTool", () => {
+  /** One definition as the stub registry recorded it. */
+  interface RecordedTool {
+    readonly name: string;
+    readonly description: string;
+    readonly output: { readonly render: unknown };
+  }
+
+  /** A tools registry that records what it was asked to register. */
+  function stubTools(): { tools: { register: (definition: RecordedTool) => () => void }; registered: RecordedTool[] } {
+    const registered: RecordedTool[] = [];
+    return {
+      tools: {
+        register: (definition: RecordedTool) => {
+          registered.push(definition);
+          return () => undefined;
+        },
+      },
+      registered,
+    };
+  }
+
+  it("registers the tool once when inject hands back both services", async () => {
+    const { registerReasoningEffortTool } = await import("../src/index.ts");
+    const { tools, registered } = stubTools();
+    const llm = ladderLlm();
+    const ctx = {
+      effect: () => undefined,
+      inject: (_deps: readonly string[], callback: (scope: unknown) => void) => {
+        callback({ tools, llm });
+        return () => undefined;
+      },
+    };
+
+    registerReasoningEffortTool(ctx as never);
+
+    expect(registered).toHaveLength(1);
+    expect(registered[0]?.name).toBe("set_reasoning_effort");
+    expect(typeof registered[0]?.output.render).toBe("function");
+    // The cache cost is the one fact the description exists for; a rewrite that
+    // drops it would quietly turn a deliberate tool into a convenient one.
+    expect(registered[0]?.description).toContain("prompt cache");
+  });
+
+  it("stays quiet when the services never arrive", async () => {
+    const { registerReasoningEffortTool } = await import("../src/index.ts");
+    const { registered } = stubTools();
+    const ctx = {
+      effect: () => undefined,
+      inject: () => () => undefined,
+    };
+
+    expect(() => registerReasoningEffortTool(ctx as never)).not.toThrow();
+    expect(registered).toHaveLength(0);
+  });
+
+  it("registers through get on a host without inject", async () => {
+    const { registerReasoningEffortTool } = await import("../src/index.ts");
+    const { tools, registered } = stubTools();
+    const llm = ladderLlm();
+    const ctx = {
+      effect: () => undefined,
+      get: (name: string) => (name === "tools" ? tools : name === "llm" ? llm : undefined),
+    };
+
+    registerReasoningEffortTool(ctx as never);
+
+    expect(registered).toHaveLength(1);
+    expect(registered[0]?.name).toBe("set_reasoning_effort");
+  });
+
+  it("registers nothing when get is missing one of the two services", async () => {
+    const { registerReasoningEffortTool } = await import("../src/index.ts");
+    const { tools, registered } = stubTools();
+    const ctx = {
+      effect: () => undefined,
+      // `tools` is present and `llm` is not: the same registry object is handed
+      // back so a registration would land in `registered` and fail the assertion.
+      get: (name: string) => (name === "tools" ? tools : undefined),
+    };
+
+    expect(() => registerReasoningEffortTool(ctx as never)).not.toThrow();
+    expect(registered).toHaveLength(0);
+  });
+});
