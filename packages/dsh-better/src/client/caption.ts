@@ -45,19 +45,51 @@ export function providerCaption(provider: ProviderIdentity): string {
 }
 
 /**
- * The trigger caption for one catalog entry.
+ * The trigger caption split into its two halves.
  *
- * Reason and effort live outside this string: the trigger appends them itself,
+ * Split rather than kept as one string because the catalog badge (0.2.2) sits
+ * between the provider and the model name, exactly where the shell draws it in
+ * its own trigger. A single string would force every caller that wants to draw
+ * that badge to re-parse the caption.
+ */
+export interface TriggerCaptionParts {
+  /** Provider display name; absent when there is no catalog entry to name. */
+  readonly provider?: string;
+  /** Model name, or the fallback when the entry is gone from the catalog. */
+  readonly model: string;
+}
+
+/**
+ * Split the trigger caption for one catalog entry.
+ *
+ * Reason and effort live outside these parts: the trigger appends them itself,
  * separated by `·`, so nothing here may add a separator of its own.
  * @param found - the catalog entry the selection names, or undefined when the
  *   catalog no longer lists it.
  * @param fallback - what to say when there is no entry to name, e.g. the
  *   untranslated key's already-resolved string.
+ * @returns the two halves, provider first.
+ */
+export function triggerCaptionParts(
+  found: CatalogEntryLike | undefined,
+  fallback: string,
+): TriggerCaptionParts {
+  if (found === undefined) return { model: fallback };
+  const provider = providerCaption(found.group);
+  const model = found.model.name.trim();
+  // An entry without a name says nothing the provider does not already say; a
+  // leading space in front of the badge would read as a layout bug.
+  return model === "" ? { model: provider } : { provider, model };
+}
+
+/**
+ * The trigger caption for one catalog entry.
+ * @param found - the catalog entry the selection names, or undefined when the
+ *   catalog no longer lists it.
+ * @param fallback - what to say when there is no entry to name.
  * @returns the caption text.
  */
 export function triggerCaption(found: CatalogEntryLike | undefined, fallback: string): string {
-  if (found === undefined) return fallback;
-  const provider = providerCaption(found.group);
-  const model = found.model.name.trim();
-  return model === "" ? provider : `${provider} ${model}`;
+  const parts = triggerCaptionParts(found, fallback);
+  return parts.provider === undefined ? parts.model : `${parts.provider} ${parts.model}`;
 }

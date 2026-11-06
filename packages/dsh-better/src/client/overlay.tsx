@@ -95,6 +95,24 @@ export function ownsPicker(state: PopupStateLike): boolean {
   return state.submitting || state.error === null;
 }
 
+/**
+ * Whether this browser is a phone or a tablet.
+ *
+ * The shell's picker skips auto-focusing its search field on mobile because that
+ * focus raises the on-screen keyboard over the list the user just opened. This
+ * surface owns the render, so it has to repeat the test; it is read structurally
+ * rather than imported because this package takes no runtime dependency on host
+ * bundles. `MacIntel` with touch points is desktop-mode iPad, which reports no
+ * mobile user agent at all.
+ * @param navigator - the window's navigator, or undefined outside a browser.
+ * @returns true when the search field must not take focus on its own.
+ */
+export function isMobileDevice(navigator: Navigator | undefined): boolean {
+  if (navigator === undefined) return false;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
 /** A store that never publishes, standing in before the controller arrives. */
 const ABSENT_STORE = {
   subscribe: () => () => undefined,
@@ -244,8 +262,12 @@ function ModelPicker({ popup, state, t, primitives, doc, catalog, current, selec
   }, [doc, popup, state.open]);
 
   useEffect(() => {
+    if (!state.open) return;
+    // Desktop raises focus so typing narrows immediately; mobile would raise the
+    // keyboard and cover the list, which is the shell's own rule.
+    if (isMobileDevice(doc?.defaultView?.navigator)) return;
     searchRef.current?.focus();
-  }, [state.open]);
+  }, [doc, state.open]);
 
   /**
    * Settle one drawn row by identity.

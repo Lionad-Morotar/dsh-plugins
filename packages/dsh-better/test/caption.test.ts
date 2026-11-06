@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { providerCaption, triggerCaption } from "../src/client/caption.ts";
+import { providerCaption, triggerCaption, triggerCaptionParts } from "../src/client/caption.ts";
 
 describe("providerCaption", () => {
   it("uses the display name the catalog carries", () => {
@@ -46,5 +46,27 @@ describe("triggerCaption", () => {
 
   it("separates the two names with exactly one space", () => {
     expect(triggerCaption({ group: { id: "a", name: " A " }, model: { id: "b", name: "B" } }, "x")).toBe("A B");
+  });
+});
+
+describe("triggerCaptionParts", () => {
+  it("splits the provider from the model so a badge can sit between them", () => {
+    expect(
+      triggerCaptionParts(
+        { group: { id: "dsh-ddodsf", name: "dsh-ddodsf" }, model: { id: "deepseek-flash", name: " deepseek-v4.1-flash " } },
+        "选择模型",
+      ),
+    ).toEqual({ provider: "dsh-ddodsf", model: "deepseek-v4.1-flash" });
+  });
+
+  it("carries no provider when the entry is gone from the catalog", () => {
+    // A provider invented here would label the trigger with something that is
+    // not the selection.
+    expect(triggerCaptionParts(undefined, "选择模型")).toEqual({ model: "选择模型" });
+  });
+
+  it("drops the provider half when the model has no name", () => {
+    expect(triggerCaptionParts({ group: { id: "a", name: "A" }, model: { id: "b", name: "   " } }, "x"))
+      .toEqual({ model: "A" });
   });
 });

@@ -28,6 +28,7 @@ import {
 import { createAliasStore } from "./alias-store.ts";
 import { insertAliasPageStyles } from "./alias-styles.ts";
 import { createAliasWatcher, type AliasTriggerController } from "./alias-watcher.tsx";
+import { type ComposerPhase, type ComposerPhaseStoreLike } from "./composer-phase.ts";
 import {
   createSkillEnhancer,
   type InputActionsLike,
@@ -64,6 +65,7 @@ import { installContinueStyles } from "./continue-styles.ts";
 import { submitContinue } from "./continue-submit.ts";
 import { createSeat, type SeatDeps, type SeatProps } from "./seat.tsx";
 import { modelPopupSpec, openContext, openSegment, type PopupOpenerLike } from "./trigger.ts";
+import { localizedText, type LocalizedTextLike } from "./localized-text.ts";
 import { TabSettingsPage, insertTabPageStyles, type PageReact } from "./tabs-page.tsx";
 import {
   createTabController,
@@ -249,6 +251,13 @@ export interface ModelDirectoriesLike {
     | {
         readonly store: { getSnapshot(): DirectorySnapshotLike };
         /**
+         * Ensure the shared advisory catalog is loaded.
+         *
+         * Only the shell's own seat calls this, on the fallback path; it is a
+         * soft probe because a host that dropped it must still render a trigger.
+         */
+        load?(): Promise<unknown>;
+        /**
          * Submit a complete provider/model/effort selection.
          *
          * This is the authoritative path for a selection that names a level: the
@@ -283,8 +292,20 @@ export interface InputTriggersScopeLike {
 
 /** One session's published composer state, narrowed to what the watcher reads. */
 export interface AliasInputStoreLike {
-  getSnapshot(): { readonly draft: string; readonly draftRev: number; readonly phase: "plain" | "adjudicating" | "claimed" | "submitting" };
+  getSnapshot(): { readonly draft: string; readonly draftRev: number; readonly phase: ComposerPhase };
   subscribe(listener: () => void): () => void;
+}
+
+/** The application-internal file drag service, narrowed to the one call a drop makes. */
+export interface FileDragLike {
+  /**
+   * Resolve the original file behind this application's own drag token.
+   *
+   * The token is written when an image is dragged inside the application (for
+   * example from the transcript into the composer); the browser's own
+   * `dataTransfer.files` is empty for those, which is why the rail needs this.
+   */
+  readonly read?: (transfer: DataTransfer) => File | undefined;
 }
 
 /** The slice of `ctx.conversation` the watcher reaches the draft through. */
@@ -355,6 +376,16 @@ export interface ClientContextLike {
      * outlives the setting.
      */
     bind?(namespace: string): (key: string) => string;
+    /**
+     * Resolve provider-authored display text (either one literal or a map of
+     * translations).
+     *
+     * Read for the catalog badge 0.2.2 added to models, and passed through to the
+     * shell's own seat on the fallback path, which calls it while rendering a
+     * badged model. Optional because the service is a soft probe like every other
+     * cross-bundle face here.
+     */
+    resolveText?(text: LocalizedTextLike): string;
   };
   /**
    * The shared per-session model directory service.
@@ -363,6 +394,15 @@ export interface ClientContextLike {
    * effort ladders shown here are the same ones a selection is resolved against.
    */
   readonly modelDirectories?: ModelDirectoriesLike | undefined;
+  /**
+   * The application-internal file drag service.
+   *
+   * Soft probe, not a plugin dependency: it arrived in 0.2.2 alongside the rail
+   * injection this package now has to reproduce, and a host without it must still
+   * get every other feature here. Its `read` is what turns one of this
+   * application's own drag tokens back into a `File`.
+   */
+  readonly fileDrag?: FileDragLike | undefined;
   /**
    * The client's Remote namespaces.
    *
@@ -531,7 +571,9 @@ export const clientPlugin = {
               id: CONTINUE_ID,
               order: CONTINUE_ORDER,
               locale: NS,
-              inject: () => ({ submitContinue: (sessionId: string) => submitContinue(ctx, sessionId) }),
+              inject: (sessionId) => ({
+                submitContinue: (target: string) => submitContinue(ctx, target),
+              }),
             },
             ContinueButton,
           ),
@@ -619,12 +661,40 @@ export const clientPlugin = {
               priority: SEAT_PRIORITY,
               locale: NS,
               // The trigger draws the current selection, so it needs the same
-              // directory store the shell's seat reads.
-              inject: (sessionId) => ({
-                sessionId,
-                available: true,
-                directory: ctx.modelDirectories?.directoryFor?.(sessionId)?.store,
-              }),
+              // directory store the shell's seat reads. The shell's own seat
+              // injection also carries `load` / `select` / `resolveText` / the
+              // label child's `renderSlot`; they are supplied here because this
+              // shadow replaces the shell's registration entirely. Without them
+              // the fallback render (an unrecognised stylesheet) would throw
+              // while drawing the trigger, and a click would go nowhere.
+              inject: (sessionId) => {
+                const directory = ctx.modelDirectories?.directoryFor?.(sessionId);
+                const resolve = ctx.locale.resolveText;
+                return {
+                  sessionId,
+                  available: true,
+                  directory: directory?.store,
+                  load: () => {
+                    void directory?.load?.();
+                  },
+                  select: (selection: { provider: string; model: string; reasoningEffort?: string }) =>
+                    directory?.select?.(selection),
+                  resolveText: (text: LocalizedTextLike) =>
+                    localizedText(resolve?.bind(ctx.locale), text),
+                  // The shell's seat declares `conversation.input.model.label` as
+                  // a child and renders the model name through the binding that
+                  // declaration creates. This shadow replaces that registration,
+                  // so the binding does not exist here, and the shell's own
+                  // fallback (name plus badge) is the honest label for a degraded
+                  // render. Without it the fallback branch throws on the first
+                  // rendered trigger.
+                  renderSlot: (
+                    _key: string,
+                    _owner: unknown,
+                    options?: { readonly fallback?: unknown },
+                  ) => options?.fallback ?? null,
+                };
+              },
             },
             Seat,
           );
@@ -668,10 +738,20 @@ export const clientPlugin = {
               name: ATTACHMENTS_SLOT,
               priority: ATTACHMENTS_PRIORITY,
               locale: NS,
-              // The rail itself is handed everything it needs by the shell; the
-              // Session id is the one thing this wrapper adds, and it is what makes
-              // a pasted path readable through the Session's filesystem.
-              inject: (sessionId) => ({ sessionId }),
+              // The rail itself is handed everything it needs by the shell; two
+              // things this wrapper adds. The Session id is what makes a pasted
+              // path readable through the Session's filesystem. The drag reader
+              // is new in 0.2.2: the shipped rail's own registration injects
+              // `ctx.fileDrag.read` so an application-internal image drag can
+              // become an attachment, and this shadow replaced that registration,
+              // so the drop handler would otherwise call `undefined` on release.
+              inject: (sessionId) => ({
+                sessionId,
+                readFileDrag: readFileDragOf(ctx),
+                // Read at paste time rather than captured at registration: the
+                // input controller mounts with the composer and may land later.
+                phase: () => composerStateOf(ctx, sessionId)?.getSnapshot().phase,
+              }),
             },
             ComposerAttachments,
           );
@@ -899,6 +979,45 @@ export const clientPlugin = {
     });
   },
 };
+
+/**
+ * The rail's application-internal drag reader.
+ *
+ * Resolved per drop rather than captured once: `fileDrag` arrives with its own
+ * plugin, which may mount after this registration. A host without it (anything
+ * before 0.2.2) gets a reader that answers "no file", which is exactly what the
+ * shipped rail did before the token existed.
+ * @param ctx - client context.
+ * @returns a reader the shipped drop handler can call unconditionally.
+ */
+function readFileDragOf(ctx: ClientContextLike): (transfer: DataTransfer) => File | undefined {
+  return transfer => (readHostService(ctx, "fileDrag") as FileDragLike | undefined)?.read?.(transfer);
+}
+
+/**
+ * The session's composer state store.
+ *
+ * The turn tail's own injection face has no composer state, and `0.2.2` publishes
+ * a send only after the host accepts it; the phase is therefore the one face that
+ * shows a submission while it is in flight. Every failure degrades to "unknown"
+ * so a host without this seam still gets the button.
+ * @param ctx - client context.
+ * @param sessionId - session whose composer is wanted.
+ * @returns the store, or undefined when the session or the conversation is gone.
+ */
+function composerStateOf(
+  ctx: ClientContextLike,
+  sessionId: string | undefined,
+): ComposerPhaseStoreLike | undefined {
+  if (sessionId === undefined) return undefined;
+  const actx = ctx.sessions.scope?.(sessionId);
+  if (actx === undefined || ctx.conversation === undefined) return undefined;
+  try {
+    return ctx.conversation.input?.for?.(actx)?.state;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Find the shell's component for a `single` slot.

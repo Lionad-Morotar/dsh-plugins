@@ -52,6 +52,8 @@ export interface Primitives {
   readonly IconDataOutlineRegular?: ComponentType<{ className?: string; size?: number }> | undefined;
   /** The composer trigger's trailing chevron. */
   readonly IconChevronDownOutlineRegular?: ComponentType<{ className?: string }> | undefined;
+  /** Read-only capsule badge, used for the catalog badge 0.2.2 added to models. */
+  readonly Tag?: ComponentType<{ tone?: string; className?: string; children?: unknown }> | undefined;
   /** The host's label ranker: fuzzy subsequence scoring with boundary bonuses. */
   readonly rankByName?: RankByName | undefined;
 }
@@ -102,6 +104,8 @@ export function resolvePrimitives(load: ((specifier: string) => unknown) | null)
   if (dataIcon !== undefined) primitives.IconDataOutlineRegular = dataIcon;
   const chevron = component<{ className?: string }>("IconChevronDownOutlineRegular");
   if (chevron !== undefined) primitives.IconChevronDownOutlineRegular = chevron;
+  const tag = component<{ tone?: string; className?: string; children?: unknown }>("Tag");
+  if (tag !== undefined) primitives.Tag = tag;
   const anchored = fn<NonNullable<Primitives["useAnchoredMaxHeight"]>>("useAnchoredMaxHeight");
   if (anchored !== undefined) primitives.useAnchoredMaxHeight = anchored;
   const sticky = fn<NonNullable<Primitives["observeStickyMenuGroups"]>>("observeStickyMenuGroups");

@@ -16,6 +16,7 @@
  */
 import { useState, type ReactNode } from "react";
 
+import { composerBusy } from "./composer-phase.ts";
 import { shouldOfferContinue } from "./continue-turn.ts";
 import { CONTINUE_BUTTON_CLASS, CONTINUE_ERROR_CLASS } from "./continue-styles.ts";
 
@@ -46,6 +47,11 @@ export interface ContinueSessionSnapshotLike {
   readonly pendingSubmissions?: readonly unknown[];
 }
 
+/** The composer snapshot this component reads: only the submit phase. */
+export interface ContinueInputSnapshotLike {
+  readonly phase?: string | undefined;
+}
+
 /** Everything the slot hands this entry that it reads. */
 export interface ContinueButtonProps {
   /** 层主给的 owner prop：本轮位置值，含 `.turn`（轮次号）与 `.end`（收尾事件）。 */
@@ -56,6 +62,14 @@ export interface ContinueButtonProps {
   readonly useChat?: ((select: (snapshot: ContinueChatSnapshotLike) => unknown) => unknown) | undefined;
   /** 标准套件注入：会话快照选择器，用来读未落定的提交。 */
   readonly useSession?: ((select: (snapshot: ContinueSessionSnapshotLike) => unknown) => unknown) | undefined;
+  /**
+   * 标准套件注入：composer 状态选择器。
+   *
+   * 宿主的待处理提交只在**宿主接受之后**才发布，发送窗口里读不到；phase 是
+   * 唯一能看见「已按下发送、尚未落定」这条路径的面。拿不到（老宿主）时退回
+   * 只看待处理提交。
+   */
+  readonly useInput?: ((select: (snapshot: ContinueInputSnapshotLike) => unknown) => unknown) | undefined;
   /** 标准套件注入：本包命名空间的翻译函数。 */
   readonly t?: ContinueTranslate | undefined;
   /** 注册时 inject 进来的发送动作；缺失时按钮不渲染。 */
@@ -99,10 +113,10 @@ function noSnapshot(): undefined {
 /**
  * The turn-tail entry.
  *
- * Both selectors are called before any early return. React requires the same
- * hooks in the same order on every render, and this component returns null for
- * most of the states it can be in, so a conditional call would break the moment
- * the host's state changed between two renders of the same row.
+ * All three selectors are called before any early return. React requires the
+ * same hooks in the same order on every render, and this component returns null
+ * for most of the states it can be in, so a conditional call would break the
+ * moment the host's state changed between two renders of the same row.
  * @param props - the turn's position, the injected kit, and the send action.
  * @returns the button, or null when continuing is not on offer.
  */
@@ -111,19 +125,29 @@ export function ContinueButton({
   sessionId,
   useChat,
   useSession,
+  useInput,
   t,
   submitContinue,
 }: ContinueButtonProps): ReactNode {
   const readChat = useChat ?? noSnapshot;
   const readSession = useSession ?? noSnapshot;
+  const readInput = useInput ?? noSnapshot;
   const chat = readChat(select => select) as ContinueChatSnapshotLike | undefined;
   const session = readSession(select => select) as ContinueSessionSnapshotLike | undefined;
+  // Read on every render, not only when the send is clicked: the composer
+  // publishes `sending` the moment the user presses Enter, which is the one
+  // update that can take this row away before the host accepts the message.
+  const composer = readInput(select => select) as ContinueInputSnapshotLike | undefined;
 
   const [sending, setSending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
   const latest = turn !== undefined && isLatestTurn(chat?.timeline.turnOrder ?? [], turn.turn);
-  const pending = (session?.pendingSubmissions?.length ?? 0) > 0;
+  // Two faces for one question. `pendingSubmissions` covers everything the host
+  // has accepted; the composer phase covers the window before acceptance, which
+  // 0.2.2 made invisible here. Without the second face a person who just pressed
+  // send can press "continue" again on the same stopped turn.
+  const pending = (session?.pendingSubmissions?.length ?? 0) > 0 || composerBusy(composer?.phase);
 
   if (turn === undefined || sessionId === undefined || submitContinue === undefined || t === undefined) return null;
   if (!shouldOfferContinue({ end: turn.end?.data, latest, pending })) return null;

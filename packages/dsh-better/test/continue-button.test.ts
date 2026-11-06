@@ -22,6 +22,7 @@ import {
   continueFailureText,
   type ContinueButtonProps,
   type ContinueChatSnapshotLike,
+  type ContinueInputSnapshotLike,
   type ContinueSessionSnapshotLike,
 } from "../src/client/continue-button.tsx";
 import {
@@ -47,6 +48,11 @@ function chatEndingAt(last: number) {
 function sessionWithPending(count: number) {
   return (select: (snapshot: ContinueSessionSnapshotLike) => unknown): unknown =>
     select({ pendingSubmissions: Array.from({ length: count }, (_, index) => ({ index })) });
+}
+
+/** A composer snapshot selector stuck on one phase. */
+function composerAt(phase: string) {
+  return (select: (snapshot: ContinueInputSnapshotLike) => unknown): unknown => select({ phase });
 }
 
 /** Props for a turn that should offer to continue, before any override. */
@@ -89,6 +95,11 @@ describe("ContinueButton", () => {
     ["the turn ended in an error", { turn: { turn: 2, end: { data: { reason: { kind: "error" } } } } }],
     ["the turn has not ended", { turn: { turn: 2 } }],
     ["a submission is still in flight", { useSession: sessionWithPending(1) }],
+    // 0.2.2 publishes the echo only after acceptance, so the phase is what
+    // covers the window in between; without it the button lingers long enough
+    // to be pressed twice.
+    ["a message is still being accepted", { useInput: composerAt("sending") }],
+    ["the composer is adjudicating a command", { useInput: composerAt("submitting") }],
     ["the host handed over no send action", { submitContinue: undefined }],
     ["the host handed over no translator", { t: undefined }],
     ["the host handed over no session", { sessionId: undefined }],
@@ -103,6 +114,18 @@ describe("ContinueButton", () => {
     // is known to be queued, and refusing to draw would hide the button on a
     // host that simply has no pending-submission view.
     expect(render({ useSession: undefined })).toContain('data-testid="better-continue"');
+  });
+
+  it("offers again once the send settles back to a plain draft", () => {
+    // The window is temporary: a refused send returns the composer to plain
+    // with the draft kept, and the button must come back so it can be retried.
+    expect(render({ useInput: composerAt("plain") })).toContain('data-testid="better-continue"');
+  });
+
+  it("keeps offering on a host that publishes no composer phase", () => {
+    // Older hosts have no `sending` phase; the pending-submission face is all
+    // they have, and it must not be replaced by a permanent lock.
+    expect(render({ useInput: undefined })).toContain('data-testid="better-continue"');
   });
 
   it("reads the timeline rather than trusting the turn's own position", () => {
@@ -125,8 +148,12 @@ describe("ContinueButton", () => {
         calls.push("session");
         return select({ pendingSubmissions: [] });
       },
+      useInput: select => {
+        calls.push("input");
+        return select({ phase: "plain" });
+      },
     });
-    expect(calls).toEqual(["chat", "session"]);
+    expect(calls).toEqual(["chat", "session", "input"]);
   });
 });
 

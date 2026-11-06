@@ -41,7 +41,12 @@ export interface ContinueOfferInput {
   readonly end: { readonly reason?: { readonly kind?: string } } | undefined;
   /** 这一轮是否是当前对话的最后一轮。 */
   readonly latest: boolean;
-  /** 当前是否还有未落定的用户提交（正在发送/排队）。 */
+  /**
+   * 当前是否还有未落定的用户提交。
+   *
+   * 包含宿主已接受的待处理提交（0.2.2 在**接受之后**才发布）与仍在发送窗口
+   * 里的那一次（由 composer 的 phase 判定），两者都不该再给「继续」。
+   */
   readonly pending: boolean;
 }
 
@@ -55,8 +60,8 @@ export interface ContinueOfferInput {
  *   never disagree;
  * - it is the last turn, because continuing an older one would append to a
  *   conversation the user has already moved past;
- * - nothing is pending, because a queued submission means the user has already
- *   answered the stop themselves.
+ * - nothing is pending, because a submission being sent or queued means the user
+ *   has already answered the stop themselves.
  *
  * Any other reason (`stop`, `error`, `aborted`) is a turn that reached its own
  * conclusion. Continuing those is a new request, not a resume, and guessing at

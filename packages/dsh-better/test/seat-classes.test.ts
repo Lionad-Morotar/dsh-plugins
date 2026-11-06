@@ -9,13 +9,17 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { readSeatClasses } from "../src/client/seat.tsx";
+import { badgeViewOf, readSeatClasses, type SeatCatalogEntry } from "../src/client/seat.tsx";
 
 /** The stylesheet id the shell installs the seat's CSS under. */
 const SHEET_ID = "@deepseek-ai/dsh-client-ui-model-selection/ModelSelect.module.css";
 
-/** A `<style>` element carrying one build's prefix. */
-function stylesheet(prefix: string): Element {
+/**
+ * A `<style>` element carrying one build's prefix.
+ * @param prefix - the per-build hash prefix.
+ * @param withBadge - include the badge rule 0.2.2 added to the sheet.
+ */
+function stylesheet(prefix: string, withBadge = false): Element {
   const css = [
     `.${prefix}_root{min-width:0;position:relative}`,
     `.${prefix}_trigger{height:28px;background:0 0}`,
@@ -23,6 +27,7 @@ function stylesheet(prefix: string): Element {
     `.${prefix}_triggerLabel{overflow:hidden}`,
     `.${prefix}_triggerEffort{color:var(--x)}`,
     `.${prefix}_chevron{transition:transform .12s}`,
+    ...(withBadge ? [`.${prefix}_badge{flex:none}`] : []),
   ].join("");
   return { textContent: css } as unknown as Element;
 }
@@ -86,5 +91,53 @@ describe("readSeatClasses", () => {
     } as unknown as Document;
     readSeatClasses(doc);
     expect(asked[0]).toContain(SHEET_ID);
+  });
+
+  it("reads the badge capsule class when the shell ships one", () => {
+    const classes = readSeatClasses(documentWith(stylesheet(DESKTOP_PREFIX, true)));
+    expect(classes?.badge).toBe("htuFrW_badge");
+  });
+
+  it("still takes the seat over on a shell that predates the badge", () => {
+    // Requiring this one decorative class would push every 0.2.1 host onto the
+    // native fallback path and lose the trigger's provider caption.
+    const classes = readSeatClasses(documentWith(stylesheet(CLI_PREFIX)));
+    expect(classes).toBeDefined();
+    expect(classes?.badge).toBeUndefined();
+  });
+});
+
+describe("badgeViewOf", () => {
+  /**
+   * One catalog entry carrying the given badge.
+   * @param badge - the provider-authored badge, or none.
+   * @returns the entry.
+   */
+  function entryWith(badge?: { text: string | Record<string, string>; tone?: string }): SeatCatalogEntry {
+    return {
+      group: { id: "deepseek-account", name: "DeepSeek Account", models: [] },
+      model: { id: "deepseek-v4.1-flash", name: "deepseek-v4.1-flash", ...(badge === undefined ? {} : { badge }) },
+    };
+  }
+
+  it("draws the provider-authored literal with its tone", () => {
+    expect(badgeViewOf(entryWith({ text: "beta", tone: "info" }), undefined))
+      .toEqual({ text: "beta", tone: "info" });
+  });
+
+  it("resolves a translated label through the host", () => {
+    const resolve = (text: string | Record<string, string>): string =>
+      typeof text === "string" ? text : text.zh ?? text.en ?? "";
+    expect(badgeViewOf(entryWith({ text: { en: "beta", zh: "测试" } }), resolve)?.text).toBe("测试");
+  });
+
+  it("draws nothing when the model carries no badge", () => {
+    expect(badgeViewOf(entryWith(), () => "ignored")).toBeUndefined();
+    expect(badgeViewOf(undefined, () => "ignored")).toBeUndefined();
+  });
+
+  it("draws nothing rather than an empty capsule", () => {
+    expect(badgeViewOf(entryWith({ text: "" }), undefined)).toBeUndefined();
+    expect(badgeViewOf(entryWith({ text: {} }), undefined)).toBeUndefined();
   });
 });
