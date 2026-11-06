@@ -638,7 +638,13 @@ export function HistoryPane(props: HistoryPaneProps) {
           onChange={event => onSearch(event.currentTarget.value)}
         />
       </header>
-      {commits.length === 0 ? (
+      {/* Three cases, not two. A repository with no commits yet can still have a
+          working tree worth showing: a fresh `git init` with staged or untracked
+          files has nothing to list but has the uncommitted row, and the empty
+          state would swallow the one line that explains why the panel is not
+          blank. A query is different: it asks about commits, and the working
+          tree is not an answer to it, so no-match keeps the empty state. */}
+      {commits.length === 0 && !(hasUncommitted && !queried) ? (
         <div className="gx-empty">
           <strong>{emptyLabel}</strong>
           {emptyDescription === undefined ? null : <span>{emptyDescription}</span>}

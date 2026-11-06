@@ -445,3 +445,85 @@ describe("the view's working-tree selection", () => {
     expect(host.querySelector('[data-testid="git-working-tree"]')).toBeNull();
   });
 });
+
+describe("a repository with no commits yet", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  async function mount(options: { dirty?: boolean; search?: string } = {}): Promise<void> {
+    await act(async () => {
+      root.render(
+        createElement(HistoryPane, {
+          commits: [],
+          graph: [],
+          selectedHash: undefined,
+          headHash: null,
+          total: 0,
+          hasMore: false,
+          loadingMore: false,
+          loadError: undefined,
+          searching: false,
+          search: options.search ?? "",
+          t,
+          onSelect: () => undefined,
+          onLoadMore: () => undefined,
+          onSearch: () => undefined,
+          onSelectUncommitted: () => undefined,
+          emptyTitle: "state.emptyRepository.title",
+          emptyDescription: "state.emptyRepository.description",
+          ...(options.dirty === false
+            ? {}
+            : {
+                workingTree: {
+                  groups: dirtyGroups(),
+                  stats: stats(),
+                  fileCount: 4,
+                },
+              }),
+        }),
+      );
+    });
+  }
+
+  it("shows the uncommitted row instead of the empty state", async () => {
+    await mount({ dirty: true });
+    // A fresh `git init` with staged or untracked files has no commits and yet
+    // has something to show. The empty state would swallow the one row that
+    // explains why the panel is not blank.
+    expect(host.querySelector('[data-testid="git-uncommitted-row"]')).not.toBeNull();
+    expect(host.querySelector(".gx-empty")).toBeNull();
+    expect(host.textContent).not.toContain("state.emptyRepository.title");
+  });
+
+  it("still renders the list header and scroller for that one row", async () => {
+    await mount({ dirty: true });
+    expect(host.querySelector('[data-testid="git-history-colhead"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="git-history-scroll"]')).not.toBeNull();
+  });
+
+  it("keeps the empty state when a search matched nothing", async () => {
+    await mount({ dirty: true, search: "nothing matches" });
+    // The query is what the reader asked about, and the working tree is not an
+    // answer to it; the no-match copy stays.
+    expect(host.querySelector(".gx-empty")).not.toBeNull();
+    expect(host.querySelector('[data-testid="git-uncommitted-row"]')).toBeNull();
+  });
+
+  it("keeps the empty state when the working tree is clean", async () => {
+    await mount({ dirty: false });
+    expect(host.querySelector(".gx-empty")).not.toBeNull();
+    expect(host.querySelector('[data-testid="git-uncommitted-row"]')).toBeNull();
+    expect(host.textContent).toContain("state.emptyRepository.title");
+  });
+});
