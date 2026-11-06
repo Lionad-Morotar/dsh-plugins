@@ -16,6 +16,7 @@ import { useEffect, useRef, useSyncExternalStore, type KeyboardEvent as ReactKey
 
 import type { ContextMenuAnchor } from "./context-menu.ts";
 import type { Translate } from "./copy.ts";
+import { detectPlatform } from "./keyboard.ts";
 import type { DocumentStore } from "./document-session.ts";
 import { badgeFor, iconFor } from "./model.ts";
 import { panelTitle, type PanelEntry } from "./panels.ts";
@@ -275,6 +276,21 @@ function PanelGlyph() {
 }
 
 /**
+ * The chord the reader can actually press to close a panel.
+ *
+ * Desktop turns the close-page chord into the host's `page.close` command, so a
+ * Mac prints ⌘W while Windows and Linux (whose primary modifier is Ctrl) print
+ * Ctrl+W. The web shell owns neither: the browser closes its own tab first, and
+ * the empty state is only advice, so it keeps the panel-local spelling.
+ * @returns the keycap the empty state prints.
+ */
+function closePanelChord(): string {
+  const desktop = typeof document !== "undefined" && document.documentElement.dataset.platform !== undefined;
+  if (!desktop) return "Ctrl+W";
+  return detectPlatform() === "mac" ? "⌘W" : "Ctrl+W";
+}
+
+/**
  * Render the invitation the editor column shows before the first file opens.
  * @param props - the translate seat.
  * @returns the empty state with the panel chords spelled out.
@@ -290,7 +306,7 @@ export function PanelEmpty({ t }: { readonly t: Translate }) {
       <span className="fx-empty-keys">
         <kbd className="fx-kbd">⌘⌥↓</kbd>
         <kbd className="fx-kbd">⌘⌥↑</kbd>
-        <kbd className="fx-kbd">Ctrl+W</kbd>
+        <kbd className="fx-kbd">{closePanelChord()}</kbd>
         <span>{t("panel.empty.keys")}</span>
       </span>
     </div>

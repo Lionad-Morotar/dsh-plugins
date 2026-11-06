@@ -46,7 +46,7 @@ import {
 import type { BookmarkNode, BookmarkTree } from "../bookmarks.ts";
 import { writeClipboard } from "./clipboard.ts";
 import { NamePrompt } from "./name-prompt.tsx";
-import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap } from "./keyboard.ts";
+import { KEYMAP, createEscapeHandler, hasOpenModal, isEditableTarget, matchesKeymap, pageCloseIntent } from "./keyboard.ts";
 import type { DocumentStore } from "./document-session.ts";
 import type { SymlinkLocator } from "./preview.ts";
 import {
@@ -134,6 +134,11 @@ export interface WorkbenchFace {
   openView?(id: string, focus?: string): boolean;
   /** Absent on cores older than the focus hand-off. */
   readonly viewFocus?: ViewFocusFace;
+  /**
+   * Claim the host's close-page fallback (⌘W) while this view owns the page.
+   * Absent on cores older than contract version 3.
+   */
+  registerPageCloser?(closer: () => boolean): () => void;
 }
 
 /** The request the conversation shell carries when `openView` targets this tab. */
@@ -624,6 +629,27 @@ export function createFsExplorerView({
       },
       [closeSequence, stack],
     );
+
+    // Desktop's File > 关闭页面 (⌘W) reaches the host's `page.close` command,
+    // which closes the focused right-sidebar page and otherwise closes the
+    // window. The workbench core hands that fallback here, so a file panel is
+    // what the chord closes instead of the application. The claim is registered
+    // only while this view is mounted, and `pageCloseIntent` refuses the chord
+    // for a retained view of another Session.
+    useEffect(() => {
+      const register = workbench.registerPageCloser;
+      if (typeof register !== "function") return;
+      return register(() => {
+        const intent = pageCloseIntent({
+          viewSessionId: sessionId,
+          currentSessionId: workbench.currentSessionId(),
+          activePanel: stack.snapshot().active,
+          confirming: pendingCloseRef.current !== null,
+        });
+        if (intent === "close") requestClose();
+        return intent !== "pass";
+      });
+    }, [requestClose, sessionId, stack, workbench]);
 
     /** Answer "save and close": the panel only leaves once the write landed. */
     const confirmSaveAndClose = useCallback((): void => {

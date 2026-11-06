@@ -6,6 +6,13 @@
  * promise what a DOM listener sees. `KEYMAP` is the single description both the
  * listener and the settings slice read, so no surface hard-codes a second copy.
  *
+ * Closing has two paths on desktop because the host owns the chord the reader
+ * reaches for first: ⌘W is the host's `page.close` accelerator, and when it has
+ * no right-sidebar page to close it asks the workbench (see
+ * {@link pageCloseIntent}). The `Ctrl+W` row stays as the panel-local fallback
+ * for shells whose host offers no such seam, and as the web-safe chord a DOM
+ * listener can still see.
+ *
  * Escape is separate from the panel chords because its job is not the panel
  * stack: with no dialog open it always returns the caret to the conversation
  * composer, and with a dialog open it must let the dialog win untouched.
@@ -33,6 +40,12 @@ export interface KeymapEntry {
  *
  * `⌘O` is absent on purpose: the host's `workspace.add` owns it, and a plugin
  * that shadows the file picker is worse than a plugin without a shortcut.
+ *
+ * `Ctrl+W` is the fallback, not the promise: the desktop shell dispatches ⌘W to
+ * its own `page.close` command before any DOM listener sees it, so the primary
+ * path lives in the workbench core's page-close seam (`pageCloseIntent`). This
+ * row still answers where that seam is absent, and it is the only chord a web
+ * shell could ever see.
  */
 export const KEYMAP: readonly KeymapEntry[] = Object.freeze([
   {
@@ -195,4 +208,42 @@ export function createEscapeHandler(seams: EscapeSeams): (event: EscapeEventLike
     if (focused !== true) focusNearestComposer(doc);
     seams.onClose?.();
   };
+}
+
+/** What one mounted view knows when the host asks it to close the page. */
+export interface PageCloseProbe {
+  /** Session this mounted view draws. */
+  readonly viewSessionId: string | undefined;
+  /** Session the window is looking at right now. */
+  readonly currentSessionId: string | undefined;
+  /** Active panel key, or null when the tab strip is empty. */
+  readonly activePanel: string | null;
+  /** Whether the save-or-discard bar already owns a close gesture. */
+  readonly confirming: boolean;
+}
+
+/**
+ * What the workbench should do with the host's close-page fallback.
+ *
+ * `close` drops the active panel, `hold` keeps a close question the reader is
+ * already answering, and `pass` leaves the gesture to the host, which then
+ * closes the window. Only the mounted view of the session on screen may claim:
+ * a background Session's retained view must not answer another Session's chord.
+ */
+export type PageCloseIntent = "close" | "hold" | "pass";
+
+/**
+ * Decide whether this view takes the host's close-page gesture.
+ *
+ * The host (`page.close`, ⌘W) first closes the focused right-sidebar page; only
+ * when there is none does it ask the workbench, which is why a file panel and a
+ * right-sidebar page never compete for the same keypress.
+ * @param probe - mounted view identity, panel state and the open confirmation.
+ * @returns the intent; `hold` still counts as claimed.
+ */
+export function pageCloseIntent(probe: PageCloseProbe): PageCloseIntent {
+  if (probe.viewSessionId === undefined || probe.viewSessionId !== probe.currentSessionId) return "pass";
+  if (probe.activePanel === null) return "pass";
+  if (probe.confirming) return "hold";
+  return "close";
 }
