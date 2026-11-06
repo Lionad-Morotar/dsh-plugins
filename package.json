@@ -18,7 +18,7 @@
     "check:lib": "pnpm --filter dsh-preview-more run check:lib"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-plugin-market-index": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-plugin-market-index": "0.2.2-rc.1",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.3.0",
