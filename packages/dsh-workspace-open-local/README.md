@@ -62,7 +62,7 @@ ctx.contextMenus.register({
 
 ## 引擎地板
 
-需要宿主 `>=0.2.2-rc.1 <0.3.0-0`，`engines.dsh` 与 peerDependencies 同步声明。`contextMenus` 是客户端 root 服务，老宿主上这个依赖不满足，插件静默不挂载：菜单里没有这一行，但也不会报错。升级宿主即恢复。
+`engines.dsh` 声明宿主 `>=0.2.2-rc.1 <0.3.0-0`，它是宿主的挂载门；`peerDependencies` 里的 `@deepseek-ai/dsh` 仍保持宽范围，只表达「与宿主同场」而不把版本下限写死，因为 pnpm 会把 optional peer 装进开发锁文件，收紧一次就把整棵宿主运行时依赖图拖进来。`contextMenus` 是客户端 root 服务，老宿主上这个依赖不满足，插件静默不挂载：菜单里没有这一行，但也不会报错。升级宿主即恢复。
 
 ## 安装
 
