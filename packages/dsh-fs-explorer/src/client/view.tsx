@@ -98,6 +98,7 @@ import {
 } from "./tree-search.ts";
 import { buildWorkspaceMap, MANIFEST_FILES, type WorkspaceTag } from "./workspace-map.ts";
 import { createWorkspaceClient, type WorkspaceClient, type WorkspaceError } from "./workspace-face.ts";
+import { indexIgnoredPaths } from "./ignored.ts";
 import type { WorkspaceCapabilities } from "../host/types.ts";
 import { buildRemoteLinks, type RemoteLink } from "./remote-url.ts";
 import {
@@ -186,6 +187,34 @@ export interface ViewWiring {
   readonly fileReferences?: () => FileReferencesFace | undefined;
 }
 
+/**
+ * The header's ignored-entries glyph.
+ *
+ * Open draws an eye, closed draws the same eye struck through: the toggle states
+ * are "these rows are visible" and "these rows are hidden", and a single glyph
+ * that only dims would leave the reader guessing which way it points.
+ * @param props - whether ignored entries are currently listed.
+ */
+export function EyeIcon({ open }: { readonly open: boolean }) {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M1.5 8S4 3.8 8 3.8 14.5 8 14.5 8 12 12.2 8 12.2 1.5 8 1.5 8Z" />
+      <circle cx="8" cy="8" r="1.9" />
+      {open ? null : <path d="M2.6 13.4 13.4 2.6" />}
+    </svg>
+  );
+}
+
 /** The first-paint state without waiting for an effect. */
 export type InitialViewState = "idle" | "no-service" | "loading";
 
@@ -218,6 +247,44 @@ function paneWidthStorage(): PaneWidthStorage | null {
     return document.defaultView?.localStorage ?? null;
   } catch {
     return null;
+  }
+}
+
+/** Where the header toggle's choice lives. */
+const SHOW_IGNORED_KEY = "dsh-fs-explorer.show-ignored";
+
+/**
+ * Whether the tree lists git-ignored entries.
+ *
+ * Showing them is the default and the feature's whole point, so only an
+ * explicit `"0"` reads as hidden: an absent key, a value written by an older
+ * build, or a store that refuses to answer all mean "show".
+ * @param storage - the store to read, or null/undefined when unavailable.
+ * @returns true when ignored entries should be listed.
+ */
+export function readShowIgnored(storage?: PaneWidthStorage | null): boolean {
+  if (storage === null || storage === undefined) return true;
+  try {
+    return storage.getItem(SHOW_IGNORED_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Remember the header toggle's choice.
+ *
+ * A refusing store (private mode) leaves the choice session-only rather than
+ * throwing out of a click handler.
+ * @param value - whether ignored entries should be listed.
+ * @param storage - the store to write, or null/undefined when unavailable.
+ */
+export function writeShowIgnored(value: boolean, storage?: PaneWidthStorage | null): void {
+  if (storage === null || storage === undefined) return;
+  try {
+    storage.setItem(SHOW_IGNORED_KEY, value ? "1" : "0");
+  } catch {
+    // A refusing store keeps the preference in state only.
   }
 }
 
@@ -433,6 +500,15 @@ export function createFsExplorerView({
     const [reloadToken, setReloadToken] = useState(0);
     const controllers = useRef<Map<string, AbortController>>(new Map());
     const handledRequest = useRef<string | undefined>(undefined);
+
+    // The paths git ignores, as the host lists them. Kept as raw entries rather
+    // than as the index so a reload that returns the same list does not rebuild
+    // the set the whole tree is tested against on every render.
+    const [ignoredEntries, setIgnoredEntries] = useState<readonly string[]>([]);
+    // The header toggle's choice. Read once per mount from the store; a view
+    // switch remounts this component, which is exactly when the stored value
+    // should win again.
+    const [showIgnored, setShowIgnored] = useState(() => readShowIgnored(paneWidthStorage()));
 
     // Closing a dirty panel is a question, not a gesture: the bar keeps the
     // panel path so every answer still addresses the tab the reader asked to
@@ -1033,9 +1109,16 @@ export function createFsExplorerView({
       return () => document.removeEventListener("keydown", onKeyDown, true);
     }, [pendingClose, cancelClose]);
 
+    const ignoredIndex = useMemo(() => indexIgnoredPaths(ignoredEntries), [ignoredEntries]);
+
     const rows = useMemo(
-      () => flattenTree(levels, expanded, statuses, workspaceTags),
-      [levels, expanded, statuses, workspaceTags],
+      () =>
+        flattenTree(levels, expanded, statuses, workspaceTags, {
+          ignored: ignoredIndex,
+          showIgnored,
+          hiddenLabel: count => t("state.hiddenDirectory").replace("{count}", String(count)),
+        }),
+      [levels, expanded, statuses, workspaceTags, ignoredIndex, showIgnored, t],
     );
 
     // Having a query and having the caret in the bar are two states: a bar with
@@ -1358,6 +1441,42 @@ export function createFsExplorerView({
         alive = false;
       };
     }, [workspace, sessionId]);
+
+    // The ignored listing. It decorates rows the reader can already see, so
+    // every failure path here is silence: an absent channel, a refusal and a
+    // thrown transport all read as "nothing is ignored" and the tree renders
+    // exactly as it did before the feature existed. A reload re-asks because a
+    // refresh is the reader's way of saying the working tree changed.
+    useEffect(() => {
+      const read = workspace?.ignored;
+      if (sessionId === undefined || workspace === undefined || typeof read !== "function") {
+        setIgnoredEntries([]);
+        return;
+      }
+      const controller = new AbortController();
+      let alive = true;
+      void Promise.resolve()
+        .then(() => read.call(workspace, sessionId, controller.signal))
+        .then(outcome => {
+          if (!alive) return;
+          setIgnoredEntries(outcome.ok ? outcome.entries : []);
+        })
+        .catch(() => {
+          if (alive) setIgnoredEntries([]);
+        });
+      return () => {
+        alive = false;
+        controller.abort();
+      };
+    }, [sessionId, workspace, reloadToken]);
+
+    const toggleIgnored = useCallback((): void => {
+      setShowIgnored(current => {
+        const next = !current;
+        writeShowIgnored(next, paneWidthStorage());
+        return next;
+      });
+    }, []);
 
     /**
      * Open the context menu for one row, or for the tree's blank area.
@@ -1685,6 +1804,20 @@ export function createFsExplorerView({
                 <b>{rootLevel.nodes.length}</b> {t("head.entries")}
               </span>
             ) : null}
+            {ignoredEntries.length === 0 ? null : (
+              <button
+                type="button"
+                className="fx-btn"
+                data-testid="fs-toggle-ignored"
+                data-on={showIgnored ? "true" : "false"}
+                aria-pressed={showIgnored}
+                title={t(showIgnored ? "head.hideIgnored" : "head.showIgnored")}
+                aria-label={t(showIgnored ? "head.hideIgnored" : "head.showIgnored")}
+                onClick={toggleIgnored}
+              >
+                <EyeIcon open={showIgnored} />
+              </button>
+            )}
             <button
               type="button"
               className="fx-btn"

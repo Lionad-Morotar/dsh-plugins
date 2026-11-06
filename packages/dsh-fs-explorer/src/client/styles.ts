@@ -378,6 +378,10 @@ export const FS_STYLES = `
 .fx-btn:hover:not(:disabled) { background: var(--fx-hover); color: var(--fx-text); border-color: var(--fx-border-soft); }
 .fx-btn:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -2px; }
 .fx-btn:disabled { opacity: .4; cursor: default; }
+/* The ignored-entries toggle in its "rows are hidden" state: the glyph already
+   carries the strike-through, so the button only steps back to read as off. */
+.fx-btn[data-on="false"] { opacity: .6; }
+.fx-btn[data-on="false"]:hover:not(:disabled) { opacity: 1; }
 
 .fx-main { display: flex; flex-direction: row; flex: 1; min-height: 0; }
 .fx-tree-pane {
