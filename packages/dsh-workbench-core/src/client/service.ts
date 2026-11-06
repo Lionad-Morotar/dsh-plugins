@@ -163,9 +163,11 @@ export function createWorkbenchService(ctx: unknown, options: WorkbenchServiceOp
   // first registration wins a duplicate (the desktop double-apply relies on
   // the caller's dispose-then-register, not on replacement semantics here).
   const panelKindRows: DockPanelKindDescriptor[] = [];
-  // The dock is on by default: a fresh install should show the surface the user
-  // installed, and hiding it is the explicit choice.
-  const dockVisibility = createDockVisibility(true);
+  // The dock starts closed: its consumer spawns shell processes and fetches the
+  // emulator chunk on mount, and a reader who never asks for a terminal should
+  // pay neither. Opening is the explicit `⌘⇧M` toggle, which mounts the surface
+  // the first time it turns on.
+  const dockVisibility = createDockVisibility(false);
 
   const views = createViewSeam();
 

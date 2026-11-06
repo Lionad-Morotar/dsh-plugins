@@ -30,7 +30,7 @@
 ## 核心能力
 
 - 服务 `workbench`（契约版本 3）：`panelStore` 面板台账（按 `order` 与 id 排序、同 id 注册幂等）、`registerDock` / `docks`、`currentSessionId`、`openView` / `closeView`、`openViewOrSwitch`、`viewFocus`、`registerPageCloser`。
-- 终端开关 `dockVisibility`：默认可见，`get` / `set` / `toggle` / `subscribe` 四件套；`dockVisible` / `setDockVisible` 保留为兼容读写。`shell.bottom` 是单槽且先注册者胜，所以"是否占这个槽"只能有一个决策人，dock 在注册前先读这个开关，运行中则订阅它收放。
+- 终端开关 `dockVisibility`：默认收起，`get` / `set` / `toggle` / `subscribe` 四件套；`dockVisible` / `setDockVisible` 保留为兼容读写。默认值是懒加载的闸门：`dsh-term-dock` 在开关关着时不注册 `shell.bottom`，因此不挂载终端、不取 xterm chunk、不起 shell；`⌘⇧M` 第一次把它翻成可见时才发生挂载。`shell.bottom` 是单槽且先注册者胜，所以"是否占这个槽"只能有一个决策人，dock 在注册前先读这个开关，运行中则订阅它收放。
 - 视图切换 seam：`views.bind(sessionId, open)` 接住宿主发给会话级的 `openView`，`open` / `showChat` 供 root 作用域的终端 dock 回对话。同一会话后绑定的覆盖先绑定的，旧 disposer 不会误删新绑定。`createViewSwitcher` 在 seam 之上加一条显式兜底：宿主只在 View More 菜单展开时绑定 `openView`，菜单关掉后按精确文本点击宿主自己的「文件」/「Git」/「对话」标签。`openViewOrSwitch` 把这两条合成一次调用，并用 `focused` 回答"focus 是否真的送到了"，因为点标签只能切视图、送不了目标。
 
 - 会话视图数字键（`src/client/view-digits.ts`）：`⌘1 … ⌘9`（web 端 `⌥1 … ⌥9`）按会话视图标签的可见顺序切换，位置寻址而不是身份寻址，所以功能包以后新注册的视图不用改这里。`⌘0`（web 端 `⌥0`）切到当前可见的最后一个标签，标签增减后仍落在最末一个，不占用第 10 个槽位；收进「更多会话视图」的溢出项两边都够不着。默认开启，设置页「工作台 → 会话视图」有一个持久开关（`localStorage`，键 `dsh-workbench:view-digits:v1`）：关掉即刻释放这些注册，宿主目录里也不再出现它们。桌面端走 `ctx.shortcuts`，web 端走插件自己的捕获阶段路由，与 `⌘⇧E/G/M` 同一套理由。

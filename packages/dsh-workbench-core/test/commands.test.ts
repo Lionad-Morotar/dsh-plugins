@@ -69,7 +69,7 @@ describe("workbench command registration", () => {
     const resolution = terminal?.resolve({ region: "page", modal: null, target: null });
     expect(resolution?.status).toBe("handled");
     if (resolution?.status === "handled") resolution.run();
-    expect(service.dockVisible()).toBe(false);
+    expect(service.dockVisible()).toBe(true);
   });
 
   it("lets the web router replace the view opener with its DOM fallback", () => {
@@ -91,9 +91,9 @@ describe("workbench command registration", () => {
     const seen: boolean[] = [];
     service.dockVisibility.subscribe(visible => seen.push(visible));
     runWorkbenchCommand("workbench.term.toggle", service);
-    expect(seen).toEqual([false]);
+    expect(seen).toEqual([true]);
     runWorkbenchCommand("workbench.term.toggle", service);
-    expect(seen).toEqual([false, true]);
+    expect(seen).toEqual([true, false]);
   });
 
   it("keeps registering after one host rejection", () => {

@@ -29,10 +29,12 @@ export interface DockVisibility {
 
 /**
  * Create the visibility store for one client mount.
- * @param initial - starting value; the workbench shows its dock by default.
+ * @param initial - starting value; the workbench starts with its dock closed so
+ *   a reader who never opens the terminal pays for neither its process nor its
+ *   emulator chunk.
  * @returns the store; listeners live only in this closure.
  */
-export function createDockVisibility(initial = true): DockVisibility {
+export function createDockVisibility(initial = false): DockVisibility {
   let visible = initial;
   const listeners = new Set<DockVisibilityListener>();
 

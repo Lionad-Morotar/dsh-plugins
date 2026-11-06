@@ -126,11 +126,11 @@ describe("workbench service", () => {
     const seen: boolean[] = [];
     service.dockVisibility.subscribe(visible => seen.push(visible));
 
-    service.setDockVisible(false);
-    expect(service.dockVisible()).toBe(false);
-    service.dockVisibility.set(true);
+    service.setDockVisible(true);
     expect(service.dockVisible()).toBe(true);
-    expect(seen).toEqual([false, true]);
+    service.dockVisibility.set(false);
+    expect(service.dockVisible()).toBe(false);
+    expect(seen).toEqual([true, false]);
   });
 
   it("registers docks idempotently", () => {
