@@ -296,6 +296,15 @@ __publicField(PathExplorerService, "inject", []);
 import { Remote as Remote3, TypertRemoteService as TypertRemoteService3 } from "@deepseek-ai/dsh-typert-protocol";
 
 // src/host/shutdown.ts
+function currentShellChannel() {
+  return {
+    send: typeof process.send === "function" ? process.send : void 0,
+    connected: process.connected
+  };
+}
+function shellOwnsProcess(channel) {
+  return typeof channel.send === "function" && channel.connected === true;
+}
 function appExitOf(ctx) {
   try {
     const exit = ctx.get?.("appExit", false);
@@ -304,10 +313,12 @@ function appExitOf(ctx) {
     return void 0;
   }
 }
-function shutdownAvailable(ctx) {
+function shutdownAvailable(ctx, channel) {
+  if (shellOwnsProcess(channel)) return false;
   return appExitOf(ctx) !== void 0;
 }
-function requestShutdown(ctx) {
+function requestShutdown(ctx, channel) {
+  if (shellOwnsProcess(channel)) return "unavailable";
   const exit = appExitOf(ctx);
   if (exit === void 0) return "unavailable";
   try {
@@ -326,15 +337,18 @@ function requestShutdown(ctx) {
 // src/host/shutdown-remote.ts
 var _request_dec, _available_dec, _a3, _init3;
 var HostShutdownService = class extends (_a3 = TypertRemoteService3, _available_dec = [Remote3("available")], _request_dec = [Remote3("request")], _a3) {
-  constructor(ctx) {
+  constructor(ctx, options) {
     super(ctx, SHUTDOWN_SERVICE);
     __runInitializers(_init3, 5, this);
+    /** Captured at mount: how this process was launched does not change later. */
+    __publicField(this, "shellChannel");
+    this.shellChannel = options.channel;
   }
   async available() {
-    return shutdownAvailable(this.ctx);
+    return shutdownAvailable(this.ctx, this.shellChannel);
   }
   async request() {
-    return requestShutdown(this.ctx);
+    return requestShutdown(this.ctx, this.shellChannel);
   }
 };
 _init3 = __decoratorStart(_a3);
@@ -348,7 +362,7 @@ var name = "dsh-command-panel";
 var inject = [];
 function apply(ctx) {
   new PathExplorerService(ctx);
-  new HostShutdownService(ctx);
+  new HostShutdownService(ctx, { channel: currentShellChannel() });
   new NativeOpenService(ctx);
 }
 apply.inject = inject;
@@ -361,8 +375,10 @@ export {
   PathExplorerService,
   SHUTDOWN_SERVICE,
   apply,
+  currentShellChannel,
   index_default as default,
   inject,
   name,
-  requestShutdown
+  requestShutdown,
+  shellOwnsProcess
 };

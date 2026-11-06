@@ -7,16 +7,44 @@
  * plugin pending forever, silently, while `appExit` is legitimately optional
  * (older hosts, non-DSH embeds).
  *
- * Two answers come out of the same probe, and both are needed. `appExit` exists
- * only in hosts whose launcher owns the process — the CLI binary, `dsh web`
- * started from a terminal — and never in the Desktop shell, which spawns the
- * Host as a child and owns quitting itself through the application menu. A quit
- * row listed there could only ever fail, so the client asks this probe before
- * it lists the row at all, and the confirm path keeps the second, stricter
- * answer for the case where the capability went away between listing and firing.
+ * Two answers come out of the same probe, and both are needed. `appExit` is
+ * provided by the profile boot in every combination — the CLI and `dsh web`
+ * launchers as well as the Desktop shell — so its presence alone does not say
+ * "this host may quit on its own". The Desktop shell spawns the Host as an IPC
+ * child and reads a self-initiated child exit as a failure: its window drops to
+ * "reconnecting" and the application itself lives on. The capability answer
+ * therefore also asks whether a parent shell owns this process over that
+ * channel, and the client lists the quit row only when the answer is yes to
+ * both — otherwise the Desktop quit path stays with the application menu, which
+ * asks about running tasks before it ends the whole app.
  */
 export interface ShutdownContext {
   get?(name: string, strict?: boolean): unknown;
+}
+
+/**
+ * The facts that tell whether a launcher owns this process from outside.
+ *
+ * Node only defines `process.send` when the process was spawned with an IPC
+ * channel, which is exactly how the Desktop shell starts the Host. A terminal
+ * host (`dsh` / `dsh web`) has no such parent and owns its own exit.
+ */
+export interface ShellChannel {
+  readonly send?: unknown;
+  readonly connected?: boolean;
+}
+
+/** The live process's channel facts, read once by the host half at mount. */
+export function currentShellChannel(): ShellChannel {
+  return {
+    send: typeof process.send === "function" ? process.send : undefined,
+    connected: process.connected,
+  };
+}
+
+/** Whether a parent shell holds an open IPC channel to this process. */
+export function shellOwnsProcess(channel: ShellChannel): boolean {
+  return typeof channel.send === "function" && channel.connected === true;
 }
 
 function appExitOf(ctx: ShutdownContext): ((code: number) => void) | undefined {
@@ -29,16 +57,19 @@ function appExitOf(ctx: ShutdownContext): ((code: number) => void) | undefined {
 }
 
 /**
- * Whether this host can end the process on request.
+ * Whether this host can end the process on request, as a real quit.
  *
  * @param ctx - the host half's Cordis context, where `appExit` actually lives.
- * @returns true when a callable `appExit` is in hand.
+ * @param channel - how the process was launched; a shell-owned host answers false.
+ * @returns true only when a callable `appExit` is in hand and no shell owns the process.
  */
-export function shutdownAvailable(ctx: ShutdownContext): boolean {
+export function shutdownAvailable(ctx: ShutdownContext, channel: ShellChannel): boolean {
+  if (shellOwnsProcess(channel)) return false;
   return appExitOf(ctx) !== undefined;
 }
 
-export function requestShutdown(ctx: ShutdownContext): "requested" | "unavailable" {
+export function requestShutdown(ctx: ShutdownContext, channel: ShellChannel): "requested" | "unavailable" {
+  if (shellOwnsProcess(channel)) return "unavailable";
   const exit = appExitOf(ctx);
   if (exit === undefined) return "unavailable";
   try {

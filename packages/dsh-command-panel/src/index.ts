@@ -14,9 +14,10 @@ import type { Context } from "@deepseek-ai/cordis";
 import { NativeOpenService } from "./host/native-open.ts";
 import { PathExplorerService } from "./host/path-explorer.ts";
 import { HostShutdownService } from "./host/shutdown-remote.ts";
+import { currentShellChannel } from "./host/shutdown.ts";
 
 export { NativeOpenService, PathExplorerService, HostShutdownService };
-export { requestShutdown } from "./host/shutdown.ts";
+export { currentShellChannel, requestShutdown, shellOwnsProcess } from "./host/shutdown.ts";
 export { OPEN_SERVICE, PATH_SERVICE, SHUTDOWN_SERVICE } from "./shared.ts";
 export type {
   NativeOpenResult,
@@ -48,7 +49,10 @@ export const inject: string[] = [];
  */
 export function apply(ctx: Context): void {
   new PathExplorerService(ctx);
-  new HostShutdownService(ctx);
+  // The quit half is told how this process was launched at mount: a host whose
+  // IPC channel belongs to a shell must not offer to exit itself (the shell
+  // reads that exit as a failure), so the capability answer depends on it.
+  new HostShutdownService(ctx, { channel: currentShellChannel() });
   new NativeOpenService(ctx);
 }
 
