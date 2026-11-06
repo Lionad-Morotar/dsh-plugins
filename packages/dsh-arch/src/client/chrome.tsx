@@ -94,6 +94,21 @@ export interface ArchChromeOptions {
   readonly writeBackDelayMs?: number;
   /** Refresh poll interval; tests shrink it, production uses the default. */
   readonly refreshIntervalMs?: number;
+  /**
+   * The composer seam the reference button writes through.
+   *
+   * Absent means the mount cannot reach a composer at all (the dock panel has
+   * no `inputActions`), and the button is not drawn rather than drawn dead.
+   */
+  readonly nodeReference?: NodeReferenceSeam;
+}
+
+/** What the action bar needs to turn a selected element into a reference. */
+export interface NodeReferenceSeam {
+  /** Whether a reference can be taken right now; drives the button's presence. */
+  readonly available: boolean;
+  /** Write one element into the composer; never throws into the diagram. */
+  insert(nodeId: string): void | Promise<void>;
 }
 
 /**
@@ -496,6 +511,13 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
         openNodeRelations(nodeId, anchor);
         return;
       }
+      if (action === "reference") {
+        // The relations pane is left exactly as it is: referencing writes into
+        // another surface rather than navigating, so the reader keeps the view
+        // and the selection they were reading.
+        void options.nodeReference?.insert(nodeId);
+        return;
+      }
       // `navigate` switches to the target view and keeps the element selected
       // there, which is what the official IconZoomScan action does.
       const node = view?.nodes.find(candidate => candidate.id === nodeId);
@@ -510,6 +532,11 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
       // cleared selection, because an edge press has already cleared that.
       relationsPane.render(null);
     },
+    // Forwarded so the renderer can decide whether to draw the third button;
+    // the press itself comes back through `onNodeAction` above.
+    ...(options.nodeReference === undefined
+      ? {}
+      : { nodeReference: { available: options.nodeReference.available } }),
     onSelect: id => {
       if (id === null) {
         detailsPane.render(null);

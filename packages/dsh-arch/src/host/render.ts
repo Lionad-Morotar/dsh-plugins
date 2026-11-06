@@ -14,6 +14,10 @@
  * otherwise a save right after opening the panel would serve the stale view
  * as if it were ready.
  */
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join, relative, sep } from "node:path";
+
 import type { WireDiagnostic, WireModelResponse, WireViewsResponse } from "../shared.ts";
 
 /** The node entry of `@likec4/language-services`, lazily imported. */
@@ -99,6 +103,10 @@ export function toModelPayload(input: {
     readonly relations?: Record<string, unknown>;
     readonly specification?: unknown;
   };
+  /** Where each element is defined in the `.c4` sources; absent when unread. */
+  readonly elementSources?: Readonly<Record<string, ElementSource>>;
+  /** The code file each element maps to; absent when the walk did not run. */
+  readonly elementCode?: Readonly<Record<string, ElementCode>>;
 }): WireModelResponse {
   return {
     workspace: input.workspace,
@@ -106,6 +114,11 @@ export function toModelPayload(input: {
     elements: input.model.elements ?? {},
     relations: input.model.relations ?? {},
     specification: input.model.specification ?? null,
+    // Both maps are optional on the wire: a host that cannot read the sources
+    // omits them rather than sending empty objects, so the client can tell
+    // "not reported" from "reported and empty".
+    ...(input.elementSources === undefined ? {} : { elementSources: input.elementSources }),
+    ...(input.elementCode === undefined ? {} : { elementCode: input.elementCode }),
   };
 }
 
@@ -182,4 +195,249 @@ async function renderFromInstance(dir: string, entry: CacheEntry): Promise<Rende
       : [],
     instance: entry.instance,
   };
+}
+
+/** Where one element is defined in the model sources. */
+export interface ElementSource {
+  /** Workspace-relative path of the `.c4` file, `/`-separated. */
+  readonly file: string;
+  /** 1-based line of the element's declaration. */
+  readonly line: number;
+}
+
+/** The code file one element maps to. */
+export interface ElementCode {
+  /** Workspace-relative path, `/`-separated. */
+  readonly file: string;
+}
+
+/** The AST slice the source collector walks; the rest of the node is noise. */
+interface AstElement {
+  readonly name?: string;
+  readonly body?: { readonly elements?: readonly AstElement[] };
+  /**
+   * The element an `ExtendElement` reopens. Its children are declared inside
+   * the extend block but belong to the target's id, so the walk has to continue
+   * under the target rather than under the block.
+   */
+  readonly element?: { readonly el?: { readonly $refText?: string } };
+  readonly $cstNode?: { readonly range?: { readonly start?: { readonly line?: number } } };
+}
+
+/** The parse result of one Langium document, narrowed to what is walked. */
+interface AstDocument {
+  readonly uri: { toString(): string };
+  readonly parseResult?: {
+    readonly value?: { readonly models?: readonly { readonly elements?: readonly AstElement[] }[] };
+  };
+}
+
+/**
+ * Collect the definition site of every element the model knows.
+ *
+ * The AST and the computed model disagree in both directions: the AST carries
+ * anonymous nodes (references, specification entries) and the model carries
+ * ids that only exist after resolution. Intersecting with `knownIds` is what
+ * keeps the map to elements a reader can actually select.
+ *
+ * `likec4builtin:` documents are skipped: the bundled icon library parses as a
+ * `.c4` file and would otherwise contribute ids that are not in this
+ * workspace, and a `file:` check is also what keeps `fileURLToPath` honest.
+ * @param instance - the booted workspace.
+ * @param workspaceDir - absolute workspace root the paths are made relative to.
+ * @param knownIds - ids present in the computed model.
+ * @returns one entry per resolvable element; unresolvable ones are absent.
+ */
+export function collectElementSources(
+  instance: LikeC4Instance,
+  workspaceDir: string,
+  knownIds: ReadonlySet<string>,
+): Record<string, ElementSource> {
+  const sources: Record<string, ElementSource> = {};
+  const documents = (instance as unknown as { LangiumDocuments?: { all?: Iterable<AstDocument> } })
+    .LangiumDocuments;
+  if (documents?.all === undefined) return sources;
+  for (const doc of documents.all) {
+    const uri = doc.uri.toString();
+    if (!uri.startsWith("file:") || !uri.endsWith(".c4")) continue;
+    let file: string;
+    try {
+      file = relative(workspaceDir, fileURLToPath(uri)).split(sep).join("/");
+    } catch {
+      // A URI that is not a filesystem path is not a source this map can name.
+      continue;
+    }
+    for (const model of doc.parseResult?.value?.models ?? []) {
+      walkAstElements(model.elements, "", file, knownIds, sources);
+    }
+  }
+  return sources;
+}
+
+/**
+ * Walk one model's element tree, recording each known element's line.
+ *
+ * The first definition wins: a model that declares the same id twice (legal
+ * while editing) should point at the one a reader would find first.
+ */
+function walkAstElements(
+  elements: readonly AstElement[] | undefined,
+  parent: string,
+  file: string,
+  knownIds: ReadonlySet<string>,
+  into: Record<string, ElementSource>,
+): void {
+  for (const element of elements ?? []) {
+    const name = element.name;
+    if (name === undefined || name === "") {
+      // An `ExtendElement` reopens an existing element: its children belong to
+      // that element's id, so the walk continues under the target. Any other
+      // anonymous node still nests real children, so the walk continues under
+      // the current parent without inventing an id for this level.
+      const target = element.element?.el?.$refText;
+      walkAstElements(element.body?.elements, target ?? parent, file, knownIds, into);
+      continue;
+    }
+    const fqn = parent === "" ? name : `${parent}.${name}`;
+    const line = element.$cstNode?.range?.start?.line;
+    if (line !== undefined && knownIds.has(fqn) && into[fqn] === undefined) {
+      into[fqn] = { file, line: line + 1 };
+    }
+    walkAstElements(element.body?.elements, fqn, file, knownIds, into);
+  }
+}
+
+/** One package directory the code resolver can attribute a file to. */
+interface PackageDir {
+  /** Package name from `package.json`, when it declares one. */
+  readonly name?: string;
+  /** Directory name, e.g. `dsh-jump`. */
+  readonly dirName: string;
+  /** Workspace-relative directory, `/`-separated. */
+  readonly dir: string;
+}
+
+/** Suffixes tried for a title that names a file. */
+const CODE_SUFFIXES = [".ts", ".tsx", ".js", ".mjs", ".css"] as const;
+
+/**
+ * Map elements onto the code files their titles name.
+ *
+ * This repository's C4 model uses an element's `title` as a path inside its
+ * package (`title "client/app"` on a component of the `dsh-jump` package), and
+ * the package is named by an ancestor's title. That is a convention of the
+ * model, not a LikeC4 capability, so every step here is a heuristic allowed to
+ * find nothing: a miss costs the reference its `code` segment, never its
+ * existence.
+ *
+ * No line number is reported: the title names a file, and there is no symbol
+ * in it to resolve one against.
+ * @param workspaceDir - absolute workspace root.
+ * @param elements - the model's element record, keyed by id.
+ * @returns one entry per element whose code file was found on disk.
+ */
+export function resolveElementCode(
+  workspaceDir: string,
+  elements: Readonly<Record<string, { title?: unknown }>>,
+): Record<string, ElementCode> {
+  const code: Record<string, ElementCode> = {};
+  const packages = readPackageDirs(workspaceDir);
+  if (packages.length === 0) return code;
+  const byName = new Map<string, PackageDir>();
+  const byDirName = new Map<string, PackageDir>();
+  for (const pkg of packages) {
+    if (pkg.name !== undefined && !byName.has(pkg.name)) byName.set(pkg.name, pkg);
+    if (!byDirName.has(pkg.dirName)) byDirName.set(pkg.dirName, pkg);
+  }
+  for (const [id, element] of Object.entries(elements)) {
+    const title = typeof element.title === "string" ? element.title.trim() : "";
+    if (title === "") continue;
+    const pkg = packageFor(id, elements, byName, byDirName);
+    if (pkg === undefined) continue;
+    const file = codeFileFor(workspaceDir, pkg, title);
+    if (file !== undefined) code[id] = { file };
+  }
+  return code;
+}
+
+/**
+ * Find the package an element belongs to, by the deepest ancestor whose title
+ * names one.
+ *
+ * Deepest, not nearest-to-root: a nested component may sit inside a container
+ * whose title is a path fragment, and the more specific ancestor is the one
+ * that actually names the package.
+ */
+function packageFor(
+  id: string,
+  elements: Readonly<Record<string, { title?: unknown }>>,
+  byName: ReadonlyMap<string, PackageDir>,
+  byDirName: ReadonlyMap<string, PackageDir>,
+): PackageDir | undefined {
+  const segments = id.split(".");
+  for (let cut = segments.length - 1; cut > 0; cut -= 1) {
+    const ancestor = elements[segments.slice(0, cut).join(".")];
+    const title = typeof ancestor?.title === "string" ? ancestor.title.trim() : "";
+    if (title === "") continue;
+    const named = byName.get(title) ?? byDirName.get(title);
+    if (named !== undefined) return named;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve one title to a file inside its package.
+ *
+ * Titles that name more than one thing (`client/bindings + client/recorder`)
+ * are skipped rather than guessed at: picking one half would attribute the
+ * element to a file that only implements part of it.
+ */
+function codeFileFor(workspaceDir: string, pkg: PackageDir, title: string): string | undefined {
+  const clean = title.replace(/^\/+/u, "").replace(/\/+$/u, "");
+  if (clean === "" || clean.includes(" ") || clean.includes("+")) return undefined;
+  const bases = [`src/${clean}`, `src/client/${clean}`, clean];
+  for (const base of bases) {
+    for (const suffix of CODE_SUFFIXES) {
+      if (existsSync(join(workspaceDir, pkg.dir, `${base}${suffix}`))) return `${pkg.dir}/${base}${suffix}`;
+    }
+    for (const indexSuffix of [".ts", ".tsx"] as const) {
+      if (existsSync(join(workspaceDir, pkg.dir, base, `index${indexSuffix}`))) {
+        return `${pkg.dir}/${base}/index${indexSuffix}`;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Read the workspace's packages, tolerating every failure.
+ *
+ * A workspace without `packages/` is the normal case for most models; a
+ * package with an unreadable manifest is skipped rather than aborting the walk,
+ * because one broken package should not cost every other element its code path.
+ */
+function readPackageDirs(workspaceDir: string): PackageDir[] {
+  const root = join(workspaceDir, "packages");
+  let names: string[];
+  try {
+    names = readdirSync(root);
+  } catch {
+    return [];
+  }
+  const found: PackageDir[] = [];
+  for (const dirName of names) {
+    let manifest: unknown;
+    try {
+      manifest = JSON.parse(readFileSync(join(root, dirName, "package.json"), "utf8"));
+    } catch {
+      continue;
+    }
+    const name = (manifest as { name?: unknown } | null)?.name;
+    found.push({
+      ...(typeof name === "string" && name !== "" ? { name } : {}),
+      dirName,
+      dir: `packages/${dirName}`,
+    });
+  }
+  return found;
 }

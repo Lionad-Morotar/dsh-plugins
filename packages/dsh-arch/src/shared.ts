@@ -84,6 +84,19 @@ export interface WireModelResponse {
   readonly elements: Readonly<Record<string, unknown>>;
   readonly relations: Readonly<Record<string, unknown>>;
   readonly specification: unknown;
+  /**
+   * Where each element is declared in the model sources.
+   *
+   * Optional because a host that cannot read the AST omits it: absent means
+   * "not reported", which the client must not render as "no element has a
+   * definition".
+   */
+  readonly elementSources?: Readonly<Record<string, { readonly file: string; readonly line: number }>>;
+  /**
+   * The code file each element maps to, when the title→path convention
+   * resolves one. Absent keys are elements with no resolvable code.
+   */
+  readonly elementCode?: Readonly<Record<string, { readonly file: string }>>;
 }
 
 /**
