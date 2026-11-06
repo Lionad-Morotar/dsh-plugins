@@ -15,7 +15,7 @@ import {
   openInAppIconRoute,
   readRememberedApplication,
   rememberApplication,
-  resolveDefaultApplication,
+  orderApplications,
   type FetchLike,
   type StorageLike,
 } from "../src/client/host-api.ts";
@@ -157,13 +157,16 @@ describe("launch", () => {
   });
 });
 
-describe("default application", () => {
-  it("keeps a remembered id only while that application is still installed", () => {
-    expect(resolveDefaultApplication(["finder", "cursor"], "cursor")).toBe("cursor");
-    expect(resolveDefaultApplication(["finder", "cursor"], "gone")).toBe("finder");
-    expect(resolveDefaultApplication(["finder", "cursor"], null)).toBe("finder");
-    expect(resolveDefaultApplication([], "cursor")).toBeNull();
-    expect(resolveDefaultApplication([], null)).toBeNull();
+describe("application order", () => {
+  it("moves an installed remembered id to the front and leaves the rest alone", () => {
+    expect(orderApplications(["finder", "cursor"], "cursor")).toEqual(["cursor", "finder"]);
+    expect(orderApplications(["finder", "cursor"], "gone")).toEqual(["finder", "cursor"]);
+    expect(orderApplications(["finder", "cursor"], null)).toEqual(["finder", "cursor"]);
+    expect(orderApplications([], "cursor")).toEqual([]);
+    // A caller's array is not mutated: the menu may keep the catalog snapshot.
+    const catalog = ["finder", "cursor"];
+    orderApplications(catalog, "cursor");
+    expect(catalog).toEqual(["finder", "cursor"]);
   });
 });
 
