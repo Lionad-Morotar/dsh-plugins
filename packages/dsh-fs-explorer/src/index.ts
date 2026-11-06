@@ -37,6 +37,7 @@ import {
   saveDocument,
   type DocumentsConfig,
 } from "./host/documents.ts";
+import { createGitRunner, listIgnoredPaths, type IgnoredRunner } from "./host/ignored.ts";
 import {
   capabilitiesResult,
   createWorkspaceEntry,
@@ -75,6 +76,8 @@ import type {
   WorkspaceCreateResult,
   WorkspaceInfoRequest,
   WorkspaceInfoResult,
+  WorkspaceIgnoredRequest,
+  WorkspaceIgnoredResult,
   WorkspaceRevealRequest,
   WorkspaceRevealResult,
 } from "./host/types.ts";
@@ -112,6 +115,9 @@ export type {
   WorkspaceFileManager,
   WorkspaceInfoRequest,
   WorkspaceInfoResult,
+  WorkspaceIgnoredList,
+  WorkspaceIgnoredRequest,
+  WorkspaceIgnoredResult,
   WorkspacePathInfo,
   WorkspaceRevealRequest,
   WorkspaceRevealResult,
@@ -145,7 +151,7 @@ export function describe(): { name: string; slot: string; id: string; order: num
 function realWorkspaceEnv(): WorkspaceEnv {
   const spawn: RevealSpawn = (command, args, options) =>
     nodeSpawn(command, [...args], options as unknown as SpawnOptions) as ChildProcess & RevealChild;
-  return { platform: process.platform, env: process.env, spawn, release: osRelease() };
+  return { platform: process.platform, env: process.env, spawn, release: osRelease(), git: createGitRunner() };
 }
 
 /**
@@ -258,6 +264,11 @@ export class FsExplorerDocumentsService extends TypertRemoteService {
  *
  * `fs` is the only declared dependency, for the same reason as the document
  * service. The platform facts are replaceable so a test never spawns.
+ *
+ * Every endpoint here except `ignored` acts on one path the reader named. That
+ * one is read-only and answers a whole working directory at once, and outside a
+ * repository it degrades to an empty list rather than an error, because the
+ * client's only use for it is to decide whether to dim a row.
  */
 export class FsExplorerWorkspaceService extends TypertRemoteService {
   static inject = ["fs"];
@@ -325,6 +336,24 @@ export class FsExplorerWorkspaceService extends TypertRemoteService {
     const deps = await this.deps(request.sessionId);
     if ("ok" in deps) return deps;
     return createWorkspaceEntry(deps, request, signal);
+  }
+
+  /**
+   * The paths git ignores under this session's working directory.
+   *
+   * Read-only, and the one endpoint here that answers about a set rather than a
+   * path: the tree dims rows by membership, so asking per directory would repeat
+   * the same git invocation once per expanded node. A host whose platform facts
+   * carry no runner answers `io-error` instead of throwing, which the client
+   * treats as "nothing is dimmed".
+   */
+  @Remote("ignored")
+  async ignored(request: WorkspaceIgnoredRequest, signal?: AbortSignal): Promise<WorkspaceIgnoredResult> {
+    const deps = await this.deps(request.sessionId);
+    if ("ok" in deps) return deps;
+    const git = this.env.git;
+    if (git === undefined) return failWorkspace("io-error", "this host has no git runner");
+    return listIgnoredPaths({ cwd: deps.cwd, git }, request, signal);
   }
 
   /**

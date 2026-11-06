@@ -289,6 +289,40 @@ export type WorkspaceCreateResult =
   | { readonly ok: true; readonly path: string }
   | { readonly ok: false; readonly error: WorkspaceFailure };
 
+/**
+ * One request for the paths git ignores under a session's working directory.
+ *
+ * No path field: the listing is always the whole working directory, because the
+ * tree dims rows by membership in one set and a per-directory query would ask
+ * the same question once per expanded node.
+ */
+export interface WorkspaceIgnoredRequest {
+  readonly sessionId: string;
+}
+
+/**
+ * What git ignores, as paths the tree can key on.
+ *
+ * Entries are relative to the session's working directory, not to the
+ * repository root: the tree's path keys are built from the session directory, so
+ * a repository checked out above it would otherwise produce entries that match
+ * no row. `root` is the repository root, carried for diagnostics only.
+ *
+ * A null `root` is a successful answer, not a failure: it means the working
+ * directory is not inside a repository, where nothing is ignored and nothing
+ * should be dimmed. `truncated` says the list was cut, so the client can state
+ * the cap rather than implying the set is complete.
+ */
+export interface WorkspaceIgnoredList {
+  readonly root: string | null;
+  readonly entries: readonly string[];
+  readonly truncated: boolean;
+}
+
+export type WorkspaceIgnoredResult =
+  | { readonly ok: true; readonly ignored: WorkspaceIgnoredList }
+  | { readonly ok: false; readonly error: WorkspaceFailure };
+
 /** Structural slice of the live session store: only the header cwd is read. */
 export interface SessionsFace {
   get(id: string): { readonly header?: { readonly cwd?: string } } | undefined;

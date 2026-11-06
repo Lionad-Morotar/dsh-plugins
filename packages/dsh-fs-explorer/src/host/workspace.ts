@@ -15,6 +15,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
+import type { IgnoredRunner } from "./ignored.ts";
 import type {
   FsTargetFace,
   WorkspaceCapabilities,
@@ -52,7 +53,9 @@ export type RevealSpawn = (
  * Everything platform-shaped, injectable so a test never spawns for real.
  *
  * `env` is the process environment the display-server and WSL probes read;
- * `spawn` is the one side effect.
+ * `spawn` is the one side effect. `git` is optional so a composition that only
+ * reveals paths can leave it out; the ignored listing answers `io-error` when it
+ * is absent rather than crashing the row.
  */
 export interface WorkspaceEnv {
   readonly platform: NodeJS.Platform;
@@ -60,6 +63,8 @@ export interface WorkspaceEnv {
   readonly spawn: RevealSpawn;
   /** Kernel release string; the WSL probe reads it when no WSL variable is set. */
   readonly release?: string;
+  /** Argv-only git, used by the ignored listing. */
+  readonly git?: IgnoredRunner;
 }
 
 /**

@@ -95,6 +95,7 @@ describe("bookmark endpoints", () => {
       "info",
       "reveal",
       "create",
+      "ignored",
       "loadBookmarks",
       "saveBookmarks",
     ]);
