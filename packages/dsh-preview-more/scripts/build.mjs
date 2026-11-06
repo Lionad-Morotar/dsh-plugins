@@ -46,7 +46,20 @@ const libRoot = join(packageRoot, "lib");
 const require = createRequire(join(packageRoot, "package.json"));
 const manifest = require(join(packageRoot, "package.json"));
 
-/** Renderer families, each one lazy chunk. Mirrors the shared src/formats.ts. */
+/**
+ * Renderer families, each one lazy chunk. Mirrors the shared src/formats.ts.
+ *
+ * Deliberately the whole catalogue rather than `familiesFor("sidebar")`: this
+ * package carries a chunk for every family the shared package can draw, so the
+ * chunk table means "what this plugin can render" and the catalogue's `claims`
+ * means "what this surface should offer". The entry registers only the three
+ * the sidebar claims, which leaves `client.image.js` and `client.pdf.js`
+ * unreachable at runtime. That is the accepted cost of keeping one invariant
+ * here and in dsh-fs-explorer instead of two surface-parameterised ones; the
+ * bytes sit on disk unloaded (the loader fetches a chunk only when a
+ * registration asks for it), and a family that gains a sidebar claim later
+ * finds its chunk already built.
+ */
 const CHUNKS = ["scene3d", "raster", "cad", "image", "pdf"];
 
 /**

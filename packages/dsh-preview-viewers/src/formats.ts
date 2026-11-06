@@ -1,16 +1,20 @@
 /**
  * Format catalogue for the previews these surfaces own.
  *
- * The catalogue is the workbench's claim list, and the workbench is the file's
- * main surface: a file picked in the tree should be drawn where it was picked,
- * not bounce the reader into a sidebar tab. That is why images and PDF are
- * claimed here even though the built-in preview renders them too. The goal is
- * not to out-render that preview but to keep one surface authoritative for the
- * files a reader opens from the tree.
+ * The catalogue answers two questions per family, and they are not the same
+ * question: which suffixes it owns, and which surface should claim them. The
+ * second one is why `claims` exists. The workbench is the file's main surface,
+ * so a file picked in the tree should be drawn where it was picked rather than
+ * bounce the reader into a sidebar tab; that is why images and PDF are claimed
+ * for the workbench at all, even though the built-in preview renders them too.
+ * The sidebar is a second opinion on the same files, and for those two it
+ * declines: the host's own image preview has a shared zoom viewport and its PDF
+ * preview a selectable text layer, so an `extension`-band claim there would win
+ * the file and lose the reader both.
  *
- * Office documents (docx, pptx, xlsx) and csv stay unclaimed: the built-in
- * preview's renderers for those are richer than anything drawn here would be,
- * so claiming them would only shadow a better implementation.
+ * Office documents (docx, pptx, xlsx) and csv stay unclaimed by either surface:
+ * the built-in preview's renderers for those are richer than anything drawn
+ * here would be, so claiming them would only shadow a better implementation.
  *
  * The catalogue is data, not behaviour, so it is the one place a new format is
  * added: every consuming plugin derives its registry from it and its sidebar
