@@ -2,9 +2,12 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type UIEvent,
 } from "react";
 
@@ -13,10 +16,44 @@ import { cursorActionOf, nearTail, stepCursor } from "./cursor.ts";
 import type { Translate } from "./copy.ts";
 import type { GitCommitNode } from "../host/types.ts";
 import { GraphSvg } from "./graph.tsx";
+import {
+  DEFAULT_HISTORY_COLUMN_WIDTHS,
+  HISTORY_COLUMN_SPECS,
+  clampHistoryColumnWidth,
+  columnDragReturnedToBase,
+  columnResizeKeyAction,
+  readHistoryColumnWidths,
+  saveHistoryColumnWidth,
+  type HistoryColumnId,
+  type HistoryColumnWidths,
+} from "./history-columns.ts";
+import type { PaneWidthStorage } from "./pane-width.ts";
 
 export { HISTORY_ROW_HEIGHT };
 /** How close to the last loaded row a cursor may walk before the list fetches. */
 const CURSOR_FETCH_AHEAD = 12;
+
+/**
+ * The graph column's width for a lane count, matching `GraphSvg`'s own sizing.
+ * The two have to agree: the row grid reserves this track while the SVG paints
+ * inside it, and a formula that drifted would clip the outermost lane.
+ */
+function graphColumnWidth(laneCount: number): number {
+  return Math.min(116, Math.max(16, laneCount * 12));
+}
+
+/**
+ * localStorage for column widths; null outside a browser or when access throws.
+ * Mirrors the view's own accessor so both stores fail the same way.
+ */
+function columnWidthStorage(): PaneWidthStorage | null {
+  if (typeof document === "undefined") return null;
+  try {
+    return document.defaultView?.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Props one history pane mount reads. */
 export interface HistoryPaneProps {
@@ -39,6 +76,11 @@ export interface HistoryPaneProps {
   readonly emptyDescription?: string;
   readonly onRetry?: () => void;
   readonly retryLabel?: string;
+  /**
+   * Where column widths are read and written. Omitted, the pane takes the
+   * document's localStorage; tests inject a stand-in.
+   */
+  readonly columnStorage?: PaneWidthStorage | null;
 }
 
 function CommitRow({
@@ -73,21 +115,103 @@ function CommitRow({
       onClick={() => onSelect(commit.hash)}
     >
       {row === undefined ? <span className="gx-graph" style={{ width: 16 }} /> : <GraphSvg row={row} laneCount={laneCount} height={HISTORY_ROW_HEIGHT} />}
-      <span className="gx-hash">{commit.hash.slice(0, 7)}</span>
+      {/* The refs cell sits between the graph and the subject, so a long branch
+          name has a column of its own to be truncated in rather than pushing the
+          subject around. */}
+      <span className="gx-refs" data-testid="git-history-refs">
+        {commit.refs.slice(0, 2).map(ref => (
+          // The row is one button, and a button's own title wins over a child's,
+          // so the chip carries its full name in a hover label instead.
+          <span key={`${ref.kind}:${ref.name}`} className="gx-ref" data-kind={ref.kind}>
+            <span className="gx-ref-name">{ref.name}</span>
+            <span className="gx-ref-tip" role="tooltip">{ref.name}</span>
+          </span>
+        ))}
+      </span>
       <span className="gx-subject">{commit.subject}</span>
-      {commit.refs.slice(0, 2).map(ref => (
-        // The row is one button, and a button's own title wins over a child's,
-        // so the chip carries its full name in a hover label instead.
-        <span key={`${ref.kind}:${ref.name}`} className="gx-ref" data-kind={ref.kind}>
-          <span className="gx-ref-name">{ref.name}</span>
-          <span className="gx-ref-tip" role="tooltip">{ref.name}</span>
-        </span>
-      ))}
-      <span className="gx-author">{commit.author}</span>
       <span className="gx-time" title={new Date(commit.time * 1000).toLocaleString()}>
         {relativeTime(commit.time)}
       </span>
+      <span className="gx-author">{commit.author}</span>
+      <span className="gx-hash">{commit.hash.slice(0, 7)}</span>
     </button>
+  );
+}
+
+/** The six column labels, in the same order the row grid lays its cells out. */
+const COLUMN_LABELS = [
+  { id: "graph", key: "history.col.graph" },
+  { id: "refs", key: "history.col.refs" },
+  { id: "subject", key: "history.col.subject" },
+  { id: "time", key: "history.col.time" },
+  { id: "author", key: "history.col.author" },
+  { id: "hash", key: "history.col.hash" },
+] as const;
+
+/**
+ * The header row above the list.
+ *
+ * It lives outside the scroll container so its handles stay reachable while the
+ * list scrolls, which also means it spans the full width while the rows inside
+ * give up the scrollbar gutter. `gutter` is that difference, measured by the
+ * pane and applied as padding so the two grids line up to the pixel.
+ */
+function ColumnHeader({
+  widths,
+  gutter,
+  t,
+  onPointerDown,
+  onPointerMove,
+  onPointerEnd,
+  onKeyDown,
+  onReset,
+}: {
+  readonly widths: HistoryColumnWidths;
+  readonly gutter: number;
+  readonly t: Translate;
+  readonly onPointerDown: (id: HistoryColumnId, event: ReactPointerEvent<HTMLElement>) => void;
+  readonly onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
+  readonly onPointerEnd: (event: ReactPointerEvent<HTMLElement>) => void;
+  readonly onKeyDown: (id: HistoryColumnId, event: ReactKeyboardEvent<HTMLElement>) => void;
+  readonly onReset: (id: HistoryColumnId) => void;
+}) {
+  const specOf = (id: HistoryColumnId) => HISTORY_COLUMN_SPECS.find(spec => spec.id === id);
+  return (
+    <div
+      className="gx-colhead"
+      data-testid="git-history-colhead"
+      style={{ paddingRight: gutter === 0 ? undefined : gutter }}
+    >
+      {COLUMN_LABELS.map(cell => {
+        const spec = cell.id === "graph" || cell.id === "subject" ? undefined : specOf(cell.id);
+        return (
+          <span key={cell.id} className={`gx-colhead-cell gx-colhead-${cell.id}`}>
+            {t(cell.key)}
+            {spec === undefined ? null : (
+              <span
+                className="gx-col-handle"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label={`${t("history.col.resize")}: ${t(cell.key)}`}
+                aria-valuemin={spec.min}
+                aria-valuemax={spec.max}
+                aria-valuenow={widths[spec.id]}
+                title={t("history.col.resizeHint")}
+                tabIndex={0}
+                data-testid={`gx-col-handle-${spec.id}`}
+                onPointerDown={event => onPointerDown(spec.id, event)}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerEnd}
+                onPointerCancel={onPointerEnd}
+                onLostPointerCapture={onPointerEnd}
+                onKeyDown={event => onKeyDown(spec.id, event)}
+                onDoubleClick={() => onReset(spec.id)}
+              />
+            )}
+          </span>
+        );
+      })}
+    </div>
   );
 }
 
@@ -102,6 +226,16 @@ export function HistoryPane(props: HistoryPaneProps) {
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
   const pending = useRef(false);
+  // The store is taken once per mount: a fresh identity on every render would
+  // restart the drag callbacks and re-read localStorage mid-gesture.
+  const [widthStorage] = useState<PaneWidthStorage | null>(() =>
+    props.columnStorage === undefined ? columnWidthStorage() : props.columnStorage,
+  );
+  const [widths, setWidths] = useState<HistoryColumnWidths>(() => readHistoryColumnWidths(widthStorage));
+  // The scrollbar gutter the rows give up and the header does not. jsdom lays
+  // nothing out, so it measures 0 there and the header simply spans full width.
+  const [gutter, setGutter] = useState(0);
+  const columnDrag = useRef<{ pointerId: number; startX: number; baseWidth: number; restWidth: number; id: HistoryColumnId } | null>(null);
   // The cursor is an index into `commits` and doubles as this pane's notion of
   // "which commit is under the keyboard". Moving it selects the commit, which is
   // what the detail pane follows; `selectedHash` can also change from a click or
@@ -113,13 +247,18 @@ export function HistoryPane(props: HistoryPaneProps) {
   useEffect(() => {
     const element = scroller.current;
     if (element === null) return;
-    const measure = (): void => setHeight(element.clientHeight);
+    const measure = (): void => {
+      setHeight(element.clientHeight);
+      // offsetWidth counts the scrollbar, clientWidth does not: the difference
+      // is exactly what the rows lose and the header has to pad back.
+      setGutter(Math.max(0, element.offsetWidth - element.clientWidth));
+    };
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
+  }, [commits.length]);
 
   useEffect(() => {
     if (!loadingMore) pending.current = false;
@@ -222,6 +361,108 @@ export function HistoryPane(props: HistoryPaneProps) {
     rowHeight: HISTORY_ROW_HEIGHT,
   });
   const laneCount = Math.max(1, graphLaneCount(graph));
+
+  // A pointer drag works in pixel deltas from the width the column had when the
+  // gesture began. Only the resting width is written: the moves update state so
+  // the grid follows the pointer, and a drag that lands back where it started
+  // restores the pre-drag width instead of pinning transient pixels.
+  const beginColumnDrag = useCallback(
+    (id: HistoryColumnId, event: ReactPointerEvent<HTMLElement>): void => {
+      if (event.button !== 0 || columnDrag.current !== null) return;
+      // The handle sits in the header, not in a row, but a stray click must still
+      // not read as a row selection or as a button press.
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        return; // Without capture a pointer leaving the window strands the drag.
+      }
+      columnDrag.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        baseWidth: widths[id],
+        restWidth: widths[id],
+        id,
+      };
+      document.body.classList.add("gx-col-resizing");
+    },
+    [widths],
+  );
+
+  const moveColumnDrag = useCallback((event: ReactPointerEvent<HTMLElement>): void => {
+    const drag = columnDrag.current;
+    if (drag === null || drag.pointerId !== event.pointerId) return;
+    const next = clampHistoryColumnWidth(drag.id, drag.baseWidth + event.clientX - drag.startX);
+    setWidths(current => ({ ...current, [drag.id]: next }));
+  }, []);
+
+  const endColumnDrag = useCallback(
+    (event: ReactPointerEvent<HTMLElement>): void => {
+      const drag = columnDrag.current;
+      if (drag === null || drag.pointerId !== event.pointerId) return;
+      columnDrag.current = null;
+      document.body.classList.remove("gx-col-resizing");
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // Capture is already gone; pointercancel beats this handler here.
+      }
+      const width = drag.baseWidth + event.clientX - drag.startX;
+      if (columnDragReturnedToBase(width, drag.baseWidth)) {
+        setWidths(current => ({ ...current, [drag.id]: drag.restWidth }));
+        return;
+      }
+      setWidths(saveHistoryColumnWidth(widthStorage, drag.id, width));
+    },
+    [widthStorage],
+  );
+
+  const resetColumn = useCallback(
+    (id: HistoryColumnId): void => {
+      // Resetting one column keeps the others: writing the default through the
+      // normal save path drops that column's entry from the sparse object and
+      // removes the key once nothing differs. `resetHistoryColumnWidths` would
+      // drop the whole key, which would reset all four columns from a handle
+      // that only ever spoke for one.
+      setWidths(saveHistoryColumnWidth(widthStorage, id, DEFAULT_HISTORY_COLUMN_WIDTHS[id]));
+    },
+    [widthStorage],
+  );
+
+  const onColumnHandleKeyDown = useCallback(
+    (id: HistoryColumnId, event: ReactKeyboardEvent<HTMLElement>): void => {
+      if (event.nativeEvent.isComposing) return;
+      const action = columnResizeKeyAction(
+        event.key,
+        event.altKey || event.ctrlKey || event.metaKey || event.shiftKey,
+      );
+      if (action === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (action.kind === "reset") {
+        resetColumn(id);
+        return;
+      }
+      const spec = HISTORY_COLUMN_SPECS.find(candidate => candidate.id === id);
+      if (spec === undefined) return;
+      const base = action.kind === "nudge" ? widths[id] + action.delta : action.kind === "min" ? spec.min : spec.max;
+      setWidths(saveHistoryColumnWidth(widthStorage, id, base));
+    },
+    [resetColumn, widthStorage, widths],
+  );
+
+  const columnVars = useMemo(
+    () =>
+      ({
+        "--gx-col-graph": `${String(graphColumnWidth(laneCount))}px`,
+        "--gx-col-refs": `${String(widths.refs)}px`,
+        "--gx-col-time": `${String(widths.time)}px`,
+        "--gx-col-author": `${String(widths.author)}px`,
+        "--gx-col-hash": `${String(widths.hash)}px`,
+      }) as CSSProperties,
+    [laneCount, widths],
+  );
   // An empty list means two different things: the repository has no commit, or
   // the current query matched none. The query is what decides, not the in-flight
   // flag, because the flag is already false by the time the empty page lands.
@@ -230,7 +471,7 @@ export function HistoryPane(props: HistoryPaneProps) {
   const emptyDescription = queried ? undefined : props.emptyDescription;
 
   return (
-    <section className="gx-pane" data-testid="git-history">
+    <section className="gx-pane" data-testid="git-history" style={columnVars}>
       <header className="gx-pane-head">
         <span>{t("history.title")}</span>
         <span className="gx-count">{`${String(commits.length)} / ${String(total)}`}</span>
@@ -257,14 +498,27 @@ export function HistoryPane(props: HistoryPaneProps) {
           )}
         </div>
       ) : (
-        <div
-          className="gx-scroll"
-          ref={scroller}
-          tabIndex={0}
-          data-testid="git-history-scroll"
-          onScroll={handleScroll}
-          onKeyDown={handleKeyDown}
-        >
+        <>
+          {/* The header stays outside the scroller so its handles remain
+              clickable while the list scrolls under them. */}
+          <ColumnHeader
+            widths={widths}
+            gutter={gutter}
+            t={t}
+            onPointerDown={beginColumnDrag}
+            onPointerMove={moveColumnDrag}
+            onPointerEnd={endColumnDrag}
+            onKeyDown={onColumnHandleKeyDown}
+            onReset={resetColumn}
+          />
+          <div
+            className="gx-scroll"
+            ref={scroller}
+            tabIndex={0}
+            data-testid="git-history-scroll"
+            onScroll={handleScroll}
+            onKeyDown={handleKeyDown}
+          >
           <div className="gx-vlist" style={{ height: commits.length * HISTORY_ROW_HEIGHT }}>
             {slice.rows.map((commit, offset) => {
               const index = slice.startIndex + offset;
@@ -287,6 +541,7 @@ export function HistoryPane(props: HistoryPaneProps) {
             })}
           </div>
         </div>
+        </>
       )}
       <footer className="gx-loadbar">
         <span>{`${t("history.loaded")} ${String(commits.length)}`}</span>

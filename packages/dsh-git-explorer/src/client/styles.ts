@@ -331,13 +331,17 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
 .gx-badge[data-status="conflicted"] { color: var(--gx-conflict); }
 
 .gx-vlist { position: relative; width: 100%; }
+/* The row and the header share one grid template, built from the column
+   variables the pane root publishes. Two templates would drift the moment a
+   column is dragged, and the header would stop labelling the cells under it. */
 .gx-row {
   position: absolute;
   left: 0;
   right: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--gx-col-graph, 16px) var(--gx-col-refs, 168px) minmax(140px, 1fr) var(--gx-col-time, 84px) var(--gx-col-author, 96px) var(--gx-col-hash, 68px);
   align-items: center;
-  gap: 8px;
+  column-gap: 8px;
   height: var(--gx-row-h);
   padding: 0 10px 0 4px;
   border: 0;
@@ -358,8 +362,13 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
    would otherwise paint over its edge. */
 .gx-row[data-cursor="true"] { outline: 1.5px solid var(--gx-accent); outline-offset: -1.5px; z-index: 1; }
 .gx-graph { flex: none; display: block; overflow: visible; }
-.gx-hash { flex: none; color: var(--gx-caption); font-family: var(--gx-mono); font-size: 10.5px; }
-.gx-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+/* The hash column moved to the end, where it reads as the commit's identity
+   rather than as a prefix in front of the subject. */
+.gx-hash { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--gx-caption); font-family: var(--gx-mono); font-size: 10.5px; text-align: right; }
+.gx-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+/* The refs cell clips its own chips: a column narrower than the names has to
+   truncate them rather than push the subject off its track. */
+.gx-refs { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
 .gx-ref {
   position: relative;
   flex: none;
@@ -397,9 +406,61 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
 }
 .gx-ref:hover .gx-ref-tip { display: block; }
 .gx-ref[data-kind="tag"] { color: var(--gx-modified); border-color: color-mix(in srgb, var(--gx-modified) 35%, transparent); }
-.gx-author, .gx-time { flex: none; color: var(--gx-caption); font-size: 10.5px; }
-.gx-author { max-width: 12ch; overflow: hidden; text-overflow: ellipsis; }
-.gx-time { font-family: var(--gx-mono); font-variant-numeric: tabular-nums; min-width: 3ch; text-align: right; }
+.gx-author, .gx-time { min-width: 0; color: var(--gx-caption); font-size: 10.5px; }
+.gx-author { overflow: hidden; text-overflow: ellipsis; }
+.gx-time { font-family: var(--gx-mono); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* The header is the row grid without a row: same template, same gap, same
+   horizontal padding, so every label sits over the cells it names. It stays
+   outside the scroller, so the pane pads it by the scrollbar gutter instead. */
+.gx-colhead {
+  display: grid;
+  grid-template-columns: var(--gx-col-graph, 16px) var(--gx-col-refs, 168px) minmax(140px, 1fr) var(--gx-col-time, 84px) var(--gx-col-author, 96px) var(--gx-col-hash, 68px);
+  align-items: center;
+  column-gap: 8px;
+  flex: none;
+  height: 24px;
+  padding: 0 10px 0 4px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--gx-border-soft);
+  color: var(--gx-caption);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+.gx-colhead-cell { position: relative; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.gx-colhead-time, .gx-colhead-hash { text-align: right; }
+/* The handle sits on the column's right edge and overhangs it, so the hit area
+   straddles the boundary the pointer is aiming at. */
+.gx-col-handle {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  bottom: 0;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.gx-col-handle::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-.5px);
+  background: var(--gx-accent);
+  opacity: 0;
+}
+.gx-col-handle:hover::before { opacity: .55; }
+/* The handle is 9px wide, so the default focus ring collapses into noise; the
+   keyboard focus reuses the hover line instead, like the column divider. */
+.gx-col-handle:focus-visible { outline: none; }
+.gx-col-handle:focus-visible::before { opacity: .55; }
+/* Applied to the document body while a column drag is live: no text selection
+   under a moving pointer and a stable cursor wherever it travels. */
+body.gx-col-resizing { user-select: none; cursor: col-resize; }
 
 .gx-loadbar {
   display: flex;
@@ -779,7 +840,12 @@ body.gx-row-resizing { user-select: none; cursor: row-resize; }
      persisted width (this rule wins the cascade over the variable) both go
      inert. */
   .gx-pane-handle { display: none; }
-  .gx-author { display: none; }
+  /* The author column leaves the row and the header together: dropping it from
+     one template only would shift every later label off its cells. */
+  .gx-author, .gx-colhead-author { display: none; }
+  .gx-row, .gx-colhead {
+    grid-template-columns: var(--gx-col-graph, 16px) var(--gx-col-refs, 168px) minmax(140px, 1fr) var(--gx-col-time, 84px) var(--gx-col-hash, 68px);
+  }
 }
 `;
 

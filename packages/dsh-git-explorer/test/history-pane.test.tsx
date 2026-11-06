@@ -12,6 +12,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HistoryPane } from "../src/client/history-pane.tsx";
+import {
+  DEFAULT_HISTORY_COLUMN_WIDTHS,
+  HISTORY_COLUMNS_KEY,
+  HISTORY_COLUMN_STEP,
+} from "../src/client/history-columns.ts";
+import type { PaneWidthStorage } from "../src/client/pane-width.ts";
 import type { GitCommitNode } from "../src/host/types.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -295,5 +301,306 @@ describe("HistoryPane search seat", () => {
       );
     });
     expect(host.querySelector(".gx-empty")?.textContent).toContain("state.emptyRepository.title");
+  });
+});
+
+/** An in-memory stand-in; the pane only needs localStorage's three-item face. */
+function memoryStorage(initial: Record<string, string> = {}): PaneWidthStorage {
+  const data = new Map(Object.entries(initial));
+  return {
+    getItem: key => data.get(key) ?? null,
+    setItem: (key, value) => void data.set(key, value),
+    removeItem: key => void data.delete(key),
+  };
+}
+
+describe("HistoryPane columns", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  /** A list whose first commit carries two refs, so the refs column has content. */
+  function refCommits(): GitCommitNode[] {
+    const list = commits(6);
+    const first = list[0];
+    if (first !== undefined) {
+      list[0] = {
+        ...first,
+        refs: [
+          { kind: "branch", name: "main", head: true },
+          { kind: "tag", name: "v1.0.0", head: false },
+        ],
+      };
+    }
+    return list;
+  }
+
+  async function mount(
+    options: { rows?: number; storage?: PaneWidthStorage | null; list?: GitCommitNode[] } = {},
+  ): Promise<void> {
+    const list = options.list ?? commits(options.rows ?? 6);
+    await act(async () => {
+      root.render(
+        createElement(HistoryPane, {
+          commits: list,
+          graph: list.map(() => ({ lane: 0, color: 0, merge: false, segments: [] })),
+          selectedHash: undefined,
+          headHash: list[0]?.hash ?? null,
+          total: list.length,
+          hasMore: false,
+          loadingMore: false,
+          loadError: undefined,
+          searching: false,
+          search: "",
+          t,
+          onSelect: () => undefined,
+          onLoadMore: () => undefined,
+          onSearch: () => undefined,
+          columnStorage: options.storage,
+        }),
+      );
+    });
+  }
+
+  /** The pane root, which carries the column-width variables both halves inherit. */
+  function pane(): HTMLElement {
+    const found = host.querySelector<HTMLElement>('[data-testid="git-history"]');
+    if (found === null) throw new Error("history pane missing");
+    return found;
+  }
+
+  /** One column's width as the pane currently declares it. */
+  function columnWidth(id: string): string {
+    return pane().style.getPropertyValue(`--gx-col-${id}`);
+  }
+
+  function handle(id: string): HTMLElement {
+    const found = host.querySelector<HTMLElement>(`[data-testid="gx-col-handle-${id}"]`);
+    if (found === null) throw new Error(`handle ${id} missing`);
+    return found;
+  }
+
+  async function pressOn(id: string, key: string, modifiers: KeyboardEventInit = {}): Promise<KeyboardEvent> {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...modifiers });
+    await act(async () => {
+      handle(id).dispatchEvent(event);
+    });
+    return event;
+  }
+
+  it("lays each row out as graph, refs, subject, time, author, hash", async () => {
+    await mount({ list: refCommits() });
+    const row = host.querySelector<HTMLElement>('[data-testid="git-history-row"]');
+    if (row === null) throw new Error("row missing");
+    // The graph cell is an SVG, whose `className` is an SVGAnimatedString; the
+    // class attribute is the only form that reads the same on both.
+    const classes = [...row.children].map(child => child.getAttribute("class"));
+    expect(classes).toEqual(["gx-graph", "gx-refs", "gx-subject", "gx-time", "gx-author", "gx-hash"]);
+  });
+
+  it("puts the refs column ahead of the subject, as its own cell", async () => {
+    await mount({ list: refCommits() });
+    const row = host.querySelector<HTMLElement>('[data-testid="git-history-row"]');
+    if (row === null) throw new Error("row missing");
+    const refs = row.querySelector<HTMLElement>('[data-testid="git-history-refs"]');
+    const subject = row.querySelector<HTMLElement>(".gx-subject");
+    if (refs === null || subject === null) throw new Error("refs or subject missing");
+    // Node.DOCUMENT_POSITION_FOLLOWING: the subject comes after the refs cell.
+    expect(refs.compareDocumentPosition(subject) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(refs.querySelectorAll(".gx-ref")).toHaveLength(2);
+  });
+
+  it("keeps the short hash in the last column", async () => {
+    await mount();
+    const row = host.querySelector<HTMLElement>('[data-testid="git-history-row"]');
+    if (row === null) throw new Error("row missing");
+    expect(row.lastElementChild?.className).toBe("gx-hash");
+    expect(row.lastElementChild?.textContent).toBe("hash00");
+  });
+
+  it("renders a header with the six column labels in the same order", async () => {
+    await mount();
+    const head = host.querySelector<HTMLElement>('[data-testid="git-history-colhead"]');
+    if (head === null) throw new Error("column header missing");
+    const labels = [...head.children].map(cell => cell.textContent);
+    expect(labels).toEqual([
+      "history.col.graph",
+      "history.col.refs",
+      "history.col.subject",
+      "history.col.time",
+      "history.col.author",
+      "history.col.hash",
+    ]);
+  });
+
+  it("keeps the header out of the scrolling container", async () => {
+    await mount();
+    const head = host.querySelector<HTMLElement>('[data-testid="git-history-colhead"]');
+    const scroll = host.querySelector<HTMLElement>('[data-testid="git-history-scroll"]');
+    if (head === null || scroll === null) throw new Error("header or scroller missing");
+    expect(scroll.contains(head)).toBe(false);
+  });
+
+  it("renders no header when the list is empty, leaving the empty state alone", async () => {
+    await mount({ list: [] });
+    expect(host.querySelector('[data-testid="git-history-colhead"]')).toBeNull();
+    expect(host.querySelector(".gx-empty")).not.toBeNull();
+  });
+
+  it("exposes one separator per resizable column, with its bounds", async () => {
+    await mount();
+    for (const id of ["refs", "time", "author", "hash"]) {
+      const separator = handle(id);
+      expect(separator.getAttribute("role")).toBe("separator");
+      expect(separator.getAttribute("aria-orientation")).toBe("vertical");
+      expect(separator.tabIndex).toBe(0);
+      expect(separator.getAttribute("aria-valuemin")).not.toBeNull();
+      expect(separator.getAttribute("aria-valuemax")).not.toBeNull();
+      expect(separator.getAttribute("aria-valuenow")).not.toBeNull();
+    }
+    // The graph and the subject are not resizable, so they carry no handle.
+    expect(host.querySelector('[data-testid="gx-col-handle-graph"]')).toBeNull();
+    expect(host.querySelector('[data-testid="gx-col-handle-subject"]')).toBeNull();
+  });
+
+  it("starts every column on its shipped default", async () => {
+    await mount();
+    expect(columnWidth("refs")).toBe(`${String(DEFAULT_HISTORY_COLUMN_WIDTHS.refs)}px`);
+    expect(columnWidth("time")).toBe(`${String(DEFAULT_HISTORY_COLUMN_WIDTHS.time)}px`);
+    expect(columnWidth("author")).toBe(`${String(DEFAULT_HISTORY_COLUMN_WIDTHS.author)}px`);
+    expect(columnWidth("hash")).toBe(`${String(DEFAULT_HISTORY_COLUMN_WIDTHS.hash)}px`);
+  });
+
+  it("nudges a column by one step on the bare arrows", async () => {
+    const store = memoryStorage();
+    await mount({ storage: store });
+    const start = DEFAULT_HISTORY_COLUMN_WIDTHS.refs;
+    const event = await pressOn("refs", "ArrowRight");
+    expect(event.defaultPrevented).toBe(true);
+    expect(columnWidth("refs")).toBe(`${String(start + HISTORY_COLUMN_STEP)}px`);
+    await pressOn("refs", "ArrowLeft");
+    expect(columnWidth("refs")).toBe(`${String(start)}px`);
+  });
+
+  it("parks a column on its bounds with Home and End", async () => {
+    await mount({ storage: memoryStorage() });
+    await pressOn("refs", "Home");
+    expect(columnWidth("refs")).toBe("64px");
+    await pressOn("refs", "End");
+    expect(columnWidth("refs")).toBe("400px");
+  });
+
+  it("restores a column's default on Delete and Backspace", async () => {
+    const store = memoryStorage({ [HISTORY_COLUMNS_KEY]: JSON.stringify({ hash: 100 }) });
+    await mount({ storage: store });
+    expect(columnWidth("hash")).toBe("100px");
+    await pressOn("hash", "Delete");
+    expect(columnWidth("hash")).toBe(`${String(DEFAULT_HISTORY_COLUMN_WIDTHS.hash)}px`);
+    expect(store.getItem(HISTORY_COLUMNS_KEY)).toBeNull();
+  });
+
+  it("resets only the column whose handle was pressed", async () => {
+    const store = memoryStorage({ [HISTORY_COLUMNS_KEY]: JSON.stringify({ refs: 220, hash: 100 }) });
+    await mount({ storage: store });
+    await pressOn("hash", "Delete");
+    expect(columnWidth("hash")).toBe(`${String(DEFAULT_HISTORY_COLUMN_WIDTHS.hash)}px`);
+    // The handle speaks for one column, so the neighbour keeps the width the
+    // user gave it.
+    expect(columnWidth("refs")).toBe("220px");
+    expect(store.getItem(HISTORY_COLUMNS_KEY)).toBe(JSON.stringify({ refs: 220 }));
+  });
+
+  it("leaves modified chords and unrelated keys to the host", async () => {
+    await mount({ storage: memoryStorage() });
+    const before = columnWidth("refs");
+    const chorded = await pressOn("refs", "ArrowRight", { ctrlKey: true });
+    expect(chorded.defaultPrevented).toBe(false);
+    const shifted = await pressOn("refs", "ArrowRight", { shiftKey: true });
+    expect(shifted.defaultPrevented).toBe(false);
+    const typed = await pressOn("refs", "a");
+    expect(typed.defaultPrevented).toBe(false);
+    expect(columnWidth("refs")).toBe(before);
+  });
+
+  it("persists a keyboard nudge so the next mount reads it back", async () => {
+    const store = memoryStorage();
+    await mount({ storage: store });
+    await pressOn("refs", "ArrowRight");
+    expect(store.getItem(HISTORY_COLUMNS_KEY)).toBe(JSON.stringify({ refs: DEFAULT_HISTORY_COLUMN_WIDTHS.refs + HISTORY_COLUMN_STEP }));
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await mount({ storage: store });
+    expect(columnWidth("refs")).toBe(`${String(DEFAULT_HISTORY_COLUMN_WIDTHS.refs + HISTORY_COLUMN_STEP)}px`);
+  });
+
+  it("starts from a stored width instead of the default", async () => {
+    const store = memoryStorage({ [HISTORY_COLUMNS_KEY]: JSON.stringify({ refs: 220, hash: 100 }) });
+    await mount({ storage: store });
+    expect(columnWidth("refs")).toBe("220px");
+    expect(columnWidth("hash")).toBe("100px");
+    // A column the entry does not carry keeps following the shipped default.
+    expect(columnWidth("time")).toBe(`${String(DEFAULT_HISTORY_COLUMN_WIDTHS.time)}px`);
+  });
+
+  it("drags a column edge and writes once at rest", async () => {
+    const store = memoryStorage();
+    await mount({ storage: store });
+    const separator = handle("refs");
+    separator.setPointerCapture = () => undefined;
+    separator.releasePointerCapture = () => undefined;
+
+    await act(async () => {
+      separator.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: 300, button: 0, bubbles: true }));
+      separator.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: 340, bubbles: true }));
+    });
+    // Moving only changes state; the store is untouched until the pointer rests.
+    expect(store.getItem(HISTORY_COLUMNS_KEY)).toBeNull();
+    expect(columnWidth("refs")).toBe(`${String(DEFAULT_HISTORY_COLUMN_WIDTHS.refs + 40)}px`);
+
+    await act(async () => {
+      separator.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, clientX: 340, bubbles: true }));
+    });
+    expect(store.getItem(HISTORY_COLUMNS_KEY)).toBe(JSON.stringify({ refs: DEFAULT_HISTORY_COLUMN_WIDTHS.refs + 40 }));
+  });
+
+  it("undoes a drag that lands back where it began instead of pinning the pixels", async () => {
+    const store = memoryStorage();
+    await mount({ storage: store });
+    const separator = handle("refs");
+    separator.setPointerCapture = () => undefined;
+    separator.releasePointerCapture = () => undefined;
+
+    await act(async () => {
+      separator.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: 300, button: 0, bubbles: true }));
+      separator.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: 340, bubbles: true }));
+      separator.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, clientX: 300, bubbles: true }));
+    });
+    expect(columnWidth("refs")).toBe(`${String(DEFAULT_HISTORY_COLUMN_WIDTHS.refs)}px`);
+    expect(store.getItem(HISTORY_COLUMNS_KEY)).toBeNull();
+  });
+
+  it("marks the document while a column drag is live", async () => {
+    await mount({ storage: memoryStorage() });
+    const separator = handle("refs");
+    separator.setPointerCapture = () => undefined;
+    separator.releasePointerCapture = () => undefined;
+    await act(async () => {
+      separator.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: 300, button: 0, bubbles: true }));
+    });
+    expect(document.body.classList.contains("gx-col-resizing")).toBe(true);
+    await act(async () => {
+      separator.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, clientX: 300, bubbles: true }));
+    });
+    expect(document.body.classList.contains("gx-col-resizing")).toBe(false);
   });
 });
