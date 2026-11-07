@@ -441,7 +441,6 @@ export interface ParamPanelInput {
   readonly match: ParamDraftMatch;
   /** The already-filtered candidates, in profile order. */
   readonly params: readonly SkillParam[];
-  readonly box: TokenBox | undefined;
   /** Read at click time, so the panel never holds a stale action surface. */
   readonly getActions: () => InputActionsLike | undefined;
   /** Read at click time, for the same reason. */
@@ -451,7 +450,7 @@ export interface ParamPanelInput {
 }
 
 /**
- * Build the parameter candidate panel.
+ * Build the parameter candidate panel's content.
  *
  * A click replaces the half-typed token rather than appending after it, which is
  * the difference between a completion and a second flag: `--c` plus `--create`
@@ -460,6 +459,13 @@ export interface ParamPanelInput {
  * cannot be mapped honestly is dropped — a click that does nothing leaves the
  * token for the user to finish, while a click at a guessed offset corrupts the
  * draft and is not undoable as one step.
+ *
+ * Placement is deliberately not decided here. The flip above or below the caret
+ * depends on the panel's own height, and a node that has not been appended yet
+ * reports a height of zero, which `panelPlacement` reads as "not measured" and
+ * answers with `above` — so a panel built here would always open upward and run
+ * off the top of the window. `anchorParamPanel` does that half once the node is
+ * in the document.
  */
 export function renderParamPanel(doc: Document, input: ParamPanelInput): HTMLElement {
   const panel = doc.createElement("div");
@@ -478,25 +484,44 @@ export function renderParamPanel(doc: Document, input: ParamPanelInput): HTMLEle
     }
   }
 
+  panel.style.width = `${paramPanelWidth(doc)}px`;
+  return panel;
+}
+
+/** The panel's width: a fixed 320px, narrowed only by a viewport too small for it. */
+function paramPanelWidth(doc: Document): number {
+  return Math.min(320, panelMaxWidth(viewportWidth(doc)));
+}
+
+/**
+ * Place the parameter panel against the caret once it is in the document.
+ *
+ * This has to run after the append because the height it measures is the real
+ * one: a candidate list tall enough to overflow the room above the caret must
+ * flip below it, and a detached node cannot say how tall it is. The width is
+ * re-stated here so the horizontal clamp and the box agree on the same number
+ * even if the caller built the node at a different viewport size.
+ * @param doc - owning document.
+ * @param node - the panel, already appended to the document.
+ * @param box - the caret's viewport box, or undefined when nothing could be measured.
+ */
+export function anchorParamPanel(doc: Document, node: HTMLElement, box: TokenBox | undefined): void {
+  if (box === undefined) return;
   const margin = 4;
   const viewportW = viewportWidth(doc);
-  const width = Math.min(320, panelMaxWidth(viewportW));
-  panel.style.width = `${width}px`;
-  if (input.box !== undefined) {
-    // Measured from the node so the flip uses this list's real height: a skill
-    // with twelve flags must go below a token near the top of the window even
-    // though a two-flag list would have fit above it.
-    const place = panelPlacement(input.box, viewportHeight(doc), panel.offsetHeight, margin);
-    panel.style.left = `${clampPanelLeft(place.left, width, viewportW, 12)}px`;
-    if (place.anchor === "above") {
-      panel.style.bottom = `${viewportHeight(doc) - input.box.top + margin}px`;
-      panel.style.top = "";
-    } else {
-      panel.style.top = `${place.top}px`;
-      panel.style.bottom = "";
-    }
+  const width = paramPanelWidth(doc);
+  node.style.width = `${width}px`;
+  const place = panelPlacement(box, viewportHeight(doc), node.offsetHeight, margin);
+  node.style.left = `${clampPanelLeft(place.left, width, viewportW, 12)}px`;
+  if (place.anchor === "above") {
+    // `bottom` is resolved against the viewport for a fixed element, so the panel
+    // grows upward as the list of candidates gets longer.
+    node.style.bottom = `${viewportHeight(doc) - box.top + margin}px`;
+    node.style.top = "";
+  } else {
+    node.style.top = `${place.top}px`;
+    node.style.bottom = "";
   }
-  return panel;
 }
 
 /** One candidate row: the flag, its value shape, and the replacement it performs. */
@@ -800,13 +825,15 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
         name: paramMatch.name,
         match: paramMatch,
         params: candidates,
-        box: paramBox,
         getActions: () => actionsRef.current,
         getDraft: () => draftRef.current,
         getOccurrences: () => occurrencesRef.current,
       });
       paramNodeRef.current = node;
       doc.body.append(node);
+      // Only now does the node have a height to measure; placing it before the
+      // append would always choose `above` and clip the list at the window top.
+      anchorParamPanel(doc, node, paramBox);
       return () => {
         paramNodeRef.current = undefined;
         node.remove();

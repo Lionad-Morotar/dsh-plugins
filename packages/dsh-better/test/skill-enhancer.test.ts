@@ -16,6 +16,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  anchorParamPanel,
   appendParam,
   clampPanelLeft,
   hintLinesFor,
@@ -143,6 +144,11 @@ interface StubNode {
   title: string;
   type: string;
   style: Record<string, string>;
+  /**
+   * The measured height, which a real node only reports once it is in the
+   * document. Tests assign it directly to stand in for that measurement.
+   */
+  offsetHeight: number;
   children: StubNode[];
   handlers: Record<string, ((event: { preventDefault(): void }) => void)[]>;
   append(child: StubNode): void;
@@ -151,7 +157,10 @@ interface StubNode {
   remove(): void;
 }
 
-function stubDocument(): { doc: Document; created: StubNode[] } {
+function stubDocument(view: { readonly innerWidth?: number; readonly innerHeight?: number } = {}): {
+  doc: Document;
+  created: StubNode[];
+} {
   const created: StubNode[] = [];
   const make = (tagName: string): StubNode => {
     const node: StubNode = {
@@ -161,6 +170,7 @@ function stubDocument(): { doc: Document; created: StubNode[] } {
       title: "",
       type: "",
       style: {},
+      offsetHeight: 0,
       children: [],
       handlers: {},
       append(child) {
@@ -184,7 +194,12 @@ function stubDocument(): { doc: Document; created: StubNode[] } {
     body: { append() {} },
     addEventListener() {},
     removeEventListener() {},
-    defaultView: { addEventListener() {}, removeEventListener() {}, innerWidth: 1200, innerHeight: 800 },
+    defaultView: {
+      addEventListener() {},
+      removeEventListener() {},
+      innerWidth: view.innerWidth ?? 1200,
+      innerHeight: view.innerHeight ?? 800,
+    },
   } as unknown as Document;
   return { doc, created };
 }
@@ -693,7 +708,6 @@ describe("renderParamPanel", () => {
       name: options.match?.name ?? "flow-workflow",
       match: options.match ?? MATCH,
       params: options.params ?? PARAMS,
-      box: { left: 120, right: 260, top: 600, bottom: 618 },
       getActions: () => actions,
       getDraft: () => options.draft ?? DRAFT,
       getOccurrences: () => options.occurrences ?? [],
@@ -794,45 +808,93 @@ describe("renderParamPanel", () => {
     expect(findByClass(panel, "dsh-better-skill-params-title")?.textContent).toBe("/flow-workflow");
   });
 
-  it("anchors above the token when the composer sits low", () => {
-    const { panel } = build();
-    expect(panel.style.left).toBe("120px");
-    expect(panel.style.bottom).toBe("204px");
-    expect(panel.style.top).toBe("");
-  });
-
-  it("clamps its left edge to the viewport", () => {
-    const { doc } = stubDocument();
-    const panel = asStub(renderParamPanel(doc, {
-      name: "flow-workflow",
-      match: MATCH,
-      params: PARAMS,
-      box: { left: 1180, right: 1190, top: 600, bottom: 618 },
-      getActions: () => undefined,
-      getDraft: () => DRAFT,
-      getOccurrences: () => [],
-    }));
-    // 1200px window, 320px panel, 12px margin: the left edge lands at 868.
-    expect(panel.style.left).toBe("868px");
-  });
-
   it("renders at a fixed width that ignores the box", () => {
     const { panel } = build();
     expect(panel.style.width).toBe("320px");
   });
 
-  it("renders nothing positional when the anchor box is unknown", () => {
-    const { doc } = stubDocument();
-    const panel = asStub(renderParamPanel(doc, {
-      name: "flow-workflow",
-      match: MATCH,
-      params: PARAMS,
-      box: undefined,
-      getActions: () => undefined,
-      getDraft: () => DRAFT,
-      getOccurrences: () => [],
-    }));
+  it("leaves vertical placement to the caller that can measure it", () => {
+    // A node that is not in the document yet reports offsetHeight 0, and
+    // `panelPlacement` reads 0 as "not measured yet" and picks `above`. Placing
+    // the panel here would therefore always open upward, even with the caret at
+    // the top of the window, so the build step writes no position at all.
+    const { panel } = build();
     expect(panel.style.left).toBeUndefined();
+    expect(panel.style.top).toBeUndefined();
     expect(panel.style.bottom).toBeUndefined();
+  });
+});
+
+/**
+ * The parameter panel's placement, run after the node is in the document.
+ *
+ * This is the half of the placement that has to happen late: the flip above or
+ * below depends on the panel's real height, and a detached node has none. The
+ * stub stands in for the browser by assigning `offsetHeight` directly, which is
+ * exactly the value the real node would report once appended.
+ */
+describe("anchorParamPanel", () => {
+  /** A token sitting 600px down an 800px-tall window. */
+  const LOW = { left: 120, right: 120, top: 600, bottom: 618 };
+
+  /** A token near the top of the same window. */
+  const HIGH = { left: 120, right: 120, top: 40, bottom: 58 };
+
+  /** Build a bare node with a measured height, as the browser would report it. */
+  function measured(height: number): StubNode {
+    const { doc } = stubDocument();
+    const node = asStub(doc.createElement("div"));
+    node.offsetHeight = height;
+    return node;
+  }
+
+  it("opens above the token when the panel fits in the room above it", () => {
+    const { doc } = stubDocument();
+    const node = measured(300);
+    anchorParamPanel(doc, node as unknown as HTMLElement, LOW);
+
+    expect(node.style.left).toBe("120px");
+    // 800px window, token top at 600, 4px margin.
+    expect(node.style.bottom).toBe("204px");
+    expect(node.style.top).toBe("");
+  });
+
+  it("flips below the token when the room above is too small", () => {
+    // 36px of room above a 300px panel: opening upward would push most of the
+    // list past the top of the window, which is the bug this split fixes.
+    const { doc } = stubDocument();
+    const node = measured(300);
+    anchorParamPanel(doc, node as unknown as HTMLElement, HIGH);
+
+    expect(node.style.top).toBe("62px");
+    expect(node.style.bottom).toBe("");
+  });
+
+  it("writes no position at all when the anchor box is unknown", () => {
+    const { doc } = stubDocument();
+    const node = measured(300);
+    anchorParamPanel(doc, node as unknown as HTMLElement, undefined);
+
+    expect(node.style.left).toBeUndefined();
+    expect(node.style.top).toBeUndefined();
+    expect(node.style.bottom).toBeUndefined();
+  });
+
+  it("clamps the left edge on a narrow viewport", () => {
+    const { doc } = stubDocument({ innerWidth: 300 });
+    const node = measured(300);
+    anchorParamPanel(doc, node as unknown as HTMLElement, LOW);
+
+    // A 300px window cannot fit a 240px panel beside a 12px margin on both
+    // sides, so the left margin wins and the panel starts at 12.
+    expect(node.style.left).toBe("12px");
+  });
+
+  it("re-states the width so the clamp and the box agree", () => {
+    const { doc } = stubDocument({ innerWidth: 300 });
+    const node = measured(300);
+    anchorParamPanel(doc, node as unknown as HTMLElement, LOW);
+
+    expect(node.style.width).toBe("276px");
   });
 });
