@@ -43,6 +43,22 @@ describe("skill enhancer sheet", () => {
     expect(panel).not.toContain("shadow-elevated");
   });
 
+  it("paints the parameter panel like the hover panel it replaces", () => {
+    // The two panels never show at once, so a different fill or shadow would read
+    // as a glitch when one hands over to the other.
+    const params = block(".dsh-better-skill-params");
+    expect(params).toContain("background: var(--dsw-alias-bg-layer-2");
+    expect(params).toContain("var(--dsw-alias-border-l2");
+    expect(params).toContain("var(--dsw-elevation-prominent");
+    expect(params).toContain("position: fixed");
+    expect(params).toContain("z-index: 60");
+  });
+
+  it("keeps the parameter panel's title quieter than its rows", () => {
+    const title = block(".dsh-better-skill-params-title");
+    expect(title).toContain("var(--dsw-alias-label-caption");
+  });
+
   it("bounds the hint width so a long argument-hint wraps", () => {
     // flow-agent's hint is a single 349-character line; unbounded it runs past
     // the composer and is clipped rather than wrapped.

@@ -29,8 +29,16 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { matchLeadingSkillToken, shouldShowHint } from "./skill-hint.ts";
+import {
+  filterParams,
+  matchParamDraft,
+  paramCompletionSpan,
+  paramCompletionText,
+  type OccurrenceLike,
+  type ParamDraftMatch,
+} from "./skill-param.ts";
 import { composerBusy } from "./composer-phase.ts";
-import type { SkillProfileWire } from "../skill-profile.ts";
+import type { SkillParam, SkillProfileWire } from "../skill-profile.ts";
 
 /** One session's published composer state, narrowed to what this module reads. */
 export interface SkillInputStateLike {
@@ -38,6 +46,32 @@ export interface SkillInputStateLike {
   readonly draftRev: number;
   readonly phase: string;
   readonly occurrences?: readonly unknown[];
+}
+
+/**
+ * The attachment chips a composer state publishes, narrowed to what the offset
+ * arithmetic needs.
+ *
+ * The host's occurrence shape is not this module's to enforce, and this runs on
+ * every keystroke, so a malformed entry is dropped rather than allowed to throw:
+ * a missing chip shifts the replacement span by a few characters, which is bad,
+ * but an exception here would take the whole composer down. An entry with a
+ * zero length is kept because it shifts nothing and dropping it would be a
+ * second, silent opinion about the host's data.
+ * @param state - the published composer state.
+ * @returns the well-formed chips; empty when the state publishes none.
+ */
+export function occurrencesOf(state: SkillInputStateLike): readonly OccurrenceLike[] {
+  const raw = state.occurrences;
+  if (!Array.isArray(raw)) return [];
+  const out: OccurrenceLike[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const candidate = entry as { readonly offset?: unknown; readonly length?: unknown };
+    if (typeof candidate.offset !== "number" || typeof candidate.length !== "number") continue;
+    out.push({ offset: candidate.offset, length: candidate.length });
+  }
+  return out;
 }
 
 /** One session's published composer state; a snapshot store. */
@@ -361,6 +395,172 @@ function viewportHeight(doc: Document): number {
 }
 
 /**
+ * The box the parameter panel hangs from: the caret, not the skill token.
+ *
+ * The candidate list belongs under the cursor because that is where the user is
+ * looking while typing a flag, and the token may be far to the left by then. The
+ * caret is read from the selection rather than derived from a draft offset on
+ * purpose: the host's text projection and the DOM disagree whenever a chip or a
+ * soft wrap is involved, and an offset-to-DOM guess lands the panel in the wrong
+ * place with no way to notice. When the selection is not inside the composer the
+ * fallback is the last text ref, which is still the right line on a single-line
+ * composer and merely approximate on a wrapped one.
+ * @param doc - owning document.
+ * @returns the anchor box, or undefined when nothing in the composer can be measured.
+ */
+export function paramAnchorBox(doc: Document): TokenBox | undefined {
+  const selection = typeof doc.getSelection === "function" ? doc.getSelection() : null;
+  const anchor = selection?.anchorNode;
+  if (anchor !== null && anchor !== undefined) {
+    const parent = anchor.nodeType === 1 ? (anchor as Element) : anchor.parentElement;
+    const host = parent?.closest("[data-composer-text-ref]");
+    if (host !== null && host !== undefined) {
+      const rect = selection?.getRangeAt === undefined || selection.rangeCount === 0
+        ? undefined
+        : selection.getRangeAt(0).getBoundingClientRect();
+      // A collapsed caret at the very start of an empty line reports a zero-height
+      // rect; anchoring to it would put the panel at the top of the window.
+      if (rect !== undefined && rect.height > 0) {
+        return { left: rect.left, right: rect.left, top: rect.top, bottom: rect.bottom };
+      }
+    }
+  }
+  const nodes = doc.querySelectorAll("[data-composer-text-ref]");
+  const last = nodes[nodes.length - 1];
+  if (last === undefined) return undefined;
+  const rect = last.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) return undefined;
+  return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+}
+
+/** What the parameter candidate panel renders for one typed token. */
+export interface ParamPanelInput {
+  /** Skill name, without the leading slash; the panel's title. */
+  readonly name: string;
+  /** The token being typed, in draft coordinates. */
+  readonly match: ParamDraftMatch;
+  /** The already-filtered candidates, in profile order. */
+  readonly params: readonly SkillParam[];
+  /** Read at click time, so the panel never holds a stale action surface. */
+  readonly getActions: () => InputActionsLike | undefined;
+  /** Read at click time, for the same reason. */
+  readonly getDraft: () => string;
+  /** Read at click time: the chips the span has to be translated through. */
+  readonly getOccurrences: () => readonly OccurrenceLike[];
+}
+
+/**
+ * Build the parameter candidate panel's content.
+ *
+ * A click replaces the half-typed token rather than appending after it, which is
+ * the difference between a completion and a second flag: `--c` plus `--create`
+ * would otherwise leave `--c --create` in the draft. The replacement range is
+ * computed from the captured revision and the draft's chips, and a range that
+ * cannot be mapped honestly is dropped — a click that does nothing leaves the
+ * token for the user to finish, while a click at a guessed offset corrupts the
+ * draft and is not undoable as one step.
+ *
+ * Placement is deliberately not decided here. The flip above or below the caret
+ * depends on the panel's own height, and a node that has not been appended yet
+ * reports a height of zero, which `panelPlacement` reads as "not measured" and
+ * answers with `above` — so a panel built here would always open upward and run
+ * off the top of the window. `anchorParamPanel` does that half once the node is
+ * in the document.
+ */
+export function renderParamPanel(doc: Document, input: ParamPanelInput): HTMLElement {
+  const panel = doc.createElement("div");
+  panel.className = "dsh-better-skill-params";
+
+  const title = doc.createElement("div");
+  title.className = "dsh-better-skill-params-title";
+  title.textContent = `/${input.name}`;
+  panel.append(title);
+
+  // No action surface means no insertion path, and a row that cannot insert
+  // teaches a gesture that does nothing.
+  if (input.getActions()?.insertText !== undefined) {
+    for (const param of input.params) {
+      panel.append(paramCandidate(doc, input, param.flag, param.detail));
+    }
+  }
+
+  panel.style.width = `${paramPanelWidth(doc)}px`;
+  return panel;
+}
+
+/** The panel's width: a fixed 320px, narrowed only by a viewport too small for it. */
+function paramPanelWidth(doc: Document): number {
+  return Math.min(320, panelMaxWidth(viewportWidth(doc)));
+}
+
+/**
+ * Place the parameter panel against the caret once it is in the document.
+ *
+ * This has to run after the append because the height it measures is the real
+ * one: a candidate list tall enough to overflow the room above the caret must
+ * flip below it, and a detached node cannot say how tall it is. The width is
+ * re-stated here so the horizontal clamp and the box agree on the same number
+ * even if the caller built the node at a different viewport size.
+ * @param doc - owning document.
+ * @param node - the panel, already appended to the document.
+ * @param box - the caret's viewport box, or undefined when nothing could be measured.
+ */
+export function anchorParamPanel(doc: Document, node: HTMLElement, box: TokenBox | undefined): void {
+  if (box === undefined) return;
+  const margin = 4;
+  const viewportW = viewportWidth(doc);
+  const width = paramPanelWidth(doc);
+  node.style.width = `${width}px`;
+  const place = panelPlacement(box, viewportHeight(doc), node.offsetHeight, margin);
+  node.style.left = `${clampPanelLeft(place.left, width, viewportW, 12)}px`;
+  if (place.anchor === "above") {
+    // `bottom` is resolved against the viewport for a fixed element, so the panel
+    // grows upward as the list of candidates gets longer.
+    node.style.bottom = `${viewportHeight(doc) - box.top + margin}px`;
+    node.style.top = "";
+  } else {
+    node.style.top = `${place.top}px`;
+    node.style.bottom = "";
+  }
+}
+
+/** One candidate row: the flag, its value shape, and the replacement it performs. */
+function paramCandidate(
+  doc: Document,
+  input: ParamPanelInput,
+  flag: string,
+  detail: string,
+): HTMLElement {
+  const row = doc.createElement("button");
+  row.type = "button";
+  row.className = "dsh-better-skill-panel-param";
+  // The composer must keep focus; see the module note.
+  row.addEventListener("pointerdown", event => event.preventDefault());
+
+  const flagNode = doc.createElement("span");
+  flagNode.className = "dsh-better-skill-panel-param-flag";
+  flagNode.textContent = flag;
+  row.append(flagNode);
+
+  if (detail !== "") {
+    const detailNode = doc.createElement("span");
+    detailNode.className = "dsh-better-skill-panel-param-detail";
+    detailNode.textContent = detail;
+    row.append(detailNode);
+  }
+
+  row.addEventListener("click", () => {
+    const actions = input.getActions();
+    const captured = actions?.captureInsertion?.();
+    if (actions?.insertText === undefined || captured === undefined) return;
+    const span = paramCompletionSpan(input.getDraft(), input.getOccurrences(), input.match, captured.draftRev);
+    if (span === undefined) return;
+    actions.insertText(paramCompletionText(flag), span);
+  });
+  return row;
+}
+
+/**
  * Build the enhancer component.
  * @param deps - catalogue, profile, usage and insertion resolvers.
  * @returns the slot component; it renders a body-level ghost and panel.
@@ -376,6 +576,11 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
     const fromSlot = props.useInput;
     const draftFromSlot = fromSlot === undefined ? undefined : fromSlot(state => state.draft);
     const phaseFromSlot = fromSlot === undefined ? undefined : fromSlot(state => state.phase);
+    // The chips have to come from the same state the draft came from: a slot that
+    // publishes the draft while the store publishes the chips would pair a draft
+    // with another revision's offsets, and the replacement span would be off by
+    // whatever the difference is worth.
+    const occurrencesFromSlot = fromSlot === undefined ? undefined : fromSlot(state => state.occurrences);
     const stateFromStore = useSyncExternalStore(
       listener => (store === undefined ? () => undefined : store.subscribe(listener)),
       () => (store === undefined ? EMPTY_INPUT_STATE : store.getSnapshot()),
@@ -389,6 +594,11 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
     const [hovered, setHovered] = useState<string | undefined>(undefined);
     const [box, setBox] = useState<TokenBox | undefined>(undefined);
     const [usage, setUsage] = useState<{ session: number; workspace?: number } | undefined>(undefined);
+    // The draft the user dismissed the candidate list on. Storing the draft rather
+    // than a boolean is what makes the list reopen on the next keystroke: any edit
+    // changes the string, so the dismissal cannot outlive the text it applied to.
+    const [paramDismissed, setParamDismissed] = useState<string | undefined>(undefined);
+    const [paramBox, setParamBox] = useState<TokenBox | undefined>(undefined);
 
     // The catalogue is fetched once per session and kept: it changes only when the
     // workspace does, and a refetch per keystroke would hammer the host.
@@ -417,9 +627,18 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
       ? match?.name
       : undefined;
 
+    // The candidate list is the same gesture one step further: the draft still
+    // opens with a known skill, but the last token is a flag being typed. It
+    // replaces the ghost rather than joining it, because both hang off the same
+    // caret and two overlays there would fight for the same space.
+    const paramMatch = matchParamDraft(draft, name => names.has(name));
+    const paramOpen = paramMatch !== undefined && !composerBusy(phase) && paramDismissed !== draft;
+
     // The ghost's text follows whichever skill the draft addresses, whether it was
-    // reached by typing or by hovering.
-    const profileName = hintName ?? hovered;
+    // reached by typing or by hovering. The candidate list is a third way in: it
+    // is already open on a skill the catalogue knows, so its profile is the one
+    // the rows are filtered from.
+    const profileName = hintName ?? hovered ?? (paramOpen ? paramMatch.name : undefined);
     useEffect(() => {
       if (sessionId === undefined || profileName === undefined) {
         setProfile(undefined);
@@ -524,6 +743,19 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
     draftRef.current = draft;
     const actionsRef = useRef<InputActionsLike | undefined>(undefined);
     actionsRef.current = props.inputActions ?? (sessionId === undefined ? undefined : deps.actionsFor(sessionId));
+    // The chips, read at click time: the span is translated through them, and a
+    // stale list would shift the replacement by however much the last attachment
+    // was worth.
+    const occurrencesRef = useRef<readonly OccurrenceLike[]>([]);
+    occurrencesRef.current = occurrencesOf({
+      draft,
+      draftRev: stateFromStore.draftRev,
+      phase,
+      occurrences: occurrencesFromSlot ?? stateFromStore.occurrences,
+    });
+    // The candidate panel's own node, so an outside pointerdown can tell a click
+    // on a row from a click anywhere else.
+    const paramNodeRef = useRef<HTMLElement | undefined>(undefined);
 
     // The ghost. Mounted into `body` rather than rendered in the slot cell: the
     // composer clips its own children, and an absolutely positioned ghost inside
@@ -540,6 +772,9 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
     // The panel, also body-level and fixed so it clears host popovers.
     useEffect(() => {
       if (doc === undefined || hovered === undefined) return undefined;
+      // The candidate list owns the caret while it is open; two overlays anchored
+      // to the same place would overlap and the pointer would have to choose.
+      if (paramOpen) return undefined;
       const node = renderPanel(doc, deps, {
         name: hovered,
         profile,
@@ -560,7 +795,76 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
       });
       doc.body.append(node);
       return () => node.remove();
-    }, [doc, hovered, profile, usage, box, sessionId]);
+    }, [doc, hovered, profile, usage, box, sessionId, paramOpen]);
+
+    // Re-anchor the candidate list on the caret. The draft is a dependency because
+    // every keystroke can move the caret, and a resize can reflow the composer
+    // under a stationary one.
+    useEffect(() => {
+      if (doc === undefined || !paramOpen) {
+        setParamBox(undefined);
+        return;
+      }
+      const measure = (): void => setParamBox(paramAnchorBox(doc));
+      measure();
+      const view = doc.defaultView;
+      view?.addEventListener("resize", measure);
+      return () => view?.removeEventListener("resize", measure);
+    }, [doc, paramOpen, draft]);
+
+    // The candidate list. Rebuilt whenever the token or the candidate set changes,
+    // so the rows always match what has been typed; the click handlers read the
+    // draft and chips through refs, so a rebuild is never required for correctness.
+    useEffect(() => {
+      if (doc === undefined || !paramOpen || paramMatch === undefined) return undefined;
+      const candidates = filterParams(profile?.params ?? [], paramMatch.query);
+      // An empty list is not worth a panel: it would cover the composer to say
+      // "nothing matches" when the user can already see that nothing matched.
+      if (candidates.length === 0) return undefined;
+      const node = renderParamPanel(doc, {
+        name: paramMatch.name,
+        match: paramMatch,
+        params: candidates,
+        getActions: () => actionsRef.current,
+        getDraft: () => draftRef.current,
+        getOccurrences: () => occurrencesRef.current,
+      });
+      paramNodeRef.current = node;
+      doc.body.append(node);
+      // Only now does the node have a height to measure; placing it before the
+      // append would always choose `above` and clip the list at the window top.
+      anchorParamPanel(doc, node, paramBox);
+      return () => {
+        paramNodeRef.current = undefined;
+        node.remove();
+      };
+    }, [doc, paramOpen, paramMatch, profile, paramBox]);
+
+    // Escape closes the candidate list. It never takes focus, so this listens on
+    // the document; the draft is recorded so the next keystroke reopens it.
+    useEffect(() => {
+      if (doc === undefined || !paramOpen) return;
+      const onKey = (event: KeyboardEvent): void => {
+        if (event.key === "Escape") setParamDismissed(draftRef.current);
+      };
+      doc.addEventListener("keydown", onKey);
+      return () => doc.removeEventListener("keydown", onKey);
+    }, [doc, paramOpen]);
+
+    // A pointerdown outside the list closes it. Capture phase, because the row's
+    // own handler cancels the event's default action and a bubble-phase listener
+    // would miss a click that lands on a row.
+    useEffect(() => {
+      if (doc === undefined || !paramOpen) return;
+      const onDown = (event: Event): void => {
+        const node = paramNodeRef.current;
+        const target = event.target;
+        if (node !== undefined && target instanceof Node && node.contains(target)) return;
+        setParamDismissed(draftRef.current);
+      };
+      doc.addEventListener("pointerdown", onDown, true);
+      return () => doc.removeEventListener("pointerdown", onDown, true);
+    }, [doc, paramOpen]);
 
     return null;
   };
