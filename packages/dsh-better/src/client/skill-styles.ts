@@ -132,6 +132,34 @@ export const SKILL_ENHANCER_SHEET = `
   color: var(--dsw-alias-label-secondary);
   font-size: 11px;
 }
+/* The parameter candidate list. It shares the hover panel's surface treatment
+   and z-index because the two never appear together: the hover panel is
+   suppressed while this one is open, so a different fill or shadow would read as
+   a glitch at the handover. The width is fixed by the caller rather than sized
+   from content, because a list that resizes as the user types moves the row
+   under the pointer. */
+.dsh-better-skill-params {
+  position: fixed;
+  z-index: 60;
+  min-width: 240px;
+  max-width: min(640px, calc(100vw - 24px));
+  max-height: min(420px, 60vh);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 6px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
+  border-radius: var(--dsw-radius-md, 12px);
+  background: var(--dsw-alias-bg-layer-2, #ffffff);
+  box-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0, 0, 0, 0.16));
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.dsh-better-skill-params-title {
+  padding: 2px 6px 4px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+}
 `;
 
 /**

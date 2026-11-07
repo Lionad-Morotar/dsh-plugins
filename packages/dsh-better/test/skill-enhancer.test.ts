@@ -19,6 +19,7 @@ import {
   appendParam,
   clampPanelLeft,
   hintLinesFor,
+  occurrencesOf,
   panelMaxWidth,
   panelPlacement,
   panelWidthFor,
@@ -26,8 +27,10 @@ import {
   paramInsertionText,
   renderGhost,
   renderPanel,
+  renderParamPanel,
 } from "../src/client/skill-enhancer.tsx";
-import type { SkillProfileWire } from "../src/skill-profile.ts";
+import type { ParamDraftMatch } from "../src/client/skill-param.ts";
+import type { SkillParam, SkillProfileWire } from "../src/skill-profile.ts";
 
 describe("paramInsertionText", () => {
   it("separates the flag from a token that ends without whitespace", () => {
@@ -598,5 +601,238 @@ describe("renderGhost", () => {
     const ghost = asStub(renderGhost(doc, { left: 0, right: 10, top: 0, bottom: 10 }, ["[--a]", "[--b]"]));
 
     expect(ghost.textContent).toBe("[--a]\n[--b]");
+  });
+});
+
+describe("occurrencesOf", () => {
+  it("returns nothing when the state publishes no occurrences", () => {
+    expect(occurrencesOf({ draft: "/flow ", draftRev: 1, phase: "plain" })).toEqual([]);
+  });
+
+  it("returns nothing for a value that is not an array", () => {
+    // The host's shape is not this module's to enforce, so anything unexpected
+    // degrades to "no chips" rather than throwing inside a keystroke handler.
+    // The casts are the point: these are shapes the published type rules out and
+    // a real composer can still hand over.
+    const notAnArray = (value: unknown) => ({ draft: "", draftRev: 1, phase: "plain", occurrences: value } as never);
+    expect(occurrencesOf(notAnArray(null))).toEqual([]);
+    expect(occurrencesOf(notAnArray(7))).toEqual([]);
+  });
+
+  it("keeps well-formed entries and drops the rest", () => {
+    const state = {
+      draft: "",
+      draftRev: 1,
+      phase: "plain",
+      occurrences: [{ offset: 6, length: 5 }, { offset: "8", length: 2 }, null, { offset: 1 }],
+    };
+    expect(occurrencesOf(state)).toEqual([{ offset: 6, length: 5 }]);
+  });
+
+  it("keeps a zero-length entry, which shifts nothing", () => {
+    const state = { draft: "", draftRev: 1, phase: "plain", occurrences: [{ offset: 0, length: 0 }] };
+    expect(occurrencesOf(state)).toEqual([{ offset: 0, length: 0 }]);
+  });
+});
+
+/**
+ * The parameter candidate panel.
+ *
+ * This is the surface that replaces typing a flag from memory: the user types
+ * `--` and the list narrows as they type. Two things about it are load-bearing
+ * and both are asserted here — the rows mirror the filtered parameters, and a
+ * click replaces the typed token through the host's revision-checked insertion
+ * rather than appending to the end of the draft.
+ *
+ * The offset case is the one that fails silently in a real composer: an
+ * attachment chip is many characters in the draft and one in the editor, so a
+ * span computed in draft coordinates replaces the wrong text. The stub document
+ * cannot reproduce that, but the arithmetic can, which is why the chip cases are
+ * driven through the real `paramCompletionSpan`.
+ */
+describe("renderParamPanel", () => {
+  /** The parameters the panel lists, in the order the profile gave them. */
+  const PARAMS: readonly SkillParam[] = [
+    { flag: "--create", detail: "" },
+    { flag: "--scope", detail: "<package|project|global>" },
+  ];
+
+  /** A draft with the parameter token at its end. */
+  const DRAFT = "/flow-workflow --c";
+
+  /** The match `matchParamDraft` produces for {@link DRAFT}. */
+  const MATCH: ParamDraftMatch = { name: "flow-workflow", query: "--c", start: 15 };
+
+  /** One recorded insertion, as the stub action surface saw it. */
+  interface Recorded {
+    readonly text: string;
+    readonly span: { readonly start: number; readonly end: number; readonly draftRev: number };
+  }
+
+  /** Build the panel over a stub document, recording insertions. */
+  function build(options: {
+    readonly params?: readonly SkillParam[];
+    readonly draft?: string;
+    readonly match?: ParamDraftMatch;
+    readonly occurrences?: readonly { readonly offset: number; readonly length: number }[];
+    readonly actions?: boolean;
+  } = {}): { panel: StubNode; inserted: Recorded[]; prevented: unknown[] } {
+    const { doc } = stubDocument();
+    const inserted: Recorded[] = [];
+    const prevented: unknown[] = [];
+    const actions = options.actions === false
+      ? undefined
+      : {
+        captureInsertion: () => ({ start: 15, end: 17, draftRev: 7 }),
+        insertText: (text: string, span: Recorded["span"]) => {
+          inserted.push({ text, span });
+          return true;
+        },
+      };
+    const panel = asStub(renderParamPanel(doc, {
+      name: options.match?.name ?? "flow-workflow",
+      match: options.match ?? MATCH,
+      params: options.params ?? PARAMS,
+      box: { left: 120, right: 260, top: 600, bottom: 618 },
+      getActions: () => actions,
+      getDraft: () => options.draft ?? DRAFT,
+      getOccurrences: () => options.occurrences ?? [],
+    }));
+    // Count a row that cancels pointerdown: that is the row that keeps the
+    // composer focused, and it is the only thing the handler is for.
+    for (const row of panel.children) {
+      const handler = row.handlers.pointerdown?.[0];
+      if (handler === undefined) continue;
+      row.handlers.pointerdown = [(event) => {
+        prevented.push(event);
+        handler(event);
+      }];
+    }
+    return { panel, inserted, prevented };
+  }
+
+  it("titles itself with the skill token", () => {
+    const { panel } = build();
+    expect(findByClass(panel, "dsh-better-skill-params-title")?.textContent).toBe("/flow-workflow");
+  });
+
+  it("carries the panel class the stylesheet scopes", () => {
+    const { panel } = build();
+    expect(panel.className).toBe("dsh-better-skill-params");
+  });
+
+  it("renders one row per parameter, in order", () => {
+    const { panel } = build();
+    const rows = classesOf(panel).filter(name => name === "dsh-better-skill-panel-param");
+    expect(rows).toHaveLength(PARAMS.length);
+    const first = findByClass(panel, "dsh-better-skill-panel-param");
+    expect(first?.children[0]?.textContent).toBe("--create");
+  });
+
+  it("shows a detail only for the parameters that have one", () => {
+    const { panel } = build();
+    const details = classesOf(panel).filter(name => name === "dsh-better-skill-panel-param-detail");
+    expect(details).toHaveLength(1);
+  });
+
+  it("replaces the typed token instead of appending to the draft", () => {
+    // The span comes from the captured revision and the token's own offsets, so
+    // the half-typed `--c` is replaced rather than left behind.
+    const { panel, inserted } = build();
+    findByClass(panel, "dsh-better-skill-panel-param")?.handlers.click?.[0]?.({ preventDefault() {} });
+    // The span ends at the draft's end: the whole half-typed token is replaced.
+    expect(inserted).toEqual([{ text: "--create ", span: { start: 15, end: 18, draftRev: 7 } }]);
+  });
+
+  it("shifts the span for an attachment chip earlier in the draft", () => {
+    // `/flow @a.md --s`: the chip is 5 characters in the draft and 1 in the
+    // editor, so the token starts at 12 in the draft and 8 in the editor.
+    const { panel, inserted } = build({
+      draft: "/flow @a.md --s",
+      match: { name: "flow", query: "--s", start: 12 },
+      params: [{ flag: "--search", detail: "" }],
+      occurrences: [{ offset: 6, length: 5 }],
+    });
+    findByClass(panel, "dsh-better-skill-panel-param")?.handlers.click?.[0]?.({ preventDefault() {} });
+    expect(inserted).toEqual([{ text: "--search ", span: { start: 8, end: 11, draftRev: 7 } }]);
+  });
+
+  it("inserts nothing when the token offset falls inside a chip", () => {
+    // A span that cannot be mapped honestly is dropped: inserting at a guessed
+    // offset would corrupt the draft, which is worse than a click that does
+    // nothing and leaves the token for the user to finish.
+    const { panel, inserted } = build({
+      draft: "/flow @a.md --s",
+      match: { name: "flow", query: "--s", start: 8 },
+      params: [{ flag: "--search", detail: "" }],
+      occurrences: [{ offset: 6, length: 5 }],
+    });
+    findByClass(panel, "dsh-better-skill-panel-param")?.handlers.click?.[0]?.({ preventDefault() {} });
+    expect(inserted).toEqual([]);
+  });
+
+  it("cancels pointerdown so the composer keeps focus", () => {
+    const { panel, prevented } = build();
+    let cancelled = false;
+    findByClass(panel, "dsh-better-skill-panel-param")?.handlers.pointerdown?.[0]?.({
+      preventDefault: () => {
+        cancelled = true;
+      },
+    });
+    expect(cancelled).toBe(true);
+    expect(prevented).toHaveLength(1);
+  });
+
+  it("renders no rows when there is no insertion surface", () => {
+    // A row that cannot insert teaches a gesture that does nothing.
+    const { panel } = build({ actions: false });
+    expect(classesOf(panel)).not.toContain("dsh-better-skill-panel-param");
+  });
+
+  it("keeps the title when there is nothing to insert", () => {
+    const { panel } = build({ actions: false });
+    expect(findByClass(panel, "dsh-better-skill-params-title")?.textContent).toBe("/flow-workflow");
+  });
+
+  it("anchors above the token when the composer sits low", () => {
+    const { panel } = build();
+    expect(panel.style.left).toBe("120px");
+    expect(panel.style.bottom).toBe("204px");
+    expect(panel.style.top).toBe("");
+  });
+
+  it("clamps its left edge to the viewport", () => {
+    const { doc } = stubDocument();
+    const panel = asStub(renderParamPanel(doc, {
+      name: "flow-workflow",
+      match: MATCH,
+      params: PARAMS,
+      box: { left: 1180, right: 1190, top: 600, bottom: 618 },
+      getActions: () => undefined,
+      getDraft: () => DRAFT,
+      getOccurrences: () => [],
+    }));
+    // 1200px window, 320px panel, 12px margin: the left edge lands at 868.
+    expect(panel.style.left).toBe("868px");
+  });
+
+  it("renders at a fixed width that ignores the box", () => {
+    const { panel } = build();
+    expect(panel.style.width).toBe("320px");
+  });
+
+  it("renders nothing positional when the anchor box is unknown", () => {
+    const { doc } = stubDocument();
+    const panel = asStub(renderParamPanel(doc, {
+      name: "flow-workflow",
+      match: MATCH,
+      params: PARAMS,
+      box: undefined,
+      getActions: () => undefined,
+      getDraft: () => DRAFT,
+      getOccurrences: () => [],
+    }));
+    expect(panel.style.left).toBeUndefined();
+    expect(panel.style.bottom).toBeUndefined();
   });
 });
