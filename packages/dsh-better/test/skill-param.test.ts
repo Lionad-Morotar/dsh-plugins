@@ -108,7 +108,7 @@ describe("matchParamDraft", () => {
 describe("filterParams", () => {
   const PARAMS: readonly SkillParam[] = [param("--search"), param("--hear"), param("--simplify")];
 
-  it("returns every parameter for a bare double dash", () => {
+  it("returns every flag for a bare double dash", () => {
     expect(flags(filterParams(PARAMS, "--"))).toEqual(["--search", "--hear", "--simplify"]);
   });
 
@@ -126,8 +126,11 @@ describe("filterParams", () => {
   });
 
   it("drops placeholders and bare words, which cannot be completed as flags", () => {
+    // A bare `--` is the user announcing a flag, not asking for the skill's whole
+    // argument surface: a positional placeholder cannot be completed into a flag,
+    // so offering it would put a row in the list that the gesture cannot use.
     const mixed = [param("<file>"), param("target"), param("--search")];
-    expect(flags(filterParams(mixed, "--"))).toEqual(["<file>", "target", "--search"]);
+    expect(flags(filterParams(mixed, "--"))).toEqual(["--search"]);
     expect(flags(filterParams(mixed, "--s"))).toEqual(["--search"]);
   });
 

@@ -83,18 +83,17 @@ export function matchParamDraft(
 /**
  * Narrow the parameters to the typed prefix.
  *
- * A bare `--` returns everything: the user has announced that a flag is coming
- * but not which one, so the list is the answer. Flags that do not start with
- * `--` are dropped once a prefix exists because they cannot be completed as
- * flags, but they are kept for the bare `--` case, where the panel is the
- * skill's whole argument surface.
+ * A bare `--` is the user announcing that a flag is coming, not asking for the
+ * skill's whole argument surface: a positional placeholder like `<file>` cannot be
+ * completed into a flag, so offering it would put a row in the list that the
+ * gesture cannot use. Every query therefore goes through the same predicate, and
+ * only the needle differs.
  * @param params - the skill's parameters, in source order.
  * @param query - the typed token, always starting with `--`.
  * @returns the matching parameters in source order; duplicates are kept, since
  *   the list mirrors the hint rather than a set of names.
  */
 export function filterParams(params: readonly SkillParam[], query: string): readonly SkillParam[] {
-  if (query === "--") return params;
   const needle = query.slice(2).toLowerCase();
   return params.filter(entry => {
     if (!entry.flag.startsWith("--")) return false;
