@@ -666,6 +666,56 @@ describe("node action bar", () => {
     expect(Number(ty)).toBeCloseTo(node.y + node.height + 2, 6);
   });
 
+  it("adds the reference button only when the host can take one", () => {
+    const view = viewWithNavigate();
+    const without = createDiagram(host, structuredClone(view), { viewport: VIEWPORT });
+    without.select("dshPlugins");
+    expect(actionOf("reference")).toBeNull();
+    expect(host.querySelectorAll("[data-arch-action]")).toHaveLength(2);
+
+    const withSeam = createDiagram(host, structuredClone(view), {
+      viewport: VIEWPORT,
+      nodeReference: { available: true },
+    });
+    withSeam.select("dshPlugins");
+    expect(actionOf("reference")).not.toBeNull();
+    expect(host.querySelectorAll("[data-arch-action]")).toHaveLength(3);
+    // Last in the bar: the two existing buttons keep their positions.
+    const ids = [...host.querySelectorAll("[data-arch-action]")].map(node =>
+      node.getAttribute("data-arch-action"),
+    );
+    expect(ids).toEqual(["navigate", "relationships", "reference"]);
+  });
+
+  it("keeps the bar centred when the reference button widens it", () => {
+    const view = viewWithNavigate();
+    const diagram = createDiagram(host, view, { viewport: VIEWPORT, nodeReference: { available: true } });
+    diagram.select("dshPlugins");
+    const node = view.nodes.find(candidate => candidate.id === "dshPlugins") as DiagramNode;
+    const layer = host.querySelector("[data-arch-actions]") as SVGGElement;
+    const match = /translate\(([-\d.]+) ([-\d.]+)\)/u.exec(layer.getAttribute("transform") ?? "");
+    const [, tx] = match as unknown as [string, string];
+    // Three 26px buttons with two 6px gaps: 90 wide, so 45 left of centre.
+    expect(Number(tx)).toBeCloseTo(node.x + node.width / 2 - 45, 6);
+  });
+
+  it("reports the reference action with the node anchor", () => {
+    const onNodeAction = vi.fn();
+    const diagram = createDiagram(host, viewWithNavigate(), {
+      viewport: VIEWPORT,
+      onNodeAction,
+      nodeReference: { available: true },
+    });
+    diagram.select("dshPlugins");
+    (actionOf("reference") as SVGGElement).dispatchEvent(
+      new PointerEvent("pointerdown", { clientX: 300, clientY: 300, cancelable: true, bubbles: true }),
+    );
+    expect(onNodeAction).toHaveBeenCalledTimes(1);
+    const [action, id] = onNodeAction.mock.calls[0] as [string, string];
+    expect(action).toBe("reference");
+    expect(id).toBe("dshPlugins");
+  });
+
   it("reports the action with the node anchor and never starts a drag", () => {
     const onNodeAction = vi.fn();
     const onMove = vi.fn();

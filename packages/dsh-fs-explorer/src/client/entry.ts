@@ -61,9 +61,15 @@ import {
   type RendererRegistry,
 } from "./renderer-registry.ts";
 import { insertStyles } from "./styles.ts";
+import {
+  registerFsReferenceSource,
+  type FsReferenceInsert,
+  type FsReferenceSpan,
+  type ReferenceContextLike,
+} from "./reference.ts";
 import { parseStatusZ, statusBadge, statusTone } from "./status.ts";
 import { buildWorkspaceMap, workspaceTagFor } from "./workspace-map.ts";
-import { createFsExplorerView, type WorkbenchFace } from "./view.tsx";
+import { createFsExplorerView, type ReferenceWiring, type ReferenceWiringResolver, type WorkbenchFace } from "./view.tsx";
 import { createWorkspaceClient } from "./workspace-face.ts";
 import {
   createFilesResolver,
@@ -186,6 +192,62 @@ function rendererRegistry(): RendererRegistry {
  * dictionary above is replaced rather than re-registered. */
 let registeredBridge: (() => void) | undefined;
 
+/**
+ * Build the per-session reference writer.
+ *
+ * Every service is read on each call. Two reasons: the facade is per session
+ * generation and throws once that generation is released, so caching one would
+ * hand a stale composer to the next click; and this resolver is built during
+ * `apply`, which can run before `sessions` and `conversation` are up, so
+ * capturing them there would freeze a legitimate absence into a permanent one.
+ * @param ctx - client context, read through the non-throwing resolver.
+ * @returns a resolver that answers undefined when the input plane is absent.
+ */
+export function createReferenceResolver(ctx: ClientContextLike): ReferenceWiringResolver {
+  return (sessionId: string): ReferenceWiring | undefined => {
+    const sessions = ctx.get?.("sessions") as { scope?(sessionId: string): unknown } | undefined;
+    const conversation = ctx.get?.("conversation") as
+      | { input?: { for(actx: unknown): SessionInputFace } }
+      | undefined;
+    if (sessions?.scope === undefined || conversation?.input?.for === undefined) return undefined;
+    let facade: SessionInputFace;
+    try {
+      const actx = sessions.scope(sessionId);
+      if (actx === undefined) return undefined;
+      facade = conversation.input.for(actx);
+    } catch {
+      // The controller refuses a Context whose generation was released: the
+      // session was switched away from between the render and this click.
+      return undefined;
+    }
+    if (facade === undefined || facade === null) return undefined;
+    // Only the methods the facade really has are wrapped. A host can hand back a
+    // facade without `insertReference` (an older composer, a partial stub); a
+    // wrapper that always provides it passes the caller's capability check and
+    // then throws on the write, which is the one path the plain-text fallback
+    // can never reach.
+    const insertReference = facade.insertReference;
+    const focus = facade.focus;
+    const notify = facade.notify;
+    return {
+      ...(typeof insertReference === "function"
+        ? { insertReference: (insert, span) => insertReference.call(facade, insert, span) }
+        : {}),
+      ...(typeof focus === "function" ? { focus: () => focus.call(facade) } : {}),
+      ...(typeof notify === "function"
+        ? { notify: (level, text) => notify.call(facade, level, text) }
+        : {}),
+    };
+  };
+}
+
+/** The slice of the session input facade the reference writer calls. */
+interface SessionInputFace {
+  insertReference?(insert: FsReferenceInsert, span: FsReferenceSpan): boolean;
+  focus?(): void;
+  notify?(level: "info" | "error", text: string): void;
+}
+
 export function apply(ctx: ClientContextLike): () => void {
   const workbench = ctx.workbench;
   if (workbench === undefined || workbench === null) return () => {};
@@ -226,6 +288,9 @@ export function apply(ctx: ClientContextLike): () => void {
   // Optional: without the host's theme service the panel keeps the sizes the
   // host wrote on `body`, so this never blocks the view from mounting.
   const offFontScale = attachFontScale(ctx);
+  // The chip's send-time identity. Registered before the view so a draft that
+  // already holds a chip can be sent the moment the tab paints.
+  const referenceSource = registerFsReferenceSource(ctx as ReferenceContextLike);
   const View = createFsExplorerView({
     workbench,
     version: workbench.version,
@@ -241,6 +306,10 @@ export function apply(ctx: ClientContextLike): () => void {
     // leaves the tree's search on the listed-rows fallback, which the bar
     // labels. Probed at call time so a late mount still takes effect.
     fileReferences: createFileReferencesResolver(ctx),
+    reference: createReferenceResolver(ctx),
+    // A getter, not a snapshot: the inject path may register the source after
+    // this view is built.
+    referenceSourceAvailable: () => referenceSource.available,
   });
 
   // The address bridge hangs off the optional right sidebar; it registers
@@ -267,6 +336,7 @@ export function apply(ctx: ClientContextLike): () => void {
     if (providedService === offService) providedService = undefined;
     offBridge();
     if (registeredBridge === offBridge) registeredBridge = undefined;
+    referenceSource.dispose();
     offStyles();
     offFontScale();
     offLocale();

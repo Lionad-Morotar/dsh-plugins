@@ -536,6 +536,29 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
 .gx-detail { display: flex; flex-direction: column; flex: none; height: var(--gx-detail-h, 38%); min-height: 180px; border: 1px solid var(--gx-border); border-radius: 10px; background: var(--gx-panel); overflow: hidden; }
 .gx-detail-head { display: flex; align-items: center; gap: 8px; flex: none; height: calc(var(--gx-fs) * 2); padding: 0 10px; border-bottom: 1px solid var(--gx-border-soft); color: var(--gx-text-2); font-size: calc(var(--gx-fs) * 0.7857); font-weight: 600; }
 .gx-detail-head .gx-hash { color: var(--gx-text-2); }
+/* The reference button rides the header's own height instead of the generic
+   .gx-btn box, so it lines up with the hash beside it and does not grow the
+   header when the label is long. */
+.gx-refbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: calc(var(--gx-fs) * 1.5714);
+  padding: 0 7px;
+  border: 1px solid var(--gx-border-soft);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--gx-text-2);
+  font: inherit;
+  font-size: calc(var(--gx-fs) * 0.7857);
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+}
+.gx-refbtn:hover:not(:disabled) { background: var(--gx-hover); color: var(--gx-text); border-color: var(--gx-border); }
+.gx-refbtn:disabled { opacity: .45; cursor: default; }
+.gx-refbtn:focus-visible { outline: 2px solid var(--gx-accent); outline-offset: -2px; }
 .gx-detail-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 10px 10px; box-sizing: border-box; }
 .gx-detail-subject { font-size: calc(var(--gx-fs) * 0.9286); font-weight: 600; line-height: 1.4; word-break: break-word; }
 .gx-detail-meta { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: var(--gx-caption); font-size: calc(var(--gx-fs) * 0.75); }

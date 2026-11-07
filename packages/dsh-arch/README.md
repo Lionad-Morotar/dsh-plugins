@@ -59,6 +59,19 @@ flow-dx 的 `agents-md` 流程派 `c4-mapper` 子代理产出的正是本包要�
 - 关系面板：点边或点元素的「浏览关系」弹出浮层，列出被点中那条边聚合的关系，按端点身份分 `DIRECT` 与 `RESOLVED FROM NESTED` 两组（关系自身的 source/target 与被点中的边完全一致算直连，其余是被折叠上来的嵌套关系）。每行是「源胶囊 → 目标胶囊」加关系标题，`technology` 与 `description` 有则显示；胶囊显示 id 最后一段，全名放 `title` 做悬浮提示。浮层用宿主的 raised 表面与描边（`bg-layer-2` / `border-l3`），不再是一张深色卡片。定位按锚点矩形手算四象限翻转，锚点由渲染器换算成 host 像素后上报，面板不需要知道平移与缩放。Esc、空白画布、右上 × 三路都能关。关系数据来自 `/arch/api/model` 的 `relations`，chrome 有与 `elementsOf` 对称的 `relationsOf` 缓存，一次取回解码复用。
 - 诊断：坏模型不抛，`hasErrors()` 的错误以独立区块呈现在视图上方，图照常挂载。
 
+## 引用架构元素
+
+选中节点后动作条上的第三个按钮「引用」把该元素以结构化 chip 插进当前会话输入框。
+
+- 模型文本：`[arch element <id>] <title> · <kind> · <technology> · def <c4 文件>:<行号> · code <代码文件>`。段按可用性取舍而不是留空：没有 code 就整段不出现，没有 source 就退化成 `[arch element <id>] <title>`，元素连 title 都没有时只剩 `[arch element <id>]`。chip 显示 title（无 title 用 id），草稿可见文本是 `[arch element <id>]`。
+- 两个位置来自宿主半的两个新 map（`GET /arch/api/model` 的可选字段，老宿主不返回时客户端按缺失处理）：
+  - `elementSources[id] = { file, line }`：从 LikeC4 的 AST 取 `$cstNode.range.start.line + 1`，`file` 是 workspace 相对路径。AST 与计算后的模型两个方向都不一致（AST 里有匿名节点，模型里有解析后才存在的 id），所以只保留与模型 id 交集的部分；`likec4builtin:` 的内置图标库文档被排除。`extend` 块里的子元素按被 extend 的目标 id 续接，因为它们的 id 属于目标而不是块本身。
+  - `elementCode[id] = { file }`：模型里元素的 title 被当作包内路径用（`title "client/app"`），包由某个祖先的 title 命名（包名或目录名）。这是本仓模型的约定而不是 LikeC4 能力，所以每一步都允许落空：找不到包、title 含空格或 `+`（如 `client/bindings + client/recorder`）、文件不存在，都只是少一个 `code` 段。不猜行号，因为 title 里没有可解析的符号。
+- 写入是双通道：span 只从槽位 props 的 `captureInsertion()` 取（detect 坐标加 `draftRev`，`InputState.draft.length` 是 clipboard 长度，草稿里有 chip 时两者不等），chip 走 `conversation.input.for(sessions.scope(id)).insertReference(...)`。`insertReference` 对过期 revision 是静默 `false` 而不是抛错，所以失败后用新 span 重试一次，仍失败降级 `insertText(clipboardText)`，再失败返回 `failed` 不抛错。
+- source 名 `lionad.arch`，trigger `@`，`showGroupTitle: false`，`candidates()` 恒返回空数组：它只做发送时的身份，不参与 `@` 菜单。发送时宿主按 source 名找 `codec.serialize`，找不到就拒绝发送并保留草稿，所以 chip 与 source 必须同包同版本发行。chip 的 `ref` 是 JSON，`codec.serialize` 从它重建文本；解析失败回退 `[arch element <ref>]` 而不抛错。
+- 引用不改变选中、不切视图、不打开关系面板：它是往另一个面写入，不是导航。按钮只在 dock 面板以外的挂载点出现——dock 那条路径拿不到 `inputActions`，没有输入框可写，所以按钮干脆不画而不是画一个点了没反应的。
+- 兼容边界：结构化引用面（`insertReference` / `InputTriggerSource` / `codec`）从宿主 0.2.0-rc.2 就有，`engines.dsh` 地板不用抬。`inputTriggers`、`sessions`、`conversation` 都是软探测，缺任何一个都只降级不报错。插件被卸载后草稿里留下的 chip 发不出去，这是可恢复状态（删掉 chip 即可发），不是数据损坏。
+
 ## 已知限制
 
 - 默认不往用户仓库写文件：拖拽与视口只写宿主存储（`~/.dsh/storages/` 下人类可读 JSON），`git status` 干净；完全不使用 `.likec4/*.snap`。

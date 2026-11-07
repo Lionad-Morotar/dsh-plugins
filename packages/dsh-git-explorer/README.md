@@ -61,6 +61,20 @@
 - 分页：首屏默认 400 条（Loader 行 `config.maxCommits`），历史列表每点一次"加载更多"取 100 条，单次请求上限 5000。
 - 空态与错误态：未选会话、Git 服务不可用、不是 git 仓库、空仓库、读取失败各有文案与重试；头部有刷新按钮。
 
+## 引用提交
+
+提交详情面板头部右侧有一个「引用」按钮，把当前选中的提交插进输入框，成为一颗结构化 chip。
+
+- 三种拼写：chip 显示 `<短哈希> <subject>`（subject 单行、超过 60 字符按词边界截断加 `…`）；草稿里的可见文本是 `[git commit <短哈希>]`；发送给模型的是 `[git commit <完整 hash>] <subject> · <refs> · <作者> · <YYYY-MM-DD>`。refs 为空时该段整段不出现，不会留下空 `()` 或连续分隔符。
+- 为什么不是 `@path` 那种写法：`@` 开头会被宿主的文件引用 prompt 当成路径，`/` 开头会被 Enter 裁决当命令，`dsh-session:` 会触发会话解析。`[git commit …]` 三种解析器都碰不到。
+- 日期按读者本地时区算，与面板里提交行显示的日期同源；两处口径不同会读成 bug。
+- 写入是双通道：span 只从槽位 props 的 `captureInsertion()` 取（它是 detect 坐标加 `draftRev`，`InputState.draft.length` 是 clipboard 长度，草稿里有 chip 时两者不等，拿后者当 span 会越界），chip 走 `conversation.input.for(sessions.scope(id)).insertReference(...)`。`insertReference` 对过期 revision 是静默 `false` 而不是抛错，所以失败后用新 span 重试一次，仍失败降级 `insertText(clipboardText)`，再失败给 notice 与 console 提示，不抛错。
+- source 名 `lionad.git`，trigger `@`，`showGroupTitle: false`，`candidates()` 恒返回空数组：它只做发送时的身份，不参与 `@` 菜单。发送时宿主按 source 名找 `codec.serialize`，找不到就拒绝发送并保留草稿，所以 chip 与 source 必须同包同版本发行。
+- chip 的 `ref` 是 JSON（`hash` / `subject` / `refs` / `author` / `date` / `short`），`codec.serialize` 从它重建模型文本；解析失败回退 `[git commit <ref>]` 而不抛错，否则一颗坏 chip 会让整条草稿发不出去。
+- 禁用条件：没有会话、宿主没给输入面、输入阶段不是 `plain`（正在发送 / 裁决 / 命令态）时按钮 `disabled`，原因写在 `title` 与 `aria-disabled` 上。缺 `insertReference` 不禁用，因为那时会降级成纯文本，引用仍然可读。宿主不发布输入阶段时按「未知」处理而不是当成忙，否则老宿主上按钮会永远灰着。
+- 兼容边界：结构化引用面（`insertReference` / `InputTriggerSource` / `codec`）从宿主 0.2.0-rc.2 就有，`engines.dsh` 地板不用抬。`inputTriggers` 与 `conversation` / `sessions` 都是软探测：没有 `inputTriggers` 时 source 不注册、插入降级纯文本；没有输入面时按钮禁用并给原因。插件被卸载后草稿里留下的 chip 发不出去，这是可恢复状态（删掉 chip 即可发），不是数据损坏。
+- 本轮不做气泡渲染：发送后用户消息按模型文本原文显示，自定义 `UserText` 规则留到后续。
+
 ## 快捷键
 
 | 动作 | 键 | 说明 |

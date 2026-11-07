@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { fitViewport, mountArchChrome } from "../src/client/chrome.tsx";
 import { mountArchDiagram } from "../src/client/entry.ts";
@@ -321,6 +321,67 @@ describe("mountArchChrome", () => {
       const scale = scaleOf();
       return scale !== null && Math.abs(scale - 0.75) < 1e-9;
     });
+    dispose();
+  });
+});
+
+describe("node reference seam", () => {
+  /** Mount the chrome over the real renderer, with a model route available. */
+  async function mountWithSeam(seam: { available: boolean; insert: (id: string) => void }) {
+    const { fetch } = fakeFetch({
+      "/arch/api/views": () => jsonResponse(viewsResponse()),
+      "/arch/api/state": () => jsonResponse({ state: null, degraded: false }),
+      "/arch/api/model": () => jsonResponse({ workspace: "/w", projectId: "p", elements: {}, relations: {}, specification: null }),
+    });
+    const { host } = mountHost();
+    const dispose = mountArchChrome(host, {
+      sessionId: "s1",
+      fetchImpl: fetch,
+      load: loadRealChunk,
+      mountView,
+      nodeReference: seam,
+    });
+    await until(() => host.querySelector("[data-arch-body] svg") !== null);
+    return { host, dispose };
+  }
+
+  /** Select one node the way a reader does, then read its action bar. */
+  function selectNode(host: HTMLElement, id: string): void {
+    const node = host.querySelector(`[data-arch-body] g[data-id="${id}"]`) as SVGGElement;
+    node.dispatchEvent(new PointerEvent("pointerdown", { clientX: 10, clientY: 10, cancelable: true, bubbles: true }));
+    node.dispatchEvent(new PointerEvent("pointerup", {}));
+  }
+
+  it("draws the reference button when the seam says it can take one", async () => {
+    const insert = vi.fn();
+    const { host, dispose } = await mountWithSeam({ available: true, insert });
+    selectNode(host, "dshPlugins");
+    expect(host.querySelector('[data-arch-action="reference"]')).not.toBeNull();
+    dispose();
+  });
+
+  it("leaves the button off when the mount has no composer", async () => {
+    const insert = vi.fn();
+    const { host, dispose } = await mountWithSeam({ available: false, insert });
+    selectNode(host, "dshPlugins");
+    expect(host.querySelector('[data-arch-action="reference"]')).toBeNull();
+    expect(host.querySelector('[data-arch-action="relationships"]')).not.toBeNull();
+    dispose();
+  });
+
+  it("calls insert and leaves the relations pane closed", async () => {
+    const insert = vi.fn();
+    const { host, dispose } = await mountWithSeam({ available: true, insert });
+    selectNode(host, "dshPlugins");
+    (host.querySelector('[data-arch-action="reference"]') as SVGGElement).dispatchEvent(
+      new PointerEvent("pointerdown", { clientX: 300, clientY: 300, cancelable: true, bubbles: true }),
+    );
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(insert).toHaveBeenCalledWith("dshPlugins");
+    // Referencing is not navigation: the browse pane must stay shut.
+    expect(document.querySelector("[data-arch-relations]")).toBeNull();
+    // And the node stays selected, so the reader keeps their place.
+    expect(host.querySelector('[data-arch-action="reference"]')).not.toBeNull();
     dispose();
   });
 });

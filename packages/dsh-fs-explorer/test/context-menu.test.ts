@@ -55,6 +55,7 @@ describe("buildContextMenu", () => {
         createParent: "docs",
         remoteLinks: undefined,
         bookmarkTarget: undefined,
+        inputTarget: { session: true, insertReference: true, source: true },
       },
       t,
     );
@@ -65,6 +66,7 @@ describe("buildContextMenu", () => {
       MENU_ACTION.reveal,
       "menu.copy",
       MENU_ACTION.copyRemote,
+      MENU_ACTION.reference,
       MENU_ACTION.addBookmark,
     ]);
     expect(copyEntries(entries).map(entry => entry.id)).toEqual([
@@ -203,6 +205,7 @@ describe("buildContextMenu", () => {
       copyRelative: "copy.relative",
       copyRemote: "copy.remote",
       addBookmark: "add.bookmark",
+      reference: "reference.input",
     });
   });
 });

@@ -67,6 +67,18 @@ const off = ctx.fsExplorer.registerRenderer({
 
 选择是同步纯函数：后缀按小写含点比较，家族走 `familyOf`，命中多条时 `priority` 大者胜、同优先级按 id 字典序，只有胜出者会被 `load()`。重复 id 保留先注册者并报告一次。内置的 Markdown、源码与三个二进制家族就在同一张表里（`builtin.markdown`、`builtin.source` 与 `builtin.family.*`，源码是 priority -1000 的兜底），所以没装任何渲染器插件时行为不变；没有候选或 `load()` 失败时回到内置的降级正文（Markdown 走零依赖元素树、源码走纯文本、家族显示失败块）。引擎仍然只在选中文件时才取，入口 bundle 里没有编辑器或引擎符号。
 
+## 引用文件与目录
+
+树行右键菜单与页签右键菜单各有一行「引用到输入框」，把该路径作为结构化 chip 插进当前会话的输入框。
+
+- 拼写：chip 显示文件名或目录名；草稿文本与发送给模型的文本都是 `@<工作区相对路径>`，目录带尾斜杠（`@src/client/`）。这里刻意复用宿主自己的 `@` 文件引用语义：模型按文件引用理解它，发送后的气泡也由宿主规则画成文件 chip，本包不需要注册 `UserText` 规则。chip 的 `appearance` 是 `file` / `folder`，这是文件与目录在输入框里唯一的区别。
+- 路径规范化：反斜杠转 `/`、去 `./` 前缀、去首尾 `/`，所以 Windows 分隔符与绝对写法都不会漏进草稿。`@` 开头是允许的（就是宿主语义），`/` 开头与 `dsh-session:` 开头仍然禁止。
+- 写入是双通道：span 只从槽位 props 的 `captureInsertion()` 取（detect 坐标加 `draftRev`，`InputState.draft.length` 是 clipboard 长度，草稿里有 chip 时两者不等），chip 走 `conversation.input.for(sessions.scope(id)).insertReference(...)`。`insertReference` 对过期 revision 是静默 `false` 而不是抛错，所以失败后用新 span 重试一次，仍失败降级 `insertText(clipboardText)`（此时给一条提示，因为结果不是 chip），再失败给 notice 与 console，不抛错。
+- source 名 `lionad.fs`，trigger `@`，`showGroupTitle: false`，`candidates()` 恒返回空数组：它只做发送时的身份，不参与 `@` 菜单（那个菜单是宿主的文件引用）。发送时宿主按 source 名找 `codec.serialize`，找不到就拒绝发送并保留草稿，所以 chip 与 source 必须同包同版本发行。chip 的 `ref` 是 JSON（`path` / `label` / `kind`），`codec.serialize` 从它重建文本；解析失败回退 `@<ref>` 而不抛错，否则一颗坏 chip 会让整条草稿发不出去。
+- 菜单行禁用条件：没有会话、宿主没给输入面、facade 没有 `insertReference` 时 `disabled` 并给原因。缺 `inputTriggers` 不禁用：source 不注册只影响发送时的序列化，插入本身仍会降级成纯文本。空白区（没有行）不出现该行。
+- 页签边界：页签路径是工作区外的绝对路径（`absolute`）或提交版本（`revision` 非空）时禁用并给专门原因。两者都不是工作区路径，`@<path>` 会让模型去找一个在工作区里不存在的东西；同时成立时按 `revision` 报，因为它是更具体的那条。页签的目录/文件判定查已加载的树层级，查不到按文件处理。
+- 兼容边界：结构化引用面（`insertReference` / `InputTriggerSource` / `codec`）从宿主 0.2.0-rc.2 就有，`engines.dsh` 地板不用抬。`inputTriggers`、`sessions`、`conversation` 都是软探测，缺任何一个都只降级不报错。插件被卸载后草稿里留下的 chip 发不出去，这是可恢复状态（删掉 chip 即可发），不是数据损坏。
+
 ## 快捷键
 
 | 动作 | 键 | 说明 |

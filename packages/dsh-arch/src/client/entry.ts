@@ -21,7 +21,15 @@ import { PACKAGE_NAME, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
 import { loadDiagramChunk } from "./chunk-loader.ts";
 import { EN, LOCALE_NAMESPACE, ZH } from "./copy.ts";
 import { mountArchChrome, type ArchChromeStrings } from "./chrome.tsx";
-import { createArchView } from "./view.tsx";
+import { createArchView, type InsertReferenceSeam } from "./view.tsx";
+import {
+  insertArchReference,
+  registerArchReferenceSource,
+  type ArchReferenceInsert,
+  type ArchReferencePayload,
+  type ArchReferenceSpan,
+  type ReferenceContextLike,
+} from "./reference.ts";
 import { applyViewOffsets, defaultViewport, offsetFromDrag } from "./view-state.ts";
 import type { ViewStateHandle } from "./view-state.ts";
 
@@ -180,6 +188,62 @@ function chromeSeams(t: (key: string) => string) {
 }
 
 /**
+ * Build the writer that turns one element payload into a composer chip.
+ *
+ * Every service is read on each call. Two reasons: the facade is per session
+ * generation and throws once that generation is released, so caching one would
+ * hand a stale composer to the next click; and this seam is built during
+ * `apply`, which can run before `sessions` and `conversation` are up, so
+ * capturing them there would freeze a legitimate absence into a permanent one.
+ * @param ctx - the client context, read through the non-throwing resolver.
+ * @returns a writer that reports `failed` rather than throwing.
+ */
+export function createInsertReference(ctx: ArchClientContext): InsertReferenceSeam {
+  return (sessionId, payload, actions, sourceAvailable) => {
+    let facade: SessionInputFace | undefined;
+    try {
+      const sessions = ctx.get?.("sessions") as { scope?(id: string): unknown } | undefined;
+      const conversation = ctx.get?.("conversation") as
+        | { input?: { for(actx: unknown): SessionInputFace } }
+        | undefined;
+      const actx = sessions?.scope?.(sessionId);
+      if (actx === undefined || conversation?.input?.for === undefined) return "failed";
+      facade = conversation.input.for(actx);
+    } catch {
+      // The controller refuses a Context whose generation was released: the
+      // session was switched away from between the render and this click.
+      return "failed";
+    }
+    if (facade === undefined || facade === null) return "failed";
+    const result = insertArchReference(
+      {
+        captureSpan: () => {
+          const span = actions.captureInsertion?.();
+          return span === undefined ? undefined : { start: span.start, end: span.end, draftRev: span.draftRev };
+        },
+        insertReference: (insert, span) => facade?.insertReference?.(insert, span) ?? false,
+        insertText: (text, span) => actions.insertText?.(text, span) ?? false,
+        canInsertReference: sourceAvailable,
+      },
+      payload,
+    );
+    if (result === "failed") return result;
+    try {
+      facade.focus?.();
+    } catch {
+      // Focus is a courtesy; a released composer must not undo a landed write.
+    }
+    return result;
+  };
+}
+
+/** The slice of the session input facade the reference writer calls. */
+interface SessionInputFace {
+  insertReference(insert: ArchReferenceInsert, span: ArchReferenceSpan): boolean;
+  focus?(): void;
+}
+
+/**
  * Register the Arch panel kind.
  *
  * @param ctx - the client context, with the core service already injected.
@@ -192,7 +256,16 @@ export function apply(ctx: ArchClientContext): () => void {
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
   registeredDictionaries = offLocale;
 
-  const View = createArchView({ chrome: chromeSeams(t) });
+  // The chip's send-time identity. Registered before the view so a draft that
+  // already holds a chip can be sent the moment the tab paints.
+  const referenceSource = registerArchReferenceSource(ctx as ReferenceContextLike);
+  const View = createArchView({
+    chrome: chromeSeams(t),
+    insertReference: createInsertReference(ctx),
+    // A getter, not a snapshot: the inject path may register the source after
+    // this view is built.
+    referenceSourceAvailable: () => referenceSource.available,
+  });
   ctx.slots.inject(VIEW_SLOT, () =>
     ctx.slots.register(
       {
@@ -226,6 +299,7 @@ export function apply(ctx: ArchClientContext): () => void {
   }
 
   return () => {
+    referenceSource.dispose();
     offKind();
     offLocale();
     if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
@@ -273,6 +347,7 @@ export async function mountArchDiagram(
     onEdgeClick: interactions.onEdgeClick,
     onNodeAction: interactions.onNodeAction,
     onBackgroundClick: interactions.onBackgroundClick,
+    ...(interactions.nodeReference === undefined ? {} : { nodeReference: interactions.nodeReference }),
     onMove: (id, x, y) => {
       const base = view.nodes.find(node => node.id === id);
       if (base !== undefined) state.queueOffset(view.id, id, offsetFromDrag(base, x, y));

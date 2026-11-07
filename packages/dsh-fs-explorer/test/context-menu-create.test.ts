@@ -170,6 +170,7 @@ describe("buildContextMenu create rows", () => {
       MENU_ACTION.reveal,
       "menu.copy",
       MENU_ACTION.copyRemote,
+      MENU_ACTION.reference,
       MENU_ACTION.addBookmark,
     ]);
   });
