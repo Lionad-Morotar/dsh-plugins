@@ -126,17 +126,12 @@ export interface SetEffortToolDefinition {
 /**
  * The description the model reads before deciding whether to call this.
  *
- * It leads with the cost rather than the capability on purpose: a model that
- * knows only what the tool does will use it to "help", and each of those uses
- * pays for a cold cache.
+ * It is deliberately one sentence: the definition ships in every request's tool
+ * schema, so each extra clause is a permanent token cost. A caller only needs to
+ * know what the two forms are, that a switch costs a cache flush, and when the
+ * tool is meant to be used.
  */
-const DESCRIPTION = [
-  "Switch this session's reasoning effort, or read the current level and the levels this model supports.",
-  "",
-  "Switching is expensive: it invalidates the provider's prompt cache, so the next request re-bills the entire context instead of reusing cached prefixes. Use it only when the user explicitly asks you to change how hard you think, or when a long piece of work clearly needs a materially different level than the one in effect and a cold cache is acceptable. Do not call it on your own initiative, do not tune the level back and forth, and never use it as a retry, fallback, or repair strategy.",
-  "",
-  "Call it with no arguments for a free read of the effort in effect, the model's default, and the available level ids (for example off, low, high, max). Call it with an effort id to switch; an unknown id fails and lists the available ones. The switch applies from the next model step; earlier answers still belong to the old level.",
-].join("\n");
+const DESCRIPTION = "Read or set this session's reasoning effort. Switching flushes the prompt cache; only when asked.";
 
 /** A nullable string node, the only way the enforced subset can express `null`. */
 const NULLABLE_STRING: JsonObject = { oneOf: [{ type: "string" }, { type: "null" }] };
@@ -321,7 +316,7 @@ export function createSetEffortTool(deps: SetEffortToolDeps): SetEffortToolDefin
       effort: {
         type: "string",
         description:
-          "The level id to switch to, one of the ids this model advertises. Omit it to read the current level without changing anything.",
+          "Level id to switch to (e.g. off, low, high, max); omit to read without changing anything.",
       },
     },
     additionalProperties: false,

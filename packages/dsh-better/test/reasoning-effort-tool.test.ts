@@ -9,9 +9,10 @@
  *   - everything the model cannot do (no session model, no ladder, an id the
  *     model does not advertise) fails loudly instead of quietly doing nothing.
  *
- * The description is asserted as well. The three facts it has to carry (the
- * cache cost, the very narrow use case, the free read) are the reason this tool
- * exists in this shape, so a rewrite that drops one is a regression.
+ * The description is asserted as well. The facts it has to carry within the
+ * 100-character budget (the cache cost, the narrow trigger, the read form) are
+ * the reason this tool exists in this shape, so a rewrite that drops one is a
+ * regression.
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -135,16 +136,17 @@ describe("createSetEffortTool", () => {
     expect(SET_EFFORT_TOOL_NAME).toBe("set_reasoning_effort");
   });
 
-  it("carries the three facts the description exists for", () => {
+  it("carries the facts the description exists for", () => {
     const { description } = createSetEffortTool({ llm: ladderLlm() });
 
     // The cost, because a switch is not free.
     expect(description).toContain("prompt cache");
-    expect(description).toContain("re-bills the entire context");
-    // The narrow use case, because the model should almost never reach for it.
-    expect(description).toContain("Do not call it on your own initiative");
-    // The free read, because reading is how the model avoids guessing.
-    expect(description).toContain("no arguments");
+    // The narrow trigger, because the model should almost never reach for it.
+    expect(description).toContain("only when asked");
+    // The read form, because reading is how the model avoids guessing.
+    expect(description).toContain("Read or set");
+    // The budget: the definition ships in every request's tool schema.
+    expect(description.length).toBeLessThanOrEqual(100);
   });
 
   it("declares an optional effort parameter", () => {
