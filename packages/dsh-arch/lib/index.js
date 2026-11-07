@@ -100,6 +100,9 @@ async function discoverC4ProjectDirs(root) {
 }
 
 // src/host/render.ts
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join as join2, relative, sep } from "node:path";
 var WATCH_BASELINE_WINDOW_MS = 1200;
 var delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 var languageServices;
@@ -140,7 +143,12 @@ function toModelPayload(input) {
     projectId: input.projectId,
     elements: input.model.elements ?? {},
     relations: input.model.relations ?? {},
-    specification: input.model.specification ?? null
+    specification: input.model.specification ?? null,
+    // Both maps are optional on the wire: a host that cannot read the sources
+    // omits them rather than sending empty objects, so the client can tell
+    // "not reported" from "reported and empty".
+    ...input.elementSources === void 0 ? {} : { elementSources: input.elementSources },
+    ...input.elementCode === void 0 ? {} : { elementCode: input.elementCode }
   };
 }
 function createRenderer(maxWorkspaces = 3, boot = renderWorkspace) {
@@ -186,6 +194,114 @@ async function renderFromInstance(dir, entry) {
     errors: entry.instance.hasErrors() ? entry.instance.getErrors().map((error) => ({ message: error.message, sourcePath: error.sourceFsPath })) : [],
     instance: entry.instance
   };
+}
+function collectElementSources(instance, workspaceDir, knownIds) {
+  const sources = {};
+  const documents = instance.LangiumDocuments;
+  if (documents?.all === void 0) return sources;
+  for (const doc of documents.all) {
+    const uri = doc.uri.toString();
+    if (!uri.startsWith("file:") || !uri.endsWith(".c4")) continue;
+    let file;
+    try {
+      file = relative(workspaceDir, fileURLToPath(uri)).split(sep).join("/");
+    } catch {
+      continue;
+    }
+    for (const model of doc.parseResult?.value?.models ?? []) {
+      walkAstElements(model.elements, "", file, knownIds, sources);
+    }
+  }
+  return sources;
+}
+function walkAstElements(elements, parent, file, knownIds, into) {
+  for (const element of elements ?? []) {
+    const name2 = element.name;
+    if (name2 === void 0 || name2 === "") {
+      const target = element.element?.el?.$refText;
+      walkAstElements(element.body?.elements, target ?? parent, file, knownIds, into);
+      continue;
+    }
+    const fqn = parent === "" ? name2 : `${parent}.${name2}`;
+    const line = element.$cstNode?.range?.start?.line;
+    if (line !== void 0 && knownIds.has(fqn) && into[fqn] === void 0) {
+      into[fqn] = { file, line: line + 1 };
+    }
+    walkAstElements(element.body?.elements, fqn, file, knownIds, into);
+  }
+}
+var CODE_SUFFIXES = [".ts", ".tsx", ".js", ".mjs", ".css"];
+function resolveElementCode(workspaceDir, elements) {
+  const code = {};
+  const packages = readPackageDirs(workspaceDir);
+  if (packages.length === 0) return code;
+  const byName = /* @__PURE__ */ new Map();
+  const byDirName = /* @__PURE__ */ new Map();
+  for (const pkg of packages) {
+    if (pkg.name !== void 0 && !byName.has(pkg.name)) byName.set(pkg.name, pkg);
+    if (!byDirName.has(pkg.dirName)) byDirName.set(pkg.dirName, pkg);
+  }
+  for (const [id, element] of Object.entries(elements)) {
+    const title = typeof element.title === "string" ? element.title.trim() : "";
+    if (title === "") continue;
+    const pkg = packageFor(id, elements, byName, byDirName);
+    if (pkg === void 0) continue;
+    const file = codeFileFor(workspaceDir, pkg, title);
+    if (file !== void 0) code[id] = { file };
+  }
+  return code;
+}
+function packageFor(id, elements, byName, byDirName) {
+  const segments = id.split(".");
+  for (let cut = segments.length - 1; cut > 0; cut -= 1) {
+    const ancestor = elements[segments.slice(0, cut).join(".")];
+    const title = typeof ancestor?.title === "string" ? ancestor.title.trim() : "";
+    if (title === "") continue;
+    const named = byName.get(title) ?? byDirName.get(title);
+    if (named !== void 0) return named;
+  }
+  return void 0;
+}
+function codeFileFor(workspaceDir, pkg, title) {
+  const clean = title.replace(/^\/+/u, "").replace(/\/+$/u, "");
+  if (clean === "" || clean.includes(" ") || clean.includes("+")) return void 0;
+  const bases = [`src/${clean}`, `src/client/${clean}`, clean];
+  for (const base of bases) {
+    for (const suffix of CODE_SUFFIXES) {
+      if (existsSync(join2(workspaceDir, pkg.dir, `${base}${suffix}`))) return `${pkg.dir}/${base}${suffix}`;
+    }
+    for (const indexSuffix of [".ts", ".tsx"]) {
+      if (existsSync(join2(workspaceDir, pkg.dir, base, `index${indexSuffix}`))) {
+        return `${pkg.dir}/${base}/index${indexSuffix}`;
+      }
+    }
+  }
+  return void 0;
+}
+function readPackageDirs(workspaceDir) {
+  const root = join2(workspaceDir, "packages");
+  let names;
+  try {
+    names = readdirSync(root);
+  } catch {
+    return [];
+  }
+  const found = [];
+  for (const dirName of names) {
+    let manifest;
+    try {
+      manifest = JSON.parse(readFileSync(join2(root, dirName, "package.json"), "utf8"));
+    } catch {
+      continue;
+    }
+    const name2 = manifest?.name;
+    found.push({
+      ...typeof name2 === "string" && name2 !== "" ? { name: name2 } : {},
+      dirName,
+      dir: `packages/${dirName}`
+    });
+  }
+  return found;
 }
 
 // src/host/routes.ts
@@ -400,7 +516,14 @@ function mountRoutes(host, webServer) {
     const rendered = await renderer.get(dir);
     const model = await rendered.instance.layoutedModel(rendered.projectId);
     const data = model.$data;
-    return toModelPayload({ workspace, projectId: rendered.projectId, model: data });
+    const elements = data.elements ?? {};
+    return toModelPayload({
+      workspace,
+      projectId: rendered.projectId,
+      model: data,
+      elementSources: collectElementSources(rendered.instance, workspace, new Set(Object.keys(elements))),
+      elementCode: resolveElementCode(workspace, elements)
+    });
   }
   async function loadState(workspace) {
     const store = await storePromise;

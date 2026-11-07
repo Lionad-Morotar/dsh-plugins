@@ -42,16 +42,21 @@ describe("buildTabMenu", () => {
   it("keeps close-others visible but disabled on the only tab, and drops close-right", () => {
     const rows = buildTabMenu({ panels: [panel("a.md")], key: "a.md" }, t);
 
-    expect(rows.map(row => row.id)).toEqual([TAB_MENU_ACTION.close, TAB_MENU_ACTION.closeOthers]);
-    expect(rows[0]?.disabled).toBeUndefined();
-    expect(rows[1]?.disabled).toBe(true);
-    expect(rows[1]?.reason).toBe("menu.tab.closeOthers.reason");
+    expect(rows.map(row => row.id)).toEqual([
+      TAB_MENU_ACTION.reference,
+      TAB_MENU_ACTION.close,
+      TAB_MENU_ACTION.closeOthers,
+    ]);
+    expect(rows[1]?.disabled).toBeUndefined();
+    expect(rows[2]?.disabled).toBe(true);
+    expect(rows[2]?.reason).toBe("menu.tab.closeOthers.reason");
   });
 
   it("enables close-others and adds close-right when tabs sit to the right", () => {
     const rows = buildTabMenu({ panels: [panel("a.md"), panel("b.md")], key: "a.md" }, t);
 
     expect(rows.map(row => row.id)).toEqual([
+      TAB_MENU_ACTION.reference,
       TAB_MENU_ACTION.close,
       TAB_MENU_ACTION.closeOthers,
       TAB_MENU_ACTION.closeRight,

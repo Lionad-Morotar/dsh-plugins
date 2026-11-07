@@ -93,4 +93,26 @@ describe("toModelPayload", () => {
     expect(Object.keys(payload.relations)).toHaveLength(Object.keys(dump.relations).length);
     expect(payload.specification).toEqual(dump.specification);
   });
+
+  it("omits both location maps when the caller did not read them", () => {
+    // Absent is a different answer from empty: a host that cannot walk the AST
+    // must not look like a model whose elements have no definition.
+    expect(payload.elementSources).toBeUndefined();
+    expect(payload.elementCode).toBeUndefined();
+  });
+
+  it("passes both location maps through when they were read", () => {
+    const withMaps = toModelPayload({
+      workspace: "/w/dsh-plugins",
+      projectId: dump.projectId,
+      model: dump,
+      elementSources: { user: { file: ".planning/c4/dsh-plugins.c4", line: 12 } },
+      elementCode: { user: { file: "packages/dsh-jump/src/client/app.ts" } },
+    });
+    expect(withMaps.elementSources).toEqual({ user: { file: ".planning/c4/dsh-plugins.c4", line: 12 } });
+    expect(withMaps.elementCode).toEqual({ user: { file: "packages/dsh-jump/src/client/app.ts" } });
+    // The pre-existing fields are untouched by the addition.
+    expect(Object.keys(withMaps.elements)).toHaveLength(Object.keys(dump.elements).length);
+    expect(withMaps.specification).toEqual(dump.specification);
+  });
 });

@@ -23,7 +23,14 @@ import type { Context } from "@deepseek-ai/cordis";
 
 import { openArchStore, type ArchStore, type StorageDomainFace } from "./host/arch-store.ts";
 import { discoverC4ProjectDirs } from "./host/discover.ts";
-import { createRenderer, toModelPayload, toViewsPayload, type WorkspaceRenderer } from "./host/render.ts";
+import {
+  collectElementSources,
+  createRenderer,
+  resolveElementCode,
+  toModelPayload,
+  toViewsPayload,
+  type WorkspaceRenderer,
+} from "./host/render.ts";
 import { registerArchRoutes, type WebServerFace } from "./host/routes.ts";
 import {
   canonicalPath,
@@ -183,7 +190,17 @@ function mountRoutes(host: HostContext, webServer: WebServerFace): void {
       relations?: Record<string, unknown>;
       specification?: unknown;
     };
-    return toModelPayload({ workspace, projectId: rendered.projectId, model: data });
+    // Both maps are derived here rather than in the renderer: they are only
+    // needed by this one route, and the source walk reads the AST that the
+    // instance already holds, so neither costs a second boot.
+    const elements = data.elements ?? {};
+    return toModelPayload({
+      workspace,
+      projectId: rendered.projectId,
+      model: data,
+      elementSources: collectElementSources(rendered.instance, workspace, new Set(Object.keys(elements))),
+      elementCode: resolveElementCode(workspace, elements as Record<string, { title?: unknown }>),
+    });
   }
 
   async function loadState(workspace: string): Promise<ArchWorkspaceState | null | undefined> {

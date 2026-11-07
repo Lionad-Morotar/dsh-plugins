@@ -129,10 +129,19 @@ export interface DiagramOptions {
    * floating pane opened by the edge press would never learn to close.
    */
   readonly onBackgroundClick?: () => void;
+  /**
+   * Whether the host can take a reference for the selected element.
+   *
+   * A capability flag rather than a callback: the bar is rebuilt on every
+   * selection change, and a button that appears only to do nothing is worse
+   * than one that is not there. The press still reports through
+   * {@link onNodeAction}, so the host owns what happens next.
+   */
+  readonly nodeReference?: { readonly available: boolean };
 }
 
 /** The two buttons the selected node's action bar offers. */
-export type NodeAction = "navigate" | "relationships";
+export type NodeAction = "navigate" | "relationships" | "reference";
 
 export interface DiagramHandle {
   viewport(): DiagramViewport;
@@ -162,6 +171,8 @@ export interface DiagramInteractions {
   onEdgeClick?(id: string, anchor: DiagramAnchor): void;
   onNodeAction?(action: NodeAction, id: string, anchor: DiagramAnchor): void;
   onBackgroundClick?(): void;
+  /** Forwarded to {@link DiagramOptions.nodeReference}. */
+  nodeReference?: { readonly available: boolean };
 }
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -837,11 +848,15 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     // Two endpoints joined by a line: the relationship-browse affordance.
     relationships:
       "M6 6 m-2.5 0 a2.5 2.5 0 1 0 5 0 a2.5 2.5 0 1 0 -5 0 M18 18 m-2.5 0 a2.5 2.5 0 1 0 5 0 a2.5 2.5 0 1 0 -5 0 M8 8 L16 16",
+    // A quotation mark: the element is being cited somewhere else, not opened.
+    reference:
+      "M9 7 H6.5 A1.5 1.5 0 0 0 5 8.5 V11 A1.5 1.5 0 0 0 6.5 12.5 H8 V15 A1.5 1.5 0 0 1 6.5 16.5 M18 7 H15.5 A1.5 1.5 0 0 0 14 8.5 V11 A1.5 1.5 0 0 0 15.5 12.5 H17 V15 A1.5 1.5 0 0 1 15.5 16.5",
   };
 
   const ACTION_LABELS: Readonly<Record<NodeAction, string>> = {
     navigate: "Navigate to view",
     relationships: "Browse relationships",
+    reference: "Reference element",
   };
 
   /**
@@ -860,6 +875,9 @@ export function createDiagram(host: HTMLElement, view: DiagramView, opts: Diagra
     const actions: NodeAction[] = [];
     if (typeof node.navigateTo === "string" && node.navigateTo !== "") actions.push("navigate");
     actions.push("relationships");
+    // Last, and only when the host can actually take one: this button writes
+    // into a composer that may not exist on this mount (the dock panel).
+    if (opts.nodeReference?.available === true) actions.push("reference");
 
     const totalWidth = actions.length * ACTION_BUTTON + (actions.length - 1) * ACTION_GAP;
     // Centred on the node's bottom edge, nudged down so the pill straddles it
