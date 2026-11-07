@@ -23,6 +23,24 @@
 - 判据：它的索引按 npm 包名组织，不按 GitHub 仓库。所以只有仓库地址而没有 npm 包的插件在这里很难定位
 - 站点入口：`https://dshopen.org/` 上的 Submit a plugin
 
+### dsh.fish
+
+- 规模：官方口径一万多个插件，六语言（英、简、繁、日、韩、俄），站点自称 The plugin hub for DeepSeek Harness，仓库 `stvlynn/dsh.fish`
+- 投稿：`https://dsh.fish/submit`，需要浏览器登录态（GitHub OAuth）。它的文档明说 device token
+  只能搜、装、评分，不能替你发布。三个字段：类型（bundle / profile / skill / agent preset）、
+  源、备注（只在转人工时被读）
+- 关键机制：源决定审核路径。仓库 owner 的 GitHub 数字 id 与登录账号一致时即时批准并直接给出条目；
+  npm 源没有等价校验，一律排人工；组织名下的仓库属于组织不属于你，也排人工。有自己的仓库就写
+  `github:<owner>/<repo>[/<path>]`，别图省事写 npm 源
+- 契约：它用与爬虫同一个 reader 重读真实 manifest。选的类型与实际 kind 不符会被拒；找不到
+  harness manifest 也会被拒（bundle 必须在 `package.json` 声明 `dsh.bundle`）。monorepo
+  子目录包用 `github:owner/repo/path` 形态
+- 判据：详情页 `https://dsh.fish/a/<id>`；目录 API `https://dsh.fish/api/v1/artifacts?q=<关键词>`
+  检索、`/api/v1/artifacts/<id>` 取单条（含 `verified`、`score`、`grade`、`maintenanceStatus`）。
+  检索是模糊匹配，断言未收录前看返回条目的 id，别只看关键词命中
+- 评分：S/A/B/C 加 0-100 分。新仓 0 star 时 B/60 是初始态，不是差评，随 star 与安装量变化
+- 收录页还自带 README 徽章与「本包在安装时构建」的风险提示；后者对我们这种提交了 `lib/` 的包不会出现
+
 ### dshmarketplace.dev
 
 - 投稿：`https://dshmarketplace.dev/submit`，表单 `Submit a repository`（无验证码）

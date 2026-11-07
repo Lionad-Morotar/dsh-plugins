@@ -4,7 +4,7 @@ description: 把 DSH 插件投进各市场并如实标注收录状态
 argument-hint: "[预检 | 索引 | awesome | hub | registry | 徽章] <包目录>"
 disable-model-invocation: true
 metadata:
-  version: alpha3
+  version: alpha
 ---
 
 # post-dsh-plugin：DSH 插件投稿
@@ -22,7 +22,7 @@ metadata:
 - 索引与条目：monorepo 里生成 `market/index.json` 或 `market/awesome/*.yml` → Workflow artifacts
 - awesome：给 awesome-dsh-plugin 提条目 PR → Workflow awesome
 - hub：投 dsh-plugin.org（Issue 或等 topic 自动爬取）→ Workflow hub
-- registry：投 dsh.pub / dshopen.org / dshmarketplace.dev / deepseek1024 / dsh-market 创意工坊 / hub.omdsh.dev → Workflow registry
+- registry：投 dsh.pub / dsh.fish / dshopen.org / dshmarketplace.dev / deepseek1024 / dsh-market 创意工坊 / hub.omdsh.dev → Workflow registry
 - 徽章：往 README 加收录徽章或其它可验证徽章 → Workflow badge
 
 ## 外部依赖入口

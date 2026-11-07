@@ -9,13 +9,27 @@
 
 ## 收录徽章
 
-形态：
+各家形态不同，共同前提是详情页先返回 200。加之前 curl 一次详情页，再 curl 一次徽章图，两个都绿才写进 README。
+
+dsh-plugin.org：
 
 ```
 [![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/<owner>/<slug>)
 ```
 
-`<owner>` 与 `<slug>` 从收录后的详情页地址取。加之前先 curl 一次详情页，200 才加。
+dsh.fish（徽章显示当前 grade，随分数变化）：
+
+```
+[![<id> on dsh.fish](https://dsh.fish/a/<id>/badge.svg)](https://dsh.fish/a/<id>)
+```
+
+dshopen.org（走 shields 的 endpoint，返回 label/message/color，message 里带喜欢数）：
+
+```
+[![Open Plugin Market](https://img.shields.io/endpoint?url=https%3A%2F%2Fdshopen.org%2Fbadge%2F<id>.json%3Flang%3Den)](https://dshopen.org/plugins/<id>)
+```
+
+`<owner>`/`<slug>`/`<id>` 都从收录后的详情页地址取。dsh-plugin.org 的 owner 在 URL 里是小写，徽章链接也要跟着小写，否则 301 之后才算命中。
 
 站点原文把加徽章这件事排在"插件被收录后"，顺序不是建议。
 

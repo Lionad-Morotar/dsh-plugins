@@ -6,7 +6,7 @@ DSH 没有官方市场。到 2026-11-01，社区已经跑出上百个自称「�
 
 第一层是源头，只有三件事：GitHub `dsh-plugin` topic、npm 发布、awesome 主目录。绝大多数目录是这三者的派生产物，从它们自动同步。做完这三件，长尾里一大半会自己出现。
 
-第二层是独立入口，各自有单独的收录机制，不会因为你打了 topic 就自动出现。这一层才需要逐个动手：dsh.pub、dshopen.org、dshmarketplace.dev、hub.omdsh.dev、deepseek1024.com、dsh-market.com 创意工坊。
+第二层是独立入口，各自有单独的收录机制，不会因为你打了 topic 就自动出现。这一层才需要逐个动手：dsh.pub、dsh.fish、dshopen.org、dshmarketplace.dev、hub.omdsh.dev、deepseek1024.com、dsh-market.com 创意工坊。
 
 第三层是长尾 PR 型目录，几十个，星数从几十到一千五，多数写着自动同步。逐个提 PR 的边际价值很低，挑星数高且明确要求手动提交的做几条即可。
 
