@@ -23,6 +23,28 @@ const RUNNING_ROW = `
   </div>
 `;
 
+/**
+ * The running row in its animated shape: TextShimmer paints from the attribute
+ * and keeps no text nodes, and it carries a decoration copy for the sweep.
+ */
+const SHIMMER_ROW = `
+  <div data-chat-running>
+    <span class="visuallyHidden" role="status">深度求索中</span>
+    <span class="divider"></span>
+    <span class="content">
+      <span class="icon"></span>
+      <span data-shimmer>
+        <span class="content"><span data-shimmer-text="深度求索中，用时 9小时30分35秒 ···"></span></span>
+        <span class="decoration" aria-hidden="true" inert>
+          <span class="sweep">
+            <span class="content highlight"><span data-shimmer-text="深度求索中，用时 9小时30分35秒 ···"></span></span>
+          </span>
+        </span>
+      </span>
+    </span>
+  </div>
+`;
+
 /** The settled row: the sentence is one text node, the duration is three spans. */
 const SETTLED_ROW = `
   <div data-turn-process="2" data-turn-process-messages="8">
@@ -72,6 +94,19 @@ describe("patchDocument", () => {
     expect(text("[data-turn-process]").trim()).toBe("已完成，用时 2小时30分37秒");
     // The idle view must not touch a row the host is no longer showing as running.
     expect(text("[data-chat-running] .text")).toBe("深度求索中，用时 9小时30分35秒 ···");
+  });
+
+  it("rewrites both copies of the animated label through data-shimmer-text", () => {
+    document.body.innerHTML = `${SHIMMER_ROW}${SETTLED_ROW}`;
+    const now = 3_600_000;
+    const written = patchDocument(document, () => blockedView(now), now);
+    expect(written).toBe(3);
+    const copies = [...document.querySelectorAll("[data-shimmer-text]")].map((element) => element.getAttribute("data-shimmer-text"));
+    // The visible copy and the sweep's decoration copy must agree, or the two
+    // figures stack on top of each other.
+    expect(copies).toEqual(["深度求索中，用时 4分35秒 ···", "深度求索中，用时 4分35秒 ···"]);
+    expect(document.querySelector("[data-shimmer-text]")?.textContent).toBe("");
+    expect(text("[data-chat-running] .visuallyHidden")).toBe("深度求索中");
   });
 
   it("is idempotent", () => {

@@ -11,8 +11,11 @@
  *   - the host owns the sentence; we only replace the duration inside it, so
  *     every language the host ships keeps working and no copy is duplicated;
  *   - we never add or remove nodes, because React owns the element tree. A
- *     rewrite writes the new sentence into the first text node and blanks the
- *     rest, and the next React render simply overwrites them again;
+ *     settled label is rewritten through its text nodes (the new sentence goes
+ *     into the first and the rest are blanked); the live label is painted by
+ *     TextShimmer from a `data-shimmer-text` attribute and has no text nodes at
+ *     all, so it is rewritten through that attribute instead. Either way the
+ *     host's next render overwrites the value and the observer corrects it again;
  *   - an unrecognized label is left alone. A host that rephrases its sentence
  *     degrades to the shipped reading instead of printing something wrong.
  *
@@ -163,26 +166,55 @@ const RUNNING_SELECTOR = "[data-chat-running]";
 const TURN_PROCESS_SELECTOR = "[data-turn-process]";
 
 /**
- * Find the live sentence inside one running row.
+ * The attribute TextShimmer paints its copy from.
  *
- * The row itself also carries an aria-only "deep diving" text, so rewriting the
- * row would blank the visible sentence and paint the corrected one into a
- * clipped node. The sentence is the one with the running tail, and its parent is
- * the element to rewrite.
- * @param root - one `[data-chat-running]` element.
- * @returns the sentence element, or null when the row is not (yet) the live label.
+ * While the shimmer runs the component holds no text nodes at all: both the
+ * visible span and its decoration twin carry the sentence in this attribute and
+ * the stylesheet renders it with `content: attr(data-shimmer-text)`. A text-node
+ * rewrite therefore cannot reach the live label, which is why the attribute is
+ * the primary target here.
  */
-function runningLabel(root: Element): Element | null {
-  const doc = root.ownerDocument;
-  const walker = doc.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
-  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-    if ((node.nodeValue ?? "").includes(RUNNING_TAIL)) return node.parentElement;
-  }
-  return null;
-}
+const SHIMMER_TEXT_ATTR = "data-shimmer-text";
 
 /** The minimum the patcher needs from a view; the host view satisfies it. */
 export type ClockReading = Pick<TurnClockView, "currentTurn" | "turnStart" | "waitMs" | "waitSince" | "turnNet">;
+
+/**
+ * Rewrite one running row's live sentence, in every copy of it.
+ *
+ * Two targets, because TextShimmer ships two shapes of the same component: an
+ * animated one that paints from the attribute (a visible copy plus a decoration
+ * copy for the sweep), and an idle one that renders real children. Both copies
+ * of the animated shape are rewritten so the sweep and the text cannot disagree,
+ * and the text-node pass keeps the idle shape working (and survives a host that
+ * drops the shimmer).
+ * @param row - one `[data-chat-running]` element.
+ * @param millis - net duration to show.
+ * @returns how many copies were rewritten.
+ */
+function patchRunningRow(row: Element, millis: number): number {
+  let written = 0;
+  for (const element of row.querySelectorAll(`[${SHIMMER_TEXT_ATTR}]`)) {
+    const value = element.getAttribute(SHIMMER_TEXT_ATTR) ?? "";
+    const parts = splitLabel(value);
+    if (parts === null) continue;
+    const next = `${parts.prefix}${formatNet(millis, parts)}${parts.suffix}`;
+    if (next === value) continue;
+    element.setAttribute(SHIMMER_TEXT_ATTR, next);
+    written += 1;
+  }
+  for (const node of textNodes(row)) {
+    const value = node.nodeValue ?? "";
+    if (!value.includes(RUNNING_TAIL)) continue;
+    const parts = splitLabel(value);
+    if (parts === null) continue;
+    const next = `${parts.prefix}${formatNet(millis, parts)}${parts.suffix}`;
+    if (next === value) continue;
+    node.nodeValue = next;
+    written += 1;
+  }
+  return written;
+}
 
 /**
  * Apply the correction to everything currently on screen.
@@ -200,10 +232,7 @@ export function patchDocument(doc: Document, read: () => ClockReading | undefine
   let written = 0;
   const running = liveNetMs({ ...view, totalWaitMs: 0 }, now);
   if (running !== null && view.currentTurn !== null) {
-    for (const row of doc.querySelectorAll(RUNNING_SELECTOR)) {
-      const label = runningLabel(row);
-      if (label !== null && rewriteLabel(label, running)) written += 1;
-    }
+    for (const row of doc.querySelectorAll(RUNNING_SELECTOR)) written += patchRunningRow(row, running);
   }
   for (const row of doc.querySelectorAll(TURN_PROCESS_SELECTOR)) {
     const turn = row.getAttribute("data-turn-process");
@@ -251,7 +280,16 @@ export function startClockPatcher(doc: Document, read: () => ClockReading | unde
   };
   const observer = new MutationObserver(schedule);
   const target = doc.body ?? doc.documentElement;
-  observer.observe(target, { subtree: true, childList: true, characterData: true });
+  // `data-shimmer-text` is an attribute, not text: the host rewrites it once a
+  // second on the live label, and without the attribute filter those writes
+  // would only be corrected on the next tick.
+  observer.observe(target, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: [SHIMMER_TEXT_ATTR],
+  });
   const interval = setInterval(() => {
     patchDocument(doc, read, Date.now());
   }, TICK_MS);
