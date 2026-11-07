@@ -23,10 +23,12 @@ import { EN, LOCALE_NAMESPACE, ZH } from "./copy.ts";
 import { mountArchChrome, type ArchChromeStrings } from "./chrome.tsx";
 import { createArchView, type InsertReferenceSeam } from "./view.tsx";
 import {
+  archReferenceSeam,
   insertArchReference,
   registerArchReferenceSource,
   type ArchReferenceInsert,
   type ArchReferencePayload,
+  type ArchReferenceSeam,
   type ArchReferenceSpan,
   type ReferenceContextLike,
 } from "./reference.ts";
@@ -63,6 +65,8 @@ export interface WorkbenchFace {
     readonly title: string;
     readonly mount: (host: HTMLElement, context: { readonly sessionId: string }) => (() => void) | void;
   }) => () => void;
+  /** The session on screen; absent on cores older than the session read. */
+  readonly currentSessionId?: () => string | undefined;
 }
 
 /** Services this plugin waits for before applying.
@@ -188,6 +192,27 @@ function chromeSeams(t: (key: string) => string) {
 }
 
 /**
+ * Build the seam a chip click drives, reading the host per click.
+ *
+ * The session is read from the workbench core, which is optional here: the tab
+ * row is the part that actually switches the view, so a host without the core
+ * still gets a working click and only loses the cross-session guard. That guard
+ * is worth keeping where it exists (a chip from another session names an
+ * element in a model this tab is not showing), but it is not worth losing the
+ * whole gesture over, and the tab row it would have protected is the same one
+ * the click is about to press.
+ * @param ctx - the client context, read through the non-throwing resolver.
+ * @returns the seam; empty outside a browser.
+ */
+export function createArchReferenceSeam(ctx: ArchClientContext): ArchReferenceSeam {
+  const titles = [ZH["arch.tabTitle"] ?? "", EN["arch.tabTitle"] ?? ""];
+  return {
+    ...archReferenceSeam(typeof document === "undefined" ? undefined : document, titles),
+    currentSessionId: () => readWorkbench(ctx)?.currentSessionId?.(),
+  };
+}
+
+/**
  * Build the writer that turns one element payload into a composer chip.
  *
  * Every service is read on each call. Two reasons: the facade is per session
@@ -256,9 +281,13 @@ export function apply(ctx: ArchClientContext): () => void {
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
   registeredDictionaries = offLocale;
 
-  // The chip's send-time identity. Registered before the view so a draft that
-  // already holds a chip can be sent the moment the tab paints.
-  const referenceSource = registerArchReferenceSource(ctx as ReferenceContextLike);
+  // The chip's send-time identity and its click target. Registered before the
+  // view so a draft that already holds a chip can be sent the moment the tab
+  // paints. The seam is resolved per click: the tab row is rebuilt by the host
+  // on every view switch, and the session on screen changes with it.
+  const referenceSource = registerArchReferenceSource(ctx as ReferenceContextLike, () =>
+    createArchReferenceSeam(ctx),
+  );
   const View = createArchView({
     chrome: chromeSeams(t),
     insertReference: createInsertReference(ctx),

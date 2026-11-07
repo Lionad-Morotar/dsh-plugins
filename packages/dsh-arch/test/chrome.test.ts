@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { fitViewport, mountArchChrome } from "../src/client/chrome.tsx";
+import { centerOnNode, fitViewport, mountArchChrome, type ArchFocusSeam } from "../src/client/chrome.tsx";
 import { mountArchDiagram } from "../src/client/entry.ts";
 import { createDiagram } from "../src/client/chunk/diagram.ts";
 import type { DiagramView } from "../src/client/chunk/diagram.ts";
@@ -383,6 +383,100 @@ describe("node reference seam", () => {
     // And the node stays selected, so the reader keeps their place.
     expect(host.querySelector('[data-arch-action="reference"]')).not.toBeNull();
     dispose();
+  });
+});
+
+describe("focus seam", () => {
+  /** Mount the chrome over the real renderer and hand back its focus seam. */
+  async function mountWithFocus() {
+    const { fetch } = fakeFetch({
+      "/arch/api/views": () => jsonResponse(viewsResponse()),
+      "/arch/api/state": () => jsonResponse({ state: null, degraded: false }),
+      "/arch/api/model": () => jsonResponse({ workspace: "/w", projectId: "p", elements: {}, relations: {}, specification: null }),
+    });
+    const { host } = mountHost();
+    const focusSeam: ArchFocusSeam = {};
+    const dispose = mountArchChrome(host, {
+      sessionId: "s1",
+      fetchImpl: fetch,
+      load: loadRealChunk,
+      mountView,
+      focusSeam,
+    });
+    await until(() => host.querySelector("[data-arch-body] svg") !== null);
+    return { host, dispose, focusSeam };
+  }
+
+  it("fills the seam in so a click outside the panel has somewhere to land", async () => {
+    const { dispose, focusSeam } = await mountWithFocus();
+    expect(typeof focusSeam.focus).toBe("function");
+    dispose();
+  });
+
+  it("selects the element and centres the viewport on it", async () => {
+    const { host, dispose, focusSeam } = await mountWithFocus();
+    // jsdom lays out nothing, so the host box the centring reads is stubbed.
+    const diagram = host.querySelector<HTMLElement>("[data-arch-diagram]");
+    expect(diagram).not.toBeNull();
+    if (diagram !== null) stubBox(diagram, 800, 600);
+    focusSeam.focus?.("dshPlugins");
+    await until(() => host.querySelector('[data-arch-body] g[data-id="dshPlugins"] rect[display="inline"]') !== null);
+    // The node sits at 504,1160 and is 353x180; the default scale is kept.
+    const scale = 0.75;
+    const tx = 400 - (504 + 353 / 2) * scale;
+    const ty = 300 - (1160 + 180 / 2) * scale;
+    await until(() => viewportTransform(host)?.includes(`translate(${String(tx)} ${String(ty)})`) === true);
+    expect(viewportTransform(host)).toContain(`translate(${String(tx)} ${String(ty)})`);
+    // The selection ring is what the reader sees, and it is the renderer's own
+    // selected state rather than a second highlight drawn by the chrome.
+    expect(host.querySelector('[data-arch-body] g[data-id="dshPlugins"] rect[display="inline"]')).not.toBeNull();
+    dispose();
+  });
+
+  it("keeps the scale it found rather than re-fitting", async () => {
+    const { host, dispose, focusSeam } = await mountWithFocus();
+    const before = viewportTransform(host);
+    focusSeam.focus?.("dshPlugins");
+    // A zero-sized box cannot be centred against, so the viewport is untouched.
+    await until(() => host.querySelector('[data-arch-body] g[data-id="dshPlugins"] rect[display="inline"]') !== null);
+    expect(viewportTransform(host)).toBe(before);
+    dispose();
+  });
+
+  it("switches to the view that owns the element", async () => {
+    const { host, dispose, focusSeam } = await mountWithFocus();
+    // `dshPlugins.skin` lives in the skin view, not the mounted index view.
+    focusSeam.focus?.("dshPlugins.skin.app");
+    await until(() => host.querySelector('button[data-view-id="skin"]')?.getAttribute("aria-pressed") === "true");
+    expect(host.querySelector('button[data-view-id="skin"]')?.getAttribute("aria-pressed")).toBe("true");
+    dispose();
+  });
+
+  it("does nothing for an element the model does not have", async () => {
+    const { host, dispose, focusSeam } = await mountWithFocus();
+    const before = viewportTransform(host);
+    expect(() => {
+      focusSeam.focus?.("no.such.element");
+    }).not.toThrow();
+    await until(() => host.querySelector("[data-arch-body] svg") !== null);
+    expect(host.querySelector('button[data-view-id="index"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(viewportTransform(host)).toBe(before);
+    dispose();
+  });
+});
+
+describe("centerOnNode", () => {
+  it("puts the node centre in the middle of the box and keeps the scale", () => {
+    const node = { x: 100, y: 200, width: 40, height: 20 };
+    const centred = centerOnNode(node, { scale: 2, tx: 0, ty: 0 }, { width: 400, height: 300 });
+    expect(centred.scale).toBe(2);
+    expect(centred.tx).toBe(200 - (100 + 20) * 2);
+    expect(centred.ty).toBe(150 - (200 + 10) * 2);
+  });
+
+  it("leaves the viewport alone against a box with no size", () => {
+    const viewport = { scale: 1.5, tx: 7, ty: 9 };
+    expect(centerOnNode({ x: 1, y: 2, width: 3, height: 4 }, viewport, { width: 0, height: 0 })).toBe(viewport);
   });
 });
 

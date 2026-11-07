@@ -14,6 +14,7 @@
  * refuses a stale revision with a silent `false` rather than throwing. So the
  * retry and the plain-text fallback are this module's job, not the host's.
  */
+import { clearArchFocus, requestArchFocus } from "./focus-store.ts";
 
 /** The source name the chip is filed under; the host looks the codec up by it. */
 export const ARCH_REFERENCE_SOURCE = "lionad.arch";
@@ -277,6 +278,130 @@ export function insertArchReference(
   return deps.insertText(payload.clipboardText, span) ? "text" : "failed";
 }
 
+/**
+ * The host-side capabilities a chip click needs.
+ *
+ * The arch tab is a plain `conversation.view` entry, so it gets none of the
+ * workbench's view-switching seam: the host's own tab row is the only way to
+ * bring it forward, and the only way to ask whether it is already there is to
+ * look at that row. Both are injected so the decision stays testable in jsdom
+ * and on a host that publishes no tab row at all.
+ */
+export interface ArchReferenceSeam {
+  /** The session on screen, which is what a mismatch is measured against. */
+  readonly currentSessionId?: () => string | undefined;
+  /** Whether the arch tab is the selected one right now. */
+  readonly activeTab?: () => boolean;
+  /** Press the arch tab; false when the host's row has no such tab. */
+  readonly clickTab?: () => boolean;
+}
+
+/**
+ * The id a chip's `ref` names.
+ * @param ref - the chip's `ref` string.
+ * @returns the element id, or undefined when the ref is not ours.
+ */
+function archRefElementId(ref: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(ref);
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== "object") return undefined;
+  const id = (parsed as { readonly id?: unknown }).id;
+  if (typeof id !== "string") return undefined;
+  const trimmed = id.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+/**
+ * The id of the session a click came from.
+ *
+ * The host's session object is not part of this package's contract, so both
+ * spellings it has used are read and anything else is left to the caller's
+ * fallback rather than guessed at.
+ * @param session - the value the host passed as the session.
+ * @returns the id, or undefined when the value carries none.
+ */
+function sessionIdOf(session: unknown): string | undefined {
+  if (session === null || typeof session !== "object") return undefined;
+  const fields = session as { readonly id?: unknown; readonly sessionId?: unknown };
+  if (typeof fields.id === "string" && fields.id !== "") return fields.id;
+  if (typeof fields.sessionId === "string" && fields.sessionId !== "") return fields.sessionId;
+  return undefined;
+}
+
+/**
+ * Bring the arch tab forward and select one element in it.
+ *
+ * The request is filed before the tab is pressed, never after: the view mounts
+ * lazily on selection, so a request that arrived later would miss the mount
+ * that could have consumed it. When the tab is already up there is nothing to
+ * press and the request is the whole gesture.
+ *
+ * A failed press clears the request. The tab row is the only route in, so a
+ * click that cannot reach it is a click that will never be honoured; leaving
+ * the id behind would move the diagram on the next unrelated mount.
+ * @param seam - the host capabilities the click was given.
+ * @param sessionId - the session the click came from.
+ * @param ref - the chip's `ref` string.
+ * @returns whether the click was consumed; false leaves the editor's own gesture.
+ */
+export function openArchReference(
+  seam: ArchReferenceSeam,
+  sessionId: string | undefined,
+  ref: string,
+): boolean {
+  const elementId = archRefElementId(ref);
+  if (elementId === undefined) return false;
+  if (sessionId === undefined || sessionId === "") return false;
+  const current = seam.currentSessionId?.();
+  // A chip from another session names an element in a model this tab is not
+  // showing; selecting it would move a diagram the reader is not looking at.
+  if (current !== undefined && current !== sessionId) return false;
+  requestArchFocus(elementId);
+  if (seam.activeTab?.() === true) return true;
+  if (seam.clickTab?.() === true) return true;
+  clearArchFocus();
+  return false;
+}
+
+/**
+ * Read the host's tab row as the seam this package needs.
+ *
+ * Matching is exact on the label, never substring: the row also holds the
+ * files, Git and chat tabs, and a "contains" rule would press whichever of them
+ * happened to share a word with the arch title.
+ * @param doc - the document to search; undefined outside a browser.
+ * @param titles - every spelling the arch tab may carry (one per locale).
+ * @returns the seam; empty when there is no document to search.
+ */
+export function archReferenceSeam(
+  doc: Document | undefined,
+  titles: readonly string[],
+): ArchReferenceSeam {
+  if (doc === undefined) return {};
+  const tabs = (): readonly Element[] => {
+    const row = doc.querySelector("[data-conversation-tabs]");
+    if (row === null) return [];
+    return [...row.querySelectorAll('[role="tab"]')];
+  };
+  const archTab = (): Element | undefined => {
+    const wanted = new Set(titles.map(title => title.trim()).filter(title => title !== ""));
+    return tabs().find(tab => wanted.has((tab.textContent ?? "").trim()));
+  };
+  return {
+    activeTab: () => archTab()?.getAttribute("aria-selected") === "true",
+    clickTab: () => {
+      const tab = archTab();
+      if (tab === undefined) return false;
+      (tab as Element & { click?(): void }).click?.();
+      return true;
+    },
+  };
+}
+
 /** The slice of `ctx.inputTriggers` this package registers into. */
 export interface InputTriggersFace {
   registerSource(source: ArchReferenceSource): () => void;
@@ -293,6 +418,14 @@ export interface ArchReferenceSource {
     clipboardText(ref: string): string;
     serialize(ref: string, signal?: AbortSignal): Promise<string>;
   };
+  /**
+   * Take a click on one of this source's chips.
+   *
+   * The host calls this from the editor's click handler and keeps its own
+   * gesture when the answer is false, so a host whose tab row has no arch entry
+   * leaves the chip inert instead of swallowing the click.
+   */
+  openReference(session: unknown, activation: unknown): boolean;
 }
 
 /**
@@ -303,9 +436,11 @@ export interface ArchReferenceSource {
  * host requires the source to exist and to have a codec, because send-time
  * serialization looks the codec up by name and rejects the submission when it
  * is missing.
+ * @param readSeam - resolves the host capabilities per click, because the tab
+ *   row and the session on screen both change under a long-lived source.
  * @returns the source to register.
  */
-export function createArchReferenceSource(): ArchReferenceSource {
+export function createArchReferenceSource(readSeam: () => ArchReferenceSeam = () => ({})): ArchReferenceSource {
   return {
     trigger: ARCH_REFERENCE_TRIGGER,
     name: ARCH_REFERENCE_SOURCE,
@@ -321,6 +456,23 @@ export function createArchReferenceSource(): ArchReferenceSource {
       async serialize(ref: string) {
         return archRefModelText(ref);
       },
+    },
+    openReference(session, activation) {
+      const ref = activation !== null && typeof activation === "object"
+        ? (activation as { readonly ref?: unknown }).ref
+        : undefined;
+      if (typeof ref !== "string") return false;
+      // The click runs inside the editor's own handler: a seam that throws must
+      // leave the chip inert rather than take the composer down with it.
+      try {
+        const seam = readSeam();
+        // A host whose session object carries no id still clicked a chip in the
+        // session on screen, so that is the session to address.
+        const target = sessionIdOf(session) ?? seam.currentSessionId?.();
+        return openArchReference(seam, target, ref);
+      } catch {
+        return false;
+      }
     },
   };
 }
@@ -353,6 +505,7 @@ function isInputTriggers(value: unknown): value is InputTriggersFace {
  * both would be a duplicate `trigger`/`name` pair, which the host rejects by
  * throwing.
  * @param ctx - the client context.
+ * @param readSeam - resolves the host capabilities per chip click.
  * @returns a disposer for whatever was registered.
  */
 /**
@@ -369,8 +522,11 @@ export interface ReferenceSourceHandle {
   dispose(): void;
 }
 
-export function registerArchReferenceSource(ctx: ReferenceContextLike): ReferenceSourceHandle {
-  const source = createArchReferenceSource();
+export function registerArchReferenceSource(
+  ctx: ReferenceContextLike,
+  readSeam?: () => ArchReferenceSeam,
+): ReferenceSourceHandle {
+  const source = createArchReferenceSource(readSeam);
   let dispose: (() => void) | undefined;
   const release = (): void => {
     dispose?.();
