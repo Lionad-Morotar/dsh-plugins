@@ -1,0 +1,6 @@
+# Mount dsh-turn-clock: this package owns the Turn clock that leaves the wait for
+# `ask_user_question` answers out of both the live running label and the settled
+# "completed in" label.
+- insert:
+    - id: turn-clock
+      name: 'dsh-turn-clock'
