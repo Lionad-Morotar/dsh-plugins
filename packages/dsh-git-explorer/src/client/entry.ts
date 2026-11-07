@@ -22,7 +22,13 @@ import { createBranchAction } from "./branch-action.tsx";
 import { createBranchStore } from "./branch-store.ts";
 import { computeWindow, createJump, formatCommitDetail, groupChanges } from "./model.ts";
 import { insertStyles } from "./styles.ts";
-import { registerGitReferenceSource, type ReferenceContextLike, type ReferenceInsert, type ReferenceSpan } from "./reference.ts";
+import {
+  gitReferenceSeam,
+  registerGitReferenceSource,
+  type ReferenceContextLike,
+  type ReferenceInsert,
+  type ReferenceSpan,
+} from "./reference.ts";
 import { createGitExplorerView, type ReferenceWiring, type ReferenceWiringResolver, type WorkbenchFace } from "./view.tsx";
 import { createRpcRemoteFace, type GitRemoteFace, type RemoteResolver, type RpcCall } from "./wire.ts";
 
@@ -201,10 +207,15 @@ export function apply(ctx: ClientContextLike): () => void {
   const offFontScale = attachFontScale(ctx);
   const remote = createRemoteResolver(ctx);
   const reference = createReferenceResolver(ctx);
-  // The chip's send-time identity. Without it the chip still lands in the draft,
-  // but the host would reject the send for a missing codec, so the writer only
-  // reaches for a chip when this registration succeeded.
-  const referenceSource = registerGitReferenceSource(ctx as ReferenceContextLike);
+  // The chip's send-time identity and its click target. Without the source the
+  // chip still lands in the draft, but the host would reject the send for a
+  // missing codec, so the writer only reaches for a chip when this registration
+  // succeeded. The seam is resolved per click: the workbench service may mount
+  // after this registration, and a snapshot taken here would leave the chip
+  // inert on exactly that host.
+  const referenceSource = registerGitReferenceSource(ctx as ReferenceContextLike, () =>
+    gitReferenceSeam(ctx.workbench),
+  );
 
   const BranchAction = createBranchAction({ store: createBranchStore(remote), t });
   ctx.slots.inject(HEADER_SLOT, () =>

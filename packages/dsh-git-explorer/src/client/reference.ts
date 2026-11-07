@@ -10,6 +10,7 @@
  * retry and the plain-text fallback are this module's job, not the host's.
  */
 import type { GitCommitDetail } from "../host/types.ts";
+import { VIEW_ID } from "../shared.ts";
 
 /** The source name the chip is filed under; the host looks the codec up by it. */
 export const GIT_REFERENCE_SOURCE = "lionad.git";
@@ -335,6 +336,170 @@ export function referenceAvailability(input: ReferenceAvailabilityInput): Refere
   return { enabled: true };
 }
 
+/**
+ * The seam a chip click drives to bring the Git view forward.
+ *
+ * Every member is optional because the host hands these capabilities out
+ * piecemeal: the session-addressed `views` seam exists only while a
+ * conversation-header row holds the host's `openView`, the focus queue arrived
+ * in a later core, and a host may expose any subset. A missing member degrades
+ * to the next path rather than failing the click.
+ */
+export interface GitReferenceSeam {
+  /** Open a view for one session and deliver the focus with it. */
+  readonly openView?: (sessionId: string, viewId: string, focus: string) => boolean;
+  /** Leave a focus for a view that is mounted lazily. */
+  readonly requestFocus?: (viewId: string, focus: string) => void;
+  /** Withdraw a queued focus; used when the switch it was queued for failed. */
+  readonly takeFocus?: (viewId: string) => void;
+  /** Switch the view through the host's own tab row, which carries no focus. */
+  readonly openViewOrSwitch?: (
+    viewId: string,
+    focus?: string,
+  ) => { readonly opened: boolean; readonly focused: boolean };
+  /** The session on screen, which is what a mismatch is measured against. */
+  readonly currentSessionId?: () => string | undefined;
+}
+
+/**
+ * Read the workbench service as the seam this package needs.
+ *
+ * The service is probed, not assumed: the members below live on different
+ * contract versions, and a host that offers only the older `openView` still
+ * switches the view, just without a session argument to address it with.
+ * @param workbench - the workbench service, or whatever the context held.
+ * @returns the seam; empty when the service is absent.
+ */
+export function gitReferenceSeam(workbench: unknown): GitReferenceSeam {
+  if (workbench === null || typeof workbench !== "object") return {};
+  const face = workbench as {
+    readonly views?: { open?(sessionId: string, id: string, focus?: string): boolean | void };
+    openView?(id: string, focus?: string): boolean;
+    readonly viewFocus?: {
+      request?(view: string, focus: string): void;
+      take?(view: string): string | undefined;
+    };
+    openViewOrSwitch?(id: string, focus?: string): { readonly opened: boolean; readonly focused: boolean };
+    currentSessionId?(): string | undefined;
+  };
+  const views = face.views;
+  const scopedOpen = views?.open;
+  const legacyOpen = face.openView;
+  const queue = face.viewFocus;
+  const queueRequest = queue?.request;
+  const queueTake = queue?.take;
+  const switchView = face.openViewOrSwitch;
+  const currentSessionId = face.currentSessionId;
+  return {
+    // The core's `views.open` answers `boolean`, but the view-side face widens
+    // it to `boolean | void`; only a literal true means the focus was delivered.
+    openView:
+      typeof scopedOpen === "function"
+        ? (sessionId, viewId, focus) => scopedOpen.call(views, sessionId, viewId, focus) === true
+        : typeof legacyOpen === "function"
+          ? (_sessionId, viewId, focus) => legacyOpen.call(face, viewId, focus)
+          : undefined,
+    requestFocus:
+      typeof queueRequest === "function"
+        ? (viewId, focus) => {
+            queueRequest.call(queue, viewId, focus);
+          }
+        : undefined,
+    takeFocus:
+      typeof queueTake === "function"
+        ? viewId => {
+            queueTake.call(queue, viewId);
+          }
+        : undefined,
+    openViewOrSwitch:
+      typeof switchView === "function" ? (viewId, focus) => switchView.call(face, viewId, focus) : undefined,
+    currentSessionId:
+      typeof currentSessionId === "function" ? () => currentSessionId.call(face) : undefined,
+  };
+}
+
+/**
+ * The id of the session a click came from.
+ *
+ * The host's session object is not part of this package's contract, so both
+ * spellings it has used are read and anything else is left to the caller's
+ * fallback rather than guessed at.
+ * @param session - the value the host passed as the session.
+ * @returns the id, or undefined when the value carries none.
+ */
+function sessionIdOf(session: unknown): string | undefined {
+  if (session === null || typeof session !== "object") return undefined;
+  const fields = session as { readonly id?: unknown; readonly sessionId?: unknown };
+  if (typeof fields.id === "string" && fields.id !== "") return fields.id;
+  if (typeof fields.sessionId === "string" && fields.sessionId !== "") return fields.sessionId;
+  return undefined;
+}
+
+/**
+ * The commit hash a chip's `ref` names, normalized for the view's focus parser.
+ *
+ * `parseCommitFocus` accepts 4-64 hex, so a ref whose hash is not that shape is
+ * refused here rather than handed over and silently ignored by the view, which
+ * would switch the tab and leave the cursor where it was.
+ * @param ref - the chip's `ref` string.
+ * @returns the lowercase hash, or undefined when the ref is not ours.
+ */
+function commitRefHash(ref: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(ref);
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== "object") return undefined;
+  const hash = (parsed as { readonly hash?: unknown }).hash;
+  if (typeof hash !== "string") return undefined;
+  const normalized = hash.trim().toLowerCase();
+  return /^[0-9a-f]{4,64}$/u.test(normalized) ? normalized : undefined;
+}
+
+/**
+ * Bring the Git view forward and select one commit.
+ *
+ * The focus carries the full hash from the chip, not the abbreviation it
+ * displays: the view accepts a 4-64 hex prefix, but the short hash is a display
+ * width the panel decides, not an identity.
+ *
+ * The three paths are tried in order of how much they can deliver. The
+ * session-addressed seam carries the focus itself. Failing that, the focus is
+ * queued first and the view switched second, because the view is mounted
+ * lazily: queued after the switch it would arrive after the mount that could
+ * have consumed it. A queue left behind by a switch that did not land is
+ * withdrawn, since the latest focus is a "where the reader wants to be"
+ * statement and replaying it on the next unrelated mount would move the cursor
+ * under them.
+ * @param seam - the view-switching capabilities the host offered.
+ * @param sessionId - the session the click came from.
+ * @param ref - the chip's `ref` string.
+ * @returns whether the click was consumed; false leaves the editor's own gesture.
+ */
+export function openGitReference(seam: GitReferenceSeam, sessionId: string | undefined, ref: string): boolean {
+  const hash = commitRefHash(ref);
+  if (hash === undefined) return false;
+  if (sessionId === undefined || sessionId === "") return false;
+  const current = seam.currentSessionId?.();
+  // A chip from another session names a commit in a repository this view is not
+  // showing; selecting it would point the history at something it never loaded.
+  if (current !== undefined && current !== sessionId) return false;
+  const focus = `commit:${hash}`;
+  if (seam.openView?.(sessionId, VIEW_ID, focus) === true) return true;
+  if (seam.requestFocus !== undefined) {
+    seam.requestFocus(VIEW_ID, focus);
+    const switched = seam.openViewOrSwitch?.(VIEW_ID);
+    if (switched?.opened === true) return true;
+    seam.takeFocus?.(VIEW_ID);
+    return false;
+  }
+  // No queue to hand the focus to, so the switch has to carry it or the reader
+  // would land in the view with the history wherever they left it.
+  return seam.openViewOrSwitch?.(VIEW_ID, focus)?.focused === true;
+}
+
 /** The slice of `ctx.inputTriggers` this package registers into. */
 export interface InputTriggersFace {
   registerSource(source: GitReferenceSource): () => void;
@@ -351,6 +516,14 @@ export interface GitReferenceSource {
     clipboardText(ref: string): string;
     serialize(ref: string, signal?: AbortSignal): Promise<string>;
   };
+  /**
+   * Take a click on one of this source's chips.
+   *
+   * The host calls this from the editor's click handler and keeps its own
+   * gesture when the answer is false, so a host without the workbench simply
+   * leaves the chip inert instead of swallowing the click.
+   */
+  openReference(session: unknown, activation: unknown): boolean;
 }
 
 /**
@@ -361,9 +534,11 @@ export interface GitReferenceSource {
  * host only requires the source to exist and to have a codec, because send-time
  * serialization looks the codec up by name and rejects the submission when it
  * is missing.
+ * @param readSeam - resolves the view-switching seam per click, because the
+ *   workbench service may mount after this source is registered.
  * @returns the source to register.
  */
-export function createGitReferenceSource(): GitReferenceSource {
+export function createGitReferenceSource(readSeam: () => GitReferenceSeam = () => ({})): GitReferenceSource {
   return {
     trigger: GIT_REFERENCE_TRIGGER,
     name: GIT_REFERENCE_SOURCE,
@@ -379,6 +554,23 @@ export function createGitReferenceSource(): GitReferenceSource {
       async serialize(ref: string) {
         return commitRefModelText(ref);
       },
+    },
+    openReference(session, activation) {
+      const ref = activation !== null && typeof activation === "object"
+        ? (activation as { readonly ref?: unknown }).ref
+        : undefined;
+      if (typeof ref !== "string") return false;
+      // The click runs inside the editor's own handler: a seam that throws must
+      // leave the chip inert rather than take the composer down with it.
+      try {
+        const seam = readSeam();
+        // A host whose session object carries no id still clicked a chip in the
+        // session on screen, so that is the session to address.
+        const target = sessionIdOf(session) ?? seam.currentSessionId?.();
+        return openGitReference(seam, target, ref);
+      } catch {
+        return false;
+      }
     },
   };
 }
@@ -415,6 +607,7 @@ function isInputTriggers(value: unknown): value is InputTriggersFace {
  * draft; only send-time serialization would be missing, which is why the writer
  * falls back to plain text.
  * @param ctx - the client context.
+ * @param readSeam - resolves the view-switching seam per chip click.
  * @returns a disposer for whatever was registered.
  */
 /**
@@ -431,8 +624,11 @@ export interface ReferenceSourceHandle {
   dispose(): void;
 }
 
-export function registerGitReferenceSource(ctx: ReferenceContextLike): ReferenceSourceHandle {
-  const source = createGitReferenceSource();
+export function registerGitReferenceSource(
+  ctx: ReferenceContextLike,
+  readSeam?: () => GitReferenceSeam,
+): ReferenceSourceHandle {
+  const source = createGitReferenceSource(readSeam);
   let dispose: (() => void) | undefined;
   const release = (): void => {
     dispose?.();
