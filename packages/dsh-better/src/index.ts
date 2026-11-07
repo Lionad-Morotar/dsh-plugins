@@ -1,23 +1,30 @@
 /**
  * Host half.
  *
- * Two contributions. The `sessionCompaction` projection unit counts how often
+ * Three contributions. The `sessionCompaction` projection unit counts how often
  * this session's context was compressed; that figure cannot be derived from
  * anything the shell publishes — occupancy says how full the context is, never
  * how often it was rebuilt — so it is folded host-side over the session log and
  * shipped to the browser as a wire view. The `/better/api/skill-profile` route
  * answers one skill's parameter profile, because the hint it needs is dropped by
- * the host's own frontmatter parser and has to be re-read from SKILL.md.
- * Everything else this package does stays in `dsh.client`.
+ * the host's own frontmatter parser and has to be re-read from SKILL.md. The
+ * third is model-facing rather than browser-facing: `set_reasoning_effort` lets
+ * the model read and change this session's reasoning effort, which is the only
+ * way it can act on a level it was never told about. Everything else this
+ * package does stays in `dsh.client`.
  *
- * Both seams are reached through soft probes rather than a plugin-level
- * `inject`: on a host without the projection seam or the web server the whole
- * browser half (the picker search, the focus chord, the attachment clipboard)
- * must still mount, and a hard dependency would leave the fiber pending instead.
+ * All three seams are reached through soft probes rather than a plugin-level
+ * `inject`: on a host without the projection seam, the web server or the tool
+ * registry the whole browser half (the picker search, the focus chord, the
+ * attachment clipboard) must still mount, and a hard dependency would leave the
+ * fiber pending instead. The tool probe is the one that matters most in
+ * practice, because a headless composition has no `llm` and would otherwise take
+ * the rest of the plugin down with it.
  */
 import { readFile } from "node:fs/promises";
 
 import { sessionCompactionProjection } from "./compaction.ts";
+import { createSetEffortTool, type EffortLlmFace } from "./host/reasoning-effort.ts";
 import { registerSkillProfileRoutes, type WebServerFace } from "./host/skill-profile-routes.ts";
 import { readFrontmatterArgumentHint, readFrontmatterFields } from "./skill-profile.ts";
 import type { SkillFrontmatter } from "./skill-profile.ts";
@@ -47,6 +54,17 @@ interface HostContextLike {
   get?(name: string): unknown;
 }
 
+/** Structural slice of the `tools` registry this half calls. */
+interface ToolsFaceLike {
+  register(definition: ReturnType<typeof createSetEffortTool>): () => void;
+}
+
+/** The scope the `tools` + `llm` soft probe hands back. */
+interface EffortScopeLike {
+  readonly tools: ToolsFaceLike;
+  readonly llm: EffortLlmFace;
+}
+
 /**
  * Register this package's projection units.
  *
@@ -68,6 +86,37 @@ function registerProjection(scope: ProjectionScopeLike): void {
 }
 
 /**
+ * Register the model-facing `set_reasoning_effort` tool.
+ *
+ * Registration is deliberately not wrapped in an `effect`: `tools.register`
+ * already rides the fiber of the injected sub-plugin, so unloading the plugin
+ * takes the tool back out on its own. The legacy `get` branch has no such fiber,
+ * which is the one place a stale registration could outlive an unload — an
+ * acceptable cost on a host old enough to predate `ctx.inject`, and much cheaper
+ * than leaving the tool unregistered there.
+ *
+ * A host missing either service is left untouched rather than told about it: a
+ * headless composition has no `llm`, and throwing would take the projections and
+ * the whole browser half down with a tool that host could never have run.
+ * @param ctx - host context.
+ */
+export function registerReasoningEffortTool(ctx: HostContextLike): void {
+  const mount = (scope: EffortScopeLike): void => {
+    scope.tools.register(createSetEffortTool({ llm: scope.llm }));
+  };
+
+  if (typeof ctx.inject === "function") {
+    ctx.inject<EffortScopeLike>(["tools", "llm"], mount);
+    return;
+  }
+
+  const tools = ctx.get?.("tools") as ToolsFaceLike | undefined;
+  const llm = ctx.get?.("llm") as EffortLlmFace | undefined;
+  if (tools === undefined || tools === null || llm === undefined || llm === null) return;
+  mount({ tools, llm });
+}
+
+/**
  * Register the projection when the host has the seam.
  * @param ctx - host context.
  */
@@ -86,6 +135,7 @@ export function apply(ctx: HostContextLike): void {
     }
   }
   registerSkillProfile(ctx);
+  registerReasoningEffortTool(ctx);
 }
 
 /** Structural slice of the `skills` service this half calls. */
