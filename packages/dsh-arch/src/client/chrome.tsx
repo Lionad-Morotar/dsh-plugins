@@ -101,6 +101,26 @@ export interface ArchChromeOptions {
    * no `inputActions`), and the button is not drawn rather than drawn dead.
    */
   readonly nodeReference?: NodeReferenceSeam;
+  /**
+   * The one-way seam a chip click drives to select an element.
+   *
+   * A mutable object rather than a callback because the chrome is mounted
+   * asynchronously: the view subscribes to the focus store before the chrome
+   * exists, so it needs a slot to write the method into once `select` is
+   * defined.
+   */
+  readonly focusSeam?: ArchFocusSeam;
+}
+
+/**
+ * What a chip click can ask the mounted chrome to do.
+ *
+ * `focus` is filled in by {@link mountArchChrome} and called by the view. It
+ * takes an element id and never throws: a click that names an element the
+ * model does not have is a click that does nothing.
+ */
+export interface ArchFocusSeam {
+  focus?(elementId: string): void;
 }
 
 /** What the action bar needs to turn a selected element into a reference. */
@@ -132,6 +152,32 @@ export function fitViewport(bounds: DiagramBounds, host: { width: number; height
     scale,
     tx: width / 2 - (bounds.x + bounds.width / 2) * scale,
     ty: height / 2 - (bounds.y + bounds.height / 2) * scale,
+  };
+}
+
+/**
+ * The viewport that puts one node's centre in the middle of the host box.
+ *
+ * The scale is carried over unchanged: a chip click is a "show me where this
+ * is" gesture, and re-zooming would answer a question the reader did not ask.
+ * A zero-sized host box (jsdom, or a panel that has not been laid out yet)
+ * cannot be centred against, so the viewport is returned as it was.
+ * @param node - the laid-out node to centre on.
+ * @param viewport - the current viewport, whose scale is kept.
+ * @param host - the host box the diagram renders into.
+ * @returns the viewport to apply.
+ */
+export function centerOnNode(
+  node: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+  viewport: ArchViewport,
+  host: { readonly width: number; readonly height: number },
+): ArchViewport {
+  if (host.width <= 0 || host.height <= 0) return viewport;
+  const scale = viewport.scale;
+  return {
+    scale,
+    tx: host.width / 2 - (node.x + node.width / 2) * scale,
+    ty: host.height / 2 - (node.y + node.height / 2) * scale,
   };
 }
 
@@ -197,6 +243,8 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
   // Mounts are serialized: a slow chunk load must not land on top of the view
   // the user switched to in the meantime.
   let chain: Promise<void> = Promise.resolve();
+  // An element a chip click asked for before the views were loaded.
+  let pendingFocus: string | undefined;
 
   // Escape closes the relations pane from anywhere in the panel, including
   // from a row inside the pane itself, so it is bound to the document rather
@@ -611,6 +659,61 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
       });
   };
 
+  /**
+   * Select one element and, when it is off screen, bring it into view.
+   *
+   * A request that arrives before the views are loaded is held, not dropped:
+   * the chip click that produced it is what caused this mount, so the model
+   * fetch it is waiting on is already in flight. The held id is applied by
+   * {@link renderViews} once the first view is mounted.
+   *
+   * Selection goes through the chrome's own `select` rather than the renderer
+   * handle: `select` is what repaints the tab row and mounts the view the
+   * element lives in, and an element id alone does not say which view that is.
+   * @param elementId - the element to select.
+   */
+  const focusElement = (elementId: string): void => {
+    if (disposed) return;
+    if (views === undefined) {
+      pendingFocus = elementId;
+      return;
+    }
+    pendingFocus = undefined;
+    applyFocus(elementId);
+  };
+
+  /**
+   * Apply one element id against the loaded views.
+   *
+   * The element is looked up in every view, not just the selected one: a
+   * reference names an element, and the model may have laid it out in a view
+   * the reader is not currently on. The first view that has it wins, which is
+   * the same rule the model's own ids follow (they are unique per view graph).
+   * @param elementId - the element to select.
+   */
+  const applyFocus = (elementId: string): void => {
+    const owner = views?.find(candidate => candidate.nodes.some(node => node.id === elementId));
+    if (owner === undefined) return;
+    if (owner.id !== view?.id) select(owner.id);
+    // The mount is serialized behind `chain`, so the handle for the view just
+    // selected does not exist yet; the centring rides the same chain.
+    chain = chain.then(() => {
+      if (disposed || handle === undefined) return;
+      const node = view?.nodes.find(candidate => candidate.id === elementId);
+      if (node === undefined) return;
+      handle.select(elementId);
+      // The box is read the same way `applyDockMode` reads it: jsdom and a
+      // not-yet-laid-out panel both report zero, and `centerOnNode` leaves the
+      // viewport alone in that case rather than parking the diagram at 0,0.
+      const box = diagramHost?.getBoundingClientRect();
+      handle.setViewport(
+        centerOnNode(node, handle.viewport(), { width: box?.width ?? 0, height: box?.height ?? 0 }),
+      );
+    });
+  };
+
+  if (options.focusSeam !== undefined) options.focusSeam.focus = focusElement;
+
   const renderViews = (payload: WireViewsResponse): void => {
     views = payload.views as readonly DiagramView[];
     lastSignature = signatureOf(payload);
@@ -649,6 +752,13 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
       if (first !== undefined) viewState.setViewport(defaultViewport(first.bounds, { width: 0, height: 0 }));
     }
     if (initial !== "") select(initial);
+    // A chip click that caused this mount left its element here; the views are
+    // loaded now, so it can finally be applied.
+    if (pendingFocus !== undefined) {
+      const waiting = pendingFocus;
+      pendingFocus = undefined;
+      applyFocus(waiting);
+    }
 
     const section = host.closest("[data-workbench-dock]");
     if (section !== null && observer === undefined && typeof MutationObserver === "function") {

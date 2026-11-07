@@ -11,8 +11,9 @@
  */
 import { useEffect, useRef, type ReactElement } from "react";
 
-import type { ArchChromeOptions, NodeReferenceSeam } from "./chrome.tsx";
+import type { ArchChromeOptions, ArchFocusSeam, NodeReferenceSeam } from "./chrome.tsx";
 import { mountArchChrome } from "./chrome.tsx";
+import { subscribeArchFocus, takeArchFocus } from "./focus-store.ts";
 import { archReferenceFromModel, type ArchInsertionResult, type ArchReferencePayload } from "./reference.ts";
 import { ROUTE_PREFIX } from "../shared.ts";
 
@@ -85,6 +86,21 @@ export async function fetchArchReferencePayload(
 }
 
 /**
+ * Take whatever focus request is waiting and hand it to the mounted chrome.
+ *
+ * Exported because it is the view's whole side-effect surface: the effect only
+ * decides *when* to call it, and a test can drive this half without a React
+ * tree. A request that arrives with no chrome behind the seam is dropped, which
+ * is the same outcome as one that arrives before the chrome exists.
+ * @param seam - the object `mountArchChrome` fills `focus` into.
+ */
+export function consumeArchFocus(seam: ArchFocusSeam): void {
+  const id = takeArchFocus();
+  if (id === undefined) return;
+  seam.focus?.(id);
+}
+
+/**
  * Build the conversation view component.
  *
  * @param wiring - the chrome seams the entry already composed.
@@ -103,6 +119,11 @@ export function createArchView({ chrome, insertReference, referenceSourceAvailab
     // on every apply, and it must not restart the chrome mid-read.
     const chromeRef = useRef(chrome);
     chromeRef.current = chrome;
+    // The chrome fills this in when it mounts; the focus effect below reads it
+    // through the same object rather than through a state update, because a
+    // selection request must not re-render (and remount) the diagram.
+    const focusSeamRef = useRef<ArchFocusSeam>({});
+    const focusSeam = focusSeamRef.current;
     const hasComposer = props.inputActions !== undefined && insertReference !== undefined;
 
     useEffect(() => {
@@ -124,8 +145,20 @@ export function createArchView({ chrome, insertReference, referenceSourceAvailab
           insertReference(sessionId, payload, actions, referenceSourceAvailable?.() === true);
         },
       };
-      return mountArchChrome(host, { ...chromeRef.current, sessionId, nodeReference: seam });
+      return mountArchChrome(host, { ...chromeRef.current, sessionId, nodeReference: seam, focusSeam });
     }, [sessionId, hasComposer, insertReference, referenceSourceAvailable]);
+
+    // The chip click that caused this mount filed its element before the tab
+    // was pressed, so the request is already waiting here. The subscription
+    // covers the other order: a click while the panel is up. Both run after the
+    // mount effect above, which is what fills `focusSeam.focus` in.
+    useEffect(() => {
+      const apply = (): void => {
+        consumeArchFocus(focusSeam);
+      };
+      apply();
+      return subscribeArchFocus(apply);
+    }, []);
 
     return (
       <div

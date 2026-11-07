@@ -19,10 +19,13 @@ import {
   commitReferenceDate,
   commitReferencePayload,
   createGitReferenceSource,
+  gitReferenceSeam,
   insertCommitReference,
+  openGitReference,
   referenceAvailability,
   registerGitReferenceSource,
   type CommitReferencePayload,
+  type GitReferenceSeam,
   type ReferenceInsert,
   type ReferenceInsertionDeps,
   type ReferenceSpan,
@@ -500,5 +503,168 @@ describe("DetailPane reference button", () => {
     const payload = onReference.mock.calls[0]?.[0];
     expect(payload?.id).toBe(detail.hash);
     expect(payload?.modelText).toContain("main");
+  });
+});
+
+/** A seam that records every path it was driven through. */
+function fakeSeam(overrides: Partial<GitReferenceSeam> = {}) {
+  const calls: string[] = [];
+  const openView = vi.fn((sessionId: string, viewId: string, focus: string) => {
+    calls.push(`openView:${sessionId}:${viewId}:${focus}`);
+    return true;
+  });
+  const requestFocus = vi.fn((viewId: string, focus: string) => {
+    calls.push(`requestFocus:${viewId}:${focus}`);
+  });
+  const takeFocus = vi.fn((viewId: string) => {
+    calls.push(`takeFocus:${viewId}`);
+  });
+  const openViewOrSwitch = vi.fn((viewId: string, focus?: string) => {
+    calls.push(`openViewOrSwitch:${viewId}:${focus ?? ""}`);
+    return { opened: true, focused: focus !== undefined };
+  });
+  const seam: GitReferenceSeam = {
+    openView,
+    requestFocus,
+    takeFocus,
+    openViewOrSwitch,
+    currentSessionId: () => "s1",
+    ...overrides,
+  };
+  return { seam, calls, openView, requestFocus, takeFocus, openViewOrSwitch };
+}
+
+describe("openGitReference", () => {
+  it("selects the commit through the session-addressed seam", () => {
+    const { seam, openView } = fakeSeam();
+    expect(openGitReference(seam, "s1", payloadOf().ref)).toBe(true);
+    expect(openView).toHaveBeenCalledWith("s1", "git-explorer", `commit:${detail.hash}`);
+  });
+
+  it("normalizes an upper-case hash to the spelling the focus parser accepts", () => {
+    const { seam, openView } = fakeSeam();
+    const ref = JSON.stringify({ hash: detail.hash.toUpperCase(), short: SHORT });
+    expect(openGitReference(seam, "s1", ref)).toBe(true);
+    expect(openView).toHaveBeenCalledWith("s1", "git-explorer", `commit:${detail.hash}`);
+  });
+
+  it("refuses a chip from another session without touching the seam", () => {
+    const { seam, openView, openViewOrSwitch } = fakeSeam();
+    expect(openGitReference(seam, "s2", payloadOf().ref)).toBe(false);
+    expect(openView).not.toHaveBeenCalled();
+    expect(openViewOrSwitch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed ref", () => {
+    const { seam, openView } = fakeSeam();
+    expect(openGitReference(seam, "s1", "not-json")).toBe(false);
+    expect(openGitReference(seam, "s1", JSON.stringify({ hash: "" }))).toBe(false);
+    // A hash the view's own parser would reject must not switch the tab and
+    // leave the cursor where it was.
+    expect(openGitReference(seam, "s1", JSON.stringify({ hash: "zzzz" }))).toBe(false);
+    expect(openView).not.toHaveBeenCalled();
+  });
+
+  it("queues the focus before switching when the seam cannot deliver it", () => {
+    const { seam, calls, requestFocus, openViewOrSwitch, takeFocus } = fakeSeam({ openView: () => false });
+    expect(openGitReference(seam, "s1", payloadOf().ref)).toBe(true);
+    expect(requestFocus).toHaveBeenCalledWith("git-explorer", `commit:${detail.hash}`);
+    expect(openViewOrSwitch).toHaveBeenCalledWith("git-explorer");
+    // The queue must be filled before the switch: a lazily mounted view takes
+    // what is waiting at mount time and nothing that arrives afterwards.
+    expect(calls).toEqual([
+      `requestFocus:git-explorer:commit:${detail.hash}`,
+      "openViewOrSwitch:git-explorer:",
+    ]);
+    expect(takeFocus).not.toHaveBeenCalled();
+  });
+
+  it("withdraws the queued focus when the switch did not land", () => {
+    const { seam, takeFocus } = fakeSeam({
+      openView: () => false,
+      openViewOrSwitch: () => ({ opened: false, focused: false }),
+    });
+    expect(openGitReference(seam, "s1", payloadOf().ref)).toBe(false);
+    expect(takeFocus).toHaveBeenCalledWith("git-explorer");
+  });
+
+  it("falls back to a switch that carries the focus when there is no queue", () => {
+    const { seam, openViewOrSwitch } = fakeSeam({ openView: undefined, requestFocus: undefined });
+    expect(openGitReference(seam, "s1", payloadOf().ref)).toBe(true);
+    expect(openViewOrSwitch).toHaveBeenCalledWith("git-explorer", `commit:${detail.hash}`);
+  });
+
+  it("stays inert on a host with no view-switching capability at all", () => {
+    expect(openGitReference({}, "s1", payloadOf().ref)).toBe(false);
+  });
+});
+
+describe("gitReferenceSeam", () => {
+  it("reads the core service's members as the seam", () => {
+    const open = vi.fn(() => true);
+    const request = vi.fn();
+    const take = vi.fn();
+    const switchView = vi.fn(() => ({ opened: true, focused: true }));
+    const seam = gitReferenceSeam({
+      views: { open },
+      viewFocus: { request, take },
+      openViewOrSwitch: switchView,
+      currentSessionId: () => "s1",
+    });
+    expect(seam.openView?.("s1", "git-explorer", "commit:abcd")).toBe(true);
+    expect(open).toHaveBeenCalledWith("s1", "git-explorer", "commit:abcd");
+    seam.requestFocus?.("git-explorer", "commit:abcd");
+    expect(request).toHaveBeenCalledWith("git-explorer", "commit:abcd");
+    seam.takeFocus?.("git-explorer");
+    expect(take).toHaveBeenCalledWith("git-explorer");
+    expect(seam.openViewOrSwitch?.("git-explorer")).toEqual({ opened: true, focused: true });
+    expect(seam.currentSessionId?.()).toBe("s1");
+  });
+
+  it("treats a void answer from the view-side face as not delivered", () => {
+    // The view's own `ViewSeamFace` widens the answer to `boolean | void`; a
+    // seam that reported delivery on undefined would skip the queue path.
+    const seam = gitReferenceSeam({ views: { open: () => undefined } });
+    expect(seam.openView?.("s1", "git-explorer", "commit:abcd")).toBe(false);
+  });
+
+  it("stays empty without a workbench", () => {
+    expect(gitReferenceSeam(undefined)).toEqual({});
+    expect(gitReferenceSeam(null)).toEqual({});
+    expect(gitReferenceSeam("workbench")).toEqual({});
+  });
+});
+
+describe("createGitReferenceSource openReference", () => {
+  it("drives the seam the source resolved at click time", () => {
+    const { seam, openView } = fakeSeam();
+    const source = createGitReferenceSource(() => seam);
+    expect(source.openReference({ id: "s1" }, { ref: payloadOf().ref, appearance: "session" })).toBe(true);
+    expect(openView).toHaveBeenCalledWith("s1", "git-explorer", `commit:${detail.hash}`);
+  });
+
+  it("addresses the session on screen when the host's session carries no id", () => {
+    const { seam, openView } = fakeSeam();
+    const source = createGitReferenceSource(() => seam);
+    expect(source.openReference({}, { ref: payloadOf().ref })).toBe(true);
+    expect(openView).toHaveBeenCalledWith("s1", "git-explorer", `commit:${detail.hash}`);
+  });
+
+  it("stays inert without a workbench and never throws out of a click", () => {
+    expect(createGitReferenceSource().openReference({ id: "s1" }, { ref: payloadOf().ref })).toBe(false);
+    expect(
+      createGitReferenceSource(() => {
+        throw new Error("no workbench");
+      }).openReference({ id: "s1" }, { ref: payloadOf().ref }),
+    ).toBe(false);
+    expect(createGitReferenceSource(() => fakeSeam().seam).openReference({ id: "s1" }, {})).toBe(false);
+  });
+
+  it("is part of the object the registration hands the host", () => {
+    const registerSource = vi.fn((_source: unknown) => () => {});
+    const ctx = { get: (name: string) => (name === "inputTriggers" ? { registerSource } : undefined) };
+    registerGitReferenceSource(ctx, () => fakeSeam().seam);
+    const registered = registerSource.mock.calls[0]?.[0] as { openReference?: unknown } | undefined;
+    expect(typeof registered?.openReference).toBe("function");
   });
 });

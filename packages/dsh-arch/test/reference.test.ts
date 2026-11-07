@@ -7,7 +7,8 @@
  * because the interesting behaviour is entirely in the order it tries the
  * channels and in what it does when the composer refuses.
  */
-import { describe, expect, it, vi } from "vitest";
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createInsertReference } from "../src/client/entry.ts";
 
@@ -17,13 +18,17 @@ import {
   archRefModelText,
   archReferenceFromModel,
   archReferencePayload,
+  archReferenceSeam,
   createArchReferenceSource,
   insertArchReference,
+  openArchReference,
   registerArchReferenceSource,
   type ArchInsertionDeps,
   type ArchReferenceInsert,
+  type ArchReferenceSeam,
   type ArchReferenceSpan,
 } from "../src/client/reference.ts";
+import { clearArchFocus, takeArchFocus } from "../src/client/focus-store.ts";
 
 const ID = "dshPlugins.jump.jumpApp";
 const FACTS = { title: "client/app", kind: "component", technology: "jump" };
@@ -308,5 +313,171 @@ describe("registerArchReferenceSource", () => {
         },
       }),
     ).not.toThrow();
+  });
+});
+
+/** A seam that records what the click drove. */
+function fakeSeam(overrides: Partial<ArchReferenceSeam> = {}) {
+  const calls: string[] = [];
+  const clickTab = vi.fn(() => {
+    calls.push("clickTab");
+    return true;
+  });
+  const seam: ArchReferenceSeam = {
+    currentSessionId: () => "s1",
+    activeTab: () => false,
+    clickTab,
+    ...overrides,
+  };
+  return { seam, calls, clickTab };
+}
+
+describe("openArchReference", () => {
+  beforeEach(() => {
+    clearArchFocus();
+  });
+
+  it("files the element and presses the tab when the panel is not up", () => {
+    const { seam, clickTab } = fakeSeam();
+    const ref = archReferencePayload(ID, FACTS, SOURCE, CODE).ref;
+    expect(openArchReference(seam, "s1", ref)).toBe(true);
+    expect(clickTab).toHaveBeenCalledTimes(1);
+    // The request must be waiting before the tab is pressed: the view mounts on
+    // selection and takes whatever is already there.
+    expect(takeArchFocus()).toBe(ID);
+  });
+
+  it("does not press the tab when the panel is already on screen", () => {
+    const { seam, clickTab } = fakeSeam({ activeTab: () => true });
+    const ref = archReferencePayload(ID, FACTS, SOURCE, CODE).ref;
+    expect(openArchReference(seam, "s1", ref)).toBe(true);
+    expect(clickTab).not.toHaveBeenCalled();
+    expect(takeArchFocus()).toBe(ID);
+  });
+
+  it("refuses a chip from another session without filing anything", () => {
+    const { seam, clickTab } = fakeSeam();
+    const ref = archReferencePayload(ID, FACTS, SOURCE, CODE).ref;
+    expect(openArchReference(seam, "s2", ref)).toBe(false);
+    expect(clickTab).not.toHaveBeenCalled();
+    expect(takeArchFocus()).toBeUndefined();
+  });
+
+  it("refuses a malformed ref", () => {
+    const { seam, clickTab } = fakeSeam();
+    expect(openArchReference(seam, "s1", "not-json")).toBe(false);
+    expect(openArchReference(seam, "s1", JSON.stringify({ id: "" }))).toBe(false);
+    expect(openArchReference(seam, "s1", JSON.stringify({ id: "   " }))).toBe(false);
+    expect(clickTab).not.toHaveBeenCalled();
+    expect(takeArchFocus()).toBeUndefined();
+  });
+
+  it("drops the request when the host's row has no arch tab", () => {
+    const { seam } = fakeSeam({ clickTab: () => false });
+    const ref = archReferencePayload(ID, FACTS, SOURCE, CODE).ref;
+    expect(openArchReference(seam, "s1", ref)).toBe(false);
+    // A request left behind would move the diagram on the next unrelated mount.
+    expect(takeArchFocus()).toBeUndefined();
+  });
+
+  it("stays inert on a host with no tab row at all", () => {
+    const ref = archReferencePayload(ID, FACTS, SOURCE, CODE).ref;
+    expect(openArchReference({}, "s1", ref)).toBe(false);
+    expect(takeArchFocus()).toBeUndefined();
+  });
+});
+
+describe("archReferenceSeam", () => {
+  /** A tab row shaped like the host's: a container of `role="tab"` buttons. */
+  function tabRow(titles: readonly string[], selected?: string): { doc: Document; clicks: string[] } {
+    const doc = document.implementation.createHTMLDocument("tabs");
+    const row = doc.createElement("div");
+    row.setAttribute("data-conversation-tabs", "");
+    const clicks: string[] = [];
+    for (const title of titles) {
+      const tab = doc.createElement("button");
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", title === selected ? "true" : "false");
+      tab.textContent = title;
+      tab.addEventListener("click", () => clicks.push(title));
+      row.append(tab);
+    }
+    doc.body.append(row);
+    return { doc, clicks };
+  }
+
+  it("finds the arch tab by its exact label and presses it", () => {
+    const { doc, clicks } = tabRow(["聊天", "文件", "架构"]);
+    const seam = archReferenceSeam(doc, ["架构", "Arch"]);
+    expect(seam.activeTab?.()).toBe(false);
+    expect(seam.clickTab?.()).toBe(true);
+    expect(clicks).toEqual(["架构"]);
+  });
+
+  it("reads the selected state off the tab", () => {
+    const { doc } = tabRow(["聊天", "架构"], "架构");
+    expect(archReferenceSeam(doc, ["架构", "Arch"]).activeTab?.()).toBe(true);
+  });
+
+  it("accepts the English label too", () => {
+    const { doc, clicks } = tabRow(["Chat", "Arch"]);
+    const seam = archReferenceSeam(doc, ["架构", "Arch"]);
+    expect(seam.clickTab?.()).toBe(true);
+    expect(clicks).toEqual(["Arch"]);
+  });
+
+  it("never matches a tab that merely contains the label", () => {
+    const { doc, clicks } = tabRow(["架构图预览", "聊天"]);
+    const seam = archReferenceSeam(doc, ["架构", "Arch"]);
+    expect(seam.clickTab?.()).toBe(false);
+    expect(clicks).toEqual([]);
+  });
+
+  it("answers nothing without a document or a row", () => {
+    expect(archReferenceSeam(undefined, ["架构"]).clickTab).toBeUndefined();
+    const doc = document.implementation.createHTMLDocument("no-row");
+    expect(archReferenceSeam(doc, ["架构"]).clickTab?.()).toBe(false);
+  });
+});
+
+describe("createArchReferenceSource openReference", () => {
+  beforeEach(() => {
+    clearArchFocus();
+  });
+
+  it("drives the seam the source resolved at click time", () => {
+    const { seam, clickTab } = fakeSeam();
+    const source = createArchReferenceSource(() => seam);
+    const ref = archReferencePayload(ID, FACTS, SOURCE, CODE).ref;
+    expect(source.openReference({ id: "s1" }, { ref, appearance: "session" })).toBe(true);
+    expect(clickTab).toHaveBeenCalledTimes(1);
+    expect(takeArchFocus()).toBe(ID);
+  });
+
+  it("addresses the session on screen when the host's session carries no id", () => {
+    const { seam, clickTab } = fakeSeam();
+    const source = createArchReferenceSource(() => seam);
+    const ref = archReferencePayload(ID, FACTS, SOURCE, CODE).ref;
+    expect(source.openReference({}, { ref })).toBe(true);
+    expect(clickTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays inert without a seam and never throws out of a click", () => {
+    const ref = archReferencePayload(ID, FACTS, SOURCE, CODE).ref;
+    expect(createArchReferenceSource().openReference({ id: "s1" }, { ref })).toBe(false);
+    expect(
+      createArchReferenceSource(() => {
+        throw new Error("no host");
+      }).openReference({ id: "s1" }, { ref }),
+    ).toBe(false);
+    expect(createArchReferenceSource(() => fakeSeam().seam).openReference({ id: "s1" }, {})).toBe(false);
+  });
+
+  it("is part of the object the registration hands the host", () => {
+    const registerSource = vi.fn((_source: unknown) => () => {});
+    const ctx = { get: (name: string) => (name === "inputTriggers" ? { registerSource } : undefined) };
+    registerArchReferenceSource(ctx, () => fakeSeam().seam);
+    const registered = registerSource.mock.calls[0]?.[0] as { openReference?: unknown } | undefined;
+    expect(typeof registered?.openReference).toBe("function");
   });
 });

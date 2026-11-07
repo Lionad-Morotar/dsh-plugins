@@ -19,11 +19,13 @@ import {
   fsReferencePayload,
   insertFsReference,
   normalizeReferencePath,
+  openFsReference,
   referenceBlockReason,
   referenceLabel,
   registerFsReferenceSource,
   type FsInsertionDeps,
   type FsReferenceInsert,
+  type FsReferenceSeam,
   type FsReferenceSpan,
 } from "../src/client/reference.ts";
 import { createReferenceResolver } from "../src/client/entry.ts";
@@ -457,5 +459,130 @@ describe("buildTabMenu reference row", () => {
 
   it("still offers nothing at all for a tab the strip no longer holds", () => {
     expect(menu([panel("src/a.ts")], "src/gone.ts", { session: true, insertReference: true, source: true })).toEqual([]);
+  });
+});
+
+/** A seam that records every path it was driven through. */
+function fakeSeam(overrides: Partial<FsReferenceSeam> = {}) {
+  const calls: string[] = [];
+  const openView = vi.fn((sessionId: string, viewId: string, focus: string) => {
+    calls.push(`openView:${sessionId}:${viewId}:${focus}`);
+    return true;
+  });
+  const requestFocus = vi.fn((viewId: string, focus: string) => {
+    calls.push(`requestFocus:${viewId}:${focus}`);
+  });
+  const takeFocus = vi.fn((viewId: string) => {
+    calls.push(`takeFocus:${viewId}`);
+  });
+  const openViewOrSwitch = vi.fn((viewId: string, focus?: string) => {
+    calls.push(`openViewOrSwitch:${viewId}:${focus ?? ""}`);
+    return { opened: true, focused: focus !== undefined };
+  });
+  const seam: FsReferenceSeam = {
+    openView,
+    requestFocus,
+    takeFocus,
+    openViewOrSwitch,
+    currentSessionId: () => "s1",
+    ...overrides,
+  };
+  return { seam, calls, openView, requestFocus, takeFocus, openViewOrSwitch };
+}
+
+describe("openFsReference", () => {
+  it("reveals a directory row through the session-addressed seam", () => {
+    const { seam, openView } = fakeSeam();
+    const ref = fsReferencePayload("docs/api", "api", "directory").ref;
+    expect(openFsReference(seam, "s1", ref)).toBe(true);
+    expect(openView).toHaveBeenCalledWith("s1", "fs-explorer", "reveal:docs/api");
+  });
+
+  it("reveals a file row the same way, without a trailing slash in the focus", () => {
+    const { seam, openView } = fakeSeam();
+    const ref = fsReferencePayload("src/client/view.tsx", "view.tsx", "file").ref;
+    expect(openFsReference(seam, "s1", ref)).toBe(true);
+    expect(openView).toHaveBeenCalledWith("s1", "fs-explorer", "reveal:src/client/view.tsx");
+  });
+
+  it("refuses a chip from another session without touching the seam", () => {
+    const { seam, openView, openViewOrSwitch } = fakeSeam();
+    const ref = fsReferencePayload("src/a.ts", "a.ts", "file").ref;
+    expect(openFsReference(seam, "s2", ref)).toBe(false);
+    expect(openView).not.toHaveBeenCalled();
+    expect(openViewOrSwitch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed ref", () => {
+    const { seam, openView } = fakeSeam();
+    expect(openFsReference(seam, "s1", "not-json")).toBe(false);
+    expect(openFsReference(seam, "s1", JSON.stringify({ path: "", kind: "file" }))).toBe(false);
+    expect(openView).not.toHaveBeenCalled();
+  });
+
+  it("queues the focus before switching when the seam cannot deliver it", () => {
+    const { seam, calls, requestFocus, openViewOrSwitch, takeFocus } = fakeSeam({ openView: () => false });
+    const ref = fsReferencePayload("docs/api", "api", "directory").ref;
+    expect(openFsReference(seam, "s1", ref)).toBe(true);
+    expect(requestFocus).toHaveBeenCalledWith("fs-explorer", "reveal:docs/api");
+    expect(openViewOrSwitch).toHaveBeenCalledWith("fs-explorer");
+    // The queue must be filled before the switch: a lazily mounted view takes
+    // what is waiting at mount time and nothing that arrives afterwards.
+    expect(calls).toEqual([
+      "requestFocus:fs-explorer:reveal:docs/api",
+      "openViewOrSwitch:fs-explorer:",
+    ]);
+    expect(takeFocus).not.toHaveBeenCalled();
+  });
+
+  it("withdraws the queued focus when the switch did not land", () => {
+    const { seam, takeFocus } = fakeSeam({
+      openView: () => false,
+      openViewOrSwitch: () => ({ opened: false, focused: false }),
+    });
+    const ref = fsReferencePayload("src/a.ts", "a.ts", "file").ref;
+    expect(openFsReference(seam, "s1", ref)).toBe(false);
+    expect(takeFocus).toHaveBeenCalledWith("fs-explorer");
+  });
+
+  it("falls back to a switch that carries the focus when there is no queue", () => {
+    const { seam, openViewOrSwitch } = fakeSeam({ openView: undefined, requestFocus: undefined });
+    const ref = fsReferencePayload("src/a.ts", "a.ts", "file").ref;
+    expect(openFsReference(seam, "s1", ref)).toBe(true);
+    expect(openViewOrSwitch).toHaveBeenCalledWith("fs-explorer", "reveal:src/a.ts");
+  });
+
+  it("stays inert on a host with no view-switching capability at all", () => {
+    const ref = fsReferencePayload("src/a.ts", "a.ts", "file").ref;
+    expect(openFsReference({}, "s1", ref)).toBe(false);
+  });
+});
+
+describe("createFsReferenceSource openReference", () => {
+  it("drives the seam the source resolved at click time", () => {
+    const { seam, openView } = fakeSeam();
+    const source = createFsReferenceSource(() => seam);
+    const ref = fsReferencePayload("docs/api", "api", "directory").ref;
+    expect(source.openReference({ id: "s1" }, { ref, appearance: "folder" })).toBe(true);
+    expect(openView).toHaveBeenCalledWith("s1", "fs-explorer", "reveal:docs/api");
+  });
+
+  it("addresses the session on screen when the host's session carries no id", () => {
+    const { seam, openView } = fakeSeam();
+    const source = createFsReferenceSource(() => seam);
+    const ref = fsReferencePayload("src/a.ts", "a.ts", "file").ref;
+    expect(source.openReference({}, { ref })).toBe(true);
+    expect(openView).toHaveBeenCalledWith("s1", "fs-explorer", "reveal:src/a.ts");
+  });
+
+  it("stays inert without a workbench and never throws out of a click", () => {
+    const ref = fsReferencePayload("src/a.ts", "a.ts", "file").ref;
+    expect(createFsReferenceSource().openReference({ id: "s1" }, { ref })).toBe(false);
+    expect(
+      createFsReferenceSource(() => {
+        throw new Error("no workbench");
+      }).openReference({ id: "s1" }, { ref }),
+    ).toBe(false);
+    expect(createFsReferenceSource(() => fakeSeam().seam).openReference({ id: "s1" }, {})).toBe(false);
   });
 });

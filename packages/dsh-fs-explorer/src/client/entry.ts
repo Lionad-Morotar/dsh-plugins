@@ -62,6 +62,7 @@ import {
 } from "./renderer-registry.ts";
 import { insertStyles } from "./styles.ts";
 import {
+  fsReferenceSeam,
   registerFsReferenceSource,
   type FsReferenceInsert,
   type FsReferenceSpan,
@@ -288,9 +289,14 @@ export function apply(ctx: ClientContextLike): () => void {
   // Optional: without the host's theme service the panel keeps the sizes the
   // host wrote on `body`, so this never blocks the view from mounting.
   const offFontScale = attachFontScale(ctx);
-  // The chip's send-time identity. Registered before the view so a draft that
-  // already holds a chip can be sent the moment the tab paints.
-  const referenceSource = registerFsReferenceSource(ctx as ReferenceContextLike);
+  // The chip's send-time identity and its click target. Registered before the
+  // view so a draft that already holds a chip can be sent the moment the tab
+  // paints. The seam is resolved per click: the workbench service may mount
+  // after this registration, and a snapshot taken here would leave the chip
+  // inert on exactly that host.
+  const referenceSource = registerFsReferenceSource(ctx as ReferenceContextLike, () =>
+    fsReferenceSeam(ctx.workbench),
+  );
   const View = createFsExplorerView({
     workbench,
     version: workbench.version,

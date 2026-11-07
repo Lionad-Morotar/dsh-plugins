@@ -70,6 +70,7 @@ flow-dx 的 `agents-md` 流程派 `c4-mapper` 子代理产出的正是本包要�
 - 写入是双通道：span 只从槽位 props 的 `captureInsertion()` 取（detect 坐标加 `draftRev`，`InputState.draft.length` 是 clipboard 长度，草稿里有 chip 时两者不等），chip 走 `conversation.input.for(sessions.scope(id)).insertReference(...)`。`insertReference` 对过期 revision 是静默 `false` 而不是抛错，所以失败后用新 span 重试一次，仍失败降级 `insertText(clipboardText)`，再失败返回 `failed` 不抛错。
 - source 名 `lionad.arch`，trigger `@`，`showGroupTitle: false`，`candidates()` 恒返回空数组：它只做发送时的身份，不参与 `@` 菜单。发送时宿主按 source 名找 `codec.serialize`，找不到就拒绝发送并保留草稿，所以 chip 与 source 必须同包同版本发行。chip 的 `ref` 是 JSON，`codec.serialize` 从它重建文本；解析失败回退 `[arch element <ref>]` 而不抛错。
 - 引用不改变选中、不切视图、不打开关系面板：它是往另一个面写入，不是导航。按钮只在 dock 面板以外的挂载点出现——dock 那条路径拿不到 `inputActions`，没有输入框可写，所以按钮干脆不画而不是画一个点了没反应的。
+- 点击 chip 是另一回事：它切到「架构」tab 并选中对应元素。source 的 `openReference` 从 `ref` 取 `id`，先把 id 排进 `focus-store` 再按 `copy.ts` 的 `arch.tabTitle`（中文「架构」/ 英文「Arch」）在 `[data-conversation-tabs]` 里精确匹配 `[role="tab"]` 并点击：arch 是普通 `conversation.view` tab，拿不到 workbench 的视图切换 seam，宿主 tab 行是唯一入口。已经在架构 tab 时不点 tab，只交付 id。视图挂载时先 `takeArchFocus()` 再订阅后续请求；chrome 拿到 id 后在所有已加载视图里找拥有该元素的视图（引用只给元素，不给视图），切过去、`select(id)`，并把 viewport 平移到该元素中心且保持当前缩放（host 尺寸为 0 时只选中不平移）。`ref` 解析不出 id、拿不到会话、session 不匹配、tab 行里没有架构 tab 时返回 `false`，点击退回编辑器默认手势；tab 行缺失那条会清掉待选请求，元素不在模型里则是点击已被消费、图只是不动，两者都不会重放到下一次无关挂载把图挪走。
 - 兼容边界：结构化引用面（`insertReference` / `InputTriggerSource` / `codec`）从宿主 0.2.0-rc.2 就有，`engines.dsh` 地板不用抬。`inputTriggers`、`sessions`、`conversation` 都是软探测，缺任何一个都只降级不报错。插件被卸载后草稿里留下的 chip 发不出去，这是可恢复状态（删掉 chip 即可发），不是数据损坏。
 
 ## 已知限制
