@@ -5,12 +5,13 @@
  * (`exports["./client"]`) and never runs a build step, so `lib/` is a build
  * product that is committed, and this script is the only thing that writes it.
  *
- *   lib/index.js   Host half, plain ESM (Node imports it directly).
- *   lib/client.js  Browser half, CJS wrapped in a ModuleLoader factory.
+ *   lib/index.js             Host half, plain ESM (Node imports it directly).
+ *   lib/client.js            Browser half, CJS wrapped in a ModuleLoader factory.
+ *   lib/client.snapshot.js   Lazy chunk: the board's data snapshot.
  *
  * The host half stays unminified so the committed output remains readable
- * evidence of what `src/` produced; only the browser half pays for minification
- * because it boots on every page.
+ * evidence of what `src/` produced; only the browser halves pay for
+ * minification, and only the startup one has a size budget that matters.
  */
 import { build } from "esbuild";
 import { createRequire } from "node:module";
@@ -25,6 +26,14 @@ const libRoot = join(packageRoot, "lib");
 const require = createRequire(join(packageRoot, "package.json"));
 const manifest = require(join(packageRoot, "package.json"));
 
+/**
+ * The lazy chunk's file name; must match `SNAPSHOT_CHUNK` in src/shared.ts.
+ *
+ * The build script cannot import the TS module, so the agreement is enforced by
+ * asserting the bundled entry still names this literal instead of by trust.
+ */
+const SNAPSHOT_CHUNK = "client.snapshot.js";
+
 /** Host-half platform packages: the Harness install provides its own copies. */
 const HOST_EXTERNALS = ["@deepseek-ai/*"];
 
@@ -38,6 +47,22 @@ const CLIENT_EXTERNALS = ["react", "react/jsx-runtime", "react-dom", "@deepseek-
  * startup half stopped being the cheap half, not that a feature is missing.
  */
 const CLIENT_MAX_BYTES = 32 * 1024;
+
+/**
+ * The snapshot chunk's budget.
+ *
+ * It is fetched once, on first mount, and cached by the loader, so it is allowed
+ * to be large; the ceiling exists to catch a regression that starts inlining
+ * something else into it. The committed snapshot is ~500KB of readable JSON.
+ */
+const SNAPSHOT_MAX_BYTES = 600 * 1024;
+
+/**
+ * Fields that only exist in the snapshot. The startup bundle must not contain
+ * any of them: if one appears, the data was pulled into the boot path and every
+ * page pays for a tab most users never open.
+ */
+const SNAPSHOT_ONLY_FIELDS = ["statusSource", "durationMs"];
 
 /**
  * Literals that must survive bundling. The slot name and the view id are the
@@ -62,14 +87,15 @@ const REQUIRED_LITERALS = ["conversation.view", "testboard"];
  * @param code - bundled CJS text.
  * @returns the script text the browser evaluates.
  */
-function wrap(id, code) {
+function wrap(id, code, { boot = false, chunk } = {}) {
+  const handover = boot ? "\nmodule.exports.boot?.(require);" : "";
+  const chunkField = chunk === undefined ? "" : `  chunk: ${JSON.stringify(chunk)},\n`;
   return `window.__ModuleLoader__.load({
   id: ${JSON.stringify(id)},
-  factory: (require) => {
+${chunkField}  factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
-${code}
-module.exports.boot?.(require);
+${code}${handover}
     return module.exports.default ?? module.exports;
   }
 });
@@ -121,9 +147,35 @@ function assertClientHalf(clientText) {
   if (!clientText.includes("__ModuleLoader__")) {
     throw new Error("lib/client.js is not wrapped in the ModuleLoader factory");
   }
+  if (!clientText.includes(`"${SNAPSHOT_CHUNK}"`)) {
+    throw new Error(`lib/client.js no longer names its lazy chunk ${SNAPSHOT_CHUNK}; the tab would fetch a file nobody built`);
+  }
+  for (const field of SNAPSHOT_ONLY_FIELDS) {
+    if (clientText.includes(field)) {
+      throw new Error(`lib/client.js contains ${field}; the snapshot data must stay in ${SNAPSHOT_CHUNK}`);
+    }
+  }
   const bytes = Buffer.byteLength(clientText);
   if (bytes > CLIENT_MAX_BYTES) {
     throw new Error(`lib/client.js is ${bytes}B (> ${CLIENT_MAX_BYTES}B); the startup bundle blew its budget`);
+  }
+}
+
+/**
+ * Assert the snapshot chunk registers its own file name and carries the data.
+ * @param chunkText - built `client.snapshot.js`, wrapper included.
+ * @throws when the chunk field or the payload is missing, or it is over budget.
+ */
+function assertSnapshotChunk(chunkText) {
+  if (!chunkText.includes(`chunk: "${SNAPSHOT_CHUNK}"`)) {
+    throw new Error(`${SNAPSHOT_CHUNK} does not register its own name in its chunk: field`);
+  }
+  if (!chunkText.includes("statusSource")) {
+    throw new Error(`${SNAPSHOT_CHUNK} does not carry the snapshot payload`);
+  }
+  const bytes = Buffer.byteLength(chunkText);
+  if (bytes > SNAPSHOT_MAX_BYTES) {
+    throw new Error(`${SNAPSHOT_CHUNK} is ${bytes}B (> ${SNAPSHOT_MAX_BYTES}B); the snapshot chunk blew its budget`);
   }
 }
 
@@ -155,13 +207,21 @@ const client = await bundle(join(packageRoot, "src", "client", "entry.ts"), "cjs
   external: CLIENT_EXTERNALS,
   minify: true,
 });
-const clientText = wrap(manifest.name, client);
+const clientText = wrap(manifest.name, client, { boot: true });
 await writeFile(join(libRoot, "client.js"), clientText, "utf8");
 
+const snapshot = await bundle(join(packageRoot, "src", "client", "snapshot-chunk.ts"), "cjs", {
+  external: CLIENT_EXTERNALS,
+  minify: true,
+});
+const snapshotText = wrap(manifest.name, snapshot, { chunk: SNAPSHOT_CHUNK });
+await writeFile(join(libRoot, SNAPSHOT_CHUNK), snapshotText, "utf8");
+
 assertClientHalf(clientText);
+assertSnapshotChunk(snapshotText);
 await assertHostHalf(join(libRoot, "index.js"));
 
-const written = ["index.js", "client.js"];
+const written = ["index.js", "client.js", SNAPSHOT_CHUNK];
 const sizes = await Promise.all(
   written.map(async file => {
     const bytes = await readFile(join(libRoot, file));

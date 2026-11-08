@@ -15,6 +15,17 @@ import { EN, ZH } from "./copy.ts";
 import { ensureStyles } from "./styles.ts";
 import { createTestboardView } from "./view.tsx";
 
+/**
+ * The loader hand-over, re-exported so the ModuleLoader factory can reach it.
+ *
+ * The factory appends `module.exports.boot?.(require)` to this bundle, which is
+ * the only point where the chunk-capable `require` exists; the snapshot loader
+ * keeps it until the board mounts. Re-exporting (rather than importing for
+ * side effects) is also what keeps the chunk's file name in this bundle: the
+ * build asserts the startup half still names the file it emitted.
+ */
+export { boot } from "./snapshot-loader.ts";
+
 /** The slice of the client context this entry uses. */
 export interface TestboardClientContext {
   readonly slots: {

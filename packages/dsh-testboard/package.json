@@ -37,6 +37,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "snapshot": "node scripts/snapshot.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"
   },

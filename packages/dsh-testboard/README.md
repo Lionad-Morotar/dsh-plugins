@@ -28,12 +28,25 @@
 ## 开发命令
 
 ```bash
-node packages/dsh-testboard/scripts/build.mjs   # 产出 lib/index.js 与 lib/client.js
+node packages/dsh-testboard/scripts/build.mjs      # 产出 lib/index.js、lib/client.js、lib/client.snapshot.js
+node packages/dsh-testboard/scripts/snapshot.mjs   # 重新生成数据快照
+node packages/dsh-testboard/scripts/snapshot.mjs --check   # 校验已提交快照是否过期
 cd packages/dsh-testboard && ../../node_modules/.bin/vitest run
 cd packages/dsh-testboard && ../../node_modules/.bin/tsc -p tsconfig.json
 ```
 
 worktree 里 `node_modules` 是指向主仓的软链，不要跑 `pnpm install` / `pnpm run`：那会反向改写主仓的 workspace 链接。
+
+## 数据快照
+
+`src/client/data/snapshot.json` 由 `scripts/snapshot.mjs` 扫描本仓 `packages/*/test/**/*.test.{ts,tsx}` 生成，抽取 `it` / `test` 的用例标题（含 `.only` / `.skip` / `.each` 形态），按 `path + name` 的 hash 播种出确定性的状态与耗时。
+
+- 状态与耗时是**合成的**，快照里 `statusSource: "synthetic"` 明写这一点。本包不跑测试。
+- 约 0.7% 用例标为 failed、1.2% 标为 skipped，用来让红色语义在界面上真的出现。
+- 生成过程不读时钟、不写绝对路径、不用随机数：同一份语料在任一台机器上重算都是同样的字节，所以改动只会以真实差异出现在 diff 里。
+- 改了测试文件之后要重跑 `snapshot.mjs`，`--check` 会在快照过期时 exit 1。
+
+数据在 `lib/client.snapshot.js` 这个懒 chunk 里，首次打开标签才拉取，启动包不含任何快照字段（构建会断言 `statusSource` 不在 `lib/client.js` 里）。
 
 ## 静态原型边界
 

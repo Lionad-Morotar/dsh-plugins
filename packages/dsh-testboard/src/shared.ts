@@ -20,3 +20,12 @@ export const VIEW_ORDER = 130;
 
 /** Locale namespace owned by the client half. */
 export const LOCALE_NAMESPACE = "testboard";
+
+/**
+ * Lazy client chunk carrying the board's data snapshot.
+ *
+ * Declared here so the loader, the build script and the chunk's own registration
+ * share one spelling: the loader fetches this file name, the build emits it, and
+ * a mismatch is a tab that never loads its data.
+ */
+export const SNAPSHOT_CHUNK = "client.snapshot.js";
