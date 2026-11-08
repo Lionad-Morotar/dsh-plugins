@@ -35,12 +35,12 @@
 
 ## 数据说明
 
-`src/client/data/snapshot.json` 由 `scripts/snapshot.mjs` 扫描本仓 `packages/*/test/**/*.test.{ts,tsx}` 生成，抽取 `it` / `test` 的用例标题（含 `.only` / `.skip` / `.each` 形态），当前覆盖 22 个包、304 个测试文件、4112 条用例。
+`src/client/data/snapshot.json` 由 `scripts/snapshot.mjs` 扫描本仓 `packages/*/test/**/*.test.{ts,tsx}` 生成，抽取 `it` / `test` 的用例标题（含 `.only` / `.skip` / `.each` 形态），当前覆盖 22 个包、305 个测试文件、4133 条用例。
 
 - 状态与耗时是**合成的**，快照里 `statusSource: "synthetic"` 明写这一点。本包不跑测试，也不读任何测试进程的输出。
 - 约 0.85% 用例标为 failed、1.27% 标为 skipped，让红色语义在界面上真的出现，又不至于让「failed」失去含义。
 - 播种键是 `path + name` 的 hash：同一份语料在任一台机器上重算都是同样的字节，所以改动只会以真实差异出现在 diff 里。生成过程不读时钟、不写绝对路径、不用随机数。
-- 改了测试文件之后要重跑 `snapshot.mjs`，`--check` 会在快照过期时 exit 1。
+- 新增或修改任何测试文件之后，必须重跑 `snapshot.mjs` 重新生成快照、重跑 `build.mjs` 同步 `lib/client.snapshot.js`，并与代码一起提交：快照是提交入库的产物，漏掉这一步 `--check` 会在快照过期时 exit 1，发行出去的看板也还是旧数据。
 - 数据在 `lib/client.snapshot.js` 这个懒 chunk 里，首次打开标签才拉取；启动包不含任何快照字段（构建会断言 `statusSource` 不在 `lib/client.js` 里）。
 
 ## 开发命令

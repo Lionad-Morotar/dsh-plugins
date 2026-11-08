@@ -5347,7 +5347,21 @@
             {"name":"orders purely by duration when asked for the slowest first","status":"passed","durationMs":4},
             {"name":"breaks ties by name so the order is stable","status":"passed","durationMs":370},
             {"name":"groups rows by package and keeps the snapshot's package order","status":"skipped","durationMs":151},
-            {"name":"drops packages whose every row was filtered out","status":"passed","durationMs":143}
+            {"name":"drops packages whose every row was filtered out","status":"passed","durationMs":143},
+            {"name":"returns one row per file, with its case tallies","status":"passed","durationMs":277},
+            {"name":"sums a file's duration from its cases","status":"passed","durationMs":1190},
+            {"name":"keeps only files holding at least one failure when filtering","status":"passed","durationMs":74},
+            {"name":"matches the query against the file path, case-insensitively","status":"passed","durationMs":30},
+            {"name":"orders purely by total duration when asked for the slowest first","status":"passed","durationMs":726},
+            {"name":"breaks duration ties by path so the order is stable","status":"passed","durationMs":502},
+            {"name":"groups file rows by package, package name ascending","status":"passed","durationMs":235},
+            {"name":"drops a package whose files were all filtered out","status":"passed","durationMs":260},
+            {"name":"buckets completions into one-second steps in execution order","status":"passed","durationMs":425},
+            {"name":"is deterministic and never reads the clock","status":"passed","durationMs":1171},
+            {"name":"returns a dense series, with a zero bucket for a quiet second","status":"passed","durationMs":255},
+            {"name":"marks the seconds in which a failure finished","status":"passed","durationMs":614},
+            {"name":"reports the peak bucket for the header","status":"passed","durationMs":1029},
+            {"name":"returns an empty series for an empty snapshot","status":"passed","durationMs":422}
           ]
         },
         {
@@ -5378,6 +5392,18 @@
             {"name":"carries no clock, no absolute path and no random field","status":"passed","durationMs":982},
             {"name":"keeps file paths repo-relative, and both levels sorted","status":"passed","durationMs":682},
             {"name":"gives every case a positive integer duration","status":"passed","durationMs":144}
+          ]
+        },
+        {
+          "path": "packages/dsh-testboard/test/view.test.tsx",
+          "cases": [
+            {"name":"renders one row per test file in the snapshot","status":"passed","durationMs":891},
+            {"name":"shows the snapshot's real totals in the header","status":"passed","durationMs":162},
+            {"name":"keeps only files holding a failure when the failed filter is on","status":"passed","durationMs":597},
+            {"name":"narrows the rows to the searched file name","status":"passed","durationMs":995},
+            {"name":"shows a detail card while a file row is hovered","status":"passed","durationMs":1054},
+            {"name":"expands a file's cases on click and collapses them on the next click","status":"passed","durationMs":86},
+            {"name":"switches the theme class with the host's dark attribute","status":"passed","durationMs":100}
           ]
         }
       ]
