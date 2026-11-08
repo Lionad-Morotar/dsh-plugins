@@ -657,22 +657,38 @@ describe("pointer paging", () => {
     expect(preview.scrollTop).toBe(1380);
   });
 
-  it("an editor keeps a page stroke the pointer lands inside it", () => {
-    // CodeMirror moves the caret a page and scrolls after it. Writing the
-    // half-page offset ourselves would leave the caret outside the fresh
-    // viewport, and the next keystroke would snap the editor back.
+  it("an editor under the pointer pages its own half viewport, not a full one", () => {
+    // CodeMirror's keymap pages a whole viewport and drags the caret with it.
+    // The half page is a reading habit, so the editor gets the same step as
+    // the transcript: the capture-phase event must never reach that keymap.
     const panel = scrollArea(1000);
     const { el } = editable();
     panel.append(el);
     mount({ pointerElementAt: () => el });
     win.dispatchEvent(mousemoveAt(20, 40));
     el.focus();
+    const reached = vi.fn();
+    doc.addEventListener("keydown", reached);
 
     const e = keydown({ key: "PageDown" });
     el.dispatchEvent(e);
 
-    expect(e.defaultPrevented).toBe(false);
-    expect(panel.scrollTop).toBe(1000);
+    expect(e.defaultPrevented).toBe(true);
+    expect(panel.scrollTop).toBe(1380);
+    expect(reached).not.toHaveBeenCalled();
+    doc.removeEventListener("keydown", reached);
+  });
+
+  it("an editor with no scrollable container still keeps the stroke away from a full native page", () => {
+    const { el } = editable();
+    el.setAttribute("contenteditable", "true");
+    mount();
+    el.focus();
+
+    const e = keydown({ key: "PageDown" });
+    el.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
   });
 
   it("a text field inside a scrolling panel pages that panel", () => {

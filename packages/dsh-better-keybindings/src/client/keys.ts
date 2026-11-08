@@ -140,7 +140,7 @@ export type PageRoute =
   | "pointer"
   /** Move the conversation scrollport. */
   | "transcript"
-  /** Leave the stroke to the focused editable surface. */
+  /** Move the scroll container the focused editable surface lives in. */
   | "editor"
   /** No surface applies; leave the stroke to the browser. */
   | "native";
@@ -172,17 +172,19 @@ export interface PageRouteInput {
  * full-height) conversation scrollport, so the pane under the pointer never
  * moved and the reader saw nothing happen at all.
  *
- * The one exception is a focused editor the pointer sits inside. Its own
- * keymap moves the caret one page and scrolls after it; a half-page
- * `scrollTop` write would leave the caret outside the fresh viewport, and the
- * next keystroke would snap the surface back. The conversation scrollport is
- * not an editor here even when the composer lives inside it: paging it by
- * half a viewport while the reader types is this plugin's whole point.
+ * A focused editor is not an exception to the size. CodeMirror's own keymap
+ * pages a whole viewport and drags the caret along, and the composer sits
+ * inside that keymap's world too. Paging by half a viewport is a reading
+ * habit, so the editor scrolls the same half page every other surface does:
+ * its caret stays put, exactly like the transcript's does under PageDown.
+ * The conversation scrollport is never mistaken for an editor surface, even
+ * with the composer living inside it.
  *
  * With no scrollable container under the pointer, an editable target keeps
- * the stroke only when its own surface scrolls (a long textarea, an editor
- * panel); otherwise the stroke stays native instead of paging a transcript
- * the reader cannot see.
+ * the stroke for the panel it lives in (a long textarea, an editor pane).
+ * When it lives in none, the stroke still does not reach the browser: a full
+ * native page of some ancestor is exactly the jump this plugin exists to
+ * remove, and a paging key that does nothing is the lesser surprise.
  */
 export function routePage(input: PageRouteInput): PageRoute {
   if (input.pointerScrolls) {

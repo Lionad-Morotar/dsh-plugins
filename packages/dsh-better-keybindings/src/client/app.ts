@@ -411,17 +411,19 @@ export function createApp(deps: AppDeps = {}): KeysApp {
             return;
           }
           if (route === "editor") {
-            // A text field pages the scrolling panel it lives in, and the
-            // stroke is still claimed when it lives in none: letting it
-            // through would hand the browser a full-viewport scroll of some
-            // ancestor the reader never asked for. A rich text editor keeps
-            // the stroke for its own keymap instead — moving the container
-            // without moving the caret would leave the two apart.
-            if (focusTarget === "text-field") {
-              event.preventDefault();
-              const box = nearestScrollable(focusElement);
-              if (box !== null) pageContainer(box, scroll.direction, scroll.fraction);
-            }
+            // Every editable surface pages the container it lives in, by the
+            // same half viewport as the transcript: the step is the reading
+            // habit, not a property of the chat. The stroke is claimed even
+            // when no container answers, because a dead key beats a full
+            // native page of some ancestor.
+            event.preventDefault();
+            // A rich text editor binds PageUp/PageDown itself and would page
+            // a whole viewport behind ours. Stopping the capture-phase event
+            // keeps it from reaching that keymap, so the editor scrolls the
+            // half page too and its caret stays put.
+            if (focusTarget === "contenteditable") event.stopPropagation();
+            const box = nearestScrollable(focusElement);
+            if (box !== null) pageContainer(box, scroll.direction, scroll.fraction);
             return;
           }
           // "native": the stroke keeps its default behaviour, exactly as if
