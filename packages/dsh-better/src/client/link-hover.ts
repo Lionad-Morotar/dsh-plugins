@@ -203,7 +203,11 @@ export function installLinkHover(doc: Document, deps: LinkHoverDeps): () => void
   // A device without hover has no pointer to rest on a link, so the panel would
   // only ever appear from a tap that is already opening the link. Checked before
   // the sheet goes in, so a touch device gets neither.
-  if (view.matchMedia?.("(hover: none)").matches === true) return () => undefined;
+  // Optional chaining stops at `matchMedia`: a document stand-in that has a
+  // window but no media queries (the package's own bundle harness) must not
+  // throw when the result is read. A missing query is treated as "hover works",
+  // which is the desktop this panel is for.
+  if (view.matchMedia?.("(hover: none)")?.matches === true) return () => undefined;
 
   const removeStyles = installLinkHoverStyles(doc);
 
