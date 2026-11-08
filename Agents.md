@@ -46,6 +46,7 @@ Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo，`packages/` 下有 2
 | `dsh-git-explorer` | [README](./packages/dsh-git-explorer/README.md)：argv-only 取数、泳道提交图、两栏视图与跨面板跳转；变更与历史两栏的行光标、变更过滤与历史按提交信息搜索 |
 | `dsh-term-dock` | [README](./packages/dsh-term-dock/README.md)：会话级终端 dock，默认收起，首次 `⌘⇧M` 才挂载并起 shell；xterm 懒 chunk、背压与进程台账 |
 | `dsh-arch` | [README](./packages/dsh-arch/README.md)：架构图 tab、LikeC4 宿主内布局与 `/arch/api` 下发、视口/偏移写回闭环、watch baseline 窗口与节流轮询刷新、箭头与线型、边动效与命中区、节点动作条、关系浮层面板、体积代价首屏（55MB 依赖） |
+| `dsh-testboard` | [README](./packages/dsh-testboard/README.md)：测试看板 tab、用例泳道与每秒完成数折线、暗亮双主题与 `--tst-*` 变量、悬停详情卡与点击展开、静态快照的确定性生成与 `--check`、独立预览页 |
 
 ## 项目技能
 

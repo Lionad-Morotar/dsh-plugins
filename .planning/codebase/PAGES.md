@@ -62,6 +62,7 @@
 | `dsh-git-explorer` | `git-explorer` | `dsh-git-explorer` | `packages/dsh-git-explorer/cordis.patch.yml` | 无；宿主半导出 Typert 命名空间 `gitExplorer`，客户端半 `dsh.client.inject: ["dsh-workbench-core"]` |
 | `dsh-term-dock` | `term-dock` | `dsh-term-dock` | `packages/dsh-term-dock/cordis.patch.yml` | 无；`dsh.client.inject: ["dsh-workbench-core"]`，占 `shell.bottom` |
 | `dsh-arch` | `arch` | `dsh-arch` | `packages/dsh-arch/cordis.patch.yml` | `/arch/api` 前缀路由（views / model / state；`model` 响应除 `elements` / `relations` / `specification` 外还有两个可选 map：`elementSources`（元素在 `.c4` 的定义文件与 1-based 行号）与 `elementCode`（按 title→包内路径约定解析出的代码文件），老宿主不返回时客户端按缺失处理），`dsh.client.inject: ["dsh-workbench-core"]`，会话顶栏 `conversation.view` 挂「架构」标签，另可选经面板种类挂进 term-dock 的 `shell.bottom` |
+| `dsh-testboard` | `testboard` | `dsh-testboard` | `packages/dsh-testboard/cordis.patch.yml` | 无；宿主半为空壳，功能全在客户端半边，`dsh.client.inject: []`，会话顶栏 `conversation.view` 挂「测试」标签 |
 
 ## 客户端半边入口
 
@@ -86,6 +87,7 @@
 | `dsh-git-explorer` | `src/client/entry.ts` | `lib/client.js`（宿主半 `lib/index.js`） | `slots.register({ name: "conversation.view", id: "git-explorer", order: 110 })`；`inject` 同文件面板，数据走 `remote.gitExplorer` 的 snapshot / query / commit；引用 chip 的点击走同一套 `views.open` / `viewFocus` 加 `openViewOrSwitch` 兜底，焦点为 `commit:<小写 hash>` |
 | `dsh-term-dock` | `src/client/entry.ts` | `lib/client.js` + `lib/client.terminal.js` | `slots.register({ name: "shell.bottom", id: "term-dock" })`，仅在 core 的 `dockVisible` 为真时注册；`inject = ["slots", "locale", "workbench"]`；xterm 在懒 chunk |
 | `dsh-arch` | `src/client/entry.ts` | `lib/client.js` + `lib/client.diagram.js` | `slots.register({ name: "conversation.view", id: "arch", order: 120 })` 会话标签（文件 100、Git 110 之后），另经 `workbench.registerDockPanelKind` 可选注册 kind `arch`；SVG 渲染器在懒 chunk；宿主半 `lib/index.js` 提供 `/arch/api` 三路由；`inject = ["slots", "locale", "workbench"]`；引用 chip 的点击不走工作台：按 `copy.ts` 的 `arch.tabTitle` 精确匹配 `[data-conversation-tabs]` 里的 `[role="tab"]` 点击切 tab，焦点经同包 `focus-store` 交给图 |
+| `dsh-testboard` | `src/client/entry.ts` | `lib/client.js` + `lib/client.snapshot.js` | `slots.register({ name: "conversation.view", id: "testboard", order: 130 })` 会话标签（架构 120 之后）；`inject = ["slots", "locale"]`；快照在懒 chunk（`lib/client.snapshot.js`）里，首次打开标签经 `require.async` 拉取，启动包不含快照字段；宿主半 `lib/index.js` 为空壳 |
 
 宿主 0.2.2 的共享菜单另有两个 keyed slot：`contextMenu.content` 是菜单的内容槽（`scope: root`，按 target 的 kind 取 key，宿主菜单覆盖层负责渲染），本仓不注册它——工作区菜单走 `ctx.contextMenus.register` 的数据动作；`contextMenu.icon` 是内联的图标槽，动作按 `icon.key` 取，`dsh-workspace-open-local` 注册 `open-local.application`。
 
