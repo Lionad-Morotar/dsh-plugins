@@ -218,7 +218,40 @@ export function createWorkspaceSwitch(ctx: ClientContextLike): WorkspaceSwitchWi
     if (typeof service?.startSession !== "function") return;
     service.startSession(workspaceId);
   };
-  return { available: () => probeWorkspaceServices(ctx), list: readList, startSession };
+  return { available: () => probeWorkspaceServices(ctx), watch: createWorkspaceWatch(ctx), list: readList, startSession };
+}
+
+/**
+ * Notify the header when the two Workspace services become readable.
+ *
+ * The services are requested through the callback form of `ctx.inject` rather
+ * than declared in the plugin's `inject` list: a host that never provides them
+ * must still mount the panel, and waiting would hide the tab on exactly that
+ * host. The callback runs when the injection resolves, which is the moment both
+ * services exist, so this is a notification and not a poll.
+ * @param ctx - client context this plugin was applied to.
+ * @returns a subscribe function; a host without `inject` yields an empty
+ * disposer, leaving the header on its per-render probe alone.
+ */
+export function createWorkspaceWatch(ctx: ClientContextLike): (listener: () => void) => () => void {
+  const inject = ctx.inject;
+  if (typeof inject !== "function") return () => () => {};
+  return listener => {
+    try {
+      const fiber = inject.call(ctx, ["workspaces", "uiWorkspace"], () => {
+        listener();
+        return () => {};
+      }) as { dispose?: () => unknown } | undefined;
+      if (fiber === undefined || typeof fiber.dispose !== "function") return () => {};
+      const dispose = fiber.dispose.bind(fiber);
+      return () => {
+        void dispose();
+      };
+    } catch {
+      // A host that refuses the injection leaves the per-render probe in place.
+      return () => {};
+    }
+  };
 }
 
 /** Whether both Workspace services are readable right now. */

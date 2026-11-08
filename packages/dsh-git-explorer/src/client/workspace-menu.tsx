@@ -154,7 +154,7 @@ function moveCursor(length: number, index: number, delta: number): number {
  * @returns the trigger and its popover, or null when the host cannot switch.
  */
 export function createWorkspaceMenu(wiring: WorkspaceMenuWiring) {
-  const { t, available, list, startSession } = wiring;
+  const { t, available, watch, list, startSession } = wiring;
 
   function WorkspaceMenu({ root }: WorkspaceMenuProps): ReactNode {
     const [open, setOpen] = useState(false);
@@ -177,6 +177,17 @@ export function createWorkspaceMenu(wiring: WorkspaceMenuWiring) {
     // Also per render: the Workspace plugin may mount after this view does, and
     // the name must become a control the moment both services are readable.
     const switchable = startSession !== undefined && (available === undefined || available());
+
+    // While the name is still a label, the services may arrive with nothing
+    // else to repaint the view. The watch reports that once; the bump below is
+    // all it does, so the next render re-reads `available()` and decides for
+    // itself. Subscribing only while unswitchable keeps a host that already has
+    // both services from holding a subscription it will never use.
+    const [, setBump] = useState(0);
+    useEffect(() => {
+      if (switchable || watch === undefined) return;
+      return watch(() => setBump(bump => bump + 1));
+    }, [switchable, watch]);
     const matches = useMemo(() => filterWorkspaces(items, query), [items, query]);
     const currentId = currentWorkspaceId(root, items);
 

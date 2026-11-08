@@ -162,6 +162,52 @@ describe("the header's Workspace switch", () => {
     expect(host.querySelector(".gx-repo")?.tagName).toBe("SPAN");
   });
 
+  it("becomes a button when the watch reports the services arrived after the mount", async () => {
+    // The services can land after this render with nothing else to repaint the
+    // view, so the watch is the only thing that can turn the label into a
+    // control. Without it the name would stay inert for the life of the mount.
+    let ready = false;
+    let notify: (() => void) | undefined;
+    const watch = vi.fn((listener: () => void) => {
+      notify = listener;
+      return () => {
+        notify = undefined;
+      };
+    });
+    await mount(remoteFace(), { available: () => ready, list: () => ITEMS, startSession: vi.fn(), watch });
+    expect(watch).toHaveBeenCalledTimes(1);
+    expect(trigger()).toBeNull();
+    expect(host.querySelector(".gx-repo")?.tagName).toBe("SPAN");
+
+    ready = true;
+    if (notify === undefined) throw new Error("watch never registered a listener");
+    await act(async () => {
+      notify?.();
+    });
+    expect(trigger()).not.toBeNull();
+    expect(host.querySelector(".gx-repo")?.tagName).toBe("BUTTON");
+  });
+
+  it("stops watching once the name is a button, and releases the watch on unmount", async () => {
+    const dispose = vi.fn();
+    const watch = vi.fn(() => dispose);
+    await mount(remoteFace(), { list: () => ITEMS, startSession: vi.fn(), watch });
+    // Already switchable on the first render, so there is nothing to wait for.
+    expect(watch).not.toHaveBeenCalled();
+    expect(trigger()).not.toBeNull();
+    await act(async () => root.unmount());
+    expect(dispose).not.toHaveBeenCalled();
+  });
+
+  it("releases the watch when the view unmounts before the services arrive", async () => {
+    const dispose = vi.fn();
+    const watch = vi.fn(() => dispose);
+    await mount(remoteFace(), { available: () => false, list: () => ITEMS, startSession: vi.fn(), watch });
+    expect(watch).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("renders a button carrying the full root as its title when both services are there", async () => {
     const startSession = vi.fn();
     await mount(remoteFace(), { list: () => ITEMS, startSession });

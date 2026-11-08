@@ -36,6 +36,16 @@ export interface WorkspaceSwitchWiring {
    * host. Absent means the caller already knows the services are there.
    */
   readonly available?: () => boolean;
+  /**
+   * Call `listener` once the two Workspace services become readable.
+   *
+   * A getter alone would only be consulted when something else repaints the
+   * view, and the services can land with no other reason to: the name would
+   * then stay a label for the life of the mount. The host's own injection
+   * reports the arrival, so this is a notification rather than a poll.
+   * @returns a disposer releasing the subscription.
+   */
+  readonly watch?: (listener: () => void) => () => void;
   readonly list?: () => readonly WorkspaceChoice[];
   readonly startSession?: (workspaceId: string) => void;
 }
