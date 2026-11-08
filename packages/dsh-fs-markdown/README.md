@@ -102,7 +102,9 @@
 | 动作 | 键 | 说明 |
 | --- | --- | --- |
 | 保存草稿 | `⌘S` / `Ctrl+S` | CodeMirror keymap 里的 `Mod-s`，`preventDefault`，不会落到浏览器的保存页面 |
-| 撤销 / 重做 / 行移动等 | CodeMirror 默认键位 | 由 `defaultKeymap` 提供 |
+| 翻半屏 | `PageUp` / `PageDown` | 覆盖 `defaultKeymap` 的整屏 `cursorPageDown`：光标按视口高度的一半逐行上下移动，再 `scrollIntoView` 让视窗跟着光标走 |
+| 扩选半屏 | `Shift+PageUp` / `Shift+PageDown` | 锚点不动，只移动选区另一端，步长同上 |
+| 撤销 / 重做 / 行移动等 | CodeMirror 默认键位 | 由 `defaultKeymap` 提供（翻页两键已被上面的绑定抢先） |
 | 下一个 / 上一个面板 | `⌘⌥↓` / `⌘⌥↑` | 文件浏览器提供，输入框聚焦时不抢 |
 | 关闭当前面板 | `Ctrl+W` | 桌面端承诺；web 上浏览器先关标签页，见「已知边界」 |
 

@@ -23,7 +23,7 @@ import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import { yaml } from "@codemirror/lang-yaml";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, drawSelection, keymap, type KeyBinding } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { useEffect, useRef, type ReactElement } from "react";
@@ -135,6 +135,65 @@ function saveKeyBinding(onSave: () => void): KeyBinding {
 }
 
 /**
+ * PageUp/PageDown as half a viewport of caret travel, with the view following.
+ *
+ * CodeMirror's default bindings move the caret by a whole viewport, and a full
+ * page leaves no shared line between the screen before and the screen after:
+ * the line being read is gone and has to be found again. Half a viewport keeps
+ * the upper half in place, which is what makes paging readable at speed.
+ *
+ * The caret leads and the view follows it, in that order. The selection is
+ * dispatched first and `scrollIntoView` brings the new position onto the
+ * screen, so after the stroke the caret still sits on the line the reader was
+ * reading. Shift extends the selection by the same half viewport.
+ * @returns the four page bindings, ahead of the default whole-page ones.
+ */
+function pageKeyBindings(): KeyBinding[] {
+  return [
+    pageKey("PageUp", -1, false),
+    pageKey("PageDown", 1, false),
+    pageKey("Shift-PageUp", -1, true),
+    pageKey("Shift-PageDown", 1, true),
+  ];
+}
+
+function pageKey(key: string, direction: -1 | 1, extend: boolean): KeyBinding {
+  return {
+    key,
+    preventDefault: true,
+    run: view => {
+      pageCaret(view, direction, extend);
+      return true;
+    },
+  };
+}
+
+/**
+ * Walk the caret half a viewport of lines along the document.
+ *
+ * Rows are measured from the scroll viewport rather than from the caret's own
+ * line box: the step is "half of what is on screen", so a short window pages
+ * fewer lines than a tall one without any extra configuration. The walk stops
+ * early at either end of the document, where `moveVertically` reports the same
+ * position twice.
+ */
+function pageCaret(view: EditorView, direction: -1 | 1, extend: boolean): void {
+  const lineHeight = view.defaultLineHeight > 0 ? view.defaultLineHeight : 20;
+  const rows = Math.max(1, Math.round(view.scrollDOM.clientHeight / 2 / lineHeight));
+  const main = view.state.selection.main;
+  let caret = EditorSelection.cursor(main.head);
+  for (let row = 0; row < rows; row += 1) {
+    const next = view.moveVertically(caret, direction > 0, lineHeight);
+    if (next.head === caret.head) break;
+    caret = next;
+  }
+  view.dispatch({
+    selection: { anchor: extend ? main.anchor : caret.head, head: caret.head },
+    scrollIntoView: true,
+  });
+}
+
+/**
  * Mount the editor for one document.
  *
  * The view is created once; text and mode arrive as effects afterwards. That is
@@ -176,6 +235,9 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
           ...(lineSeparator === undefined ? [] : [EditorState.lineSeparator.of(lineSeparator)]),
           history(),
           keymap.of([saveKeyBinding(() => onSave.current?.())]),
+          // Ahead of `defaultKeymap`: both bind the page keys, and the first
+          // matching binding wins.
+          keymap.of(pageKeyBindings()),
           keymap.of(defaultKeymap),
           drawSelection(),
           EditorView.lineWrapping,

@@ -6,10 +6,11 @@
  * synthetic keyboard events: jsdom does not run CodeMirror's input pipeline,
  * and a test that pretended otherwise would only test the DOM shim.
  */
+import { EditorSelection } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EditorBody } from "../src/client/chunk/editor.tsx";
 import type { EditorBodyProps, FindSourceFace } from "../src/client/contracts.ts";
@@ -167,6 +168,67 @@ describe("EditorBody", () => {
     expect(binding?.preventDefault).toBe(true);
     expect(binding?.run?.(view())).toBe(true);
     expect(saves).toBe(1);
+  });
+
+  /** Find the first binding registered for one key, ahead of the default map. */
+  function bindingFor(current: EditorView, key: string) {
+    return current.state.facet(keymap).flat().find(candidate => candidate.key === key);
+  }
+
+  /** Pin jsdom's zero layout to a ten-line viewport moving one line per step. */
+  function pinViewport(current: EditorView): { restore: () => void } {
+    Object.defineProperty(current, "defaultLineHeight", { value: 10, configurable: true });
+    Object.defineProperty(current.scrollDOM, "clientHeight", { value: 100, configurable: true });
+    const spy = vi.spyOn(current, "moveVertically").mockImplementation((range, forward) =>
+      EditorSelection.cursor(
+        Math.max(0, Math.min(current.state.doc.length, range.head + (forward ? 1 : -1))),
+      ),
+    );
+    return { restore: () => spy.mockRestore() };
+  }
+
+  it("moves the caret half a viewport on PageDown, not a whole one", async () => {
+    // A full page leaves no shared line between the before and after screen;
+    // half a page keeps the upper half in place, which is the reading habit.
+    await show({ text: "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\n" });
+    const current = view();
+    const layout = pinViewport(current);
+    const start = current.state.selection.main.head;
+
+    expect(bindingFor(current, "PageDown")?.run?.(current)).toBe(true);
+
+    // Ten visible lines halve to five.
+    expect(current.state.selection.main.head).toBe(start + 5);
+    layout.restore();
+  });
+
+  it("moves the caret half a viewport backward on PageUp", async () => {
+    await show({ text: "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\n" });
+    const current = view();
+    const layout = pinViewport(current);
+    await act(async () => {
+      current.dispatch({ selection: { anchor: current.state.doc.length } });
+    });
+    const start = current.state.selection.main.head;
+
+    expect(bindingFor(current, "PageUp")?.run?.(current)).toBe(true);
+
+    expect(current.state.selection.main.head).toBe(start - 5);
+    layout.restore();
+  });
+
+  it("extends the selection half a viewport on Shift+PageDown", async () => {
+    await show({ text: "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\n" });
+    const current = view();
+    const layout = pinViewport(current);
+    const anchor = current.state.selection.main.anchor;
+    const head = current.state.selection.main.head;
+
+    expect(bindingFor(current, "Shift-PageDown")?.run?.(current)).toBe(true);
+
+    expect(current.state.selection.main.anchor).toBe(anchor);
+    expect(current.state.selection.main.head).toBe(head + 5);
+    layout.restore();
   });
 
   it("renders an inactive table as a table widget with inline marks and alignment", async () => {

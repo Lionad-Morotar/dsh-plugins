@@ -140,23 +140,25 @@ export type PageRoute =
   | "pointer"
   /** Move the conversation scrollport. */
   | "transcript"
-  /** Move the scroll container the focused editable surface lives in. */
+  /** Leave the stroke to the focused editor's own keymap. */
   | "editor"
+  /** Move the scroll container the focused text field lives in. */
+  | "field"
   /** No surface applies; leave the stroke to the browser. */
   | "native";
 
 /** The DOM facts a page stroke's destination is decided from. */
 export interface PageRouteInput {
+  /** The focused element is a rich text editor outside the conversation. */
+  readonly editorFocused: boolean;
+  /** The focused element is a text field (input or textarea). */
+  readonly fieldFocused: boolean;
   /** A vertically scrollable container sits under the pointer. */
   readonly pointerScrolls: boolean;
-  /** That container is the conversation scrollport itself. */
+  /** The container under the pointer is the conversation scrollport itself. */
   readonly pointerIsTranscript: boolean;
-  /** The event target is an editable surface (and therefore has focus). */
-  readonly editableFocused: boolean;
-  /** That editable surface sits inside the container the pointer hit. */
-  readonly editableInsidePointer: boolean;
-  /** The editable surface lives inside the conversation scrollport. */
-  readonly editableInTranscript: boolean;
+  /** The focused surface lives inside the conversation scrollport. */
+  readonly focusInTranscript: boolean;
   /** The stroke was reported by BODY, or by a target inside the scrollport. */
   readonly bodyTarget: boolean;
 }
@@ -164,34 +166,30 @@ export interface PageRouteInput {
 /**
  * Decide what one PageUp/PageDown stroke pages.
  *
- * The pointer leads, always. The surface under it is the one the reader is
- * looking at, and that stays true when something editable has focus — a
- * search box in the file tree, a find field, the composer. Demoting the
- * pointer behind the focus target is what made paging dead in every view
- * whose transcript is not on screen: the stroke went to the (hidden, or
- * full-height) conversation scrollport, so the pane under the pointer never
- * moved and the reader saw nothing happen at all.
- *
- * A focused editor is not an exception to the size. CodeMirror's own keymap
- * pages a whole viewport and drags the caret along, and the composer sits
- * inside that keymap's world too. Paging by half a viewport is a reading
- * habit, so the editor scrolls the same half page every other surface does:
- * its caret stays put, exactly like the transcript's does under PageDown.
+ * An editor owns the page keys outright. Its keymap moves the caret half a
+ * viewport and scrolls after it, which is the shape the change asked for:
+ * the caret leads, the view follows. No `scrollTop` write here can imitate
+ * that, and fighting the keymap for the same keystroke is how an earlier
+ * attempt produced either two movements out of one stroke or none at all.
  * The conversation scrollport is never mistaken for an editor surface, even
- * with the composer living inside it.
+ * though the composer is editable and lives inside it.
  *
- * With no scrollable container under the pointer, an editable target keeps
- * the stroke for the panel it lives in (a long textarea, an editor pane).
- * When it lives in none, the stroke still does not reach the browser: a full
- * native page of some ancestor is exactly the jump this plugin exists to
- * remove, and a paging key that does nothing is the lesser surprise.
+ * Everything else follows the pointer, in the same shape the chat area has
+ * always had: the container under the pointer pages by half a viewport,
+ * whatever holds focus. Demoting the pointer behind the focus target is what
+ * made paging dead in every view whose transcript is not on screen.
+ *
+ * With no scrollable container under the pointer, an editable target pages
+ * the panel it belongs to: the transcript for the composer, the field's own
+ * scroll container otherwise. A text field that lives in no scrollable
+ * container is still claimed, so the browser cannot spend the stroke on a
+ * full-page scroll of some ancestor.
  */
 export function routePage(input: PageRouteInput): PageRoute {
-  if (input.pointerScrolls) {
-    const editorUnderPointer = input.editableFocused && input.editableInsidePointer && !input.pointerIsTranscript;
-    return editorUnderPointer ? "editor" : "pointer";
-  }
-  if (input.editableFocused) return input.editableInTranscript ? "transcript" : "editor";
+  if (input.editorFocused) return "editor";
+  if (input.pointerScrolls) return "pointer";
+  if (input.focusInTranscript) return "transcript";
+  if (input.fieldFocused) return "field";
   if (input.bodyTarget) return "transcript";
   return "native";
 }

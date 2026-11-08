@@ -657,10 +657,10 @@ describe("pointer paging", () => {
     expect(preview.scrollTop).toBe(1380);
   });
 
-  it("an editor under the pointer pages its own half viewport, not a full one", () => {
-    // CodeMirror's keymap pages a whole viewport and drags the caret with it.
-    // The half page is a reading habit, so the editor gets the same step as
-    // the transcript: the capture-phase event must never reach that keymap.
+  it("an editor keeps the page stroke: its keymap owns the caret and the view", () => {
+    // CodeMirror moves the caret half a viewport and scrolls after it (the
+    // editor chunk binds that itself). Claiming the stroke here would move the
+    // view without the caret, or fight the keymap for the same keystroke.
     const panel = scrollArea(1000);
     const { el } = editable();
     panel.append(el);
@@ -673,15 +673,16 @@ describe("pointer paging", () => {
     const e = keydown({ key: "PageDown" });
     el.dispatchEvent(e);
 
-    expect(e.defaultPrevented).toBe(true);
-    expect(panel.scrollTop).toBe(1380);
-    expect(reached).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+    expect(panel.scrollTop).toBe(1000);
+    expect(reached).toHaveBeenCalledTimes(1);
     doc.removeEventListener("keydown", reached);
   });
 
-  it("a page stroke aimed at another panel never reaches the editor's keymap either", () => {
-    // The pointer decides where the page goes; the editor holding focus must
-    // not also move its caret, or one stroke produces two movements.
+  it("a focused editor keeps the stroke even when the pointer rests on another panel", () => {
+    // The keyboard focus names the surface the stroke is for, and that surface
+    // is the editor: its caret moves half a viewport and the view follows. The
+    // pointer decides nothing here, so the panel under it stays put.
     const panel = scrollArea(1000);
     const hit = doc.createElement("p");
     panel.append(hit);
@@ -695,13 +696,13 @@ describe("pointer paging", () => {
     const e = keydown({ key: "PageDown" });
     editor.el.dispatchEvent(e);
 
-    expect(e.defaultPrevented).toBe(true);
-    expect(panel.scrollTop).toBe(1380);
-    expect(reached).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+    expect(panel.scrollTop).toBe(1000);
+    expect(reached).toHaveBeenCalledTimes(1);
     doc.removeEventListener("keydown", reached);
   });
 
-  it("an editor with no scrollable container still keeps the stroke away from a full native page", () => {
+  it("an editor with no scrollable container keeps the stroke too", () => {
     const { el } = editable();
     el.setAttribute("contenteditable", "true");
     mount();
@@ -710,7 +711,7 @@ describe("pointer paging", () => {
     const e = keydown({ key: "PageDown" });
     el.dispatchEvent(e);
 
-    expect(e.defaultPrevented).toBe(true);
+    expect(e.defaultPrevented).toBe(false);
   });
 
   it("a text field inside a scrolling panel pages that panel", () => {
