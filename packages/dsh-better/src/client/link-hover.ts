@@ -85,6 +85,13 @@ export interface LinkHoverDeps {
  * reader would ever want to copy or retype. Everything else is shown, including
  * schemes the host will not open externally: the panel describes the link, it
  * does not decide what a click does.
+ *
+ * The scheme is read from a copy with tab, newline and carriage return deleted,
+ * because that is what the url parser does before it looks at the scheme: an
+ * href spelled `java\nscript:` is a script address to the browser, and a panel
+ * over it would offer to copy something the browser never treats as text. Only
+ * those three characters go; a space in the middle of an address is left alone,
+ * since the parser keeps it. The address the panel displays is untouched.
  * @param href - the anchor's `href` attribute, exactly as written.
  * @returns whether the panel should appear.
  */
@@ -94,7 +101,7 @@ export function isHoverableHref(href: string): boolean {
   if (trimmed.startsWith("#")) return false;
   // The scheme is compared lower case because the host does not normalise the
   // case of an href it did not write itself.
-  const scheme = trimmed.slice(0, 11).toLowerCase();
+  const scheme = trimmed.replace(/[\t\n\r]/gu, "").slice(0, 11).toLowerCase();
   if (scheme.startsWith("javascript:")) return false;
   if (scheme.startsWith("data:")) return false;
   return true;

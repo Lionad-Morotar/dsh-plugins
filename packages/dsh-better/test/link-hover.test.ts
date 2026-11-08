@@ -219,6 +219,14 @@ describe("which addresses are worth showing", () => {
     ["JavaScript:alert(1)", "a script url in mixed case"],
     ["data:text/html,<b>x</b>", "a data url"],
     ["DATA:text/html,x", "a data url in mixed case"],
+    // The url parser deletes tab, newline and carriage return before it reads
+    // the scheme, so each of these is still a script or data address however it
+    // is spelled. A panel over one would offer to copy an address the browser
+    // would never treat as text.
+    ["java\nscript:alert(1)", "a script url split by a newline"],
+    ["java\tscript:alert(1)", "a script url split by a tab"],
+    ["java\rscript:alert(1)", "a script url split by a carriage return"],
+    ["da\nta:text/plain,x", "a data url split by a newline"],
   ])("refuses %j (%s)", href => {
     expect(isHoverableHref(href)).toBe(false);
   });
@@ -228,6 +236,9 @@ describe("which addresses are worth showing", () => {
     ["http://example.test/a", "an http address"],
     ["mailto:someone@example.test", "a mail address"],
     ["/docs/readme.md", "a relative path"],
+    // The same deletion rule cuts both ways: a newline in the middle of an
+    // https address leaves the scheme intact, so the panel still belongs there.
+    ["https://example.test/a\nb", "an https address with a newline in the path"],
   ])("accepts %j (%s)", href => {
     expect(isHoverableHref(href)).toBe(true);
   });
@@ -253,6 +264,16 @@ describe("which addresses are worth showing", () => {
     const { anchor } = flowLink(`  ${HREF}  `);
     hover(anchor);
     expect(addressText()).toBe(HREF);
+  });
+
+  it("shows an address with a newline in it exactly as written", () => {
+    // The deletion only decides whether the panel appears. What it shows is the
+    // address the reader would copy, so the newline stays in the text.
+    const href = "https://example.test/a\nb";
+    const { anchor } = flowLink(href);
+    hover(anchor);
+    expect(visible()).toBe(true);
+    expect(addressText()).toBe(href);
   });
 });
 
