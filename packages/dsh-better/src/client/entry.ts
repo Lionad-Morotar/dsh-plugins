@@ -62,6 +62,7 @@ import { installCompactionStyles } from "./compaction-styles.ts";
 import { ContinueButton } from "./continue-button.tsx";
 import { CONTINUE_ID, CONTINUE_ORDER, CONTINUE_SLOT } from "./continue-turn.ts";
 import { installContinueStyles } from "./continue-styles.ts";
+import { installLinkHover } from "./link-hover.ts";
 import { submitContinue } from "./continue-submit.ts";
 import { createSeat, type SeatDeps, type SeatProps } from "./seat.tsx";
 import { modelPopupSpec, openContext, openSegment, type PopupOpenerLike } from "./trigger.ts";
@@ -506,6 +507,12 @@ export const clientPlugin = {
     // The continue button's sheet, installed for the same reason: its own entry
     // and its own tag id, so the two surfaces stay independent.
     ctx.effect(() => installContinueStyles(doc), "dsh-better: continue button stylesheet");
+    // The link address panel. One effect installs the sheet and the document
+    // listeners together, so a reload that drops the plugin takes both away.
+    ctx.effect(
+      () => (doc === undefined ? () => undefined : installLinkHover(doc, { translate: aliasTranslator(ctx) })),
+      "dsh-better: link address panel",
+    );
 
     // Skill aliases. One document is shared by three surfaces: the settings page
     // that edits it, the `/` source that lists it in the shipped slash menu, and

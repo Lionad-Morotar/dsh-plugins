@@ -84,6 +84,12 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     // state, so the button never looks inert while the message is in flight.
     "continue.label": "继续",
     "continue.sending": "继续中…",
+    // The link address panel. The button's own label doubles as its accessible
+    // name, so a copy that fails is announced rather than silent.
+    "link.copy": "复制",
+    "link.copied": "已复制",
+    "link.copyFailed": "复制失败",
+    "link.copyAria": "复制链接地址",
   },
   en: {
     "overlay.aria": "Select a model",
@@ -138,5 +144,9 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "skill.hint.insert": "Click to insert",
     "continue.label": "Continue",
     "continue.sending": "Continuing…",
+    "link.copy": "Copy",
+    "link.copied": "Copied",
+    "link.copyFailed": "Copy failed",
+    "link.copyAria": "Copy link address",
   },
 });
