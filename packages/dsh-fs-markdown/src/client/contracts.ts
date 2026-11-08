@@ -20,6 +20,33 @@ export interface RendererPage {
   readonly offset: number;
 }
 
+/**
+ * What the pane needs to search and reveal this editor's own document.
+ *
+ * The editor holds the whole file while the pane's pager holds one page, so the
+ * body is the only one who can answer both halves honestly: the text to search
+ * and the selection that shows a hit. Reading them from the DOM instead would
+ * see only the lines CodeMirror happened to render.
+ */
+export interface FindSourceFace {
+  /**
+   * The document text, read per call so an edit cannot leave the answer stale.
+   *
+   * Its offsets must be the editor's own document positions, which count a
+   * line break as one unit whatever the file's separator is.
+   */
+  readonly text: () => string;
+  /** Select and scroll to one `[from, to)` interval of that text. */
+  readonly select: (from: number, to: number) => void;
+  /** Drop the selection the last `select` made. */
+  readonly clear: () => void;
+}
+
+/** The channel the pane hands a body for publishing its find source. */
+export interface FindSourceSinkFace {
+  register(source: FindSourceFace | null): void;
+}
+
 /** What the pane hands one renderer's body. */
 export interface RendererBodyProps {
   readonly path: string;
@@ -37,6 +64,13 @@ export interface RendererBodyProps {
   readonly t: Translate;
   /** Present on the text path; the editor reads the whole document instead. */
   readonly page?: RendererPage;
+  /**
+   * The pane's find channel.
+   *
+   * Absent outside a pane, where no find bar exists; the editor then keeps its
+   * text to itself and the pane's DOM reading answers find.
+   */
+  readonly find?: FindSourceSinkFace;
 }
 
 /** What the editor chunk adds to the renderer contract: the live text. */

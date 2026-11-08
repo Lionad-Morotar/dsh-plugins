@@ -157,6 +157,7 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
   onChange.current = props.onChange;
   const onSave = useRef(props.onSave);
   onSave.current = props.onSave;
+  const find = props.find;
 
   useEffect(() => {
     const element = host.current;
@@ -210,6 +211,37 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
       annotations: ExternalChange.of(true),
     });
   }, [text]);
+  // The find bar searches this editor's whole document, not the page the pane's
+  // pager holds and not the visible lines: the pane can read neither out of the
+  // DOM of a virtualized view. Publishing the source here also keeps focus out
+  // of the editor — a selection dispatched on an unfocused CodeMirror view is
+  // not written into the contenteditable, so the find input keeps the keyboard
+  // while the hit is still highlighted by the selection layer.
+  useEffect(() => {
+    const current = view.current;
+    if (current === null || find === undefined) return;
+    find.register({
+      // `doc.toString()` and not `sliceDoc()`: a CodeMirror position counts a
+      // line break as one unit whatever the file's separator is, and the
+      // document's own `toString()` uses the same \n. `sliceDoc()` returns
+      // CRLF for a CRLF file, whose offsets would drift by one per line before
+      // the hit and select the wrong text.
+      text: () => current.state.doc.toString(),
+      select: (from, to) => {
+        const length = current.state.doc.length;
+        const start = Math.max(0, Math.min(from, length));
+        const end = Math.max(start, Math.min(to, length));
+        current.dispatch({ selection: { anchor: start, head: end }, scrollIntoView: true });
+      },
+      clear: () => {
+        // Collapsing in place keeps the reader where they were reading; a find
+        // that jumped the viewport back on close would lose that place.
+        const head = current.state.selection.main.head;
+        current.dispatch({ selection: { anchor: head } });
+      },
+    });
+    return () => find.register(null);
+  }, [find]);
 
   useEffect(() => {
     const current = view.current;

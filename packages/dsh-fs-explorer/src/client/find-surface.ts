@@ -1,15 +1,20 @@
 /**
- * The two surfaces the preview's find bar drives.
+ * The two surfaces the preview's find bar drives, and the channel bodies use to
+ * ask for the first one.
  *
- * They cannot share an offset space. The editor's document is the page text
- * verbatim, so a hit offset is directly usable; the Markdown and plain-text
- * bodies are laid out by the browser from rendered nodes, where source markers
- * (`**bold**`) and dropped images occupy no visible character at all. So a
- * surface answers only "how many hits" and "show me the nth", and each keeps
- * its own mapping internally.
+ * They cannot share an offset space. An editor body's offsets are its own
+ * document's offsets, so a hit interval is directly a selection; the rendered
+ * bodies (the shipped fallback Markdown and plain text) are laid out by the
+ * browser, where source markers (`**bold**`) and dropped images occupy no
+ * visible character at all. So a surface answers only "how many hits" and "show
+ * me the nth", and each keeps its own mapping internally.
+ *
+ * Which one a body gets is the body's own answer: a renderer that can speak in
+ * its document's offsets publishes a {@link FindSource}, and the pane turns it
+ * into an offset surface. Everything else falls back to a DOM reading, which is
+ * only honest for bodies the browser actually laid out in full — a virtualized
+ * view leaves most of a long document out of the DOM.
  */
-import { createContext, useContext } from "react";
-
 import { findMatches, layoutText, positionAt, type TextLayout } from "./find.ts";
 
 /** What the find bar needs from whichever body is mounted. */
@@ -22,32 +27,51 @@ export interface FindSurface {
   clear(): void;
 }
 
-/** The seams an offset-measured surface closes over. */
-export interface OffsetSurfaceOptions {
+/**
+ * What an editable body hands the pane so find can search the body's own text.
+ *
+ * The pane owns the matching; the body owns the text and the selection. That
+ * split is what lets a renderer whose document is not the page it sits on (a
+ * whole-file editor) answer honestly, instead of the pane reading a DOM that a
+ * virtualized view has only partly put on screen.
+ */
+export interface FindSource {
   /**
-   * The page text, read per call.
+   * The text find searches, read per call.
    *
-   * A getter rather than a value because the editor outlives the page it holds:
-   * the pane mounts it once per file and swaps the document per page, so a
-   * captured string would search the page the reader has already left.
+   * A getter rather than a value because the body outlives the text it holds:
+   * the pane mounts an editor once per file and swaps the document per page,
+   * so a captured string would search the page the reader has already left.
    */
   readonly text: () => string;
-  /** Select and scroll to one `[from, to)` interval of the current page. */
+  /** Select and scroll to one `[from, to)` interval of that text. */
   readonly select: (from: number, to: number) => void;
   /** Drop the selection the last `select` made. */
   readonly clear: () => void;
 }
 
 /**
+ * The channel a mounted body publishes its find source through.
+ *
+ * Handed to every renderer body as `find`. Absent outside a pane, where there
+ * is no find bar to answer; a body that publishes nothing leaves the pane's
+ * DOM reading as the answer.
+ */
+export interface FindSourceSink {
+  /** Offer the body's source, or null when the body can no longer answer. */
+  register(source: FindSource | null): void;
+}
+
+/**
  * A surface whose offsets are the searched text's own offsets.
  *
- * This is the editor's shape, and only the editor's: its document is the page
- * text verbatim, so a hit interval is directly a selection. The rendered
- * surfaces must not use this — see {@link createDomSurface}.
- * @param options - the live page text, the selection gesture and the clearing one.
+ * This is the editor's shape: its document is the page text verbatim, so a hit
+ * interval is directly a selection. The rendered surfaces must not use this —
+ * see {@link createDomSurface}.
+ * @param options - the live text, the selection gesture and the clearing one.
  * @returns the surface.
  */
-export function createOffsetSurface(options: OffsetSurfaceOptions): FindSurface {
+export function createOffsetSurface(options: FindSource): FindSurface {
   const hits = (query: string) => findMatches(options.text(), query);
   return {
     count: query => hits(query).length,
@@ -125,7 +149,7 @@ function readRenderedText(root: HTMLElement): RenderedText {
 }
 
 /**
- * A surface over what the browser actually laid out.
+ * The DOM surface a pane uses for bodies that publish nothing.
  *
  * Read afresh on every call: the body is replaced by a renderer swap or a page
  * change, and a layout cached from the previous body would point at detached
@@ -181,29 +205,4 @@ export function createDomSurface(body: () => HTMLElement | null): FindSurface {
     },
     clear: () => selection()?.removeAllRanges(),
   };
-}
-
-/**
- * The channel a mounted body publishes its surface through.
- *
- * The body is chosen by the renderer registry and receives only
- * {@link RendererBodyProps}, so it cannot be handed the find bar as a prop —
- * that type is the public seam plugins implement. A context carries the other
- * direction instead: the pane offers a sink, the mounted body registers into it,
- * and the pane keeps the DOM surface as the answer for bodies that never will.
- */
-export interface FindSurfaceSink {
-  /** Offer the mounted body's surface, or null when it is going away. */
-  register(surface: FindSurface | null): void;
-}
-
-/** Absent outside a pane, where a rendered body has nothing to be found in. */
-export const FindSurfaceContext = createContext<FindSurfaceSink | null>(null);
-
-/**
- * The sink of the enclosing pane.
- * @returns the sink, or null when this body is mounted outside a preview pane.
- */
-export function useFindSurfaceSink(): FindSurfaceSink | null {
-  return useContext(FindSurfaceContext);
 }

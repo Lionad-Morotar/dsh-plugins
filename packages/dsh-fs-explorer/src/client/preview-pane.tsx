@@ -49,10 +49,8 @@ import {
 import {
   createDomSurface,
   createOffsetSurface,
-  FindSurfaceContext,
-  useFindSurfaceSink,
+  type FindSourceSink,
   type FindSurface,
-  type FindSurfaceSink,
 } from "./find-surface.ts";
 import { PreviewFailureView, PreviewLoadingView } from "./preview-failure.tsx";
 import { PreviewFindBar } from "./preview-find.tsx";
@@ -221,15 +219,16 @@ function CodeSurface({
   text,
   path,
   offset,
+  find,
 }: {
   readonly chunk: PreviewChunkModule | null;
   readonly text: string;
   readonly path: string;
   readonly offset: number;
+  readonly find?: FindSourceSink;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const handle = useRef<CodePreviewHandle | null>(null);
-  const sink = useFindSurfaceSink();
   const pageText = useRef(text);
   pageText.current = text;
   const [failed, setFailed] = useState(false);
@@ -266,16 +265,14 @@ function CodeSurface({
   // It is offered to the pane only while it is the body actually drawing, so a
   // plain-text fallback is never paired with an editor that does not exist.
   useEffect(() => {
-    if (sink === null || chunk === null || failed) return;
-    sink.register(
-      createOffsetSurface({
-        text: () => pageText.current,
-        select: (from, to) => handle.current?.revealRange(from, to),
-        clear: () => handle.current?.clearSelection(),
-      }),
-    );
-    return () => sink.register(null);
-  }, [sink, chunk, failed]);
+    if (find === undefined || chunk === null || failed) return;
+    find.register({
+      text: () => pageText.current,
+      select: (from, to) => handle.current?.revealRange(from, to),
+      clear: () => handle.current?.clearSelection(),
+    });
+    return () => find.register(null);
+  }, [find, chunk, failed]);
 
   if (chunk === null || failed) {
     return (
@@ -312,7 +309,7 @@ function FallbackTextBody({ page, path, mode }: RendererBodyProps) {
 
 /** The built-in Markdown body: reading mode upgrades to GFM once the chunk is in. */
 function createMarkdownRenderer(chunk: PreviewChunkModule): RendererModule {
-  function MarkdownBody({ page, path, mode }: RendererBodyProps) {
+  function MarkdownBody({ page, path, mode, find }: RendererBodyProps) {
     if (mode === "reading") {
       return (
         <div className="fx-preview-read" data-testid="fs-preview-markdown" data-renderer="gfm">
@@ -320,15 +317,15 @@ function createMarkdownRenderer(chunk: PreviewChunkModule): RendererModule {
         </div>
       );
     }
-    return <CodeSurface chunk={chunk} text={page?.text ?? ""} path={path} offset={page?.offset ?? 1} />;
+    return <CodeSurface chunk={chunk} text={page?.text ?? ""} path={path} offset={page?.offset ?? 1} find={find} />;
   }
   return { Body: MarkdownBody, renderer: chunk.renderer };
 }
 
 /** The built-in source body: read-only CodeMirror over the held page. */
 function createSourceRenderer(chunk: PreviewChunkModule): RendererModule {
-  function SourceBody({ page, path }: RendererBodyProps) {
-    return <CodeSurface chunk={chunk} text={page?.text ?? ""} path={path} offset={page?.offset ?? 1} />;
+  function SourceBody({ page, path, find }: RendererBodyProps) {
+    return <CodeSurface chunk={chunk} text={page?.text ?? ""} path={path} offset={page?.offset ?? 1} find={find} />;
   }
   return { Body: SourceBody, renderer: chunk.renderer };
 }
@@ -456,6 +453,9 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
   const [rendererState, setRendererState] = useState<RendererState>(IDLE_RENDERER);
   const [rendererRevision, setRendererRevision] = useState(0);
   const [rendererAttempt, setRendererAttempt] = useState(0);
+  // Bumped whenever a body changes what it can answer for, so a query typed
+  // before the answer existed is counted again instead of staying stale.
+  const [findRevision, setFindRevision] = useState(0);
   const [mode, setMode] = useState<PreviewMode>("reading");
   const [copied, setCopied] = useState(false);
   const [draftCopied, setDraftCopied] = useState(false);
@@ -466,9 +466,9 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
   // The find bar is a transient surface: opening it is the only state it keeps.
   const [finding, setFinding] = useState(false);
   const bodyHost = useRef<HTMLDivElement>(null);
-  // Whichever body registered a surface of its own; null means the DOM reading
-  // of `.fx-preview-body` is the answer, which is what Markdown and plain text
-  // need and what the editor deliberately overrides.
+  // Whichever body published a find source; null means the DOM reading of
+  // `.fx-preview-body` is the answer, which is what the shipped fallback
+  // renderers need and what every editor body deliberately overrides.
   const editorSurface = useRef<FindSurface | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const draftCopyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -638,25 +638,35 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
           ? "fallback"
           : "plain";
 
-  // A body that can answer for its own offsets offers a surface through the
-  // context below; everything else is found by reading the rendered DOM. The
-  // bar asks this on every gesture, so a renderer swap mid-find just works.
+  // A body that can answer for its own offsets publishes a source; the pane
+  // turns it into the surface the bar drives. Everything else is found by
+  // reading the rendered DOM. The bar asks this on every gesture, so a renderer
+  // swap mid-find just works.
   const domSurface = useMemo(() => createDomSurface(() => bodyHost.current), []);
   const surface = useMemo<() => FindSurface>(
     () => () => editorSurface.current ?? domSurface,
     [domSurface],
   );
-  const surfaceSink = useMemo<FindSurfaceSink>(
+  const findSourceSink = useMemo<FindSourceSink>(
     () => ({
-      register: created => {
-        editorSurface.current = created;
+      register: source => {
+        editorSurface.current = source === null ? null : createOffsetSurface(source);
+        setFindRevision(value => value + 1);
       },
     }),
     [],
   );
   // Anything that replaces the words under the bar re-runs the count: a page
-  // change, a mode switch, a renderer arriving, a file swap.
-  const findStamp = [shownPath, String(mode), snapshot.offset, snapshot.text.length, engine].join("|");
+  // change, a mode switch, a renderer arriving, a body publishing its text, a
+  // file swap.
+  const findStamp = [
+    shownPath,
+    String(mode),
+    snapshot.offset,
+    snapshot.text.length,
+    engine,
+    String(findRevision),
+  ].join("|");
   // Binary families draw pixels, not text; a find bar there would have nothing
   // to search and no way to say so honestly.
   const findable = !binary && textReady;
@@ -670,6 +680,7 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
     mode,
     ...(binary ? {} : { page: { text: snapshot.text, offset: snapshot.offset } }),
     ...(locate === undefined ? {} : { locate }),
+    find: findSourceSink,
   };
 
   const copyPath = (): void => {
@@ -908,7 +919,7 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
         </div>
       ) : null}
       <div className="fx-preview-body" data-scroll={reading ? "y" : "none"} ref={bodyHost}>
-        <FindSurfaceContext.Provider value={surfaceSink}>{body}</FindSurfaceContext.Provider>
+        {body}
       </div>
     </section>
   );

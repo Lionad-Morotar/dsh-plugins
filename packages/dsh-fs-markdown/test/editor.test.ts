@@ -12,7 +12,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { EditorBody } from "../src/client/chunk/editor.tsx";
-import type { EditorBodyProps } from "../src/client/contracts.ts";
+import type { EditorBodyProps, FindSourceFace } from "../src/client/contracts.ts";
 import { translatorFor } from "../src/client/copy.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -242,5 +242,93 @@ describe("EditorBody", () => {
 
     expect(view()).toBe(editorView);
     expect(text()).toContain("**bold**");
+  });
+  it("publishes its whole document to the find channel", async () => {
+    const registered: (FindSourceFace | null)[] = [];
+    const find = { register: (source: FindSourceFace | null) => registered.push(source) };
+    await show({ find, text: "alpha beta alpha" });
+
+    const source = registered.at(-1);
+    expect(source).not.toBeUndefined();
+    expect(source?.text()).toBe("alpha beta alpha");
+  });
+
+  it("reads the live document, so a find count cannot go stale after an edit", async () => {
+    const registered: (FindSourceFace | null)[] = [];
+    const find = { register: (source: FindSourceFace | null) => registered.push(source) };
+    await show({ find, text: "alpha beta alpha" });
+    const source = registered.at(-1);
+
+    await act(async () => {
+      view().dispatch({ changes: { from: 0, to: 5, insert: "gamma" } });
+    });
+
+    expect(source?.text()).toBe("gamma beta alpha");
+  });
+
+  it("keeps find offsets in document positions on a CRLF file", async () => {
+    const registered: (FindSourceFace | null)[] = [];
+    const find = { register: (source: FindSourceFace | null) => registered.push(source) };
+    await show({ find, text: "a\r\nb\r\nneedle" });
+    const source = registered.at(-1);
+
+    // The document counts each line break as one position; the text the find
+    // bar searches must be measured in that same space.
+    expect(source?.text()).toBe("a\nb\nneedle");
+    await act(async () => {
+      source?.select(4, 10);
+    });
+    expect(view().state.sliceDoc(4, 10)).toBe("needle");
+  });
+
+  it("selects a hit without taking the keyboard from the find input", async () => {
+    const registered: (FindSourceFace | null)[] = [];
+    const find = { register: (source: FindSourceFace | null) => registered.push(source) };
+    await show({ find, text: "alpha beta alpha" });
+    const source = registered.at(-1);
+
+    // The reader is typing in the find field while the editor is unfocused.
+    const field = document.createElement("input");
+    document.body.append(field);
+    field.focus();
+
+    await act(async () => {
+      source?.select(11, 16);
+    });
+
+    const selection = view().state.selection.main;
+    expect([selection.from, selection.to]).toEqual([11, 16]);
+    expect(document.activeElement).toBe(field);
+    field.remove();
+  });
+
+  it("collapses the find selection in place", async () => {
+    const registered: (FindSourceFace | null)[] = [];
+    const find = { register: (source: FindSourceFace | null) => registered.push(source) };
+    await show({ find });
+    const source = registered.at(-1);
+
+    await act(async () => {
+      source?.select(0, 6);
+    });
+    await act(async () => {
+      source?.clear();
+    });
+
+    expect(view().state.selection.main.empty).toBe(true);
+    expect(view().state.selection.main.head).toBe(6);
+  });
+
+  it("unregisters its find source when the body goes away", async () => {
+    const registered: (FindSourceFace | null)[] = [];
+    const find = { register: (source: FindSourceFace | null) => registered.push(source) };
+    await show({ find });
+    expect(registered.at(-1)).not.toBeNull();
+
+    await act(async () => {
+      root.render(null);
+    });
+
+    expect(registered.at(-1)).toBeNull();
   });
 });

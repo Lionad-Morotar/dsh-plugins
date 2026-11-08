@@ -21,6 +21,7 @@ import type { ComponentType } from "react";
 
 import type { Translate } from "./copy.ts";
 import type { DocumentStore } from "./document-session.ts";
+import type { FindSourceSink } from "./find-surface.ts";
 import { familyOf, type SymlinkLocator } from "./preview.ts";
 import type { WorkspaceFilesFace } from "./wire.ts";
 
@@ -60,6 +61,15 @@ export interface RendererBodyProps {
   readonly page?: RendererPage;
   /** Follows a symbolic link the workspace service refused; absent keeps the refusal. */
   readonly locate?: SymlinkLocator;
+  /**
+   * The find channel this body publishes its text through.
+   *
+   * An editable body owns the text (the whole document, not the page the pane
+   * happens to hold) and the selection that reveals a hit, so it publishes both
+   * here instead of letting the pane read a DOM the view may have virtualized.
+   * Absent outside a pane, where there is no find bar to answer.
+   */
+  readonly find?: FindSourceSink;
 }
 
 /** What a contribution's `load()` resolves to. */
