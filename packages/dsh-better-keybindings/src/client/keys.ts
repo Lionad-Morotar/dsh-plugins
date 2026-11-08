@@ -134,6 +134,66 @@ export function matchScrollKey(event: CaretKeyEvent, fromInput: boolean): Scroll
   return { direction, fraction: HALF_PAGE, target: event.shiftKey ? "sidebar" : "pointer" };
 }
 
+/** Which surface one page stroke is about, once the DOM has been described. */
+export type PageRoute =
+  /** Move the scrollable container under the pointer. */
+  | "pointer"
+  /** Move the conversation scrollport. */
+  | "transcript"
+  /** Leave the stroke to the focused editable surface. */
+  | "editor"
+  /** No surface applies; leave the stroke to the browser. */
+  | "native";
+
+/** The DOM facts a page stroke's destination is decided from. */
+export interface PageRouteInput {
+  /** A vertically scrollable container sits under the pointer. */
+  readonly pointerScrolls: boolean;
+  /** That container is the conversation scrollport itself. */
+  readonly pointerIsTranscript: boolean;
+  /** The event target is an editable surface (and therefore has focus). */
+  readonly editableFocused: boolean;
+  /** That editable surface sits inside the container the pointer hit. */
+  readonly editableInsidePointer: boolean;
+  /** The editable surface lives inside the conversation scrollport. */
+  readonly editableInTranscript: boolean;
+  /** The stroke was reported by BODY, or by a target inside the scrollport. */
+  readonly bodyTarget: boolean;
+}
+
+/**
+ * Decide what one PageUp/PageDown stroke pages.
+ *
+ * The pointer leads, always. The surface under it is the one the reader is
+ * looking at, and that stays true when something editable has focus — a
+ * search box in the file tree, a find field, the composer. Demoting the
+ * pointer behind the focus target is what made paging dead in every view
+ * whose transcript is not on screen: the stroke went to the (hidden, or
+ * full-height) conversation scrollport, so the pane under the pointer never
+ * moved and the reader saw nothing happen at all.
+ *
+ * The one exception is a focused editor the pointer sits inside. Its own
+ * keymap moves the caret one page and scrolls after it; a half-page
+ * `scrollTop` write would leave the caret outside the fresh viewport, and the
+ * next keystroke would snap the surface back. The conversation scrollport is
+ * not an editor here even when the composer lives inside it: paging it by
+ * half a viewport while the reader types is this plugin's whole point.
+ *
+ * With no scrollable container under the pointer, an editable target keeps
+ * the stroke only when its own surface scrolls (a long textarea, an editor
+ * panel); otherwise the stroke stays native instead of paging a transcript
+ * the reader cannot see.
+ */
+export function routePage(input: PageRouteInput): PageRoute {
+  if (input.pointerScrolls) {
+    const editorUnderPointer = input.editableFocused && input.editableInsidePointer && !input.pointerIsTranscript;
+    return editorUnderPointer ? "editor" : "pointer";
+  }
+  if (input.editableFocused) return input.editableInTranscript ? "transcript" : "editor";
+  if (input.bodyTarget) return "transcript";
+  return "native";
+}
+
 /**
  * Whether the stroke was reported against the document body.
  *

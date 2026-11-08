@@ -89,7 +89,7 @@ DSH 宿主（Cordis 上下文 + 模块加载器）
 | 市场索引生成 | 从包自身派生 format-1 索引（icon 内联 base64、source 默认钉 npm 精确版本、`publishTimestamp` 取自 registry），写前用宿主校验器再解析一遍；`--check` 读落盘文件并与新构建逐字节比对 | `scripts/build-market-index.mjs` |
 | 社区目录条目 | 产出 awesome 目录 YAML（要求 180px 光栅 icon），有外部 checkout 时交给它的校验器 | `scripts/build-awesome-entry.mjs` |
 | 键盘修正接线 | 捕获阶段 keydown：分类目标、取消默认动作、执行光标移动、补齐光标可见性、对称 teardown | `packages/dsh-better-keybindings/src/client/app.ts` |
-| 键位映射 | Home/End -> 方向 + 粒度 + 是否扩选；目标三分类，纯数据无 DOM | `packages/dsh-better-keybindings/src/client/keys.ts` |
+| 键位映射 | Home/End -> 方向 + 粒度 + 是否扩选；目标三分类；翻页落点路由（指针优先，指针下无可滚动容器时才按焦点与对话区回落）纯数据无 DOM | `packages/dsh-better-keybindings/src/client/keys.ts` |
 | 光标原语 | 文本框按 `\n` 字符串算术；富文本交给 `Selection.modify` 的 lineboundary/documentboundary | `packages/dsh-better-keybindings/src/client/caret.ts` |
 | 光标可见性 | 被取消的 scroll-into-view 的替代：最小滚动增量，会话滚动容器显式排除 | `packages/dsh-better-keybindings/src/client/reveal.ts` |
 | hint 快照 | 视口裁剪 + 可见性判定 + 最深元素去重 + 等长 label 分派 | `packages/dsh-jump/src/client/hints.ts` |

@@ -617,9 +617,11 @@ describe("pointer paging", () => {
     expect(scroller.scrollTop).toBe(1380);
   });
 
-  it("a focused composer wins over the pointer: the transcript pages wherever the pointer sits", () => {
-    // Typing semantics come first: the composer's ancestors own the paging
-    // target, and the preview under the pointer must not steal the stroke.
+  it("the pointer keeps the stroke while the composer holds focus", () => {
+    // The pointer names the surface the reader is looking at; a focused
+    // composer must not send the page step to a transcript the reader may not
+    // even see — the file workbench replaces that transcript with the very
+    // pane under the pointer.
     const scroller = scrollport(1000);
     const preview = scrollArea(1000);
     mount({ pointerElementAt: () => preview });
@@ -630,8 +632,64 @@ describe("pointer paging", () => {
     el.dispatchEvent(e);
 
     expect(e.defaultPrevented).toBe(true);
-    expect(scroller.scrollTop).toBe(1380);
-    expect(preview.scrollTop).toBe(1000);
+    expect(preview.scrollTop).toBe(1380);
+    expect(scroller.scrollTop).toBe(1000);
+  });
+
+  it("a search field outside the transcript does not swallow the pointer's page step", () => {
+    // The reported bug: a tree search box (or the find bar, or any input in
+    // the file workbench) keeps focus while the reader hovers the preview.
+    // Routing the stroke to the transcript left the pane dead — the host
+    // scrollport is either replaced by the active view or has no room to
+    // move, so PageDown looked like a key nothing listened to.
+    const preview = scrollArea(1000);
+    const hit = doc.createElement("p");
+    preview.append(hit);
+    const search = textarea("readme");
+    mount({ pointerElementAt: () => hit });
+    win.dispatchEvent(mousemoveAt(20, 40));
+    search.focus();
+
+    const e = keydown({ key: "PageDown" });
+    search.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(preview.scrollTop).toBe(1380);
+  });
+
+  it("an editor keeps a page stroke the pointer lands inside it", () => {
+    // CodeMirror moves the caret a page and scrolls after it. Writing the
+    // half-page offset ourselves would leave the caret outside the fresh
+    // viewport, and the next keystroke would snap the editor back.
+    const panel = scrollArea(1000);
+    const { el } = editable();
+    panel.append(el);
+    mount({ pointerElementAt: () => el });
+    win.dispatchEvent(mousemoveAt(20, 40));
+    el.focus();
+
+    const e = keydown({ key: "PageDown" });
+    el.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(false);
+    expect(panel.scrollTop).toBe(1000);
+  });
+
+  it("a text field inside a scrolling panel pages that panel", () => {
+    // No pointer target and a field outside the transcript: the nearest
+    // scrollable ancestor is the surface the field belongs to, and half a
+    // viewport of it is still better than a full native page.
+    const panel = scrollArea(1000);
+    const field = textarea("draft");
+    panel.append(field);
+    mount();
+    field.focus();
+
+    const e = keydown({ key: "PageDown" });
+    field.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(panel.scrollTop).toBe(1380);
   });
 
   it("the paged container follows the pointer as it moves", () => {

@@ -10,6 +10,8 @@ import {
   landsInScrollport,
   matchCaretKey,
   matchScrollKey,
+  routePage,
+  type PageRouteInput,
   type caretTarget,
 } from "../src/client/keys.ts";
 
@@ -132,6 +134,59 @@ describe("page keys", () => {
     for (const other of ["Home", "End", "ArrowUp", " ", ""]) {
       expect(matchScrollKey(key(other), true)).toBeNull();
     }
+  });
+});
+
+describe("page routing", () => {
+  const route = (input: Partial<PageRouteInput>): string =>
+    routePage({
+      pointerScrolls: false,
+      pointerIsTranscript: false,
+      editableFocused: false,
+      editableInsidePointer: false,
+      editableInTranscript: false,
+      bodyTarget: false,
+      ...input,
+    });
+
+  it("the pointer leads even while an editable surface has focus", () => {
+    // The reported defect lived here: whichever pane the pointer hovered,
+    // a focused search box sent the page step to the transcript instead.
+    expect(
+      route({ pointerScrolls: true, editableFocused: true, editableInsidePointer: false, editableInTranscript: false }),
+    ).toBe("pointer");
+    expect(route({ pointerScrolls: true, pointerIsTranscript: true, editableFocused: true, editableInsidePointer: true, editableInTranscript: true })).toBe(
+      "pointer",
+    );
+  });
+
+  it("an editor under the pointer keeps the stroke for its own keymap", () => {
+    // CodeMirror pages the caret and then scrolls after it; the container
+    // must not move on its own or the caret ends up outside the viewport.
+    expect(route({ pointerScrolls: true, editableFocused: true, editableInsidePointer: true })).toBe("editor");
+  });
+
+  it("the transcript is never treated as the editor surface", () => {
+    // The composer is editable and lives inside the scrollport, but paging
+    // that scrollport by half a viewport is exactly what this plugin is for.
+    expect(route({ pointerScrolls: true, pointerIsTranscript: true, editableFocused: true, editableInsidePointer: true })).toBe("pointer");
+  });
+
+  it("a focused editable inside the transcript pages the transcript", () => {
+    expect(route({ editableFocused: true, editableInTranscript: true })).toBe("transcript");
+  });
+
+  it("a focused editable outside the transcript keeps its own surface", () => {
+    expect(route({ editableFocused: true, editableInTranscript: false })).toBe("editor");
+  });
+
+  it("BODY pages the transcript, the ordinary reading state", () => {
+    expect(route({ bodyTarget: true })).toBe("transcript");
+  });
+
+  it("anything else keeps its native paging", () => {
+    // A sidebar list, a picker or a menu owns its own PageUp/PageDown.
+    expect(route({})).toBe("native");
   });
 });
 

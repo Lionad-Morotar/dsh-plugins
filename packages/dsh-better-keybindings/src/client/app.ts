@@ -20,6 +20,7 @@ import {
   landsInScrollport,
   matchCaretKey,
   matchScrollKey,
+  routePage,
   type CaretKeyEvent,
 } from "./keys.ts";
 import { moveRichText, moveTextField, type CaretSelection, type TextFieldLike } from "./caret.ts";
@@ -179,19 +180,18 @@ export function createApp(deps: AppDeps = {}): KeysApp {
   }
 
   /**
-   * The container a pointer-driven page step should move, or null when
-   * nothing scrollable sits under the pointer.
+   * The first scrollable container in the chain starting at `start`, or null.
    *
-   * Every DOM read (hit test, computed overflow, scroll metrics) stays in this
-   * layer; the choice itself is the pure {@link pickScrollContainer}, so the
-   * selection policy is testable without a layout engine.
+   * Every DOM read (computed overflow, scroll metrics) stays in this layer;
+   * the choice itself is the pure {@link pickScrollContainer}, so the
+   * selection policy is testable without a layout engine. The chain is walked
+   * on every page stroke, so both callers share this one implementation.
    */
-  function scrollableUnderPointer(): HTMLElement | null {
-    const hit = pointerElementAt(lastPointer.x, lastPointer.y);
-    if (hit === null) return null;
+  function nearestScrollable(start: Element | null): HTMLElement | null {
+    if (start === null) return null;
     const candidates: ScrollCandidate[] = [];
     const nodes: Element[] = [];
-    let node: Element | null = hit;
+    let node: Element | null = start;
     while (node !== null) {
       // A window without getComputedStyle reports no overflow at all; reading
       // that as scrollable leaves the decision to the metrics, the same
@@ -211,6 +211,14 @@ export function createApp(deps: AppDeps = {}): KeysApp {
     }
     const picked = pickScrollContainer(candidates);
     return picked === null ? null : (nodes[picked] as HTMLElement);
+  }
+
+  /**
+   * The container a pointer-driven page step should move, or null when
+   * nothing scrollable sits under the pointer.
+   */
+  function scrollableUnderPointer(): HTMLElement | null {
+    return nearestScrollable(pointerElementAt(lastPointer.x, lastPointer.y));
   }
 
   /** The first session-list row that is not part of the transcript. */
@@ -324,9 +332,17 @@ export function createApp(deps: AppDeps = {}): KeysApp {
     box.scrollTop = landing.top;
   }
 
-  /** Resolve the stroke's scrollport — the composer's own first, else the page's. */
-  function pageTranscript(target: Element, direction: -1 | 1, fraction: number): void {
-    const box = (target.closest(scrollportSelector) ?? win.document.querySelector(scrollportSelector)) as HTMLElement | null;
+  /**
+   * Resolve the stroke's scrollport — the composer's own first, else the page's.
+   *
+   * `target` is an event target, not an element: a stroke reported at
+   * `document` (the no-focus reading state) has no `closest` at all.
+   */
+  function pageTranscript(target: EventTarget | null, direction: -1 | 1, fraction: number): void {
+    const element = target as Element | null;
+    const anchor =
+      element !== null && typeof element === "object" && typeof element.closest === "function" ? element : null;
+    const box = (anchor?.closest(scrollportSelector) ?? win.document.querySelector(scrollportSelector)) as HTMLElement | null;
     if (box === null) return;
     pageContainer(box, direction, fraction);
   }
@@ -362,35 +378,54 @@ export function createApp(deps: AppDeps = {}): KeysApp {
           return;
         }
         if (scroll !== null) {
-          // Page keys are the only stroke this plugin claims on a
-          // non-editable target, and the caret branch below takes over when
-          // the stroke lands somewhere the paging contract does not reach.
+          // Where a page step lands is {@link routePage}'s decision; this
+          // layer only turns that decision into DOM reads and writes.
           //
-          // Three priority levels decide where a page step lands, in order:
-          // 1. An editable has focus — the stroke's ancestors include the
-          //    scrollport, and paging must never yank the surface the user is
-          //    typing into.
-          // 2. The pointer sits inside a scrollable area — that is the surface
-          //    the user is looking at, so it is what gets paged ("page where
-          //    the pointer is"). This branch deliberately ignores
-          //    excludeSelector: that list protects the caret reveal from
-          //    moving the transcript, while a pointer parked on the
-          //    transcript is an explicit request to page it.
-          // 3. Otherwise the transcript fallback decides, unchanged from
-          //    before the pointer branch existed: BODY (the no-focus reading
-          //    state) or a target inside the scrollport pages the transcript,
-          //    and any other target (a sidebar list, a picker, a menu) keeps
-          //    its native full-page behaviour — the fall-through hands the
-          //    stroke to the caret branch, which rejects it untouched.
-          const editableFocused = event.target !== null && classifyTarget(event.target) !== "none";
-          const pointerBox = editableFocused ? null : scrollableUnderPointer();
-          const aimedAtTranscript = pointerBox === null && (isBody(event.target) || landsInScrollport(event.target, scrollportSelector));
-          if (editableFocused || pointerBox !== null || aimedAtTranscript) {
+          // The pointer is described first, and it leads. Paging follows the
+          // surface the reader is looking at, including while a search box,
+          // a find field or the composer holds focus: ranking the focus
+          // target first is what left the file workbench's preview dead,
+          // because the stroke was spent on a transcript that was not even
+          // on screen.
+          const focusTarget = classifyTarget(event.target);
+          const editableFocused = focusTarget !== "none";
+          const focusElement = editableFocused ? (event.target as Element) : null;
+          const pointerBox = scrollableUnderPointer();
+          const route = routePage({
+            pointerScrolls: pointerBox !== null,
+            pointerIsTranscript: pointerBox !== null && pointerBox.matches(scrollportSelector),
+            editableFocused,
+            editableInsidePointer: pointerBox !== null && focusElement !== null && pointerBox.contains(focusElement),
+            editableInTranscript: focusElement !== null && focusElement.closest(scrollportSelector) !== null,
+            bodyTarget: isBody(event.target) || landsInScrollport(event.target, scrollportSelector),
+          });
+
+          if (route === "pointer" && pointerBox !== null) {
             event.preventDefault();
-            if (pointerBox !== null) pageContainer(pointerBox, scroll.direction, scroll.fraction);
-            else pageTranscript(event.target as Element, scroll.direction, scroll.fraction);
+            pageContainer(pointerBox, scroll.direction, scroll.fraction);
             return;
           }
+          if (route === "transcript") {
+            event.preventDefault();
+            pageTranscript(event.target, scroll.direction, scroll.fraction);
+            return;
+          }
+          if (route === "editor") {
+            // A text field pages the scrolling panel it lives in, and the
+            // stroke is still claimed when it lives in none: letting it
+            // through would hand the browser a full-viewport scroll of some
+            // ancestor the reader never asked for. A rich text editor keeps
+            // the stroke for its own keymap instead — moving the container
+            // without moving the caret would leave the two apart.
+            if (focusTarget === "text-field") {
+              event.preventDefault();
+              const box = nearestScrollable(focusElement);
+              if (box !== null) pageContainer(box, scroll.direction, scroll.fraction);
+            }
+            return;
+          }
+          // "native": the stroke keeps its default behaviour, exactly as if
+          // this plugin had never seen it.
         }
 
         const target = classifyTarget(event.target);
