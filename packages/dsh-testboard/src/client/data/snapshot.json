@@ -5356,12 +5356,17 @@
             {"name":"breaks duration ties by path so the order is stable","status":"passed","durationMs":502},
             {"name":"groups file rows by package, package name ascending","status":"passed","durationMs":235},
             {"name":"drops a package whose files were all filtered out","status":"passed","durationMs":260},
-            {"name":"buckets completions into one-second steps in execution order","status":"passed","durationMs":425},
+            {"name":"buckets completions by wall clock, not by summed case time","status":"passed","durationMs":790},
+            {"name":"spans about two hundred seconds for the repository's own suite","status":"passed","durationMs":928},
+            {"name":"keeps the peak readable once the run is folded onto wall clock","status":"passed","durationMs":664},
             {"name":"is deterministic and never reads the clock","status":"passed","durationMs":1171},
             {"name":"returns a dense series, with a zero bucket for a quiet second","status":"passed","durationMs":255},
-            {"name":"marks the seconds in which a failure finished","status":"passed","durationMs":614},
-            {"name":"reports the peak bucket for the header","status":"passed","durationMs":1029},
-            {"name":"returns an empty series for an empty snapshot","status":"passed","durationMs":422}
+            {"name":"puts every failure pin in the second that failure finished","status":"passed","durationMs":804},
+            {"name":"returns an empty series for an empty snapshot","status":"passed","durationMs":422},
+            {"name":"folds the summed case time onto the parallel run","status":"passed","durationMs":931},
+            {"name":"agrees with the summary's own reading","status":"passed","durationMs":883},
+            {"name":"leaves the serial duration alone","status":"passed","durationMs":876},
+            {"name":"reports zero for an empty snapshot","status":"passed","durationMs":828}
           ]
         },
         {
@@ -5399,6 +5404,7 @@
           "cases": [
             {"name":"renders one row per test file in the snapshot","status":"passed","durationMs":891},
             {"name":"shows the snapshot's real totals in the header","status":"passed","durationMs":162},
+            {"name":"shows the run's wall-clock duration beside the tallies","status":"passed","durationMs":918},
             {"name":"keeps only files holding a failure when the failed filter is on","status":"passed","durationMs":597},
             {"name":"narrows the rows to the searched file name","status":"passed","durationMs":995},
             {"name":"shows a detail card while a file row is hovered","status":"passed","durationMs":1054},

@@ -96,6 +96,7 @@ export function apply(ctx: TestboardClientContext): () => void {
       ago: t("testboard.ago"),
       passed: t("testboard.passed"),
       failed: t("testboard.failed"),
+      took: t("testboard.took"),
       filterAll: t("testboard.filterAll"),
       filterFailed: t("testboard.filterFailed"),
       searchPlaceholder: t("testboard.searchPlaceholder"),

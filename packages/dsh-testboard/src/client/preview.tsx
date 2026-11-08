@@ -31,6 +31,7 @@ const STRINGS: TestboardViewStrings = {
   ago: "2m ago",
   passed: "passed",
   failed: "failed",
+  took: "耗时",
   filterAll: "全部",
   filterFailed: "失败",
   searchPlaceholder: "搜索文件名",

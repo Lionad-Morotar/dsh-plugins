@@ -6,6 +6,7 @@
  */
 import type { ReactElement } from "react";
 
+import { formatDuration } from "../format.ts";
 import type { TestSummary } from "../model.ts";
 
 /** Strings the header renders. */
@@ -15,6 +16,7 @@ export interface SummaryHeaderStrings {
   readonly ago: string;
   readonly passed: string;
   readonly failed: string;
+  readonly took: string;
 }
 
 /** Props the header takes. */
@@ -45,6 +47,9 @@ export function SummaryHeader({ summary, strings }: SummaryHeaderProps): ReactEl
           <span data-tst="tally-failed" data-has-failed={summary.failed > 0 ? "true" : "false"}>
             {summary.failed} {strings.failed}
           </span>
+        </span>
+        <span data-testid="header-duration" data-tst="duration">
+          {strings.took} {formatDuration(summary.wallClockMs)}
         </span>
       </div>
     </header>

@@ -120,6 +120,10 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
   color: var(--tst-ink-faint);
 }
 
+[data-tst="duration"] {
+  color: var(--tst-ink-dim);
+}
+
 /* Sparkline --------------------------------------------------------------- */
 
 [data-tst="throughput"] {

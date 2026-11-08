@@ -8,17 +8,30 @@
  */
 import { describe, expect, it } from "vitest";
 
+import snapshotData from "../src/client/data/snapshot.json" with { type: "json" };
+
 import {
   groupByPackage,
   groupFileRows,
   listFileRows,
   listRows,
+  PARALLEL_TEST_PROCESSES,
   peakThroughput,
   summarize,
   throughputSeries,
+  wallClockMs,
   type TestCase,
   type TestSnapshot,
 } from "../src/client/model.ts";
+
+/**
+ * The committed snapshot, for the assertions that are about the real suite.
+ *
+ * The hand-built fixture below is the right tool for behaviour; the size and
+ * shape of the repository's own run can only be checked against the data the
+ * board actually ships.
+ */
+const REAL_SNAPSHOT = snapshotData as unknown as TestSnapshot;
 
 const CASES: TestCase[] = [
   { path: "packages/a/test/one.test.ts", name: "passes quickly", status: "passed", durationMs: 4 },
@@ -44,6 +57,7 @@ describe("summarize", () => {
       failed: 1,
       skipped: 1,
       durationMs: 1605,
+      wallClockMs: Math.ceil(1605 / PARALLEL_TEST_PROCESSES),
     });
   });
 
@@ -54,6 +68,7 @@ describe("summarize", () => {
       failed: 0,
       skipped: 0,
       durationMs: 0,
+      wallClockMs: 0,
     });
   });
 });
@@ -209,11 +224,31 @@ describe("groupFileRows", () => {
 });
 
 describe("throughputSeries", () => {
-  it("buckets completions into one-second steps in execution order", () => {
-    // 4 cases over 1605ms: the run spans two seconds, so two buckets.
+  it("buckets completions by wall clock, not by summed case time", () => {
+    // 4 cases over 1605ms of case time. Twelve processes run the suite at once,
+    // so the run itself takes ~134ms and fits in a single second. Summing the
+    // durations instead would draw 1605 seconds of timeline for a run that never
+    // took that long.
     const series = throughputSeries(SNAPSHOT);
-    expect(series.map(bucket => bucket.second)).toEqual([0, 1]);
-    expect(series.map(bucket => bucket.completed)).toEqual([2, 2]);
+    expect(series.map(bucket => bucket.second)).toEqual([0]);
+    expect(series.map(bucket => bucket.completed)).toEqual([4]);
+  });
+
+  it("spans about two hundred seconds for the repository's own suite", () => {
+    const series = throughputSeries(REAL_SNAPSHOT);
+    // 2,467,345ms of case time over 12 processes is ~206s of wall clock. The
+    // band is loose on purpose: it pins the order of magnitude, which is the
+    // thing that was wrong, without turning every regenerated snapshot into a
+    // red suite.
+    expect(series.length).toBeGreaterThan(180);
+    expect(series.length).toBeLessThan(230);
+  });
+
+  it("keeps the peak readable once the run is folded onto wall clock", () => {
+    const peak = peakThroughput(throughputSeries(REAL_SNAPSHOT));
+    // A readable spike: tens of cases a second, not a thousand.
+    expect(peak).toBeGreaterThan(10);
+    expect(peak).toBeLessThan(60);
   });
 
   it("is deterministic and never reads the clock", () => {
@@ -235,7 +270,9 @@ describe("throughputSeries", () => {
               path: "packages/a/test/one.test.ts",
               cases: [
                 { path: "packages/a/test/one.test.ts", name: "first", status: "passed", durationMs: 500 },
-                { path: "packages/a/test/one.test.ts", name: "late", status: "passed", durationMs: 2500 },
+                // 30s of case time is 2.5s of wall clock across 12 processes, so
+                // this lands in the third second and leaves the second one quiet.
+                { path: "packages/a/test/one.test.ts", name: "late", status: "passed", durationMs: 30_000 },
               ],
             },
           ],
@@ -248,17 +285,47 @@ describe("throughputSeries", () => {
     expect(series.every(bucket => typeof bucket.completed === "number")).toBe(true);
   });
 
-  it("marks the seconds in which a failure finished", () => {
-    const series = throughputSeries(SNAPSHOT);
-    expect(series.reduce((sum, bucket) => sum + bucket.failed, 0)).toBe(1);
-  });
-
-  it("reports the peak bucket for the header", () => {
-    expect(peakThroughput(throughputSeries(SNAPSHOT))).toBe(2);
+  it("puts every failure pin in the second that failure finished", () => {
+    const series = throughputSeries(REAL_SNAPSHOT);
+    const failedCases = REAL_SNAPSHOT.packages
+      .flatMap(pkg => pkg.files.flatMap(file => file.cases))
+      .filter(entry => entry.status === "failed");
+    expect(series.reduce((sum, bucket) => sum + bucket.failed, 0)).toBe(failedCases.length);
+    // No pin may land past the end of the series: a pin outside the drawn range
+    // is a failure the chart silently drops.
+    expect(series.every(bucket => bucket.second < series.length)).toBe(true);
   });
 
   it("returns an empty series for an empty snapshot", () => {
     expect(throughputSeries({ version: 1, statusSource: "synthetic", packages: [] })).toEqual([]);
     expect(peakThroughput([])).toBe(0);
+  });
+});
+
+describe("wallClockMs", () => {
+  it("folds the summed case time onto the parallel run", () => {
+    // 1605ms of case time over 12 processes is 134ms of wall clock.
+    expect(wallClockMs(SNAPSHOT)).toBe(Math.ceil(1605 / PARALLEL_TEST_PROCESSES));
+  });
+
+  it("agrees with the summary's own reading", () => {
+    expect(summarize(REAL_SNAPSHOT).wallClockMs).toBe(wallClockMs(REAL_SNAPSHOT));
+  });
+
+  it("leaves the serial duration alone", () => {
+    // `durationMs` keeps its old meaning: the sum of every case. Only the new
+    // field is the wall clock, so existing readers do not change behaviour.
+    // Asserted against the snapshot's own sum rather than a literal: the number
+    // moves whenever this repository's tests change, and pinning it would make
+    // every such change look like a regression in the model.
+    const serial = REAL_SNAPSHOT.packages
+      .flatMap(pkg => pkg.files.flatMap(file => file.cases))
+      .reduce((sum, entry) => sum + entry.durationMs, 0);
+    expect(summarize(REAL_SNAPSHOT).durationMs).toBe(serial);
+    expect(summarize(REAL_SNAPSHOT).wallClockMs).toBeLessThan(serial);
+  });
+
+  it("reports zero for an empty snapshot", () => {
+    expect(wallClockMs({ version: 1, statusSource: "synthetic", packages: [] })).toBe(0);
   });
 });

@@ -49,7 +49,44 @@ export interface TestSummary {
   readonly passed: number;
   readonly failed: number;
   readonly skipped: number;
+  /** Sum of every case's own duration. Not the run's elapsed time; see `wallClockMs`. */
   readonly durationMs: number;
+  /** How long the run actually took, with the suite's processes running at once. */
+  readonly wallClockMs: number;
+}
+
+/**
+ * How many test processes this repository's suite runs at once.
+ *
+ * The snapshot stores one duration per case and no timestamps, so the only way
+ * to recover elapsed time is to divide by how much ran in parallel. The suite is
+ * a pnpm workspace run: each package's `test` script is its own process, and
+ * pnpm starts them concurrently rather than one after another.
+ *
+ * This is a property of how the suite is executed, not a dial for making the
+ * chart look better. If the run stops being parallel, this number is wrong and
+ * the timeline with it.
+ */
+export const PARALLEL_TEST_PROCESSES = 12;
+
+/**
+ * The run's elapsed time, in milliseconds.
+ *
+ * The snapshot sums to the time every case spent running, which is roughly the
+ * suite's total CPU time. Twelve processes working at once means the wall clock
+ * is that sum divided by twelve; reporting the sum as the run's duration would
+ * claim a four-minute suite took forty.
+ * @param snapshot - the loaded snapshot.
+ * @returns elapsed milliseconds, or 0 for an empty snapshot.
+ */
+export function wallClockMs(snapshot: TestSnapshot): number {
+  let serialMs = 0;
+  for (const pkg of snapshot.packages) {
+    for (const file of pkg.files) {
+      for (const entry of file.cases) serialMs += entry.durationMs;
+    }
+  }
+  return Math.ceil(serialMs / PARALLEL_TEST_PROCESSES);
 }
 
 /** Which rows the board shows. */
@@ -100,7 +137,16 @@ export function summarize(snapshot: TestSnapshot): TestSummary {
       }
     }
   }
-  return { total: passed + failed + skipped, passed, failed, skipped, durationMs };
+  return {
+    total: passed + failed + skipped,
+    passed,
+    failed,
+    skipped,
+    durationMs,
+    // Derived from the same sum, so the header's duration and the timeline can
+    // never disagree about how long the run took.
+    wallClockMs: Math.ceil(durationMs / PARALLEL_TEST_PROCESSES),
+  };
 }
 
 /**
@@ -288,13 +334,18 @@ export interface ThroughputBucket {
 }
 
 /**
- * Bucket the run's completions into one-second steps.
+ * Bucket the run's completions into one-second steps of wall clock.
  *
  * The snapshot carries no timestamps, only per-case durations, so the run is
  * reconstructed by walking the cases in execution order (package, then file,
  * then case) and treating each duration as the time that case took. A case
  * counts in the second its own completion lands in, which is what makes a
  * failure show up as a spike in the second it happened rather than at the start.
+ *
+ * The running total is the suite's CPU time, so it is folded onto the wall clock
+ * before it becomes a second index: twelve processes finish in a twelfth of the
+ * summed time. Without that division the repository's own suite draws ~2,470
+ * points on a 1000px canvas, which is a noise band rather than a chart.
  * @param snapshot - the loaded snapshot.
  * @returns one bucket per second the run spans, in order; empty for no cases.
  */
@@ -308,7 +359,7 @@ export function throughputSeries(snapshot: TestSnapshot): ThroughputBucket[] {
         elapsedMs += entry.durationMs;
         // The second a completion lands in: a case ending exactly on a boundary
         // belongs to the second that just closed.
-        const second = Math.max(0, Math.ceil(elapsedMs / 1000) - 1);
+        const second = Math.max(0, Math.ceil(elapsedMs / (1000 * PARALLEL_TEST_PROCESSES)) - 1);
         completed[second] = (completed[second] ?? 0) + 1;
         if (entry.status === "failed") failed[second] = (failed[second] ?? 0) + 1;
       }

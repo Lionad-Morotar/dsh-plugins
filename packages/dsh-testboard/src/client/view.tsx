@@ -42,6 +42,7 @@ export interface TestboardViewStrings {
   readonly empty: string;
   readonly cases: string;
   readonly detailHint: string;
+  readonly took: string;
 }
 
 /** Owner props the host passes to a `conversation.view` entry. */
@@ -157,7 +158,14 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       <div data-testid="testboard" data-tst="board" className={`tst-theme-${theme}`} data-theme={theme}>
         <SummaryHeader
           summary={summary}
-          strings={{ title: strings.title, subtitle: strings.subtitle, ago: strings.ago, passed: strings.passed, failed: strings.failed }}
+          strings={{
+            title: strings.title,
+            subtitle: strings.subtitle,
+            ago: strings.ago,
+            passed: strings.passed,
+            failed: strings.failed,
+            took: strings.took,
+          }}
         />
         <ThroughputSparkline series={series} peak={peakThroughput(series)} strings={{ peak: strings.peak, perSecond: strings.perSecond }} />
         <Toolbar

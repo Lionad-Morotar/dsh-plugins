@@ -13,6 +13,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import snapshotData from "../src/client/data/snapshot.json" with { type: "json" };
+import { formatDuration } from "../src/client/format.ts";
 import { summarize, type TestSnapshot } from "../src/client/model.ts";
 import { createTestboardView } from "../src/client/view.tsx";
 
@@ -31,6 +32,7 @@ const STRINGS = {
   ago: "2m ago",
   passed: "passed",
   failed: "failed",
+  took: "took",
   filterAll: "全部",
   filterFailed: "失败",
   searchPlaceholder: "搜索文件名",
@@ -94,6 +96,18 @@ describe("testboard view", () => {
     expect(header?.textContent).toContain(String(summary.passed));
     expect(header?.textContent).toContain(String(summary.failed));
     expect(header?.textContent).toContain(STRINGS.subtitle);
+  });
+
+  it("shows the run's wall-clock duration beside the tallies", async () => {
+    await mount();
+    const summary = summarize(SNAPSHOT);
+    const reading = host.querySelector<HTMLElement>('[data-testid="header-duration"]');
+    expect(reading).not.toBeNull();
+    // The reading is the parallel wall clock, not the summed case time: the
+    // summed figure is ~20x larger and would misreport how long the run took.
+    expect(reading?.textContent).toContain(formatDuration(summary.wallClockMs));
+    expect(reading?.textContent).not.toContain(formatDuration(summary.durationMs));
+    expect(reading?.textContent).toContain(STRINGS.took);
   });
 
   it("keeps only files holding a failure when the failed filter is on", async () => {
