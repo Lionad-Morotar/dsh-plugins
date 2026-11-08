@@ -12,8 +12,9 @@
  */
 import { LOCALE_NAMESPACE, PACKAGE_NAME, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
 import { EN, ZH } from "./copy.ts";
+import { loadSnapshotChunk } from "./snapshot-loader.ts";
 import { ensureStyles } from "./styles.ts";
-import { createTestboardView } from "./view.tsx";
+import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
 
 /**
  * The loader hand-over, re-exported so the ModuleLoader factory can reach it.
@@ -89,8 +90,24 @@ export function apply(ctx: TestboardClientContext): () => void {
   registeredDictionaries = offLocale;
 
   const View = createTestboardView({
-    title: t("testboard.placeholderTitle"),
-    hint: t("testboard.placeholderHint"),
+    strings: {
+      title: t("testboard.tabTitle"),
+      subtitle: t("testboard.subtitle"),
+      ago: t("testboard.ago"),
+      passed: t("testboard.passed"),
+      failed: t("testboard.failed"),
+      filterAll: t("testboard.filterAll"),
+      filterFailed: t("testboard.filterFailed"),
+      searchPlaceholder: t("testboard.searchPlaceholder"),
+      sortFailFirst: t("testboard.sortFailFirst"),
+      sortSlowFirst: t("testboard.sortSlowFirst"),
+      peak: t("testboard.peak"),
+      perSecond: t("testboard.perSecond"),
+      empty: t("testboard.empty"),
+      cases: t("testboard.cases"),
+      detailHint: t("testboard.detailHint"),
+    } satisfies TestboardViewStrings,
+    loadSnapshot: () => loadSnapshotChunk().then(chunk => chunk.snapshot),
   });
 
   // `inject` is a deferred registration: the factory runs when the slot itself

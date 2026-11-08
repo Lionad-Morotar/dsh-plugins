@@ -3,12 +3,22 @@
  *
  * These are the decisions the UI will lean on, so they are pinned here rather
  * than discovered in the view: a summary counts what the board shows, the row
- * list applies filter, query and sort in one pass, and grouping keeps the
+ * lists apply filter, query and sort in one pass, and grouping keeps the
  * package order stable so the board does not reshuffle between renders.
  */
 import { describe, expect, it } from "vitest";
 
-import { groupByPackage, listRows, summarize, type TestCase, type TestSnapshot } from "../src/client/model.ts";
+import {
+  groupByPackage,
+  groupFileRows,
+  listFileRows,
+  listRows,
+  peakThroughput,
+  summarize,
+  throughputSeries,
+  type TestCase,
+  type TestSnapshot,
+} from "../src/client/model.ts";
 
 const CASES: TestCase[] = [
   { path: "packages/a/test/one.test.ts", name: "passes quickly", status: "passed", durationMs: 4 },
@@ -121,5 +131,134 @@ describe("groupByPackage", () => {
   it("drops packages whose every row was filtered out", () => {
     const rows = listRows(SNAPSHOT, { filter: "failed", query: "", sort: "fail-first" });
     expect(groupByPackage(rows).map(group => group.packageName)).toEqual(["a"]);
+  });
+});
+
+describe("listFileRows", () => {
+  it("returns one row per file, with its case tallies", () => {
+    const rows = listFileRows(SNAPSHOT, { filter: "all", query: "", sort: "fail-first" });
+    expect(rows.map(row => row.path)).toEqual(["packages/a/test/one.test.ts", "packages/b/test/two.test.ts"]);
+    expect(rows[0]).toMatchObject({ packageName: "a", passed: 1, failed: 1, skipped: 0, hasFailed: true });
+    expect(rows[1]).toMatchObject({ packageName: "b", passed: 1, failed: 0, skipped: 1, hasFailed: false });
+  });
+
+  it("sums a file's duration from its cases", () => {
+    const rows = listFileRows(SNAPSHOT, { filter: "all", query: "", sort: "fail-first" });
+    expect(rows[0]?.durationMs).toBe(904);
+    expect(rows[1]?.durationMs).toBe(701);
+  });
+
+  it("keeps only files holding at least one failure when filtering", () => {
+    const rows = listFileRows(SNAPSHOT, { filter: "failed", query: "", sort: "fail-first" });
+    expect(rows.map(row => row.path)).toEqual(["packages/a/test/one.test.ts"]);
+    // The filter picks files, not cases: the row still carries every case so the
+    // expanded list shows the passing siblings beside the failure.
+    expect(rows[0]?.cases).toHaveLength(2);
+  });
+
+  it("matches the query against the file path, case-insensitively", () => {
+    expect(listFileRows(SNAPSHOT, { filter: "all", query: "TWO.test", sort: "fail-first" }).map(row => row.path)).toEqual([
+      "packages/b/test/two.test.ts",
+    ]);
+    expect(listFileRows(SNAPSHOT, { filter: "all", query: "nope", sort: "fail-first" })).toEqual([]);
+  });
+
+  it("orders purely by total duration when asked for the slowest first", () => {
+    const rows = listFileRows(SNAPSHOT, { filter: "all", query: "", sort: "slow-first" });
+    expect(rows.map(row => row.durationMs)).toEqual([904, 701]);
+  });
+
+  it("breaks duration ties by path so the order is stable", () => {
+    const tied: TestSnapshot = {
+      version: 1,
+      statusSource: "synthetic",
+      packages: [
+        {
+          name: "a",
+          files: [
+            {
+              path: "packages/a/test/zeta.test.ts",
+              cases: [{ path: "packages/a/test/zeta.test.ts", name: "z", status: "passed", durationMs: 5 }],
+            },
+            {
+              path: "packages/a/test/alpha.test.ts",
+              cases: [{ path: "packages/a/test/alpha.test.ts", name: "a", status: "passed", durationMs: 5 }],
+            },
+          ],
+        },
+      ],
+    };
+    expect(listFileRows(tied, { filter: "all", query: "", sort: "slow-first" }).map(row => row.path)).toEqual([
+      "packages/a/test/alpha.test.ts",
+      "packages/a/test/zeta.test.ts",
+    ]);
+  });
+});
+
+describe("groupFileRows", () => {
+  it("groups file rows by package, package name ascending", () => {
+    const groups = groupFileRows(listFileRows(SNAPSHOT, { filter: "all", query: "", sort: "fail-first" }));
+    expect(groups.map(group => group.packageName)).toEqual(["a", "b"]);
+    expect(groups[0]?.rows).toHaveLength(1);
+  });
+
+  it("drops a package whose files were all filtered out", () => {
+    const groups = groupFileRows(listFileRows(SNAPSHOT, { filter: "failed", query: "", sort: "fail-first" }));
+    expect(groups.map(group => group.packageName)).toEqual(["a"]);
+  });
+});
+
+describe("throughputSeries", () => {
+  it("buckets completions into one-second steps in execution order", () => {
+    // 4 cases over 1605ms: the run spans two seconds, so two buckets.
+    const series = throughputSeries(SNAPSHOT);
+    expect(series.map(bucket => bucket.second)).toEqual([0, 1]);
+    expect(series.map(bucket => bucket.completed)).toEqual([2, 2]);
+  });
+
+  it("is deterministic and never reads the clock", () => {
+    expect(throughputSeries(SNAPSHOT)).toEqual(throughputSeries(SNAPSHOT));
+  });
+
+  it("returns a dense series, with a zero bucket for a quiet second", () => {
+    // A sparse array here leaves holes that `map` skips, and the sparkline then
+    // draws a path with missing segments. A second with no completion is a real
+    // reading of zero, so it has to be present.
+    const quiet: TestSnapshot = {
+      version: 1,
+      statusSource: "synthetic",
+      packages: [
+        {
+          name: "a",
+          files: [
+            {
+              path: "packages/a/test/one.test.ts",
+              cases: [
+                { path: "packages/a/test/one.test.ts", name: "first", status: "passed", durationMs: 500 },
+                { path: "packages/a/test/one.test.ts", name: "late", status: "passed", durationMs: 2500 },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const series = throughputSeries(quiet);
+    expect(series).toHaveLength(3);
+    expect(series.map(bucket => bucket.completed)).toEqual([1, 0, 1]);
+    expect(series.every(bucket => typeof bucket.completed === "number")).toBe(true);
+  });
+
+  it("marks the seconds in which a failure finished", () => {
+    const series = throughputSeries(SNAPSHOT);
+    expect(series.reduce((sum, bucket) => sum + bucket.failed, 0)).toBe(1);
+  });
+
+  it("reports the peak bucket for the header", () => {
+    expect(peakThroughput(throughputSeries(SNAPSHOT))).toBe(2);
+  });
+
+  it("returns an empty series for an empty snapshot", () => {
+    expect(throughputSeries({ version: 1, statusSource: "synthetic", packages: [] })).toEqual([]);
+    expect(peakThroughput([])).toBe(0);
   });
 });

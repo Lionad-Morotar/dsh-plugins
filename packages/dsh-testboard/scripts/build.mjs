@@ -58,11 +58,17 @@ const CLIENT_MAX_BYTES = 32 * 1024;
 const SNAPSHOT_MAX_BYTES = 600 * 1024;
 
 /**
- * Fields that only exist in the snapshot. The startup bundle must not contain
- * any of them: if one appears, the data was pulled into the boot path and every
- * page pays for a tab most users never open.
+ * Fields that only exist in the snapshot payload.
+ *
+ * The startup bundle must not contain any of them: if one appears, the data was
+ * pulled into the boot path and every page pays for a tab most users never open.
+ *
+ * These are payload markers, not field names the model happens to mention.
+ * `durationMs` is deliberately absent: the read model sums durations from the
+ * cases it is handed, so the identifier legitimately appears in the startup half
+ * while the data stays in the chunk.
  */
-const SNAPSHOT_ONLY_FIELDS = ["statusSource", "durationMs"];
+const SNAPSHOT_ONLY_FIELDS = ["statusSource"];
 
 /**
  * Literals that must survive bundling. The slot name and the view id are the

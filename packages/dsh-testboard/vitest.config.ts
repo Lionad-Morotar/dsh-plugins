@@ -3,6 +3,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["test/**/*.test.ts"],
+    // Both extensions: the read model and the generator are plain TS, the board's
+    // rendered behaviour is TSX.
+    include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
   },
 });
