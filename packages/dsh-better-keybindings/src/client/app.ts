@@ -365,14 +365,7 @@ export function createApp(deps: AppDeps = {}): KeysApp {
         // would pay an elementFromPoint plus a layout read for keys this
         // plugin never claims.
         const scroll = matchScrollKey(like, true);
-        // Every stroke this plugin claims is kept away from the focused
-        // editable surface's own keymap. Lexical (the composer) and CodeMirror
-        // both bind PageUp/PageDown: they would move the caret, or page a
-        // whole viewport and drag the caret with it, behind the half-page
-        // write. Stopping at the window's capture phase means no keymap
-        // downstream — the editor's, or any host handler — sees the stroke.
         const focusTarget = classifyTarget(event.target);
-        if (scroll !== null && focusTarget !== "none") event.stopPropagation();
         if (scroll !== null && scroll.target === "sidebar") {
           // Shift names the session list outright, so none of the three
           // levels below run: a focused composer, the pointer and the
@@ -381,6 +374,9 @@ export function createApp(deps: AppDeps = {}): KeysApp {
           // because letting it through would page whatever the pointer sits
           // on — the opposite of what Shift asks for.
           event.preventDefault();
+          // A stroke aimed at the session list must not also move the caret of
+          // whatever holds focus.
+          if (focusTarget !== "none") event.stopPropagation();
           const box = sidebarScroller();
           if (box !== null) pageContainer(box, scroll.direction, scroll.fraction);
           return;
@@ -398,38 +394,47 @@ export function createApp(deps: AppDeps = {}): KeysApp {
           const editableFocused = focusTarget !== "none";
           const focusElement = editableFocused ? (event.target as Element) : null;
           const pointerBox = scrollableUnderPointer();
+          const inTranscript = focusElement !== null && focusElement.closest(scrollportSelector) !== null;
           const route = routePage({
+            editorFocused: focusTarget === "contenteditable" && !inTranscript,
+            fieldFocused: focusTarget === "text-field",
             pointerScrolls: pointerBox !== null,
             pointerIsTranscript: pointerBox !== null && pointerBox.matches(scrollportSelector),
-            editableFocused,
-            editableInsidePointer: pointerBox !== null && focusElement !== null && pointerBox.contains(focusElement),
-            editableInTranscript: focusElement !== null && focusElement.closest(scrollportSelector) !== null,
+            focusInTranscript: inTranscript,
             bodyTarget: isBody(event.target) || landsInScrollport(event.target, scrollportSelector),
           });
 
+          if (route === "editor") {
+            // The editor's keymap owns the page keys: it moves the caret half
+            // a viewport and the view follows it. Claiming the stroke here
+            // would move the view without the caret, which is the defect this
+            // route exists to end.
+            return;
+          }
+          if (route === "native") return;
+
+          // Every remaining route is claimed here: keep the stroke away from
+          // the focused surface's own keymap so one keystroke never produces
+          // two movements.
+          event.preventDefault();
+          if (editableFocused) event.stopPropagation();
+
           if (route === "pointer" && pointerBox !== null) {
-            event.preventDefault();
             pageContainer(pointerBox, scroll.direction, scroll.fraction);
             return;
           }
           if (route === "transcript") {
-            event.preventDefault();
             pageTranscript(event.target, scroll.direction, scroll.fraction);
             return;
           }
-          if (route === "editor") {
-            // Every editable surface pages the container it lives in, by the
-            // same half viewport as the transcript: the step is the reading
-            // habit, not a property of the chat. The stroke is claimed even
+          if (route === "field") {
+            // A text field pages the panel it belongs to. It is claimed even
             // when no container answers, because a dead key beats a full
             // native page of some ancestor.
-            event.preventDefault();
             const box = nearestScrollable(focusElement);
             if (box !== null) pageContainer(box, scroll.direction, scroll.fraction);
             return;
           }
-          // "native": the stroke keeps its default behaviour, exactly as if
-          // this plugin had never seen it.
         }
 
         const target = classifyTarget(event.target);

@@ -140,44 +140,36 @@ describe("page keys", () => {
 describe("page routing", () => {
   const route = (input: Partial<PageRouteInput>): string =>
     routePage({
+      editorFocused: false,
+      fieldFocused: false,
       pointerScrolls: false,
       pointerIsTranscript: false,
-      editableFocused: false,
-      editableInsidePointer: false,
-      editableInTranscript: false,
+      focusInTranscript: false,
       bodyTarget: false,
       ...input,
     });
 
-  it("the pointer leads even while an editable surface has focus", () => {
-    // The reported defect lived here: whichever pane the pointer hovered,
-    // a focused search box sent the page step to the transcript instead.
-    expect(
-      route({ pointerScrolls: true, editableFocused: true, editableInsidePointer: false, editableInTranscript: false }),
-    ).toBe("pointer");
-    expect(route({ pointerScrolls: true, pointerIsTranscript: true, editableFocused: true, editableInsidePointer: true, editableInTranscript: true })).toBe(
-      "pointer",
-    );
+  it("an editor owns the page keys, wherever the pointer sits", () => {
+    // Its keymap moves the caret half a viewport and scrolls after it: the
+    // caret leads, the view follows. No scrollTop write can imitate that.
+    expect(route({ editorFocused: true })).toBe("editor");
+    expect(route({ editorFocused: true, pointerScrolls: true })).toBe("editor");
+    expect(route({ editorFocused: true, fieldFocused: false, bodyTarget: true })).toBe("editor");
   });
 
-  it("an editor under the pointer keeps the stroke for its own keymap", () => {
-    // CodeMirror pages the caret and then scrolls after it; the container
-    // must not move on its own or the caret ends up outside the viewport.
-    expect(route({ pointerScrolls: true, editableFocused: true, editableInsidePointer: true })).toBe("editor");
+  it("the pointer leads for everything that is not an editor", () => {
+    expect(route({ pointerScrolls: true, fieldFocused: true })).toBe("pointer");
+    expect(route({ pointerScrolls: true, focusInTranscript: true })).toBe("pointer");
   });
 
-  it("the transcript is never treated as the editor surface", () => {
-    // The composer is editable and lives inside the scrollport, but paging
-    // that scrollport by half a viewport is exactly what this plugin is for.
-    expect(route({ pointerScrolls: true, pointerIsTranscript: true, editableFocused: true, editableInsidePointer: true })).toBe("pointer");
+  it("the composer inside the transcript pages the transcript", () => {
+    // The composer is editable but lives inside the scrollport: it is not an
+    // editor surface, and paging the chat is the point of the plugin.
+    expect(route({ focusInTranscript: true })).toBe("transcript");
   });
 
-  it("a focused editable inside the transcript pages the transcript", () => {
-    expect(route({ editableFocused: true, editableInTranscript: true })).toBe("transcript");
-  });
-
-  it("a focused editable outside the transcript keeps its own surface", () => {
-    expect(route({ editableFocused: true, editableInTranscript: false })).toBe("editor");
+  it("a text field outside the transcript pages the panel it lives in", () => {
+    expect(route({ fieldFocused: true })).toBe("field");
   });
 
   it("BODY pages the transcript, the ordinary reading state", () => {
