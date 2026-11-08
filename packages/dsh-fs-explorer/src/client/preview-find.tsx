@@ -1,13 +1,14 @@
 /**
- * The preview's in-page find bar.
+ * The preview's find bar.
  *
- * Compared with a global find, this one has a much smaller promise: the pager
- * holds exactly one page, so the bar searches what is on screen and says so in
- * the counter. There is no query history and no persistence — the bar exists
- * while it is open and forgets everything when it closes.
+ * The promise is the mounted body's own text: a body that publishes a source
+ * answers for its whole document, a rendered fallback for what it actually laid
+ * out, and the counter names which one it is counting. There is no query
+ * history and no persistence: the bar exists while it is open and forgets
+ * everything when it closes.
  *
  * The bar holds only "which hit the reader is on". It never holds an offset:
- * the two surfaces (editor, rendered DOM) measure in different spaces, and
+ * the two shapes (offset source, rendered DOM) measure in different spaces, and
  * mixing them here is exactly the bug this split exists to prevent.
  */
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
@@ -36,6 +37,7 @@ export function PreviewFindBar({ t, surface, stamp, onClose }: PreviewFindBarPro
   const [index, setIndex] = useState(0);
   const [count, setCount] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
 
   // Opening the bar is the reader asking to type, so the caret goes there and
   // not to the document behind it.
@@ -55,13 +57,20 @@ export function PreviewFindBar({ t, surface, stamp, onClose }: PreviewFindBarPro
     setIndex(current => (found === 0 ? 0 : Math.min(current, found - 1)));
   }, [query, stamp, surface]);
 
-  // Put the selection on the current hit. Running this on the count as well is
-  // what makes a page change re-reveal the same ordinal instead of leaving the
-  // caret on a hit that the new page does not have.
+  // Put the selection on the current hit. The stamp is a dependency because a
+  // replaced body can answer the same query with the same count and still need
+  // the selection moved into itself; running on the count as well is what makes
+  // a page change re-reveal the same ordinal.
+  //
+  // The gesture is skipped while the keyboard lives outside the bar. A body
+  // that reports an edit in its document recounts the query, and revealing that
+  // would drag the caret out of the text the reader is typing into.
   useEffect(() => {
     if (query === "" || count === 0) return;
+    const active = document.activeElement;
+    if (bar.current !== null && active !== null && !bar.current.contains(active)) return;
     surface().reveal(query, index);
-  }, [query, index, count, surface]);
+  }, [query, index, count, stamp, surface]);
 
   const close = useCallback((): void => {
     surface().clear();
@@ -94,17 +103,18 @@ export function PreviewFindBar({ t, surface, stamp, onClose }: PreviewFindBarPro
     if (event.key === "ArrowDown" || event.key === "ArrowUp") event.stopPropagation();
   };
 
+  const scope = surface().scope;
   const label =
     query === ""
-      ? t("preview.find.hint")
+      ? t(`preview.find.hint.${scope}`)
       : count === 0
-        ? t("preview.find.none")
-        : t("preview.find.count")
+        ? t(`preview.find.none.${scope}`)
+        : t(`preview.find.count.${scope}`)
             .replace("{index}", String(index + 1))
             .replace("{count}", String(count));
 
   return (
-    <div className="fx-find" data-testid="fs-preview-find-bar" onKeyDown={onKeyDown}>
+    <div ref={bar} className="fx-find" data-testid="fs-preview-find-bar" onKeyDown={onKeyDown}>
       <input
         ref={input}
         type="search"
@@ -124,7 +134,7 @@ export function PreviewFindBar({ t, surface, stamp, onClose }: PreviewFindBarPro
         className="fx-find-count"
         data-testid="fs-preview-find-count"
         data-state={count === 0 ? "empty" : "ready"}
-        title={t("preview.find.scope")}
+        title={t(`preview.find.scope.${scope}`)}
       >
         {label}
       </span>

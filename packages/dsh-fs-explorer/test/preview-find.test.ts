@@ -3,8 +3,8 @@
  * The preview's find bar.
  *
  * What is worth pinning is the counter's honesty: it always names a hit that
- * the reader can actually reach, it says the scope is the current page, and
- * stepping wraps instead of running off the end into "4/3".
+ * the reader can actually reach, it says whether it counted a page or the whole
+ * document, and stepping wraps instead of running off the end into "4/3".
  */
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -34,11 +34,15 @@ describe("preview find bar", () => {
     host.remove();
   });
 
-  /** Mount the bar over a fixed page and return the selection log. */
-  async function show(text: string): Promise<{ selected: [number, number][]; close: () => number }> {
+  /** Mount the bar over a fixed text and return the selection log. */
+  async function show(
+    text: string,
+    scope: "page" | "document" = "page",
+  ): Promise<{ selected: [number, number][]; close: () => number }> {
     const selected: [number, number][] = [];
     let closed = 0;
     const surface = createOffsetSurface({
+      scope,
       text: () => text,
       select: (from, to) => selected.push([from, to]),
       clear: () => selected.push([-1, -1]),
@@ -82,21 +86,32 @@ describe("preview find bar", () => {
 
   it("says the scope is the current page before anything is typed", async () => {
     await show("alpha");
-    expect(counter()).toBe("preview.find.hint");
-    expect(host.querySelector<HTMLElement>('[data-testid="fs-preview-find-count"]')?.title).toBe("preview.find.scope");
+    expect(counter()).toBe("preview.find.hint.page");
+    expect(counter()).not.toBe("");
+    expect(host.querySelector<HTMLElement>('[data-testid="fs-preview-find-count"]')?.title).toBe(
+      "preview.find.scope.page",
+    );
+  });
+
+  it("names the whole file when the body publishes the document scope", async () => {
+    await show("alpha", "document");
+    expect(counter()).toBe("preview.find.hint.document");
+    expect(host.querySelector<HTMLElement>('[data-testid="fs-preview-find-count"]')?.title).toBe(
+      "preview.find.scope.document",
+    );
   });
 
   it("counts the hits and names the first one", async () => {
     const { selected } = await show("alpha beta alpha");
     await type("alpha");
-    expect(counter()).toBe("preview.find.count");
+    expect(counter()).toBe("preview.find.count.page");
     expect(selected.at(-1)).toEqual([0, 5]);
   });
 
   it("reports no match instead of a zero index", async () => {
     const { selected } = await show("alpha");
     await type("zeta");
-    expect(counter()).toBe("preview.find.none");
+    expect(counter()).toBe("preview.find.none.page");
     expect(selected).toEqual([]);
     expect(host.querySelector<HTMLButtonElement>('[data-testid="fs-preview-find-next"]')?.disabled).toBe(true);
   });
@@ -116,6 +131,78 @@ describe("preview find bar", () => {
     await press("Enter", true);
     // From the first hit, backwards wraps to the last one.
     expect(selected.at(-1)).toEqual([11, 16]);
+  });
+
+  it("re-reveals into a replacement body that answers with the same count", async () => {
+    const selected: [number, number][] = [];
+    let current = createOffsetSurface({
+      text: () => "alpha zeta",
+      select: (from, to) => selected.push([from, to]),
+      clear: () => {},
+    });
+    const render = async (stamp: string): Promise<void> => {
+      await act(async () => {
+        root.render(
+          createElement(PreviewFindBar, {
+            t,
+            surface: () => current,
+            stamp,
+            onClose: () => {},
+          }),
+        );
+      });
+    };
+    await render("mount-1");
+    await type("zeta");
+    expect(selected.at(-1)).toEqual([6, 10]);
+
+    // The pane swapped bodies and bumped its stamp: the count is identical, so
+    // only the stamp can tell the bar that its selection now points elsewhere.
+    current = createOffsetSurface({
+      text: () => "zeta alpha",
+      select: (from, to) => selected.push([from, to]),
+      clear: () => {},
+    });
+    await render("mount-2");
+    expect(selected.at(-1)).toEqual([0, 4]);
+  });
+
+  it("does not reveal while the reader works outside the bar", async () => {
+    const selected: [number, number][] = [];
+    let current = createOffsetSurface({
+      text: () => "alpha",
+      select: (from, to) => selected.push([from, to]),
+      clear: () => {},
+    });
+    const render = async (stamp: string): Promise<void> => {
+      await act(async () => {
+        root.render(
+          createElement(PreviewFindBar, {
+            t,
+            surface: () => current,
+            stamp,
+            onClose: () => {},
+          }),
+        );
+      });
+    };
+    await render("mount-1");
+    await type("alpha");
+    expect(selected.at(-1)).toEqual([0, 5]);
+
+    const documentArea = document.createElement("textarea");
+    document.body.append(documentArea);
+    documentArea.focus();
+    current = createOffsetSurface({
+      text: () => "alpha alpha",
+      select: (from, to) => selected.push([from, to]),
+      clear: () => {},
+    });
+    await render("mount-2");
+    // The recount happened, but the caret belongs to the document being edited.
+    expect(counter()).toBe("preview.find.count.page");
+    expect(selected.at(-1)).toEqual([0, 5]);
+    documentArea.remove();
   });
 
   it("clears the query by closing on Escape", async () => {

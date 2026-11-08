@@ -1,13 +1,13 @@
 /**
- * In-page find.
+ * Find inside whatever text a preview body owns.
  *
- * The preview holds one page of at most `PREVIEW_MAX_LINES` lines, and the
- * three text surfaces disagree about what an offset means: the editor's
- * document is the page text verbatim, while the Markdown and plain-text
- * surfaces are laid out by the browser from rendered nodes, where source
- * markers (`**bold**`) and image placeholders occupy no text at all. So this
- * module answers one question only — where does the query occur in a given
- * string — and callers keep their offsets in their own space.
+ * Bodies disagree about what an offset means, and how much text they cover. An
+ * editor body's document is its own string of the whole file (or of the page
+ * it was handed), so a hit interval is directly a selection; rendered bodies
+ * are laid out by the browser from nodes, where source markers (`**bold**`) and
+ * image placeholders occupy no text at all. So this module answers one question
+ * only — where does the query occur in a given string — and callers keep their
+ * offsets, and their scope, in their own space.
  *
  * Nothing here touches the document: a hit is an interval, and what a surface
  * does with it (an editor selection, a DOM `Range`) stays with that surface.

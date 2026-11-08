@@ -243,17 +243,18 @@ describe("EditorBody", () => {
     expect(view()).toBe(editorView);
     expect(text()).toContain("**bold**");
   });
-  it("publishes its whole document to the find channel", async () => {
+  it("publishes the whole document, and says that is what it covers", async () => {
     const registered: (FindSourceFace | null)[] = [];
     const find = { register: (source: FindSourceFace | null) => registered.push(source) };
     await show({ find, text: "alpha beta alpha" });
 
     const source = registered.at(-1);
     expect(source).not.toBeUndefined();
+    expect(source?.scope).toBe("document");
     expect(source?.text()).toBe("alpha beta alpha");
   });
 
-  it("reads the live document, so a find count cannot go stale after an edit", async () => {
+  it("reads the live document on every call, not the text it mounted with", async () => {
     const registered: (FindSourceFace | null)[] = [];
     const find = { register: (source: FindSourceFace | null) => registered.push(source) };
     await show({ find, text: "alpha beta alpha" });
@@ -264,6 +265,43 @@ describe("EditorBody", () => {
     });
 
     expect(source?.text()).toBe("gamma beta alpha");
+  });
+
+  it("asks the find bar to recount after a user edit and after a reload", async () => {
+    const invalidations: number[] = [];
+    const find = {
+      register: (_source: FindSourceFace | null) => {},
+      invalidate: () => invalidations.push(1),
+    };
+    await show({ find, text: "alpha beta alpha" });
+    expect(invalidations).toHaveLength(0);
+
+    // A user edit through the view.
+    await act(async () => {
+      view().dispatch({ changes: { from: 0, to: 5, insert: "gamma" } });
+    });
+    const afterEdit = invalidations.length;
+    expect(afterEdit).toBeGreaterThan(0);
+
+    // A replacement pushed in by the pane (a reload), which the draft store
+    // must not treat as a user edit but which still changes the searched text.
+    await act(async () => {
+      await show({ find, text: "replaced" });
+    });
+    expect(invalidations.length).toBeGreaterThan(afterEdit);
+  });
+
+  it("does not register twice when only unrelated props change", async () => {
+    const registered: (FindSourceFace | null)[] = [];
+    const find = { register: (source: FindSourceFace | null) => registered.push(source) };
+    await show({ find });
+    const mounts = registered.length;
+
+    await act(async () => {
+      await show({ find, mode: "source" });
+    });
+
+    expect(registered).toHaveLength(mounts);
   });
 
   it("keeps find offsets in document positions on a CRLF file", async () => {

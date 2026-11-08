@@ -29,6 +29,8 @@ export interface RendererPage {
  * see only the lines CodeMirror happened to render.
  */
 export interface FindSourceFace {
+  /** The editor holds the whole file, so the counter may say "whole file". */
+  readonly scope?: "page" | "document";
   /**
    * The document text, read per call so an edit cannot leave the answer stale.
    *
@@ -45,6 +47,8 @@ export interface FindSourceFace {
 /** The channel the pane hands a body for publishing its find source. */
 export interface FindSourceSinkFace {
   register(source: FindSourceFace | null): void;
+  /** Ask the bar to recount after an edit; it must not reveal again. */
+  invalidate?(): void;
 }
 
 /** What the pane hands one renderer's body. */

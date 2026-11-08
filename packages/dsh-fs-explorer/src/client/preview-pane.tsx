@@ -261,12 +261,14 @@ function CodeSurface({
     handle.current?.update(text, offset);
   }, [text, offset, chunk]);
 
-  // The editor answers in page-text offsets because its document is that text.
-  // It is offered to the pane only while it is the body actually drawing, so a
-  // plain-text fallback is never paired with an editor that does not exist.
+  // The editor answers in page-text offsets because its document is that text:
+  // this shipped viewer is always mounted over one page, unlike the editable
+  // bodies another plugin contributes. The scope says so, so the counter names
+  // the page instead of promising the whole file.
   useEffect(() => {
     if (find === undefined || chunk === null || failed) return;
     find.register({
+      scope: "page",
       text: () => pageText.current,
       select: (from, to) => handle.current?.revealRange(from, to),
       clear: () => handle.current?.clearSelection(),
@@ -653,6 +655,10 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
         editorSurface.current = source === null ? null : createOffsetSurface(source);
         setFindRevision(value => value + 1);
       },
+      // A body under an open query changed its text (an edit, a reload): the
+      // counter is a snapshot and has to be taken again. No selection is made
+      // here, so the reader's caret stays where they are working.
+      invalidate: () => setFindRevision(value => value + 1),
     }),
     [],
   );
@@ -680,7 +686,7 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
     mode,
     ...(binary ? {} : { page: { text: snapshot.text, offset: snapshot.offset } }),
     ...(locate === undefined ? {} : { locate }),
-    find: findSourceSink,
+    ...(findable ? { find: findSourceSink } : {}),
   };
 
   const copyPath = (): void => {

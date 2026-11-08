@@ -168,8 +168,19 @@ describe("preview pane find source", () => {
    */
   const DOCUMENT = "the whole document has a needle inside";
 
-  it("counts a hit the DOM never renders through the body's own source", async () => {
+  it("recounts through the body's own source after the bar has already counted", async () => {
+    // The body only publishes once asked to, which is the ordering the pane's
+    // revision counter exists for: the bar opens against the DOM reading, then
+    // the real editor arrives with a whole document the DOM never showed.
     const selections: [number, number][] = [];
+    const publish = (find?: RendererBodyProps["find"]): void => {
+      find?.register({
+        scope: "document",
+        text: () => DOCUMENT,
+        select: (from, to) => selections.push([from, to]),
+        clear: () => undefined,
+      });
+    };
     const registry = createRendererRegistry();
     registry.register({
       id: "plugin.editor",
@@ -178,23 +189,19 @@ describe("preview pane find source", () => {
       priority: 100,
       load: async () => ({
         renderer: "plugin-editor",
-        Body: ({ find }: RendererBodyProps) => {
-          useEffect(() => {
-            find?.register({
-              text: () => DOCUMENT,
-              select: (from, to) => selections.push([from, to]),
-              clear: () => undefined,
-            });
-            return () => find?.register(null);
-          }, [find]);
-          return createElement("div", { "data-testid": "plugin-body" }, "nothing visible here");
-        },
+        Body: ({ find }: RendererBodyProps) =>
+          createElement(
+            "button",
+            { type: "button", "data-testid": "plugin-publish", onClick: () => publish(find) },
+            "publish",
+          ),
       }),
     });
     const files = {
       list: async () => ({ entries: [] }),
       read: async () => ({ ok: true, value: { text: "page only", offset: 1, totalLines: 1, eof: true } }),
     };
+    const translator = (key: string): string => (key === "preview.find.count.document" ? "{index}/{count}" : key);
 
     await act(async () => {
       root.render(
@@ -202,7 +209,7 @@ describe("preview pane find source", () => {
           sessionId: "s1",
           files,
           path: "docs/a.md",
-          t,
+          t: translator,
           renderers: registry,
         }),
       );
@@ -225,8 +232,20 @@ describe("preview pane find source", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
+    // No source yet: the DOM reading counts a page and says so.
     const counter = host.querySelector('[data-testid="fs-preview-find-count"]');
-    expect(counter?.textContent).toBe("preview.find.count");
+    expect(counter?.textContent).toBe("preview.find.none.page");
+
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="plugin-publish"]')?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    // The source arrived after the count: the revision must re-run it in the
+    // body's own offset space, and the scope label must change with it.
+    expect(counter?.textContent).toBe("1/1");
+    expect(counter?.getAttribute("title")).toBe("preview.find.scope.document");
     const start = DOCUMENT.indexOf("needle");
     expect(selections.at(-1)).toEqual([start, start + "needle".length]);
   });

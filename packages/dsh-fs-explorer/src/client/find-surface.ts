@@ -1,41 +1,56 @@
 /**
- * The two surfaces the preview's find bar drives, and the channel bodies use to
- * ask for the first one.
+ * The surface the preview's find bar drives, and the channel a mounted body
+ * publishes its own text through.
  *
- * They cannot share an offset space. An editor body's offsets are its own
- * document's offsets, so a hit interval is directly a selection; the rendered
- * bodies (the shipped fallback Markdown and plain text) are laid out by the
- * browser, where source markers (`**bold**`) and dropped images occupy no
- * visible character at all. So a surface answers only "how many hits" and "show
- * me the nth", and each keeps its own mapping internally.
+ * There is one surface per pane, but two ways to answer it. A body that can
+ * speak in its own text's offsets publishes a {@link FindSource}, and the pane
+ * turns it into an offset surface; that is the only shape that reaches text a
+ * virtualized view left out of the DOM, and it is what every editable body in
+ * this workbench uses. Everything else falls back to a DOM reading, which is
+ * honest only for bodies the browser laid out in full: the shipped fallback
+ * Markdown and the plain-text `<pre>`.
  *
- * Which one a body gets is the body's own answer: a renderer that can speak in
- * its document's offsets publishes a {@link FindSource}, and the pane turns it
- * into an offset surface. Everything else falls back to a DOM reading, which is
- * only honest for bodies the browser actually laid out in full — a virtualized
- * view leaves most of a long document out of the DOM.
+ * The two shapes cannot share an offset space. An editor's offsets are its own
+ * document's, so a hit interval is directly a selection; rendered bodies are
+ * laid out by the browser, where source markers (`**bold**`) and dropped images
+ * occupy no visible character at all. So a surface answers only "how many hits"
+ * and "show me the nth", plus how much text it covers, and each shape keeps its
+ * own mapping internally.
  */
-import { findMatches, layoutText, positionAt, type TextLayout } from "./find.ts";
+import { findMatches, layoutText, positionAt, type FindMatch, type TextLayout } from "./find.ts";
+
+/**
+ * How much of a body's text one source covers.
+ *
+ * The counter says "page" or "document" so the number cannot promise more than
+ * the reader is looking at: the built-in read-only viewer holds the pager's
+ * page, while the editable bodies hold the whole file.
+ */
+export type FindScope = "page" | "document";
 
 /** What the find bar needs from whichever body is mounted. */
 export interface FindSurface {
+  /** Whether the search covers one page or the whole document. */
+  readonly scope: FindScope;
   /** How many hits the query has in this surface. */
   count(query: string): number;
   /** Select and reveal the nth hit; out-of-range indices are ignored. */
   reveal(query: string, index: number): void;
-  /** Drop the current selection. */
+  /** Clear the selection the last `reveal` made. */
   clear(): void;
 }
 
 /**
- * What an editable body hands the pane so find can search the body's own text.
+ * What a body hands the pane so find can search the body's own text.
  *
- * The pane owns the matching; the body owns the text and the selection. That
- * split is what lets a renderer whose document is not the page it sits on (a
- * whole-file editor) answer honestly, instead of the pane reading a DOM that a
- * virtualized view has only partly put on screen.
+ * The pane owns the matching; the body owns the text and the selection, because
+ * only the body knows which string its own offsets address. The `text` getter
+ * must return that string: offsets into anything else (a `sliceDoc()` that
+ * rebuilds CRLF, a rendered projection) would select the wrong interval.
  */
 export interface FindSource {
+  /** How much text {@link FindSource.text} covers; absent means one page. */
+  readonly scope?: FindScope;
   /**
    * The text find searches, read per call.
    *
@@ -46,7 +61,7 @@ export interface FindSource {
   readonly text: () => string;
   /** Select and scroll to one `[from, to)` interval of that text. */
   readonly select: (from: number, to: number) => void;
-  /** Drop the selection the last `select` made. */
+  /** Clear the selection the last `select` made, without moving the viewport. */
   readonly clear: () => void;
 }
 
@@ -60,20 +75,44 @@ export interface FindSource {
 export interface FindSourceSink {
   /** Offer the body's source, or null when the body can no longer answer. */
   register(source: FindSource | null): void;
+  /**
+   * Announce that the source's text changed under an open query.
+   *
+   * Registration would move the selection again; this only asks the bar to
+   * recount, so an edit in the body updates the counter without yanking the
+   * reader's caret back to a hit.
+   */
+  invalidate?(): void;
 }
 
 /**
  * A surface whose offsets are the searched text's own offsets.
  *
- * This is the editor's shape: its document is the page text verbatim, so a hit
- * interval is directly a selection. The rendered surfaces must not use this —
- * see {@link createDomSurface}.
+ * This is every body that publishes a {@link FindSource}, because the source's
+ * offsets are the only space it can select in. Rendered surfaces must not use
+ * this — see {@link createDomSurface}.
  * @param options - the live text, the selection gesture and the clearing one.
  * @returns the surface.
  */
 export function createOffsetSurface(options: FindSource): FindSurface {
-  const hits = (query: string) => findMatches(options.text(), query);
+  // The bar counts, then reveals the same query one effect later. Scanning the
+  // whole document twice per keystroke is the one cost worth caching away; the
+  // text getter's string identity is what invalidates it, so a body that edits
+  // its document is picked up on the next call.
+  let scannedText: string | null = null;
+  let scannedQuery: string | null = null;
+  let scannedHits: readonly FindMatch[] = [];
+  const hits = (query: string): readonly FindMatch[] => {
+    const text = options.text();
+    if (text !== scannedText || query !== scannedQuery) {
+      scannedText = text;
+      scannedQuery = query;
+      scannedHits = findMatches(text, query);
+    }
+    return scannedHits;
+  };
   return {
+    scope: options.scope ?? "page",
     count: query => hits(query).length,
     reveal: (query, index) => {
       const hit = hits(query)[index];
@@ -167,6 +206,9 @@ export function createDomSurface(body: () => HTMLElement | null): FindSurface {
     return root?.ownerDocument.defaultView?.getSelection() ?? undefined;
   };
   return {
+    // A body that publishes nothing renders its text in full; there is no page
+    // boundary to count against, so the bar names the page it can see.
+    scope: "page",
     count: query => {
       const rendered = read();
       return rendered === undefined ? 0 : findMatches(rendered.layout.text, query).length;

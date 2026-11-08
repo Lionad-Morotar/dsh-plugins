@@ -64,10 +64,10 @@ export interface RendererBodyProps {
   /**
    * The find channel this body publishes its text through.
    *
-   * An editable body owns the text (the whole document, not the page the pane
-   * happens to hold) and the selection that reveals a hit, so it publishes both
-   * here instead of letting the pane read a DOM the view may have virtualized.
-   * Absent outside a pane, where there is no find bar to answer.
+   * A body that can map its own text's offsets to a selection publishes both
+   * here instead of letting the pane read a DOM the view may have virtualized,
+   * and says whether that text is a page or the whole document. Absent when
+   * there is no find bar to answer (a probe mount, a binary family).
    */
   readonly find?: FindSourceSink;
 }

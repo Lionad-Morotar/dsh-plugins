@@ -22,6 +22,14 @@ function body(html: string): HTMLDivElement {
 }
 
 describe("offset surface", () => {
+  it("names the page scope unless the body claims the whole document", () => {
+    expect(createOffsetSurface({ text: () => "x", select: () => {}, clear: () => {} }).scope).toBe("page");
+    expect(
+      createOffsetSurface({ scope: "document", text: () => "x", select: () => {}, clear: () => {} }).scope,
+    ).toBe("document");
+    expect(createDomSurface(() => null).scope).toBe("page");
+  });
+
   it("counts hits in the live page text", () => {
     let text = "alpha beta";
     const surface = createOffsetSurface({ text: () => text, select: () => {}, clear: () => {} });

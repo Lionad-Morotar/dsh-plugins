@@ -158,6 +158,8 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
   const onSave = useRef(props.onSave);
   onSave.current = props.onSave;
   const find = props.find;
+  const findSink = useRef(props.find);
+  findSink.current = props.find;
 
   useEffect(() => {
     const element = host.current;
@@ -182,6 +184,11 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
           decorationCompartment.current.of(decorationExtension(decorate && mode === "reading")),
           EditorView.updateListener.of(update => {
             if (!update.docChanged) return;
+            // Every document change, user or external, is a new text the find
+            // counter was not taken against. Ask for a recount before the
+            // user-edit filter below, which exists for the draft store, not
+            // for the bar.
+            findSink.current?.invalidate?.();
             if (update.transactions.some(transaction => transaction.annotation(ExternalChange) === true)) return;
             // `toString()` always joins with \n; sliceDoc rebuilds the text with
             // the separator the state was created with.
@@ -221,6 +228,10 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
     const current = view.current;
     if (current === null || find === undefined) return;
     find.register({
+      // The editor reads the whole file, unlike the pane's pager: say so, or a
+      // long document's counter would claim "on this page" while counting
+      // every line.
+      scope: "document",
       // `doc.toString()` and not `sliceDoc()`: a CodeMirror position counts a
       // line break as one unit whatever the file's separator is, and the
       // document's own `toString()` uses the same \n. `sliceDoc()` returns
