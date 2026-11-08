@@ -420,6 +420,15 @@ export interface FocusTarget {
    * panel would replace what the reader is looking at with an empty tab.
    */
   readonly reveal?: boolean;
+  /**
+   * Whether this request enters a directory rather than opening a file.
+   *
+   * A directory has no panel of its own, so `enter:` selects the row and then
+   * opens the directory's own front page when it has one. The spelling keeps an
+   * absolute path as written, because the view has to resolve it against the
+   * workspace before there is a row to select.
+   */
+  readonly enter?: boolean;
 }
 
 /** Parse the optional `:<line>` suffix; a missing or bad value reads as line 1. */
@@ -430,7 +439,7 @@ function lineOf(raw: string | undefined): number {
 /**
  * Parse the focus string a caller hands this view.
  *
- * Four spellings travel. `path:<workspace path>[:<line>]` comes from the Git
+ * Five spellings travel. `path:<workspace path>[:<line>]` comes from the Git
  * changes pane and the command palette and stays relative to the session's
  * workspace root. `abs:<filesystem path>[:<line>]` comes from the address
  * bridge, which forwards files that may sit outside that root — its leading `/`
@@ -440,7 +449,10 @@ function lineOf(raw: string | undefined): number {
  * revision is normalized to lowercase and its line segment is mandatory
  * because a git path may itself end in digits. `reveal:<workspace path>` comes
  * from the side bars and asks for the row, not the file: it carries no line
- * because a cursor resting on a row has no position inside it.
+ * because a cursor resting on a row has no position inside it. `enter:<path>`
+ * comes from the chat prose, where a directory name is a link to the directory
+ * itself: the path may be absolute because the prose wrote it in full, so its
+ * leading slash is kept the way `abs:` keeps it.
  *
  * The line suffix is optional in the first two spellings. Backslashes are
  * normalized because the same jump is produced on Windows hosts.
@@ -466,6 +478,17 @@ export function parseFocus(focus: string | undefined): FocusTarget | undefined {
     const path = (revealMatch[1] ?? "").replace(/\\/gu, "/").replace(/^(?:\.\/)+/u, "").replace(/^\/+/u, "");
     if (path === "") return undefined;
     return { path, line: 1, absolute: false, reveal: true };
+  }
+
+  // A directory the reader meant to enter. The trailing slash is only how a
+  // directory is sometimes written; the leading one is an absolute spelling and
+  // survives, because the caller may have named a path outside the workspace.
+  const enterMatch = /^enter:(.+)$/u.exec(trimmed);
+  if (enterMatch !== null) {
+    const raw = (enterMatch[1] ?? "").replace(/\\/gu, "/").replace(/^(?:\.\/)+/u, "").replace(/\/+$/u, "");
+    if (raw === "") return undefined;
+    if (isAbsolutePath(raw)) return { path: raw, line: 1, absolute: true, enter: true };
+    return { path: raw.replace(/^\/+/u, ""), line: 1, absolute: false, enter: true };
   }
 
   const absoluteMatch = /^abs:(.+?)(?::(\d+))?$/u.exec(trimmed);
@@ -749,6 +772,37 @@ export function findRootReadme(rows: readonly TreeRow[]): TreeRow | undefined {
   return rows.find(
     row => row.type === "entry" && row.depth === 0 && row.kind === "file" && README_BASENAMES.has(basenameOf(row.path)),
   );
+}
+
+/**
+ * Basenames that make a directory its own front page, best first.
+ *
+ * A README is what a directory writes about itself and wins over an index when
+ * both exist; `index.md` joins the set because a directory without a README
+ * usually names its start page that way. Only text spellings, because entering
+ * one of these opens a panel and a format the previewer cannot paint would
+ * greet the reader with a failure instead of an answer.
+ */
+const FRONT_PAGE_BASENAMES: readonly string[] = [...README_BASENAMES, "index.md", "index.markdown"];
+
+/**
+ * The front page one directory listing holds, if any.
+ *
+ * The decision is made from the listing the tree already has, so entering a
+ * directory costs no extra read: the same rows the reader is about to see
+ * decide which one to open. Order comes from {@link FRONT_PAGE_BASENAMES}, and
+ * the host's own case is kept in the returned path.
+ * @param nodes - the directory's listed children.
+ * @param directory - the workspace-relative path of the directory itself.
+ * @returns the workspace-relative path of the front page, or undefined when the
+ * directory has none.
+ */
+export function findFrontPage(nodes: readonly TreeNode[], directory: string): string | undefined {
+  for (const basename of FRONT_PAGE_BASENAMES) {
+    const node = nodes.find(candidate => candidate.kind === "file" && candidate.name.toLowerCase() === basename);
+    if (node !== undefined) return joinPath(directory, node.name);
+  }
+  return undefined;
 }
 
 /** What entering the view should do, once per mount. */

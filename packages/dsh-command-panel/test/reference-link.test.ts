@@ -1,12 +1,13 @@
 /**
  * Reference recognition in the chat prose, tested as a table.
  *
- * Three shapes can name a workspace target: an anchor the markdown renderer
- * made, an inline code span, and a bare path left as text. An anchor is trusted
- * once it is not an external scheme; the other two must look like a path, and a
- * bare one must also be a single unbroken fragment. The refusals carry more
- * weight than the acceptances, because a wrong underline is a promise the click
- * cannot keep.
+ * Four shapes can name a workspace target: an anchor the markdown renderer
+ * made, the button it renders for a local link or a reference chip, an inline
+ * code span, and a bare path left as text. The two rendered shapes are trusted
+ * once their destination stays inside the workspace; the other two must look
+ * like a path, and a bare one must also be a single unbroken fragment. The
+ * refusals carry more weight than the acceptances, because a wrong underline is
+ * a promise the click cannot keep.
  */
 import { JSDOM } from "jsdom";
 import { describe, expect, it, vi } from "vitest";
@@ -29,6 +30,8 @@ function probe(fields: {
   readonly tag: string;
   readonly text: string;
   readonly href?: string;
+  readonly title?: string;
+  readonly mention?: boolean;
   readonly insidePre?: boolean;
   readonly streaming?: boolean;
 }): ReferenceProbe {
@@ -48,6 +51,16 @@ function code(text: string): ReferenceProbe {
 /** A path left as plain text inside a paragraph. */
 function bare(text: string): ReferenceProbe {
   return probe({ tag: "P", text });
+}
+
+/** The button the host renders for a local markdown link; its path is in `title`. */
+function fileLink(path: string): ReferenceProbe {
+  return probe({ tag: "BUTTON", text: "the link", title: path });
+}
+
+/** One of the host's reference chips, whose title is the composer's mention. */
+function mention(raw: string): ReferenceProbe {
+  return probe({ tag: "BUTTON", text: "the chip", title: raw, mention: true });
 }
 
 describe("normalizeReferenceTarget", () => {
@@ -98,12 +111,55 @@ describe("classifyReference", () => {
     });
   });
 
+  it("takes an absolute path or a site route from inline code", () => {
+    expect(classifyReference(code("/Users/x/project/agents/"))).toEqual({
+      target: "/Users/x/project/agents",
+      kind: "code",
+    });
+    expect(classifyReference(code("/maps/_business/analysis"))).toEqual({
+      target: "/maps/_business/analysis",
+      kind: "code",
+    });
+  });
+
   it("takes a bare path, including one written with Chinese directory names", () => {
     expect(classifyReference(bare("content/6.maps/_business/analysis"))).toEqual({
       target: "content/6.maps/_business/analysis",
       kind: "text",
     });
     expect(classifyReference(bare("docs/设计/说明"))).toEqual({ target: "docs/设计/说明", kind: "text" });
+  });
+
+  it("takes the destination of a host file link button, which is not in its text", () => {
+    expect(classifyReference(fileLink("content/6.maps/analysis"))).toEqual({
+      target: "content/6.maps/analysis",
+      kind: "link",
+    });
+    expect(classifyReference(fileLink("/users/lionad/.data/agents/"))).toEqual({
+      target: "/users/lionad/.data/agents",
+      kind: "link",
+    });
+    // A directory whose link carries its trailing slash is still a path even
+    // when it is one segment long.
+    expect(classifyReference(fileLink("scripts/"))).toEqual({ target: "scripts", kind: "link" });
+  });
+
+  it("reads a reference chip's mention back into the path it names", () => {
+    expect(classifyReference(mention("@content/6.maps/analysis"))).toEqual({
+      target: "content/6.maps/analysis",
+      kind: "link",
+    });
+    expect(classifyReference(mention('@"/Users/x/a b"'))).toEqual({ target: "/Users/x/a b", kind: "link" });
+  });
+
+  it("refuses a button that is a tooltip rather than a reference", () => {
+    expect(classifyReference(probe({ tag: "BUTTON", text: "复制", title: "复制当前会话" }))).toBeUndefined();
+    expect(classifyReference(probe({ tag: "BUTTON", text: "copy", title: "Copy" }))).toBeUndefined();
+    expect(classifyReference(probe({ tag: "BUTTON", text: "x" }))).toBeUndefined();
+    expect(classifyReference(probe({ tag: "BUTTON", text: "x", title: "   " }))).toBeUndefined();
+    // A chip whose title is not the mention spelling has nothing to read.
+    expect(classifyReference(probe({ tag: "BUTTON", text: "x", title: "content/a", mention: true }))).toBeUndefined();
+    expect(classifyReference(mention('@"unterminated'))).toBeUndefined();
   });
 
   it("refuses every anchor that leaves the workspace", () => {
@@ -221,6 +277,21 @@ describe("referenceCandidates", () => {
     expect(referenceCandidates("dsh-resource://blob/xyz")).toEqual(["dsh-resource://blob/xyz"]);
   });
 
+  it("asks about an absolute path as written, after the workspace and route spellings", () => {
+    const chain = referenceCandidates("/Users/x/project/agents");
+    expect(chain).toContain("Users/x/project/agents");
+    expect(chain).toContain("content/Users/x/project/agents");
+    expect(chain).toContain("/Users/x/project/agents");
+    expect(chain).toContain("/Users/x/project/agents.md");
+    // The absolute spelling is the only one that can name a home-directory
+    // path; it is still asked last so a site route keeps its old answer.
+    expect(chain.indexOf("/Users/x/project/agents")).toBeGreaterThan(chain.indexOf("content/Users/x/project/agents"));
+  });
+
+  it("keeps a Windows drive path as one absolute candidate", () => {
+    expect(referenceCandidates("C:/work/agents")).toContain("C:/work/agents");
+  });
+
   it("caps the chain and never repeats a candidate", () => {
     const chain = referenceCandidates("/a/b/c/d/e/f/g/h/i/j");
     expect(chain.length).toBeLessThanOrEqual(8);
@@ -336,6 +407,15 @@ describe("createReferenceResolver", () => {
     expect(table.calls).toEqual(["/Users/x/a.md"]);
   });
 
+  it("reports an absolute directory without borrowing the workspace spelling", async () => {
+    const table = probeTable({ "/Users/x/project/agents": "directory" });
+    const resolver = createReferenceResolver({ probe: table.probe });
+    expect(await resolver.resolve("/Users/x/project/agents")).toEqual({
+      kind: "directory",
+      path: "/Users/x/project/agents",
+    });
+  });
+
   it("answers an empty target without remembering it", async () => {
     const table = probeTable({});
     const resolver = createReferenceResolver({ probe: table.probe });
@@ -374,7 +454,7 @@ function host(overrides: Partial<ReferenceLinkHost> = {}): ReferenceLinkHost {
     sessionId: () => "sess-1",
     resolve: answers({}),
     openFile: vi.fn(),
-    revealDirectory: vi.fn(),
+    enterDirectory: vi.fn(),
     fsViewPresent: () => true,
     ...overrides,
   };
@@ -425,7 +505,7 @@ describe("installReferenceLinks", () => {
     stop();
   });
 
-  it("dots a paragraph that is nothing but a path, and reveals it as a directory", async () => {
+  it("dots a paragraph that is nothing but a path, and enters it as a directory", async () => {
     const { window, doc } = page();
     const paragraph = doc.createElement("p");
     paragraph.textContent = "content/6.maps/a";
@@ -437,8 +517,53 @@ describe("installReferenceLinks", () => {
     expect(paragraph.getAttribute(REF_LINK_ATTR)).toBe("dir");
 
     expect(click(window, paragraph)).toBe(true);
-    await vi.waitFor(() => expect(face.revealDirectory).toHaveBeenCalledWith("content/6.maps/a", { absolute: false }));
+    await vi.waitFor(() => expect(face.enterDirectory).toHaveBeenCalledWith("content/6.maps/a"));
     expect(face.openFile).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("takes over a host file link that names a directory, before its own click runs", async () => {
+    const { window, doc } = page();
+    const button = doc.createElement("button");
+    button.setAttribute("type", "button");
+    button.setAttribute("title", "/users/lionad/.data/agents/");
+    button.textContent = "/users/lionad/.data/agents/";
+    doc.body.append(button);
+    // The host's own handler: a bubble listener on the document stands in for
+    // the React root listener the real host installs.
+    const hostClick = vi.fn();
+    doc.addEventListener("click", hostClick);
+    const face = host({
+      resolve: answers({ "/users/lionad/.data/agents": { kind: "directory", path: "/users/lionad/.data/agents" } }),
+    });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, button);
+    expect(button.getAttribute(REF_LINK_ATTR)).toBe("dir");
+
+    expect(click(window, button)).toBe(true);
+    await vi.waitFor(() => expect(face.enterDirectory).toHaveBeenCalledWith("/users/lionad/.data/agents"));
+    expect(hostClick).not.toHaveBeenCalled();
+    expect(face.openFile).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("leaves a host file link to a file for the right Sidebar", async () => {
+    const { window, doc } = page();
+    const button = doc.createElement("button");
+    button.setAttribute("type", "button");
+    button.setAttribute("title", "content/a.md");
+    button.textContent = "a.md";
+    doc.body.append(button);
+    const hostClick = vi.fn();
+    doc.addEventListener("click", hostClick);
+    const face = host({ resolve: answers({ "content/a.md": { kind: "file", path: "content/a.md" } }) });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, button);
+    expect(button.hasAttribute(REF_LINK_ATTR)).toBe(false);
+    expect(click(window, button)).toBe(false);
+    expect(hostClick).toHaveBeenCalled();
     stop();
   });
 
@@ -539,7 +664,7 @@ describe("installReferenceLinks", () => {
     expect(click(window, code)).toBe(false);
     await Promise.resolve();
     expect(face.openFile).not.toHaveBeenCalled();
-    expect(face.revealDirectory).not.toHaveBeenCalled();
+    expect(face.enterDirectory).not.toHaveBeenCalled();
     stop();
   });
 
@@ -576,7 +701,7 @@ describe("installReferenceLinks", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(face.openFile).not.toHaveBeenCalled();
-    expect(face.revealDirectory).not.toHaveBeenCalled();
+    expect(face.enterDirectory).not.toHaveBeenCalled();
     stop();
   });
 

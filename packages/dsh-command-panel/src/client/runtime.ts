@@ -1446,19 +1446,16 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   }
 
   /**
-   * Select a directory the prose named, without opening a panel.
+   * Enter a directory the prose named: select it in the tree and open its front
+   * page when it has one.
    *
-   * `reveal:` names a workspace path only: the view's parser strips a leading
-   * slash from it, so an absolute directory cannot be spelled that way. Such a
-   * target degrades to opening the directory as a panel, which is the nearest
-   * thing the protocol can express; the reader still lands on the right place.
+   * `enter:` is the spelling for this because a directory has no panel of its
+   * own: `path:` would put an empty tab up and `reveal:` would promise no panel
+   * at all. The spelling carries an absolute path as it is written, which is
+   * how the view tells the two apart.
    */
-  function revealReferenceDirectory(path: string, options: { readonly absolute: boolean }): void {
-    if (options.absolute) {
-      handToFileWorkbench(`abs:${path}`);
-      return;
-    }
-    handToFileWorkbench(`reveal:${path}`);
+  function enterReferenceDirectory(path: string): void {
+    handToFileWorkbench(`enter:${path}`);
   }
 
   function goBack(): void {
@@ -1853,7 +1850,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       sessionId: currentSessionId,
       resolve: target => resolveReference(target),
       openFile: openReferenceFile,
-      revealDirectory: revealReferenceDirectory,
+      enterDirectory: enterReferenceDirectory,
       fsViewPresent: () => fsViewPresent(refs.slots?.entries?.(FS_VIEW_SLOT)),
     }),
   );

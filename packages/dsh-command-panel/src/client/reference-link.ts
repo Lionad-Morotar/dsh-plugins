@@ -1,10 +1,11 @@
 /**
  * Workspace references written in the chat prose.
  *
- * Three shapes can name a target the workbench knows how to open: an anchor the
- * host's markdown renderer produced, an inline code span, and a bare path left
- * as text. The host has no slot a plugin can occupy between its own link pass
- * and its file-mention pass, so none of them arrives as a jump on its own.
+ * Four shapes can name a target the workbench knows how to open: an anchor the
+ * host's markdown renderer produced, the button it renders for a local file
+ * link, an inline code span, and a bare path left as text. The host has no slot
+ * a plugin can occupy between its own link pass and its file-mention pass, so
+ * none of them arrives as a jump on its own.
  *
  * The recognition here is pure and DOM-free: a caller peels one element down to
  * a probe and gets back a target and the shape it came from. The resolution
@@ -32,6 +33,17 @@ export interface ReferenceProbe {
   readonly text: string;
   /** Only for an anchor: the href exactly as the host wrote it, which may be relative. */
   readonly href?: string;
+  /**
+   * Only for a host file link: the destination its `title` carries.
+   *
+   * The host's markdown renderer turns a local link into a `<button>` whose
+   * label is the link text, so the destination is not in the text at all. The
+   * same attribute on one of the host's reference chips holds the `@` mention
+   * the composer wrote instead of a bare destination.
+   */
+  readonly title?: string;
+  /** Only for a host reference chip: whether {@link title} is an `@` mention. */
+  readonly mention?: boolean;
   /** Whether a `pre` sits between the element and the document. */
   readonly insidePre: boolean;
   /** Whether the message that owns it is still being written. */
@@ -77,16 +89,55 @@ export function normalizeReferenceTarget(raw: string): string | undefined {
  * Whether a normalised string reads as a path rather than as prose or a URL.
  *
  * Every segment must be non-empty and made of path characters, and the first
- * must not be a dot segment or a scheme remnant. The empty-segment rule is what
- * refuses `//host/path`, whose first two segments are both empty.
+ * must not be a dot segment or a scheme remnant. A single leading slash is
+ * allowed, because that is how an absolute path and a site route are written;
+ * the empty-segment rule is what refuses `//host/path`, whose first two
+ * segments are both empty.
  */
 function looksLikePath(target: string): boolean {
   const segments = target.split("/");
-  if (segments.length < 2) return false;
-  const [head] = segments;
+  // One leading empty segment is an absolute spelling or a site route, which
+  // the candidate chain knows how to ask about; two would mean a
+  // protocol-relative host, which is not a workspace path.
+  const offset = target.startsWith("/") ? 1 : 0;
+  if (segments.length - offset < 2) return false;
+  const head = segments[offset];
   if (head === undefined || head === "." || head === "..") return false;
   if (FOREIGN_SCHEMES.some(scheme => head.toLowerCase().startsWith(scheme))) return false;
-  return segments.every(segment => segment !== "" && SEGMENT.test(segment));
+  return segments.slice(offset).every(segment => segment !== "" && SEGMENT.test(segment));
+}
+
+/**
+ * Whether a target names a location outside the workspace root.
+ *
+ * POSIX, a Windows drive and a UNC share are the spellings the host resolves
+ * as absolute; everything else is a workspace path. The distinction matters
+ * twice: an absolute candidate is probed as written instead of with a
+ * workspace prefix guessed onto it, and the click hands the workbench the same
+ * absolute spelling the resolver found.
+ * @param target - a normalised target.
+ * @returns true for a path that does not resolve against the workspace root.
+ */
+function isAbsoluteTarget(target: string): boolean {
+  return target.startsWith("/") || /^[A-Za-z]:\//u.test(target) || target.startsWith("//");
+}
+
+/**
+ * Read the path out of an `@` mention, in either spelling the composer uses.
+ *
+ * A reference chip keeps the mention text in its `title`, so a quoted path
+ * still carries its quotes and would fail every segment rule. A title that does
+ * not start with `@` is not a mention at all and is refused rather than read
+ * as a bare destination.
+ * @param raw - the `title` attribute of a reference chip.
+ * @returns the path behind the mention, or undefined when it is not one.
+ */
+function mentionPath(raw: string): string | undefined {
+  if (raw.startsWith('@"')) {
+    return raw.length >= 3 && raw.endsWith('"') ? raw.slice(2, -1) : undefined;
+  }
+  if (raw.startsWith("@")) return raw.slice(1);
+  return undefined;
 }
 
 /** Whether an anchor leaves the workspace, by scheme, by anchor, or by protocol-relative host. */
@@ -101,10 +152,11 @@ function isForeignHref(href: string): boolean {
  *
  * Refusing is the default, because a wrong underline is a promise the click
  * cannot keep: a message still being written has half a path in it, and a fenced
- * block is a sample of a path rather than a path. Beyond that the three shapes
- * are held to different bars. An anchor was made by the renderer from a link the
- * author wrote, so any href that stays inside the workspace is taken as it is. A
- * code span and a bare fragment have no such provenance and must look like a
+ * block is a sample of a path rather than a path. Beyond that the shapes are
+ * held to different bars. An anchor, and the button the renderer built from a
+ * local link or a reference chip, were made from a link or a mention the author
+ * wrote, so any destination that stays inside the workspace is taken as it is.
+ * A code span and a bare fragment have no such provenance and must look like a
  * path; a bare one must additionally be a single unbroken fragment, since a
  * sentence can contain a path without being one.
  *
@@ -127,6 +179,30 @@ export function classifyReference(probe: ReferenceProbe): ReferenceMatch | undef
     if (isForeignHref(href)) return undefined;
     const target = normalizeReferenceTarget(href);
     return target === undefined ? undefined : { target, kind: "link" };
+  }
+
+  // The host renders a local markdown link as a button and its path never
+  // reaches the text, so this shape reads the destination the way an anchor
+  // does. A chip's title is a mention instead, and both spellings keep the
+  // author's trust: the renderer built the element from a link or a mention.
+  if (probe.tag === "BUTTON") {
+    const title = probe.title?.trim() ?? "";
+    if (title === "") return undefined;
+    const raw = probe.mention === true ? mentionPath(title) : title;
+    if (raw === undefined) return undefined;
+    // A destination that leaves the workspace cannot be a reference here, and
+    // the scheme check keeps URL tooltips from being probed later.
+    if (isForeignHref(raw)) return undefined;
+    const target = normalizeReferenceTarget(raw);
+    if (target === undefined) return undefined;
+    // A path has a separator; a single word without one is far more likely a
+    // tooltip than a file, so only the trailing-slash directory spelling (or a
+    // mention, which was written as a reference in the first place) earns a
+    // click. Quoted mentions keep their spaces: the host's grammar allows them
+    // for real file names, so the segment rule used for prose does not apply.
+    const separator = target.includes("/");
+    if (!separator && probe.mention !== true && !raw.endsWith("/")) return undefined;
+    return { target, kind: "link" };
   }
 
   const target = normalizeReferenceTarget(probe.text);
@@ -214,9 +290,12 @@ function unwrapResource(target: string): string | undefined {
  * it, so a real directory is never mistaken for a markdown file beside it.
  *
  * Every candidate is a workspace path except an absolute one, which keeps its
- * leading `/`. That slash is the contract with the caller: a candidate starting
- * with `/` has to be opened as `abs:` rather than resolved against the
- * workspace, because no workspace path can begin with one.
+ * leading slash (or drive letter). That spelling is the contract with the
+ * caller: an absolute candidate has to be opened as `abs:` rather than
+ * resolved against the workspace, because no workspace path can begin with
+ * one. An absolute target also tries the same path as a workspace and content
+ * spelling first, so a route and a filesystem location that happen to be
+ * written alike are answered by existence rather than by a guess.
  * @param target - a target as the recogniser produced it.
  * @returns the ordered, de-duplicated chain, empty when the target names nothing.
  */
@@ -237,9 +316,13 @@ export function referenceCandidates(target: string): readonly string[] {
     const bare = normalized.replace(/^\/+/, "");
     if (bare === "") return [];
     seeds.push(bare);
-    // A leading slash means a site route, whose file lives under the content
-    // root. An absolute path never reaches here: it only arrives unwrapped.
-    if (normalized.startsWith("/")) seeds.push(`content/${bare}`);
+    if (isAbsoluteTarget(normalized)) {
+      // A leading slash is either a site route whose file lives under the
+      // content root or a filesystem path the author wrote in full; both are
+      // worth asking about, in that order, because only one of them can exist.
+      if (normalized.startsWith("/")) seeds.push(`content/${bare}`);
+      seeds.push(normalized);
+    }
   }
 
   const chain: string[] = [];
@@ -401,8 +484,14 @@ export interface ReferenceLinkHost {
   resolve(target: string): Promise<ResolvedReference | null>;
   /** Open a file in the workbench panel. The path is workspace-relative or absolute. */
   openFile(path: string, options: { readonly absolute: boolean }): void;
-  /** Select a directory in the tree without opening a panel. */
-  revealDirectory(path: string, options: { readonly absolute: boolean }): void;
+  /**
+   * Enter a directory in the workbench: select it in the tree, and let the view
+   * open its front page when it has one.
+   *
+   * A directory has no panel of its own, so this is the only useful destination
+   * for prose that names one.
+   */
+  enterDirectory(path: string): void;
   /** Whether the workbench view is registered right now. */
   fsViewPresent(): boolean;
 }
@@ -424,7 +513,10 @@ function candidateOf(event: Event): Element | undefined {
   if (Element === undefined || !(target instanceof Element)) return undefined;
   if (target.closest("[data-streaming]") !== null) return undefined;
   if (target.closest("pre") !== null) return undefined;
-  return target.closest("a, code, p, li, td, span") ?? undefined;
+  // The host's local markdown link is a button rather than an anchor: it has no
+  // navigation of its own and its path lives in `title`, so it is recognised
+  // here and its probe decides whether it is a reference at all.
+  return target.closest("a, code, p, li, td, span, button") ?? undefined;
 }
 
 /**
@@ -448,6 +540,14 @@ function probeOf(element: Element): ReferenceProbe | undefined {
   if (tag === "A") {
     const href = element.getAttribute("href") ?? undefined;
     return { tag, text: element.textContent ?? "", ...(href === undefined ? {} : { href }), insidePre, streaming };
+  }
+  if (tag === "BUTTON") {
+    const title = element.getAttribute("title");
+    if (title === null || title.trim() === "") return undefined;
+    // The host's reference chips mark themselves; a markdown link does not and
+    // carries a plain destination instead of the mention the composer wrote.
+    const mention = element.getAttribute("data-ref-chip") === "file";
+    return { tag, text: element.textContent ?? "", title, mention, insidePre, streaming };
   }
   if (tag === "CODE") {
     return { tag, text: element.textContent ?? "", insidePre, streaming };
@@ -505,6 +605,10 @@ export function installReferenceLinks(doc: Document, host: ReferenceLinkHost): (
       resolved => {
         if (mine !== ticket || resolved === null) return;
         if ((element.textContent ?? "") !== text) return;
+        // A host file link keeps its own click behaviour for files: the right
+        // Sidebar previews them in place. Only a directory is promoted, because
+        // that preview cannot show one and the workbench can.
+        if (element.tagName === "BUTTON" && resolved.kind !== "directory") return;
         element.setAttribute(REF_LINK_ATTR, markOf(resolved.kind));
       },
       // A transport failure is silence: the row simply stays plain, and the
@@ -524,13 +628,18 @@ export function installReferenceLinks(doc: Document, host: ReferenceLinkHost): (
     if (match === undefined) return;
     if (host.sessionId() === null) return;
     event.preventDefault();
+    // A host file link carries its own click handler, which would open the
+    // right Sidebar. The capture listener claims the gesture before it runs;
+    // every other shape has no handler to protect the decision from.
+    const button = element.tagName === "BUTTON";
+    if (button) event.stopPropagation();
     void host.resolve(match.target).then(
       resolved => {
         // The mark says what the row was when it was dotted; the resolver says
         // what it is now. A path deleted in between opens nothing, silently.
         if (resolved === null) return;
-        const absolute = resolved.path.startsWith("/");
-        if (resolved.kind === "directory") host.revealDirectory(resolved.path, { absolute });
+        const absolute = isAbsoluteTarget(resolved.path);
+        if (resolved.kind === "directory") host.enterDirectory(resolved.path);
         else host.openFile(resolved.path, { absolute });
       },
       () => undefined,

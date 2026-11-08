@@ -279,6 +279,16 @@ export interface ViewRequestSink {
    * @param path - normalized workspace-relative path.
    */
   reveal?(path: string): void;
+  /**
+   * Enter one requested directory: select it and open its front page.
+   *
+   * The path is absolute when the prose wrote it in full, because resolving it
+   * against the workspace is the view's job; a sink that cannot do that leaves
+   * the request unconsumed.
+   * @param path - workspace-relative or absolute directory path.
+   * @param absolute - whether the path is a filesystem path rather than a workspace one.
+   */
+  enter?(path: string, absolute: boolean): void;
 }
 
 /** One stack per conversation, owned by the view factory that mounts them. */
@@ -315,10 +325,11 @@ export function createPanelStackRegistry(): PanelStackRegistry {
  *
  * Callers hand over `path:<workspace path>:<line>` (the Git changes pane, the
  * command palette), `abs:<filesystem path>:<line>` (the address bridge),
- * `git:<hash>:<line>:<path>` (commit details) or `reveal:<workspace path>` (the
- * side bars, which want the row selected and no panel opened); anything else is
- * left alone. The caller owns `completeViewRequest()` because only the host
- * knows when the request has been painted.
+ * `git:<hash>:<line>:<path>` (commit details), `reveal:<workspace path>` (the
+ * side bars, which want the row selected and no panel opened) or
+ * `enter:<path>` (the chat prose, which wants a directory entered); anything
+ * else is left alone. The caller owns `completeViewRequest()` because only the
+ * host knows when the request has been painted.
  * @param focus - the request payload, or undefined when the tab was opened directly.
  * @param sink - opens the parsed path at the parsed line, or selects it.
  * @returns whether the focus was a path request.
@@ -329,6 +340,11 @@ export function consumeViewRequest(focus: string | undefined, sink: ViewRequestS
   if (target.reveal === true) {
     if (sink.reveal === undefined) return false;
     sink.reveal(target.path);
+    return true;
+  }
+  if (target.enter === true) {
+    if (sink.enter === undefined) return false;
+    sink.enter(target.path, target.absolute);
     return true;
   }
   sink.open(target.path, target.line, target.absolute, target.revision);

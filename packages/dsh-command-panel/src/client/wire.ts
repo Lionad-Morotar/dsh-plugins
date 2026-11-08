@@ -160,14 +160,34 @@ export function createSessionOpenFace(rpc: GatewayRpc): SessionOpenFace {
  * so it is reached through the gateway rather than declared in `inject`: a
  * profile without the file workbench then answers "no such path" instead of
  * keeping the whole plugin waiting for a service that will never arrive.
+ *
+ * The argument envelope is the part that moves between host versions. The
+ * session-scoped methods take their scope parameter by wire name
+ * (`workspaceFileScopeId`) on hosts that validate against the method
+ * descriptor, while every method this package publishes for itself takes one
+ * `request` object. The newer spelling is tried first and the older envelope is
+ * only used when the gateway itself refuses the shape, which is the one answer
+ * that says "this host speaks the other dialect" rather than "no such path".
  */
 export function createWorkspaceFilesFace(rpc: GatewayRpc): WorkspaceFilesFace {
+  const call = async (
+    method: "stat" | "list",
+    request: { readonly sessionId: string; readonly path: string },
+    signal?: AbortSignal,
+  ): Promise<RemoteResult<unknown>> => {
+    const scoped = await invoke(
+      rpc,
+      "workspaceFiles",
+      method,
+      { workspaceFileScopeId: request.sessionId, path: request.path },
+      signal,
+    );
+    if (scoped.ok || scoped.error.code !== "gateway/arguments-invalid") return scoped;
+    return invoke(rpc, "workspaceFiles", method, { request }, signal);
+  };
   return {
     stat: (request, signal) =>
-      invoke(rpc, "workspaceFiles", "stat", { request }, signal) as Promise<
-        RemoteResult<{ readonly absolutePath: string }>
-      >,
-    list: (request, signal) =>
-      invoke(rpc, "workspaceFiles", "list", { request }, signal) as Promise<RemoteResult<{ readonly path: string }>>,
+      call("stat", request, signal) as Promise<RemoteResult<{ readonly absolutePath: string }>>,
+    list: (request, signal) => call("list", request, signal) as Promise<RemoteResult<{ readonly path: string }>>,
   };
 }

@@ -8,6 +8,7 @@ import {
   buildTree,
   computeTreeWindow,
   describeListing,
+  findFrontPage,
   flattenTree,
   formatSize,
   iconFor,
@@ -448,6 +449,36 @@ describe("paths, focus and size", () => {
     expect(parseFocus("abs:/a/b.ts:x")).toEqual({ path: "/a/b.ts:x", line: 1, absolute: true });
   });
 
+  it("parses a directory entry, keeping an absolute path as written", () => {
+    expect(parseFocus("enter:content/6.maps/analysis")).toEqual({
+      path: "content/6.maps/analysis",
+      line: 1,
+      absolute: false,
+      enter: true,
+    });
+    // A directory written with its trailing slash is the same directory.
+    expect(parseFocus("enter:content/6.maps/analysis/")).toEqual({
+      path: "content/6.maps/analysis",
+      line: 1,
+      absolute: false,
+      enter: true,
+    });
+    expect(parseFocus("enter:/Users/x/project/agents/")).toEqual({
+      path: "/Users/x/project/agents",
+      line: 1,
+      absolute: true,
+      enter: true,
+    });
+    expect(parseFocus("  enter:./content\\a  ")).toEqual({
+      path: "content/a",
+      line: 1,
+      absolute: false,
+      enter: true,
+    });
+    expect(parseFocus("enter:")).toBeUndefined();
+    expect(parseFocus("enter:/")).toBeUndefined();
+  });
+
   it("parses a git focus with revision, line and the rest as the path", () => {
     expect(parseFocus("git:17b6a55:12:src/client/view.tsx")).toEqual({
       path: "src/client/view.tsx",
@@ -488,6 +519,33 @@ describe("paths, focus and size", () => {
     expect(formatSize(1024)).toBe("1.0 KB");
     expect(formatSize(1536)).toBe("1.5 KB");
     expect(formatSize(10 * 1024 * 1024)).toBe("10 MB");
+  });
+});
+
+describe("findFrontPage", () => {
+  const nodes = (...names: string[]) => names.map(name => ({ name, kind: "file" as const }));
+
+  it("prefers a README over an index, in the order the set declares", () => {
+    expect(findFrontPage([...nodes("index.md", "readme.markdown", "readme.md")], "docs")).toBe("docs/readme.md");
+    expect(findFrontPage([...nodes("index.md")], "docs")).toBe("docs/index.md");
+    expect(findFrontPage([...nodes("readme.txt")], "docs")).toBe("docs/readme.txt");
+  });
+
+  it("matches the host's case and keeps the directory's own spelling", () => {
+    expect(findFrontPage([...nodes("README.MD")], "packages/x")).toBe("packages/x/README.MD");
+  });
+
+  it("refuses a directory with no front page, and a folder named like one", () => {
+    expect(findFrontPage([...nodes("notes.md", "src")], "docs")).toBeUndefined();
+    expect(
+      findFrontPage(
+        [
+          { name: "readme.md", kind: "directory" },
+          { name: "index.md", kind: "directory" },
+        ],
+        "docs",
+      ),
+    ).toBeUndefined();
   });
 });
 

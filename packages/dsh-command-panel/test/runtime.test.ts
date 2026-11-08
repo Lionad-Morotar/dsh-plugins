@@ -1302,24 +1302,48 @@ describe("switch-mode status freshness", () => {
 });
 
 /**
+ * Read the request out of either workspace-files envelope.
+ *
+ * A host that validates against the method descriptor names the session scope
+ * on the wire; a host that publishes one request object per method nests it.
+ * The fake answers whichever spelling arrived, so a test that only cares about
+ * the answer does not have to choose a host version.
+ */
+function workspaceArgs(payload: unknown): { readonly sessionId?: string; readonly path?: string } {
+  const args = (payload as { readonly args?: Record<string, unknown> }).args ?? {};
+  const request = args.request as { readonly sessionId?: string; readonly path?: string } | undefined;
+  if (request !== undefined) return request;
+  return {
+    sessionId: typeof args.workspaceFileScopeId === "string" ? args.workspaceFileScopeId : undefined,
+    path: typeof args.path === "string" ? args.path : undefined,
+  };
+}
+
+/**
  * A gateway caller that answers `workspaceFiles` and nothing else.
  *
  * The reference layer asks `stat` first and falls back to `list`, so the fake
  * has to be able to say "not a file" without failing the call: a business
- * `ok: false` is exactly what the host returns for a directory.
+ * `ok: false` is exactly what the host returns for a directory. `legacy` makes
+ * the fake behave like a host that only understands the nested `request`
+ * envelope, which is what the fallback path exists for.
  */
 function workspaceRpc(answers: {
   readonly files?: readonly string[];
   readonly directories?: readonly string[];
   readonly broken?: boolean;
+  readonly legacy?: boolean;
 }): { readonly call: ReturnType<typeof vi.fn> } {
   const files = new Set(answers.files ?? []);
   const directories = new Set(answers.directories ?? []);
   return {
     call: vi.fn(async (_scope: string, endpoint: string, payload: unknown) => {
       if (answers.broken === true) throw new Error("the gateway is gone");
-      const request = (payload as { readonly args?: { readonly request?: { readonly path?: string } } }).args?.request;
-      const path = request?.path ?? "";
+      const args = (payload as { readonly args?: Record<string, unknown> }).args ?? {};
+      if (answers.legacy === true && args.request === undefined) {
+        return { ok: false, error: { code: "gateway/arguments-invalid", message: "unexpected workspaceFileScopeId" } };
+      }
+      const path = workspaceArgs(payload).path ?? "";
       if (endpoint === "workspaceFiles/stat") {
         return files.has(path)
           ? { ok: true, value: { absolutePath: `/work/${path}`, version: "v1" } }
@@ -1359,7 +1383,42 @@ describe("prose reference links", () => {
     h.runtime.dispose();
   });
 
-  it("dots a directory apart and hands it the reveal spelling", async () => {
+  it("names the session scope on the wire, in the envelope this host validates", async () => {
+    const rpc = workspaceRpc({ files: ["content/a.md"] });
+    const h = harness({ rpc, viewIds: ["fs-explorer"] });
+    const code = proseCode("content/a.md");
+
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(code.getAttribute("data-dcp-ref")).toBe("file"));
+
+    const call = rpc.call.mock.calls.find(([, endpoint]) => endpoint === "workspaceFiles/stat");
+    expect((call?.[2] as { readonly args?: unknown }).args).toEqual({
+      workspaceFileScopeId: SESSION_A.id,
+      path: "content/a.md",
+    });
+    h.runtime.dispose();
+  });
+
+  it("falls back to the nested request envelope on a host that speaks the older dialect", async () => {
+    const rpc = workspaceRpc({ files: ["content/a.md"], legacy: true });
+    const h = harness({ rpc, viewIds: ["fs-explorer"] });
+    const code = proseCode("content/a.md");
+
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(code.getAttribute("data-dcp-ref")).toBe("file"));
+
+    const calls = rpc.call.mock.calls.filter(([, endpoint]) => endpoint === "workspaceFiles/stat");
+    const envelopes = calls.map(call => (call[2] as { readonly args?: Record<string, unknown> }).args ?? {});
+    // The scoped envelope is refused by the gateway, then the same request is
+    // repeated in the shape that host understands.
+    expect(envelopes.some(args => "workspaceFileScopeId" in args)).toBe(true);
+    expect(envelopes.some(args => (args.request as { readonly path?: string } | undefined)?.path === "content/a.md")).toBe(
+      true,
+    );
+    h.runtime.dispose();
+  });
+
+  it("dots a directory apart and hands it the enter spelling", async () => {
     const rpc = workspaceRpc({ directories: ["content/6.maps"] });
     const h = harness({ rpc, viewIds: ["fs-explorer"] });
     const code = proseCode("content/6.maps");
@@ -1369,9 +1428,53 @@ describe("prose reference links", () => {
 
     code.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
     await vi.waitFor(() =>
-      expect(h.workbench.viewFocus.request).toHaveBeenCalledWith("fs-explorer", "reveal:content/6.maps"),
+      expect(h.workbench.viewFocus.request).toHaveBeenCalledWith("fs-explorer", "enter:content/6.maps"),
     );
     h.runtime.dispose();
+  });
+
+  it("resolves an absolute directory as written and enters it with the same spelling", async () => {
+    const target = "/Users/x/project/agents";
+    const rpc = workspaceRpc({ directories: [target] });
+    const h = harness({ rpc, viewIds: ["fs-explorer"] });
+    const code = proseCode(target);
+
+    code.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(code.getAttribute("data-dcp-ref")).toBe("dir"));
+
+    code.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() =>
+      expect(h.workbench.viewFocus.request).toHaveBeenCalledWith("fs-explorer", `enter:${target}`),
+    );
+    h.runtime.dispose();
+  });
+
+  it("takes a host file link that names a directory over from the right Sidebar", async () => {
+    const rpc = workspaceRpc({ directories: ["content/6.maps"] });
+    const h = harness({ rpc, viewIds: ["fs-explorer"] });
+    const button = document.createElement("button");
+    button.setAttribute("type", "button");
+    button.setAttribute("title", "content/6.maps/");
+    button.textContent = "the maps directory";
+    document.body.append(button);
+    // The host's React root listener sits below the capture listener; a document
+    // bubble listener stands in for it in jsdom.
+    const hostClick = vi.fn();
+    document.addEventListener("click", hostClick);
+
+    button.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    await vi.waitFor(() => expect(button.getAttribute("data-dcp-ref")).toBe("dir"));
+
+    const event = new dom.window.MouseEvent("click", { bubbles: true, cancelable: true });
+    button.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    await vi.waitFor(() =>
+      expect(h.workbench.viewFocus.request).toHaveBeenCalledWith("fs-explorer", "enter:content/6.maps"),
+    );
+    expect(hostClick).not.toHaveBeenCalled();
+    h.runtime.dispose();
+    document.removeEventListener("click", hostClick);
+    button.remove();
   });
 
   it("leaves a path the host cannot place undotted", async () => {
@@ -1435,10 +1538,9 @@ function perSessionRpc(bySession: Readonly<Record<string, readonly string[]>>): 
 } {
   return {
     call: vi.fn(async (_scope: string, endpoint: string, payload: unknown) => {
-      const request = (payload as { readonly args?: { readonly request?: { readonly sessionId?: string; readonly path?: string } } })
-        .args?.request;
-      const known = new Set(bySession[request?.sessionId ?? ""] ?? []);
-      const path = request?.path ?? "";
+      const request = workspaceArgs(payload);
+      const known = new Set(bySession[request.sessionId ?? ""] ?? []);
+      const path = request.path ?? "";
       if (endpoint === "workspaceFiles/stat") {
         return known.has(path)
           ? { ok: true, value: { absolutePath: `/work/${path}`, version: "v1" } }
@@ -1453,8 +1555,8 @@ function perSessionRpc(bySession: Readonly<Record<string, readonly string[]>>): 
 /** How many times one endpoint was asked for one path. */
 function callsFor(rpc: { readonly call: ReturnType<typeof vi.fn> }, endpoint: string, path: string): number {
   return rpc.call.mock.calls.filter(call => {
-    const [scope, name, payload] = call as [string, string, { readonly args?: { readonly request?: { readonly path?: string } } }];
-    return scope === "/api" && name === endpoint && payload.args?.request?.path === path;
+    const [scope, name, payload] = call as [string, string, unknown];
+    return scope === "/api" && name === endpoint && workspaceArgs(payload).path === path;
   }).length;
 }
 

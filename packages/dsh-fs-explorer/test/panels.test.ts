@@ -227,6 +227,30 @@ describe("view requests", () => {
     expect(opened).toEqual([["src/a b.ts", 12, false, "17b6a55"]]);
   });
 
+  it("hands a directory entry to the enter sink instead of opening a panel", () => {
+    const opened = vi.fn();
+    const entered: Array<[string, boolean]> = [];
+    const result = consumeViewRequest("enter:content/6.maps/analysis", {
+      open: opened,
+      enter: (path, absolute) => entered.push([path, absolute]),
+    });
+    expect(result).toBe(true);
+    expect(entered).toEqual([["content/6.maps/analysis", false]]);
+    expect(opened).not.toHaveBeenCalled();
+
+    consumeViewRequest("enter:/Users/x/project/agents", {
+      open: opened,
+      enter: (path, absolute) => entered.push([path, absolute]),
+    });
+    expect(entered.at(-1)).toEqual(["/Users/x/project/agents", true]);
+  });
+
+  it("leaves a directory entry unconsumed without an enter sink", () => {
+    const opened = vi.fn();
+    expect(consumeViewRequest("enter:content/a", { open: opened })).toBe(false);
+    expect(opened).not.toHaveBeenCalled();
+  });
+
   it("leaves other focus payloads alone", () => {
     const open = vi.fn();
     expect(consumeViewRequest("", { open })).toBe(false);

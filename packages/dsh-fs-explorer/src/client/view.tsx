@@ -63,6 +63,7 @@ import {
   buildTree,
   describeListing,
   entryIntent,
+  findFrontPage,
   flattenTree,
   isAbsolutePath,
   listingPath,
@@ -927,6 +928,11 @@ export function createFsExplorerView({
     // Set once a reveal is the reason this view is on screen, so the arrival
     // gesture does not answer it by opening the workspace front page.
     const revealOnly = useRef(false);
+    // The directory an `enter:` request named, once its row exists but before
+    // its listing has decided whether there is a front page to open. State
+    // rather than a ref because the listing arrives as state and the decision
+    // has to run again then.
+    const [enterPending, setEnterPending] = useState<{ readonly path: string } | undefined>(undefined);
 
     // One gesture, one nonce: the tree serves a request once and a re-render
     // must not replay it.
@@ -996,6 +1002,61 @@ export function createFsExplorerView({
     );
 
     /**
+     * Enter one workspace directory: select it, expand it, and queue the
+     * front-page decision for when its listing is there.
+     *
+     * A reveal is what the tree needs; entering adds the question a directory
+     * in the prose really asks ("what is in here?"), which the front page
+     * answers without a second click.
+     * @param path - a workspace-relative directory path.
+     */
+    const beginEnter = useCallback(
+      (path: string): void => {
+        if (path === "") return;
+        setEnterPending({ path });
+        revealRequest(path);
+      },
+      [revealRequest],
+    );
+
+    /**
+     * Route one `enter:` request to the tree.
+     *
+     * The prose writes a path the way the reader saw it, which may be absolute;
+     * the tree only speaks workspace paths. An absolute target is listed once
+     * through the endpoint that would fill its row anyway, and the relative
+     * path in the answer is what gets entered. A host that cannot place it
+     * leaves the view where it was rather than opening an empty tab.
+     * @param path - the path as the caller wrote it.
+     * @param absolute - whether that path is a filesystem path rather than a workspace one.
+     */
+    const enterRequest = useCallback(
+      (path: string, absolute: boolean): void => {
+        if (!absolute) {
+          beginEnter(path);
+          return;
+        }
+        if (sessionId === undefined || files === undefined) return;
+        // The listing that turns this path into a row is async, and the arrival
+        // gesture would otherwise open the workspace front page in the gap.
+        // The request is the whole gesture, so it keeps the arrival claim.
+        revealOnly.current = true;
+        const sid = sessionId;
+        void Promise.resolve(files.list(sid, path)).then(
+          response => {
+            if (sessionRef.current !== sid) return;
+            const normalized = normalizeListing(response);
+            const relative = normalized.ok ? normalized.listing.path : undefined;
+            if (relative === undefined || relative === "") return;
+            beginEnter(relative);
+          },
+          () => undefined,
+        );
+      },
+      [beginEnter, files, sessionId],
+    );
+
+    /**
      * Route one focus request to the panel stack or to the tree cursor.
      *
      * Every entry point (the host's view request, the core's focus queue) hands
@@ -1007,9 +1068,10 @@ export function createFsExplorerView({
         consumeViewRequest(focus, {
           open: openRequest,
           reveal: revealRequest,
+          enter: enterRequest,
         });
       },
-      [openRequest, revealRequest],
+      [openRequest, revealRequest, enterRequest],
     );
 
     // The Git panel jumps with `path:<workspace path>:<line>` and the address
@@ -1340,6 +1402,21 @@ export function createFsExplorerView({
       }
       askCursor(path, undefined, true);
     }, [rows, askCursor, revealAncestors]);
+
+    // Open the entered directory's front page as soon as its listing decides
+    // one. The listing is the same one the tree is about to show, so answering
+    // "what is in here" costs no extra read; a directory with neither a README
+    // nor an index keeps the plain reveal, because the selected row is all it
+    // has to offer.
+    useEffect(() => {
+      if (enterPending === undefined) return;
+      const level = levels.get(enterPending.path);
+      if (level === undefined || level.status === "loading") return;
+      setEnterPending(undefined);
+      if (level.status !== "ready") return;
+      const front = findFrontPage(level.nodes, enterPending.path);
+      if (front !== undefined) stack.open(front, 1, false);
+    }, [enterPending, levels, stack]);
 
     // The arrival gesture. The stack outlives the mount, so a first arrival
     // with nothing open opens the workspace front page and hands the keyboard
