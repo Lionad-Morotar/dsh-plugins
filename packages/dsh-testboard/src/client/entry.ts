@@ -56,11 +56,11 @@ let registeredDictionaries: (() => void) | undefined;
 /**
  * Disposer of the tab currently on the slot.
  *
- * Module scope for the same reason as the dictionary: the double apply builds
- * two closures, and a per-call local would leave the first registration live
- * beside the second. It is dropped inside the inject factory rather than before
- * it, because the factory is deferred and may run after the second `apply`
- * returned; whichever factory runs second is the one that clears the first.
+ * Module scope so a repeat apply can drop the registration it is replacing; a
+ * per-call local would leave the first tab live beside the second. It is cleared
+ * inside the inject factory rather than before it, because the factory is
+ * deferred and may run after the second `apply` returned: whichever factory runs
+ * second is the one that clears the first.
  */
 let registeredSlot: (() => void) | undefined;
 
@@ -113,7 +113,10 @@ export function apply(ctx: TestboardClientContext): () => void {
 
   // `inject` is a deferred registration: the factory runs when the slot itself
   // appears, which can be after `apply` returned, so the disposer it hands back
-  // is the only handle on the registration.
+  // is the only handle on the registration. `ownSlot` is this application's
+  // handle on it, captured per call: the module-level `registeredSlot` moves on
+  // to the next application, and this one must not follow it there.
+  let ownSlot: (() => void) | undefined;
   ctx.slots.inject(VIEW_SLOT, () => {
     registeredSlot?.();
     const offSlot = ctx.slots.register(
@@ -127,17 +130,29 @@ export function apply(ctx: TestboardClientContext): () => void {
       View,
     );
     registeredSlot = offSlot;
+    ownSlot = offSlot;
     return () => {
       offSlot();
       if (registeredSlot === offSlot) registeredSlot = undefined;
     };
   });
 
+  // Only tear down what this application still owns. The desktop applies the
+  // plugin twice and may dispose the first application afterwards; by then the
+  // module-level handles point at the second application's registrations, and
+  // unregistering those would take down a tab that is still on screen. A
+  // superseded disposer therefore does nothing, which is what makes it safe to
+  // call in any order.
   return () => {
-    registeredSlot?.();
-    registeredSlot = undefined;
-    offLocale();
-    if (registeredDictionaries === offLocale) registeredDictionaries = undefined;
+    if (ownSlot !== undefined && registeredSlot === ownSlot) {
+      registeredSlot();
+      registeredSlot = undefined;
+    }
+    ownSlot = undefined;
+    if (registeredDictionaries === offLocale) {
+      offLocale();
+      registeredDictionaries = undefined;
+    }
   };
 }
 

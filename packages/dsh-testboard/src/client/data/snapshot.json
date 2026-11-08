@@ -5332,7 +5332,8 @@
             {"name":"registers the conversation view tab beside files and git","status":"passed","durationMs":971},
             {"name":"resolves the tab label per active locale at call time","status":"passed","durationMs":25},
             {"name":"survives the desktop double apply by replacing its own registration","status":"passed","durationMs":611},
-            {"name":"drops both the dictionary and the tab on dispose","status":"passed","durationMs":508}
+            {"name":"drops both the dictionary and the tab on dispose","status":"passed","durationMs":508},
+            {"name":"leaves the replacement alone when the superseded disposer runs","status":"passed","durationMs":657}
           ]
         },
         {

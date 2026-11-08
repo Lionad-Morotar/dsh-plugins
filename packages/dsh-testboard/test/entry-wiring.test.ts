@@ -112,4 +112,25 @@ describe("testboard client entry", () => {
     expect(slots[0]?.disposed).toBe(true);
     expect(dictionaries.get("testboard")?.size ?? 0).toBe(0);
   });
+
+  it("leaves the replacement alone when the superseded disposer runs", () => {
+    // The desktop applies the plugin twice on one process and may tear down the
+    // first application afterwards. That teardown must not reach the tab the
+    // second application registered: the first one no longer owns it.
+    const { ctx, slots, dictionaries } = createContext();
+
+    const disposeFirst = apply(ctx);
+    const disposeSecond = apply(ctx);
+
+    disposeFirst();
+
+    expect(slots[0]?.disposed).toBe(true);
+    expect(slots[1]?.disposed).toBe(false);
+    expect(dictionaries.get("testboard")?.size).toBe(2);
+
+    disposeSecond();
+
+    expect(slots[1]?.disposed).toBe(true);
+    expect(dictionaries.get("testboard")?.size ?? 0).toBe(0);
+  });
 });
