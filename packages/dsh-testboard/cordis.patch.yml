@@ -1,0 +1,6 @@
+# Test board Loader row. The host half is empty on purpose: the tab lives
+# entirely in the client bundle, but the Loader mounts both halves by package
+# name, so this row keeps the pair resolvable.
+- insert:
+    - id: testboard
+      name: 'dsh-testboard'
