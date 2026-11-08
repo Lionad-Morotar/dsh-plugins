@@ -679,6 +679,28 @@ describe("pointer paging", () => {
     doc.removeEventListener("keydown", reached);
   });
 
+  it("a page stroke aimed at another panel never reaches the editor's keymap either", () => {
+    // The pointer decides where the page goes; the editor holding focus must
+    // not also move its caret, or one stroke produces two movements.
+    const panel = scrollArea(1000);
+    const hit = doc.createElement("p");
+    panel.append(hit);
+    const editor = editable();
+    mount({ pointerElementAt: () => hit });
+    win.dispatchEvent(mousemoveAt(20, 40));
+    editor.el.focus();
+    const reached = vi.fn();
+    doc.addEventListener("keydown", reached);
+
+    const e = keydown({ key: "PageDown" });
+    editor.el.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(panel.scrollTop).toBe(1380);
+    expect(reached).not.toHaveBeenCalled();
+    doc.removeEventListener("keydown", reached);
+  });
+
   it("an editor with no scrollable container still keeps the stroke away from a full native page", () => {
     const { el } = editable();
     el.setAttribute("contenteditable", "true");

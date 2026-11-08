@@ -365,6 +365,14 @@ export function createApp(deps: AppDeps = {}): KeysApp {
         // would pay an elementFromPoint plus a layout read for keys this
         // plugin never claims.
         const scroll = matchScrollKey(like, true);
+        // Every stroke this plugin claims is kept away from the focused
+        // editable surface's own keymap. Lexical (the composer) and CodeMirror
+        // both bind PageUp/PageDown: they would move the caret, or page a
+        // whole viewport and drag the caret with it, behind the half-page
+        // write. Stopping at the window's capture phase means no keymap
+        // downstream — the editor's, or any host handler — sees the stroke.
+        const focusTarget = classifyTarget(event.target);
+        if (scroll !== null && focusTarget !== "none") event.stopPropagation();
         if (scroll !== null && scroll.target === "sidebar") {
           // Shift names the session list outright, so none of the three
           // levels below run: a focused composer, the pointer and the
@@ -387,7 +395,6 @@ export function createApp(deps: AppDeps = {}): KeysApp {
           // target first is what left the file workbench's preview dead,
           // because the stroke was spent on a transcript that was not even
           // on screen.
-          const focusTarget = classifyTarget(event.target);
           const editableFocused = focusTarget !== "none";
           const focusElement = editableFocused ? (event.target as Element) : null;
           const pointerBox = scrollableUnderPointer();
@@ -417,11 +424,6 @@ export function createApp(deps: AppDeps = {}): KeysApp {
             // when no container answers, because a dead key beats a full
             // native page of some ancestor.
             event.preventDefault();
-            // A rich text editor binds PageUp/PageDown itself and would page
-            // a whole viewport behind ours. Stopping the capture-phase event
-            // keeps it from reaching that keymap, so the editor scrolls the
-            // half page too and its caret stays put.
-            if (focusTarget === "contenteditable") event.stopPropagation();
             const box = nearestScrollable(focusElement);
             if (box !== null) pageContainer(box, scroll.direction, scroll.fraction);
             return;
