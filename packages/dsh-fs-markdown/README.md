@@ -25,6 +25,13 @@
 
 两种模式共享滚动位置、选区和撤销历史：切换不是重建编辑器。装饰规划由纯函数 `planDecorations(text, selection)` 产出，规则覆盖标题、加粗、斜体、行内代码、链接、引用、列表标记、围栏代码块与表格源码。
 
+## 预览查找
+
+预览工具栏的「查找」在编辑器面上由本包提供搜索源：`EditorBody` 通过正文 props 的 `find` 通道发布 `{ text, select, clear }`——`text` 每次调用都从 `EditorView.state` 取整份文档（`doc.toString()`，未保存草稿也在内；偏移用编辑器位置坐标系，CRLF 文件也不会错位），`select(from, to)` dispatch 一个选区并 `scrollIntoView`，`clear()` 在大致当前位置折叠回去。
+
+- 查找覆盖整份文档，不受翻页器那一页（`PREVIEW_MAX_LINES = 200`）的约束：编辑器从来读整份文件。这对长文档是必须的，CodeMirror 只把视口附近的行放进 DOM，读 DOM 的查找在靠后的内容上永远「无匹配」。
+- 定位不夺焦。在失焦的 CodeMirror 上 dispatch 选区不会把选区写进 contenteditable，键盘留在查找输入框里；命中高亮由 `drawSelection` 的选区层绘制，`styles.ts` 对 `.cm-selectionBackground` 的规则在失焦时同样生效。
+
 ## 表格
 
 阅读态里，不活动的 GFM 表格由 `planTables(text)` 扫出来后整块换成 `<table>` 块 widget，而不是等宽源码：
