@@ -53,6 +53,8 @@ import {
   saveDetailHeight,
 } from "./detail-height.ts";
 import { describeFailure, unwrapTransport, type GitRemoteFace, type RemoteResolver } from "./wire.ts";
+import { createWorkspaceMenu } from "./workspace-menu.tsx";
+import { repoLabel, type WorkspaceSwitchWiring } from "./workspace-switch.ts";
 import type { GitCommitNode, GitQueryResult, GitSnapshot, GitSnapshotResult } from "../host/types.ts";
 import { VIEW_ID } from "../shared.ts";
 
@@ -143,6 +145,13 @@ export interface ViewWiring {
    * finished wiring the source a moment later.
    */
   readonly referenceSourceAvailable?: () => boolean;
+  /**
+   * The registered Workspaces the header can switch to.
+   *
+   * Absent on a host without the Workspace services, and the repository name
+   * then stays a plain label rather than a button that cannot do anything.
+   */
+  readonly workspaces?: WorkspaceSwitchWiring;
 }
 
 /** The state a fresh mount paints before the snapshot request settles. */
@@ -268,11 +277,6 @@ function StateBlock({
   );
 }
 
-function repoName(root: string): string {
-  const parts = root.split(/[\\/]/u).filter(Boolean);
-  return parts.at(-1) ?? root;
-}
-
 /**
  * Build the view component for one mount.
  * @param wiring - the core service, contract version, copy and Remote resolver.
@@ -286,7 +290,12 @@ export function createGitExplorerView(wiring: ViewWiring) {
     remote: resolveRemote,
     reference: resolveReference,
     referenceSourceAvailable,
+    workspaces,
   } = wiring;
+
+  // Built once per mount, not per render: the component owns its own open state
+  // and rebuilding it would remount the popover on every snapshot refresh.
+  const WorkspaceMenu = workspaces === undefined ? undefined : createWorkspaceMenu({ t, ...workspaces });
 
   function GitExplorerView(props: ConversationViewProps) {
     const sessionId = props.sessionId ?? workbench.currentSessionId();
@@ -945,9 +954,17 @@ export function createGitExplorerView(wiring: ViewWiring) {
                 <path d="M4.5 5.2v5.6M6.2 3.9h2.3a3 3 0 0 1 3 3v.1" strokeLinecap="round" />
               </svg>
             </span>
-            <span className="gx-repo" title={snapshot?.root ?? t("view.title")}>
-              {snapshot === undefined ? t("view.title") : repoName(snapshot.root)}
-            </span>
+            {snapshot === undefined ? (
+              <span className="gx-repo" title={t("view.title")}>
+                {t("view.title")}
+              </span>
+            ) : WorkspaceMenu === undefined ? (
+              <span className="gx-repo" title={snapshot.root}>
+                {repoLabel(snapshot.root)}
+              </span>
+            ) : (
+              <WorkspaceMenu root={snapshot.root} />
+            )}
             {head?.branch === null || head?.branch === undefined ? null : <span className="gx-branch">{head.branch}</span>}
             {head?.detached === true ? <span className="gx-chip">{t("head.detached")}</span> : null}
             {head?.ahead !== undefined && head.ahead > 0 ? <span className="gx-chip">{`${t("head.ahead")} ${String(head.ahead)}`}</span> : null}

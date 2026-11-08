@@ -30,6 +30,7 @@ import {
   type ReferenceSpan,
 } from "./reference.ts";
 import { createGitExplorerView, type ReferenceWiring, type ReferenceWiringResolver, type WorkbenchFace } from "./view.tsx";
+import type { WorkspaceChoice, WorkspaceSwitchWiring } from "./workspace-switch.ts";
 import { createRpcRemoteFace, type GitRemoteFace, type RemoteResolver, type RpcCall } from "./wire.ts";
 
 export { boot } from "./platform.ts";
@@ -179,6 +180,59 @@ interface SessionInputFace {
   notify?(level: "info" | "error", text: string): void;
 }
 
+/** The slice of the Workspace list service the header reads. */
+interface WorkspaceListFace {
+  getSnapshot(): { readonly items: readonly { readonly workspaceId: string; readonly title: string; readonly path: string }[] };
+}
+
+/** The slice of the Workspace navigation service the header switches through. */
+interface UiWorkspaceFace {
+  startSession(workspaceId?: string): void;
+}
+
+/**
+ * Probe the two Workspace services the header needs.
+ *
+ * Everything here is a getter, never a captured value: the Workspace plugin may
+ * mount after this one, and a snapshot taken at apply time would leave the
+ * repository name inert on exactly that host. Either service missing means no
+ * switch at all, so the header keeps its plain label instead of offering a
+ * button that cannot do anything.
+ * @param ctx - client context, read through the non-throwing resolver.
+ * @returns the wiring; its getters report an absent host every time they run.
+ */
+export function createWorkspaceSwitch(ctx: ClientContextLike): WorkspaceSwitchWiring {
+  const readList = (): readonly WorkspaceChoice[] => {
+    try {
+      const service = ctx.get?.("workspaces") as { list?: WorkspaceListFace } | undefined;
+      const items = service?.list?.getSnapshot().items;
+      return Array.isArray(items) ? items : [];
+    } catch {
+      // A service that throws while its inventory loads is an empty list, not
+      // a reason to take the header down.
+      return [];
+    }
+  };
+  const startSession = (workspaceId: string): void => {
+    const service = ctx.get?.("uiWorkspace") as UiWorkspaceFace | undefined;
+    if (typeof service?.startSession !== "function") return;
+    service.startSession(workspaceId);
+  };
+  return { available: () => probeWorkspaceServices(ctx), list: readList, startSession };
+}
+
+/** Whether both Workspace services are readable right now. */
+function probeWorkspaceServices(ctx: ClientContextLike): boolean {
+  try {
+    const list = ctx.get?.("workspaces") as { list?: WorkspaceListFace } | undefined;
+    if (typeof list?.list?.getSnapshot !== "function") return false;
+    const navigation = ctx.get?.("uiWorkspace") as UiWorkspaceFace | undefined;
+    return typeof navigation?.startSession === "function";
+  } catch {
+    return false;
+  }
+}
+
 /** Disposer of the dictionary currently sitting in the host's locale table.
 * A repeat apply on one host process (the desktop sync pass followed by the
 * mount pass) meets the same table, and the table refuses a second
@@ -232,6 +286,7 @@ export function apply(ctx: ClientContextLike): () => void {
 
   const workbench = ctx.workbench;
   if (workbench !== undefined && workbench !== null) {
+    const workspaces = createWorkspaceSwitch(ctx);
     const View = createGitExplorerView({
       workbench,
       version: workbench.version,
@@ -241,6 +296,7 @@ export function apply(ctx: ClientContextLike): () => void {
       // A getter, not a snapshot: the inject path may register the source after
       // this view is built.
       referenceSourceAvailable: () => referenceSource.available,
+      workspaces,
     });
     ctx.slots.inject(VIEW_SLOT, () =>
       ctx.slots.register(

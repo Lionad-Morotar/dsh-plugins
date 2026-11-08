@@ -14,7 +14,7 @@ const STYLE_ID = "dsh-git-explorer-styles";
 export const GIT_STYLES = `
 /* The token block is shared with the hover card because the card portals out of
    .gx-root and would otherwise lose the theme variables with it. */
-.gx-root, .gx-preview {
+.gx-root, .gx-preview, .gx-workspace-panel {
   --gx-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --gx-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   /* The host's own axes: body text for the interface, code size for monospace
@@ -87,6 +87,29 @@ export const GIT_STYLES = `
   text-overflow: ellipsis;
   max-width: 34ch;
 }
+/* The switchable name keeps the label's metrics so the header does not reflow
+   when the host gains the Workspace services; only the affordance is new. */
+.gx-repo-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  margin: -1px -5px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  font-size: calc(var(--gx-fs) * 0.9286);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 34ch;
+  cursor: pointer;
+}
+.gx-repo-switch:hover { background: var(--gx-hover); }
+.gx-repo-switch:focus-visible { outline: 2px solid var(--gx-accent); outline-offset: -2px; }
+.gx-repo-switch[aria-expanded="true"] { background: var(--gx-active); }
 .gx-branch, .gx-chip {
   display: inline-flex;
   align-items: center;
@@ -848,6 +871,113 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 .gx-branch-match { color: var(--dsw-alias-label-primary, inherit); font-weight: 500; }
+
+/* The Workspace switch reuses the branch popover's material and metrics: the
+   two sit in the same header and open the same way, so a second visual language
+   would read as a different kind of control. */
+.gx-workspace-panel {
+  position: fixed;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 320px;
+  max-width: min(420px, 100vw - 32px);
+  max-height: min(420px, calc(100vh - 24px));
+  padding: 4px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: var(--dsw-radius-lg, 10px);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--dsw-alias-label-primary, #000) 4%, transparent),
+      transparent 42%
+    ),
+    color-mix(
+      in srgb,
+      var(--dsw-specific-sidebar-fill, var(--dsw-menu-surface-fill, #f8f9fa)) 84%,
+      transparent
+    );
+  backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
+  -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
+  box-shadow:
+    var(--dsw-elevation-prominent, 0 8px 24px color-mix(in srgb, var(--dsw-alias-label-primary, currentColor) 16%, transparent)),
+    inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, #fff) 6%, transparent);
+  color: var(--dsw-alias-label-primary, inherit);
+  font-size: calc(var(--gx-fs) * 0.9286);
+  line-height: 1.45;
+}
+.gx-workspace-search {
+  flex: none;
+  width: 100%;
+  height: calc(var(--gx-fs) * 2);
+  padding: 4px 8px;
+  box-sizing: border-box;
+  border: 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 10%, transparent));
+  border-radius: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, inherit);
+  font: inherit;
+  font-size: calc(var(--gx-fs) * 0.9286);
+  outline: none;
+}
+.gx-workspace-search::placeholder { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit)); }
+.gx-workspace-search:focus-visible { border-bottom-color: var(--dsw-alias-link, var(--dsw-alias-state-business-primary, currentColor)); }
+.gx-workspace-list { display: flex; flex-direction: column; gap: 0; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.gx-workspace-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--dsw-radius-md, 8px);
+  background: transparent;
+  color: var(--dsw-alias-label-primary, inherit);
+  font: inherit;
+  font-size: calc(var(--gx-fs) * 0.9286);
+  text-align: left;
+  cursor: pointer;
+}
+.gx-workspace-row:hover { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent)); }
+/* The arrow-key cursor outlives the pointer leaving the row, so it reuses the
+   hover wash instead of inventing a second selection colour. */
+.gx-workspace-row[data-active="true"] { background: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent)); }
+.gx-workspace-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, currentColor); outline-offset: -2px; }
+.gx-workspace-row[data-current="true"] .gx-workspace-row-title { color: var(--dsw-alias-brand-primary, inherit); }
+.gx-workspace-row-title {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.gx-workspace-row-path {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit));
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: calc(var(--gx-fs-code) * 0.9091);
+}
+.gx-workspace-empty {
+  padding: 8px;
+  color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, inherit));
+  font-size: calc(var(--gx-fs) * 0.8571);
+}
+.gx-workspace-failure {
+  flex: none;
+  padding: 4px 8px;
+  color: var(--dsw-alias-state-error-primary, inherit);
+  font-size: calc(var(--gx-fs) * 0.8571);
+}
 .gx-branch-tag {
   flex: none;
   padding: 0 6px;
