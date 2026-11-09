@@ -19,6 +19,20 @@
  *   - an unrecognized label is left alone. A host that rephrases its sentence
  *     degrades to the shipped reading instead of printing something wrong.
  *
+ * The patcher is scoped to the conversation view that mounted it. One document
+ * can hold several views at once — split panes and dock tabs keep every session
+ * mounted — and each view carries its own Turn numbers and its own net table. A
+ * pass over the whole document would apply one session's table to another
+ * session's rows, and the two seats would keep overwriting each other's labels
+ * every tick. So the seat resolves its own view root first, and every pass walks
+ * only that root.
+ *
+ * Mutations are corrected in a microtask rather than on a timer: React commits
+ * the host's wall-clock sentence first and the observer callback runs at the end
+ * of that same task, before the browser paints, so the shipped figure is
+ * replaced by the working figure without ever reaching the screen. A timer here
+ * would let the wall figure paint for a few frames on every host tick.
+ *
  * The unit words are read back from the host's own rendering of the wall
  * duration, which is why this never needs a dictionary: `9 小时 30 分 35 秒`
  * tells us the host says 小时/分/秒, and `9h 30m 35s` tells us it says h/m/s.
@@ -217,24 +231,26 @@ function patchRunningRow(row: Element, millis: number): number {
 }
 
 /**
- * Apply the correction to everything currently on screen.
+ * Apply the correction to every label under one view root.
  *
- * Split from the observer so tests can drive one pass over a detached document,
- * and so the interval and the mutation callback share exactly one code path.
- * @param doc - the document holding the chat flow.
+ * Split from the observer so tests can drive one pass over a detached tree, and
+ * so the interval and the mutation callback share exactly one code path. The
+ * root is the view's own container, never the document: see the module note on
+ * scoping.
+ * @param root - the view root holding this session's labels (its document or an element).
  * @param read - the current session reading, or undefined before the projection arrives.
  * @param now - client wall time in epoch milliseconds.
  * @returns how many labels were rewritten.
  */
-export function patchDocument(doc: Document, read: () => ClockReading | undefined, now: number): number {
+export function patchRoot(root: ParentNode, read: () => ClockReading | undefined, now: number): number {
   const view = read();
   if (view === undefined) return 0;
   let written = 0;
   const running = liveNetMs({ ...view, totalWaitMs: 0 }, now);
   if (running !== null && view.currentTurn !== null) {
-    for (const row of doc.querySelectorAll(RUNNING_SELECTOR)) written += patchRunningRow(row, running);
+    for (const row of root.querySelectorAll(RUNNING_SELECTOR)) written += patchRunningRow(row, running);
   }
-  for (const row of doc.querySelectorAll(TURN_PROCESS_SELECTOR)) {
+  for (const row of root.querySelectorAll(TURN_PROCESS_SELECTOR)) {
     const turn = row.getAttribute("data-turn-process");
     if (turn === null) continue;
     const net = view.turnNet[turn];
@@ -243,9 +259,6 @@ export function patchDocument(doc: Document, read: () => ClockReading | undefine
   }
   return written;
 }
-
-/** How long one debounce window holds mutations before one pass runs. */
-const SETTLE_MS = 40;
 
 /** The interval that keeps the running label moving even when the host is quiet. */
 const TICK_MS = 1_000;
@@ -257,49 +270,57 @@ export interface ClockPatcher {
 }
 
 /**
- * Watch one document and keep both Turn labels on the working clock.
+ * Watch one conversation view and keep its Turn labels on the working clock.
  *
  * Two triggers, because the two labels move for different reasons: the interval
  * keeps the live figure ticking while a question is open, and the mutation
  * observer catches everything React repaints — the host rewrites the live label
  * once a second on its own, and the settled row is repainted when a Turn closes
  * or a long conversation is scrolled.
- * @param doc - the document holding the chat flow.
+ *
+ * The observer pass is deferred to a microtask, not to a timer. Mutation records
+ * are delivered at the end of the task that committed them and microtasks run
+ * before the browser paints, so the correction lands in the same frame: the
+ * host's wall-clock sentence is never composited. That is what keeps a Turn
+ * label steady while a question's wait makes the net and wall figures disagree —
+ * otherwise the two writers would alternate on screen once a second.
+ * @param root - the view root holding this session's labels (its document or an element).
  * @param read - the current session reading, or undefined before the projection arrives.
  * @returns the patcher handle.
  */
-export function startClockPatcher(doc: Document, read: () => ClockReading | undefined): ClockPatcher {
-  let timer: ReturnType<typeof setTimeout> | null = null;
+export function startClockPatcher(root: ParentNode, read: () => ClockReading | undefined): ClockPatcher {
+  let queued = false;
+  let stopped = false;
   const pass = (): void => {
-    timer = null;
-    patchDocument(doc, read, Date.now());
+    if (stopped) return;
+    patchRoot(root, read, Date.now());
   };
   const schedule = (): void => {
-    if (timer !== null) return;
-    timer = setTimeout(pass, SETTLE_MS);
+    if (queued || stopped) return;
+    queued = true;
+    queueMicrotask(() => {
+      queued = false;
+      pass();
+    });
   };
   const observer = new MutationObserver(schedule);
-  const target = doc.body ?? doc.documentElement;
   // `data-shimmer-text` is an attribute, not text: the host rewrites it once a
   // second on the live label, and without the attribute filter those writes
-  // would only be corrected on the next tick.
-  observer.observe(target, {
+  // would only be corrected on the next pass.
+  observer.observe(root as Node, {
     subtree: true,
     childList: true,
     characterData: true,
     attributes: true,
     attributeFilter: [SHIMMER_TEXT_ATTR],
   });
-  const interval = setInterval(() => {
-    patchDocument(doc, read, Date.now());
-  }, TICK_MS);
+  const interval = setInterval(pass, TICK_MS);
   pass();
   return {
     stop(): void {
+      stopped = true;
       observer.disconnect();
       clearInterval(interval);
-      if (timer !== null) clearTimeout(timer);
-      timer = null;
     },
   };
 }

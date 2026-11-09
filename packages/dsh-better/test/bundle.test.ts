@@ -81,6 +81,11 @@ function fakeDocument() {
         nodes.push(element);
       },
     },
+    // The link address panel attaches its document listeners from `apply`, not
+    // from a React effect, so the stand-in has to accept them or every mount in
+    // this file stops at that entry.
+    addEventListener: () => {},
+    removeEventListener: () => {},
     // A window with the listener calls the layout watcher makes, and no frame
     // scheduler: the frame discovery and the tab strip both stop immediately
     // without one, which is the degradation the code already handles.

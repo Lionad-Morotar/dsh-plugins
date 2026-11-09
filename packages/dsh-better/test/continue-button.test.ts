@@ -81,6 +81,14 @@ describe("ContinueButton", () => {
     expect(html).toContain(CONTINUE_BUTTON_CLASS);
   });
 
+  it("offers to continue a turn the user stopped", () => {
+    // Aborted is the other ending the host paints as 已停止; without this the
+    // button only ever appears after a process exit.
+    const html = render({ turn: { turn: 2, end: { data: { reason: { kind: "aborted" } } } } });
+    expect(html).toContain('data-testid="better-continue"');
+    expect(html).toContain("继续");
+  });
+
   it("renders a button element, not a link or a span", () => {
     expect(render()).toMatch(/^<button[^>]*data-testid="better-continue"/u);
   });
@@ -91,7 +99,8 @@ describe("ContinueButton", () => {
 
   it.each([
     ["the turn is not the last one", { turn: { turn: 1, end: { data: { reason: { kind: "interrupted" } } } } }],
-    ["the turn stopped normally", { turn: { turn: 2, end: { data: { reason: { kind: "stop" } } } } }],
+    ["the turn finished on its own", { turn: { turn: 2, end: { data: { reason: { kind: "completed" } } } } }],
+    ["the turn was closed by a fork", { turn: { turn: 2, end: { data: { reason: { kind: "forked" } } } } }],
     ["the turn ended in an error", { turn: { turn: 2, end: { data: { reason: { kind: "error" } } } } }],
     ["the turn has not ended", { turn: { turn: 2 } }],
     ["a submission is still in flight", { useSession: sessionWithPending(1) }],

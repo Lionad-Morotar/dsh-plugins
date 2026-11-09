@@ -1,11 +1,11 @@
 /**
- * The continue button under an interrupted turn.
+ * The continue button under a stopped turn.
  *
- * A turn the user stopped leaves the conversation in a state the shell has no
- * affordance for: it paints 任务已停止 and offers no way back, so resuming means
- * typing "continue" into the composer by hand. This is that affordance, and the
- * decision behind it lives in `continue-turn.ts` so it can be asserted without a
- * renderer.
+ * A turn the harness cancelled or the process never finished leaves the
+ * conversation in a state the shell has no affordance for: it paints 已停止 and
+ * offers no way back, so resuming means typing "continue" into the composer by
+ * hand. This is that affordance, and the decision behind it lives in
+ * `continue-turn.ts` so it can be asserted without a renderer.
  *
  * Everything it needs arrives as a prop rather than through an import. The slot
  * hands a turn-tail entry the owner's position value plus the standard kit, and

@@ -28,6 +28,18 @@ const OFFER: ContinueOfferInput = {
   pending: false,
 };
 
+/** A turn the user stopped: the other ending the host paints as 已停止. */
+const ABORTED: ContinueOfferInput = {
+  end: { reason: { kind: "aborted", reason: { kind: "user" } } },
+  latest: true,
+  pending: false,
+};
+
+/** A turn that reached its own conclusion. */
+function ended(kind: string): ContinueOfferInput {
+  return { ...OFFER, end: { reason: { kind } } };
+}
+
 /** One row of the decision table: the input and the answer it must produce. */
 function caseOf(name: string, input: ContinueOfferInput, expected: boolean) {
   return { name, input, expected };
@@ -57,35 +69,42 @@ describe("shouldOfferContinue", () => {
     expect(shouldOfferContinue(OFFER)).toBe(true);
   });
 
+  it("offers on an aborted last turn, the ending a user stop produces", () => {
+    expect(shouldOfferContinue(ABORTED)).toBe(true);
+  });
+
+  it.each(["user", "parent", "hook", "disposed", "legacy"])(
+    "offers after a %s cancellation, because the host's stop label does not split causes",
+    cause => {
+      expect(shouldOfferContinue({ ...OFFER, end: { reason: { kind: "aborted", reason: { kind: cause } } } })).toBe(true);
+    },
+  );
+
   it.each([
     caseOf("the turn has not ended yet", { ...OFFER, end: undefined }, false),
     caseOf("the end carries no reason", { ...OFFER, end: {} }, false),
     caseOf("the reason carries no kind", { ...OFFER, end: { reason: {} } }, false),
-    caseOf("the turn stopped normally", { ...OFFER, end: { reason: { kind: "stop" } } }, false),
-    caseOf("the turn ended in an error", { ...OFFER, end: { reason: { kind: "error" } } }, false),
-    caseOf("the turn was aborted", { ...OFFER, end: { reason: { kind: "aborted" } } }, false),
+    caseOf("the turn finished on its own", ended("completed"), false),
+    caseOf("the turn was blocked", ended("blocked"), false),
+    caseOf("the turn ended in an error", ended("error"), false),
+    caseOf("the turn hit the output-token ceiling", ended("max-tokens"), false),
+    caseOf("the turn was closed by a fork", ended("forked"), false),
+    caseOf("the reason kind is one this host never emits", ended("unknown"), false),
     caseOf("the turn is not the last one", { ...OFFER, latest: false }, false),
     caseOf("a submission is still in flight", { ...OFFER, pending: true }, false),
-    caseOf(
-      "the turn was interrupted but the user moved on",
-      { end: { reason: { kind: "interrupted" } }, latest: false, pending: false },
-      false,
-    ),
-    caseOf(
-      "the turn was interrupted and a submission is queued",
-      { end: { reason: { kind: "interrupted" } }, latest: true, pending: true },
-      false,
-    ),
+    caseOf("a stopped turn is no longer the last one", { ...ABORTED, latest: false }, false),
+    caseOf("a stopped turn already has a submission queued", { ...ABORTED, pending: true }, false),
   ])("stays silent when $name", ({ input, expected }) => {
     expect(shouldOfferContinue(input)).toBe(expected);
   });
 
-  it("matches the host's own interrupted test, so the red dot and the button agree", () => {
-    // The host renders 任务已停止 for `reason.kind === "interrupted"` and for
-    // nothing else. Any other kind must therefore produce neither.
-    const kinds = ["interrupted", "stop", "error", "aborted", "unknown"];
+  it("matches the host's own stopped test, so the status row and the button agree", () => {
+    // The host paints 已停止 for `reason.kind === "aborted" || "interrupted"`
+    // and for nothing else (TurnProcessNodeView's `stopped`). Any other kind
+    // must therefore produce neither.
+    const kinds = ["interrupted", "aborted", "completed", "blocked", "error", "max-tokens", "forked", "unknown"];
     const offered = kinds.filter(kind => shouldOfferContinue({ ...OFFER, end: { reason: { kind } } }));
-    expect(offered).toEqual(["interrupted"]);
+    expect(offered).toEqual(["interrupted", "aborted"]);
   });
 });
 
