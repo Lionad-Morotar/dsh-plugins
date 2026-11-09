@@ -172,6 +172,26 @@ describe("normalizeSettings", () => {
     expect(settings.options).toEqual(DEFAULT_SCENE_OPTIONS);
     expect(settings.appearance).toEqual(DEFAULT_APPEARANCE);
   });
+
+  it("plays the splash for a document that predates it", () => {
+    // The splash is a fresh-install default, so an upgrade has to turn it on:
+    // a document written before the field existed reads as missing, not as off.
+    expect(DEFAULT_SETTINGS.splash).toBe(true);
+    expect(normalizeSettings({}, catalog).splash).toBe(true);
+    expect(normalizeSettings({ scene: "kyoto-dusk" }, catalog).splash).toBe(true);
+  });
+
+  it("keeps a splash the reader turned off", () => {
+    expect(normalizeSettings({ splash: false }, catalog).splash).toBe(false);
+  });
+
+  it("falls back to playing the splash for a value that is not a boolean", () => {
+    // "false" as a string is a hand-edited document, not a decision: reading it
+    // as off would be trusting a shape this build never wrote.
+    expect(normalizeSettings({ splash: "false" }, catalog).splash).toBe(true);
+    expect(normalizeSettings({ splash: 0 }, catalog).splash).toBe(true);
+    expect(normalizeSettings({ splash: null }, catalog).splash).toBe(true);
+  });
 });
 
 describe("settingsEqual", () => {
@@ -201,5 +221,11 @@ describe("settingsEqual", () => {
     expect(settingsEqual(base, normalizeSettings({ regions: { sidebar: 0.5 } }, catalog))).toBe(false);
     expect(settingsEqual(base, normalizeSettings({ appearance: { scrim: 0.5 } }, catalog))).toBe(false);
     expect(settingsEqual(base, normalizeSettings({ appearance: { pauseOnBlur: false } }, catalog))).toBe(false);
+  });
+
+  it("notices a splash turned off", () => {
+    const base = normalizeSettings({}, catalog);
+    expect(settingsEqual(base, normalizeSettings({ splash: false }, catalog))).toBe(false);
+    expect(settingsEqual(base, normalizeSettings({ splash: true }, catalog))).toBe(true);
   });
 });
