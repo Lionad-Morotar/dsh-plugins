@@ -3,15 +3,15 @@
  *
  * Rendered only for the row the reader opened, so a board of three hundred
  * files costs nothing until one is expanded. Each entry is a name, a status dot
- * and a duration; a failure also carries its stand-in assertion line, which is
- * the one place the list shows why rather than just what.
+ * and a duration; the failure's message belongs to the detail pane, which has
+ * the room for it and is where a selected case is read.
  *
  * The entries are listbox options like the file rows above them, so the arrow
  * keys walk from a file straight into its cases without a second focus target.
  */
 import type { ReactElement } from "react";
 
-import { formatDuration, syntheticFailure } from "../format.ts";
+import { formatDuration } from "../format.ts";
 import type { TestCase } from "../model.ts";
 
 /** Props the case list takes. */
@@ -48,7 +48,6 @@ export function CaseList({ cases, selectedIndex, optionId, onSelect }: CaseListP
           <span data-tst="case-dot" data-status={entry.status} />
           <span data-tst="case-name">{entry.name}</span>
           <span data-tst="case-duration">{formatDuration(entry.durationMs)}</span>
-          {entry.status === "failed" ? <span data-tst="case-error">{syntheticFailure(entry.name)}</span> : null}
         </li>
       ))}
     </ul>

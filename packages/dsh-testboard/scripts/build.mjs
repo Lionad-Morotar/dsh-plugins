@@ -47,10 +47,12 @@ const CLIENT_EXTERNALS = ["react", "react/jsx-runtime", "react-dom", "@deepseek-
 /**
  * Startup-bundle budget. `client.js` is evaluated on every page boot whether or
  * not the tab is ever opened, so growth here is a cost every user pays. The
- * board's data layer and full UI land in later slices; exceeding this means the
- * startup half stopped being the cheap half, not that a feature is missing.
+ * split view, keyboard navigation and the resize handle are startup code, which
+ * took the bundle from ~24KB to ~32.7KB; the ceiling moved to 40KB rather than
+ * letting the split ship 90 bytes under the old line, where the next tweak
+ * would fail for no user-visible reason. Gzipped it is under 10KB.
  */
-const CLIENT_MAX_BYTES = 32 * 1024;
+const CLIENT_MAX_BYTES = 40 * 1024;
 
 /**
  * The lazy chunks' budgets.

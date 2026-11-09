@@ -560,13 +560,13 @@
         {
           "path": "packages/dsh-better/test/bundle.test.ts",
           "cases": [
-            {"name":"loads under the package name","line":279,"status":"passed","durationMs":94},
-            {"name":"registers the continue button into the turn tail","line":284,"status":"passed","durationMs":329},
-            {"name":"injects the send action the button needs","line":295,"status":"passed","durationMs":756},
-            {"name":"hands the attachment rail the application-internal drag reader it now requires","line":309,"status":"passed","durationMs":18},
-            {"name":"keeps the drag reader safe on a host that has no fileDrag service","line":328,"status":"passed","durationMs":1168},
-            {"name":"supplies every face the shell's own seat renders with","line":338,"status":"passed","durationMs":116},
-            {"name":"does not bundle a second React or any node builtin","line":367,"status":"passed","durationMs":463}
+            {"name":"loads under the package name","line":284,"status":"passed","durationMs":94},
+            {"name":"registers the continue button into the turn tail","line":289,"status":"passed","durationMs":329},
+            {"name":"injects the send action the button needs","line":300,"status":"passed","durationMs":756},
+            {"name":"hands the attachment rail the application-internal drag reader it now requires","line":314,"status":"passed","durationMs":18},
+            {"name":"keeps the drag reader safe on a host that has no fileDrag service","line":333,"status":"passed","durationMs":1168},
+            {"name":"supplies every face the shell's own seat renders with","line":343,"status":"passed","durationMs":116},
+            {"name":"does not bundle a second React or any node builtin","line":372,"status":"passed","durationMs":463}
           ]
         },
         {
@@ -679,23 +679,24 @@
           "path": "packages/dsh-better/test/continue-button.test.ts",
           "cases": [
             {"name":"offers to continue an interrupted last turn","line":77,"status":"passed","durationMs":923},
-            {"name":"renders a button element, not a link or a span","line":84,"status":"passed","durationMs":801},
-            {"name":"is enabled before anything is sent","line":88,"status":"passed","durationMs":258},
-            {"name":"renders nothing when %s","line":108,"status":"passed","durationMs":622},
-            {"name":"still offers when the host hands over no session selector","line":112,"status":"passed","durationMs":618},
-            {"name":"offers again once the send settles back to a plain draft","line":119,"status":"passed","durationMs":113},
-            {"name":"keeps offering on a host that publishes no composer phase","line":125,"status":"passed","durationMs":392},
-            {"name":"reads the timeline rather than trusting the turn's own position","line":131,"status":"passed","durationMs":1128},
-            {"name":"keeps the hooks unconditional, so a missing seam cannot change hook order","line":137,"status":"passed","durationMs":404},
-            {"name":"shows the error's own message","line":161,"status":"passed","durationMs":548},
-            {"name":"shows a thrown non-error as its string form","line":165,"status":"passed","durationMs":201},
-            {"name":"right-aligns the row inside the turn tail's column","line":202,"status":"passed","durationMs":701},
-            {"name":"draws a small outlined button rather than a filled primary one","line":208,"status":"passed","durationMs":1144},
-            {"name":"marks the disabled state as inert","line":214,"status":"passed","durationMs":652},
-            {"name":"takes every colour from a host design token","line":220,"status":"passed","durationMs":1163},
-            {"name":"installs once per document and disposes what it added","line":226,"status":"passed","durationMs":797},
-            {"name":"is idempotent by id, so a reload does not stack copies","line":236,"status":"passed","durationMs":214},
-            {"name":"does nothing without a document","line":247,"status":"passed","durationMs":378}
+            {"name":"offers to continue a turn the user stopped","line":84,"status":"passed","durationMs":449},
+            {"name":"renders a button element, not a link or a span","line":92,"status":"passed","durationMs":801},
+            {"name":"is enabled before anything is sent","line":96,"status":"passed","durationMs":258},
+            {"name":"renders nothing when %s","line":117,"status":"passed","durationMs":622},
+            {"name":"still offers when the host hands over no session selector","line":121,"status":"passed","durationMs":618},
+            {"name":"offers again once the send settles back to a plain draft","line":128,"status":"passed","durationMs":113},
+            {"name":"keeps offering on a host that publishes no composer phase","line":134,"status":"passed","durationMs":392},
+            {"name":"reads the timeline rather than trusting the turn's own position","line":140,"status":"passed","durationMs":1128},
+            {"name":"keeps the hooks unconditional, so a missing seam cannot change hook order","line":146,"status":"passed","durationMs":404},
+            {"name":"shows the error's own message","line":170,"status":"passed","durationMs":548},
+            {"name":"shows a thrown non-error as its string form","line":174,"status":"passed","durationMs":201},
+            {"name":"right-aligns the row inside the turn tail's column","line":211,"status":"passed","durationMs":701},
+            {"name":"draws a small outlined button rather than a filled primary one","line":217,"status":"passed","durationMs":1144},
+            {"name":"marks the disabled state as inert","line":223,"status":"passed","durationMs":652},
+            {"name":"takes every colour from a host design token","line":229,"status":"passed","durationMs":1163},
+            {"name":"installs once per document and disposes what it added","line":235,"status":"passed","durationMs":797},
+            {"name":"is idempotent by id, so a reload does not stack copies","line":245,"status":"passed","durationMs":214},
+            {"name":"does nothing without a document","line":256,"status":"passed","durationMs":378}
           ]
         },
         {
@@ -716,15 +717,17 @@
         {
           "path": "packages/dsh-better/test/continue-turn.test.ts",
           "cases": [
-            {"name":"sends the bare word the model reads as a resume instruction","line":37,"status":"passed","durationMs":146},
-            {"name":"targets the turn tail slot, after the cost meter","line":41,"status":"passed","durationMs":29},
-            {"name":"uses its own slot entry id, so it cannot displace the cost meter","line":49,"status":"passed","durationMs":148},
-            {"name":"offers on an interrupted last turn with nothing in flight","line":56,"status":"passed","durationMs":315},
-            {"name":"stays silent when $name","line":79,"status":"passed","durationMs":100},
-            {"name":"matches the host's own interrupted test, so the red dot and the button agree","line":83,"status":"passed","durationMs":14},
-            {"name":"exists in every dictionary, so the button never prints a raw key","line":95,"status":"passed","durationMs":343},
-            {"name":"is translated rather than copied between locales","line":105,"status":"passed","durationMs":989},
-            {"name":"says what the two states are","line":111,"status":"passed","durationMs":498}
+            {"name":"sends the bare word the model reads as a resume instruction","line":49,"status":"passed","durationMs":146},
+            {"name":"targets the turn tail slot, after the cost meter","line":53,"status":"passed","durationMs":29},
+            {"name":"uses its own slot entry id, so it cannot displace the cost meter","line":61,"status":"passed","durationMs":148},
+            {"name":"offers on an interrupted last turn with nothing in flight","line":68,"status":"passed","durationMs":315},
+            {"name":"offers on an aborted last turn, the ending a user stop produces","line":72,"status":"passed","durationMs":875},
+            {"name":"offers after a %s cancellation, because the host's stop label does not split causes","line":77,"status":"passed","durationMs":866},
+            {"name":"stays silent when $name","line":97,"status":"passed","durationMs":100},
+            {"name":"matches the host's own stopped test, so the status row and the button agree","line":101,"status":"passed","durationMs":194},
+            {"name":"exists in every dictionary, so the button never prints a raw key","line":114,"status":"passed","durationMs":343},
+            {"name":"is translated rather than copied between locales","line":124,"status":"passed","durationMs":989},
+            {"name":"says what the two states are","line":130,"status":"passed","durationMs":498}
           ]
         },
         {
@@ -5610,10 +5613,10 @@
         {
           "path": "packages/dsh-turn-clock/test/bundle.test.ts",
           "cases": [
-            {"name":"loads under the package name","line":82,"status":"passed","durationMs":961},
-            {"name":"registers one invisible seat in the composer dock","line":86,"status":"passed","durationMs":519},
-            {"name":"keeps React external","line":92,"status":"passed","durationMs":1089},
-            {"name":"calls the loader boot handover","line":97,"status":"passed","durationMs":83}
+            {"name":"loads under the package name","line":83,"status":"passed","durationMs":961},
+            {"name":"registers one invisible seat in the composer dock","line":87,"status":"passed","durationMs":519},
+            {"name":"keeps React external","line":93,"status":"passed","durationMs":1089},
+            {"name":"calls the loader boot handover","line":98,"status":"passed","durationMs":83}
           ]
         },
         {
@@ -5664,6 +5667,17 @@
             {"name":"does nothing before the projection arrives","line":118,"status":"passed","durationMs":549},
             {"name":"leaves a Turn without a recorded net alone","line":123,"status":"passed","durationMs":928},
             {"name":"leaves an unreadable sentence alone instead of printing a wrong one","line":128,"status":"passed","durationMs":125}
+          ]
+        },
+        {
+          "path": "packages/dsh-turn-clock/test/scope.test.ts",
+          "cases": [
+            {"name":"resolves the seat's own session container","line":80,"status":"passed","durationMs":1092},
+            {"name":"falls back to the closest ancestor holding exactly one chat flow","line":87,"status":"passed","durationMs":437},
+            {"name":"falls back to the document when no view shape is recognizable","line":97,"status":"passed","durationMs":12},
+            {"name":"an unscoped pass would rewrite both views from one session's table","line":104,"status":"passed","durationMs":569},
+            {"name":"two scoped seats keep their own figures across host repaints","line":112,"status":"passed","durationMs":983},
+            {"name":"corrects a host repaint without waiting for a timer","line":133,"status":"passed","durationMs":1163}
           ]
         }
       ]

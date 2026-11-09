@@ -7908,6 +7908,11 @@ function fakeDocument() {
         nodes.push(element);
       },
     },
+    // The link address panel attaches its document listeners from \`apply\`, not
+    // from a React effect, so the stand-in has to accept them or every mount in
+    // this file stops at that entry.
+    addEventListener: () => {},
+    removeEventListener: () => {},
     // A window with the listener calls the layout watcher makes, and no frame
     // scheduler: the frame discovery and the tab strip both stop immediately
     // without one, which is the degradation the code already handles.
@@ -9016,6 +9021,14 @@ describe("ContinueButton", () => {
     expect(html).toContain(CONTINUE_BUTTON_CLASS);
   });
 
+  it("offers to continue a turn the user stopped", () => {
+    // Aborted is the other ending the host paints as \u5DF2\u505C\u6B62; without this the
+    // button only ever appears after a process exit.
+    const html = render({ turn: { turn: 2, end: { data: { reason: { kind: "aborted" } } } } });
+    expect(html).toContain('data-testid="better-continue"');
+    expect(html).toContain("\u7EE7\u7EED");
+  });
+
   it("renders a button element, not a link or a span", () => {
     expect(render()).toMatch(/^<button[^>]*data-testid="better-continue"/u);
   });
@@ -9026,7 +9039,8 @@ describe("ContinueButton", () => {
 
   it.each([
     ["the turn is not the last one", { turn: { turn: 1, end: { data: { reason: { kind: "interrupted" } } } } }],
-    ["the turn stopped normally", { turn: { turn: 2, end: { data: { reason: { kind: "stop" } } } } }],
+    ["the turn finished on its own", { turn: { turn: 2, end: { data: { reason: { kind: "completed" } } } } }],
+    ["the turn was closed by a fork", { turn: { turn: 2, end: { data: { reason: { kind: "forked" } } } } }],
     ["the turn ended in an error", { turn: { turn: 2, end: { data: { reason: { kind: "error" } } } } }],
     ["the turn has not ended", { turn: { turn: 2 } }],
     ["a submission is still in flight", { useSession: sessionWithPending(1) }],
@@ -9304,6 +9318,18 @@ const OFFER: ContinueOfferInput = {
   pending: false,
 };
 
+/** A turn the user stopped: the other ending the host paints as \u5DF2\u505C\u6B62. */
+const ABORTED: ContinueOfferInput = {
+  end: { reason: { kind: "aborted", reason: { kind: "user" } } },
+  latest: true,
+  pending: false,
+};
+
+/** A turn that reached its own conclusion. */
+function ended(kind: string): ContinueOfferInput {
+  return { ...OFFER, end: { reason: { kind } } };
+}
+
 /** One row of the decision table: the input and the answer it must produce. */
 function caseOf(name: string, input: ContinueOfferInput, expected: boolean) {
   return { name, input, expected };
@@ -9333,35 +9359,42 @@ describe("shouldOfferContinue", () => {
     expect(shouldOfferContinue(OFFER)).toBe(true);
   });
 
+  it("offers on an aborted last turn, the ending a user stop produces", () => {
+    expect(shouldOfferContinue(ABORTED)).toBe(true);
+  });
+
+  it.each(["user", "parent", "hook", "disposed", "legacy"])(
+    "offers after a %s cancellation, because the host's stop label does not split causes",
+    cause => {
+      expect(shouldOfferContinue({ ...OFFER, end: { reason: { kind: "aborted", reason: { kind: cause } } } })).toBe(true);
+    },
+  );
+
   it.each([
     caseOf("the turn has not ended yet", { ...OFFER, end: undefined }, false),
     caseOf("the end carries no reason", { ...OFFER, end: {} }, false),
     caseOf("the reason carries no kind", { ...OFFER, end: { reason: {} } }, false),
-    caseOf("the turn stopped normally", { ...OFFER, end: { reason: { kind: "stop" } } }, false),
-    caseOf("the turn ended in an error", { ...OFFER, end: { reason: { kind: "error" } } }, false),
-    caseOf("the turn was aborted", { ...OFFER, end: { reason: { kind: "aborted" } } }, false),
+    caseOf("the turn finished on its own", ended("completed"), false),
+    caseOf("the turn was blocked", ended("blocked"), false),
+    caseOf("the turn ended in an error", ended("error"), false),
+    caseOf("the turn hit the output-token ceiling", ended("max-tokens"), false),
+    caseOf("the turn was closed by a fork", ended("forked"), false),
+    caseOf("the reason kind is one this host never emits", ended("unknown"), false),
     caseOf("the turn is not the last one", { ...OFFER, latest: false }, false),
     caseOf("a submission is still in flight", { ...OFFER, pending: true }, false),
-    caseOf(
-      "the turn was interrupted but the user moved on",
-      { end: { reason: { kind: "interrupted" } }, latest: false, pending: false },
-      false,
-    ),
-    caseOf(
-      "the turn was interrupted and a submission is queued",
-      { end: { reason: { kind: "interrupted" } }, latest: true, pending: true },
-      false,
-    ),
+    caseOf("a stopped turn is no longer the last one", { ...ABORTED, latest: false }, false),
+    caseOf("a stopped turn already has a submission queued", { ...ABORTED, pending: true }, false),
   ])("stays silent when $name", ({ input, expected }) => {
     expect(shouldOfferContinue(input)).toBe(expected);
   });
 
-  it("matches the host's own interrupted test, so the red dot and the button agree", () => {
-    // The host renders \u4EFB\u52A1\u5DF2\u505C\u6B62 for \`reason.kind === "interrupted"\` and for
-    // nothing else. Any other kind must therefore produce neither.
-    const kinds = ["interrupted", "stop", "error", "aborted", "unknown"];
+  it("matches the host's own stopped test, so the status row and the button agree", () => {
+    // The host paints \u5DF2\u505C\u6B62 for \`reason.kind === "aborted" || "interrupted"\`
+    // and for nothing else (TurnProcessNodeView's \`stopped\`). Any other kind
+    // must therefore produce neither.
+    const kinds = ["interrupted", "aborted", "completed", "blocked", "error", "max-tokens", "forked", "unknown"];
     const offered = kinds.filter(kind => shouldOfferContinue({ ...OFFER, end: { reason: { kind } } }));
-    expect(offered).toEqual(["interrupted"]);
+    expect(offered).toEqual(["interrupted", "aborted"]);
   });
 });
 
@@ -59997,6 +60030,7 @@ function evaluate(): LoadCall {
 function platform(): (specifier: string) => unknown {
   return (specifier) => {
     if (specifier === "react") return { useEffect: () => undefined, useRef: () => ({ current: undefined }) };
+    if (specifier === "react/jsx-runtime") return { Fragment: Symbol("Fragment"), jsx: () => null, jsxs: () => null };
     throw new Error(\`unexpected platform module \${specifier}\`);
   };
 }
@@ -60044,7 +60078,7 @@ describe("client bundle", () => {
 
   it("keeps React external", () => {
     const externalized = [...bundle.matchAll(/require\\("([^"]+)"\\)/gu)].map((match) => match[1]);
-    expect(new Set(externalized)).toEqual(new Set(["react"]));
+    expect(new Set(externalized)).toEqual(new Set(["react", "react/jsx-runtime"]));
   });
 
   it("calls the loader boot handover", () => {
@@ -60359,7 +60393,7 @@ describe("turnClock fold", () => {
  * three spans \u2014 because those are the two ways a naive rewrite breaks the host.
  */
 import { beforeEach, describe, expect, it } from "vitest";
-import { patchDocument } from "../src/client/face.ts";
+import { patchRoot } from "../src/client/face.ts";
 import type { TurnClockView } from "../src/types.ts";
 
 /** The running row exactly as ui-chat renders it, including the clipped duplicate. */
@@ -60425,14 +60459,14 @@ function text(selector: string): string {
   return document.querySelector(selector)?.textContent ?? "";
 }
 
-describe("patchDocument", () => {
+describe("patchRoot", () => {
   beforeEach(() => {
     document.body.innerHTML = \`\${RUNNING_ROW}\${SETTLED_ROW}\`;
   });
 
   it("rewrites the running sentence in place and leaves the aria duplicate alone", () => {
     const now = 3_600_000;
-    const written = patchDocument(document, () => blockedView(now), now);
+    const written = patchRoot(document, () => blockedView(now), now);
     expect(written).toBe(2);
     // 100s of wall minus the settled 324.018s wait minus the running wait: frozen
     // while the question is open, so the figure is whatever was already worked.
@@ -60441,7 +60475,7 @@ describe("patchDocument", () => {
   });
 
   it("rewrites the settled row from the Turn table even when no Turn is running", () => {
-    patchDocument(document, () => idleView(), 1);
+    patchRoot(document, () => idleView(), 1);
     expect(text("[data-turn-process]").trim()).toBe("\u5DF2\u5B8C\u6210\uFF0C\u7528\u65F6 2\u5C0F\u65F630\u520637\u79D2");
     // The idle view must not touch a row the host is no longer showing as running.
     expect(text("[data-chat-running] .text")).toBe("\u6DF1\u5EA6\u6C42\u7D22\u4E2D\uFF0C\u7528\u65F6 9\u5C0F\u65F630\u520635\u79D2 \xB7\xB7\xB7");
@@ -60450,7 +60484,7 @@ describe("patchDocument", () => {
   it("rewrites both copies of the animated label through data-shimmer-text", () => {
     document.body.innerHTML = \`\${SHIMMER_ROW}\${SETTLED_ROW}\`;
     const now = 3_600_000;
-    const written = patchDocument(document, () => blockedView(now), now);
+    const written = patchRoot(document, () => blockedView(now), now);
     expect(written).toBe(3);
     const copies = [...document.querySelectorAll("[data-shimmer-text]")].map((element) => element.getAttribute("data-shimmer-text"));
     // The visible copy and the sweep's decoration copy must agree, or the two
@@ -60462,24 +60496,169 @@ describe("patchDocument", () => {
 
   it("is idempotent", () => {
     const now = 3_600_000;
-    patchDocument(document, () => blockedView(now), now);
-    expect(patchDocument(document, () => blockedView(now), now)).toBe(0);
+    patchRoot(document, () => blockedView(now), now);
+    expect(patchRoot(document, () => blockedView(now), now)).toBe(0);
   });
 
   it("does nothing before the projection arrives", () => {
-    expect(patchDocument(document, () => undefined, 1)).toBe(0);
+    expect(patchRoot(document, () => undefined, 1)).toBe(0);
     expect(text("[data-turn-process]")).toContain("9\u5C0F\u65F630\u520635\u79D2");
   });
 
   it("leaves a Turn without a recorded net alone", () => {
     document.body.innerHTML = \`<div data-turn-process="9"><span>\u5DF2\u5B8C\u6210\uFF0C\u7528\u65F6 9\u5C0F\u65F630\u520635\u79D2</span></div>\`;
-    expect(patchDocument(document, () => idleView(), 1)).toBe(0);
+    expect(patchRoot(document, () => idleView(), 1)).toBe(0);
   });
 
   it("leaves an unreadable sentence alone instead of printing a wrong one", () => {
     document.body.innerHTML = \`<div data-turn-process="2"><span>\u5DF2\u5B8C\u6210</span></div>\`;
-    expect(patchDocument(document, () => idleView(), 1)).toBe(0);
+    expect(patchRoot(document, () => idleView(), 1)).toBe(0);
     expect(text("[data-turn-process]")).toBe("\u5DF2\u5B8C\u6210");
+  });
+});
+`,"packages/dsh-turn-clock/test/scope.test.ts":`// @vitest-environment jsdom
+/**
+ * One seat per mounted conversation view, and no seat touching another's rows.
+ *
+ * A DSH window can hold several conversation views at once: split panes, dock
+ * tabs, and tabs kept mounted while hidden. Every view mounts its own clock seat
+ * with its own session projection, and the two sessions number their Turns
+ * independently \u2014 both have a Turn 12, with unrelated durations. This file pins
+ * the property that keeps those seats apart: a pass runs over its own view root,
+ * never the document.
+ *
+ * The first case encodes the hazard instead of hiding it: an unscoped pass does
+ * carry one session's figure onto another session's row. That is what used to
+ * happen in the docked layout, and it is why the seats now resolve a root.
+ */
+import { afterEach, describe, expect, it } from "vitest";
+import { patchRoot, startClockPatcher, type ClockPatcher } from "../src/client/face.ts";
+import { resolvePatchRoot } from "../src/client/watch.tsx";
+import type { TurnClockView } from "../src/types.ts";
+
+/** One session's view with a single closed Turn (number 12) and its net table. */
+function view(netMs: number): TurnClockView {
+  return { currentTurn: null, turnStart: null, waitMs: 0, waitSince: null, totalWaitMs: 0, turnNet: { "12": netMs } };
+}
+
+/** The parent session's Turn 12: an old, unrelated five and a half minutes. */
+const PARENT = view(330_000);
+
+/** The docked subagent session's Turn 12: the one the reader is watching. */
+const DOCKED = view(69_000);
+
+/** One view's markup: a session container holding a chat flow with one settled row. */
+function viewMarkup(session: string): string {
+  // No whitespace inside the row: the host's React markup has none either, and
+  // the patcher writes the sentence into the row's first text node.
+  return \`<div data-conversation-session="\${session}">\`
+    + '<div data-slot="conversation.chat.flow"><div data-chat-flow>'
+    + '<button data-turn-process="12"><span class="label">\u5DF2\u5B8C\u6210\uFF0C\u7528\u65F6 <span class="num">1</span>\u5206<span class="num">10</span>\u79D2</span></button>'
+    + '</div></div>'
+    + '<div data-composer-seat><span data-anchor></span></div>'
+    + '</div>';
+}
+
+/** The host's own sentence for the row, split the way ui-chat splits it. */
+const HOST_SENTENCE = '\u5DF2\u5B8C\u6210\uFF0C\u7528\u65F6 <span class="num">1</span>\u5206<span class="num">10</span>\u79D2';
+
+/** The label text inside one view. */
+function label(session: string): string {
+  return document.querySelector(\`[data-conversation-session="\${session}"] [data-turn-process] .label\`)?.textContent?.trim() ?? "";
+}
+
+/** The view root for one session. */
+function root(session: string): Element {
+  const element = document.querySelector(\`[data-conversation-session="\${session}"]\`);
+  if (element === null) throw new Error(\`no view for \${session}\`);
+  return element;
+}
+
+/** Let the microtask-queued observer pass and its own follow-up run. */
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** Patchers started by a case, stopped even when the case throws. */
+const running: ClockPatcher[] = [];
+
+/** Start a patcher and remember it for the cleanup. */
+function watch(target: ParentNode, read: () => TurnClockView): ClockPatcher {
+  const patcher = startClockPatcher(target, read);
+  running.push(patcher);
+  return patcher;
+}
+
+afterEach(() => {
+  while (running.length > 0) running.pop()?.stop();
+  document.body.innerHTML = "";
+});
+
+describe("patch root", () => {
+  it("resolves the seat's own session container", () => {
+    document.body.innerHTML = viewMarkup("session-a") + viewMarkup("session-b");
+    const anchorA = document.querySelector('[data-conversation-session="session-a"] [data-anchor]');
+    expect(anchorA).not.toBeNull();
+    expect(resolvePatchRoot(anchorA as Element)).toBe(root("session-a"));
+  });
+
+  it("falls back to the closest ancestor holding exactly one chat flow", () => {
+    document.body.innerHTML = \`
+      <div id="view">
+        <div data-slot="conversation.chat.flow"><div data-turn-process="2">\u5DF2\u5B8C\u6210\uFF0C\u7528\u65F6 1\u79D2</div></div>
+        <div><span data-anchor></span></div>
+      </div>
+    \`;
+    expect(resolvePatchRoot(document.querySelector("[data-anchor]") as Element)).toBe(document.querySelector("#view"));
+  });
+
+  it("falls back to the document when no view shape is recognizable", () => {
+    document.body.innerHTML = \`<div><span data-anchor></span></div>\`;
+    expect(resolvePatchRoot(document.querySelector("[data-anchor]") as Element)).toBe(document);
+  });
+});
+
+describe("cross-view isolation", () => {
+  it("an unscoped pass would rewrite both views from one session's table", () => {
+    document.body.innerHTML = viewMarkup("parent") + viewMarkup("docked");
+    // This is the shape the patcher used to run in: document-wide, one table.
+    expect(patchRoot(document, () => PARENT, 1)).toBe(2);
+    expect(label("parent")).toBe("\u5DF2\u5B8C\u6210\uFF0C\u7528\u65F6 5\u520630\u79D2");
+    expect(label("docked")).toBe("\u5DF2\u5B8C\u6210\uFF0C\u7528\u65F6 5\u520630\u79D2");
+  });
+
+  it("two scoped seats keep their own figures across host repaints", async () => {
+    document.body.innerHTML = viewMarkup("parent") + viewMarkup("docked");
+    watch(root("parent"), () => PARENT);
+    watch(root("docked"), () => DOCKED);
+    await settle();
+    expect(label("parent")).toBe("\u5DF2\u5B8C\u6210\uFF0C\u7528\u65F6 5\u520630\u79D2");
+    expect(label("docked")).toBe("\u5DF2\u5B8C\u6210\uFF0C\u7528\u65F6 1\u52069\u79D2");
+
+    // The host repaints both rows with its wall-clock sentence, as React does
+    // when a row remounts or the conversation re-renders.
+    for (const session of ["parent", "docked"]) {
+      const row = document.querySelector(\`[data-conversation-session="\${session}"] [data-turn-process] .label\`);
+      if (row !== null) row.innerHTML = HOST_SENTENCE;
+    }
+    await settle();
+
+    // Each seat corrected its own view and left the other view's row alone.
+    expect(label("parent")).toBe("\u5DF2\u5B8C\u6210\uFF0C\u7528\u65F6 5\u520630\u79D2");
+    expect(label("docked")).toBe("\u5DF2\u5B8C\u6210\uFF0C\u7528\u65F6 1\u52069\u79D2");
+  });
+
+  it("corrects a host repaint without waiting for a timer", async () => {
+    document.body.innerHTML = viewMarkup("docked");
+    watch(root("docked"), () => DOCKED);
+    await settle();
+    const row = document.querySelector('[data-conversation-session="docked"] [data-turn-process] .label');
+    if (row === null) throw new Error("row missing");
+    row.innerHTML = HOST_SENTENCE;
+    // One macrotask is enough: the correction is queued as a microtask, so it
+    // lands before the next timer fires \u2014 a timer-based debounce would not.
+    await settle();
+    expect(row.textContent).toBe("\u5DF2\u5B8C\u6210\uFF0C\u7528\u65F6 1\u52069\u79D2");
   });
 });
 `,"packages/dsh-wakeup/test/bundle.test.ts":`import { existsSync } from "node:fs"

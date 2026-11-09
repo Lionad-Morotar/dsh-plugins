@@ -240,9 +240,14 @@ body.tst-pane-resizing {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}[data-testid="detail-pane"][data-empty="true"] {
+  align-items: center;
+  justify-content: center;
 }[data-tst="detail-empty"],
 [data-tst="detail-code-missing"] {
   margin: 0;
+  max-width: 30ch;
+  text-align: center;
   color: var(--tst-ink-faint);
   font-size: var(--tst-fs-small);
 }

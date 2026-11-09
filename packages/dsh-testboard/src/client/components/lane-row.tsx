@@ -38,7 +38,11 @@ export interface LaneRowProps {
  * @returns the row element.
  */
 export function LaneRow({ row, expanded, selected, optionId, strings, onSelect }: LaneRowProps): ReactElement {
-  const directory = fileDirectoryOf(row.path);
+  // The package section header already names the package; repeating it in every
+  // row is what pushed the path into an ellipsis once the list became a column.
+  const packagePrefix = `packages/${row.packageName}/`;
+  const relativePath = row.path.startsWith(packagePrefix) ? row.path.slice(packagePrefix.length) : row.path;
+  const directory = fileDirectoryOf(relativePath);
   return (
     <div
       id={optionId}
