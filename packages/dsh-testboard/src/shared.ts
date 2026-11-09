@@ -165,6 +165,24 @@ export type TestboardError =
   | "run-failed";
 
 /**
+ * The preview demo's own stage.
+ *
+ * Deliberately outside `RunProgress`: `fixing` is a stage the host cannot
+ * produce (D18 — it has no agent repair events), so it must not be a run phase
+ * the real half could ever claim. Only the fixture runtime fills this in, and
+ * only the preview renders it.
+ */
+export interface DemoStage {
+  readonly phase: "running" | "fixing" | "rerunning" | "finished";
+  /** The file the fixing card names. */
+  readonly path?: string;
+  /** The model the fixing card names. */
+  readonly model?: string;
+  /** How long the fix has been going, for the card's own reading. */
+  readonly seconds?: number;
+}
+
+/**
  * One workspace's board state.
  *
  * `error` and `snapshot` coexist on purpose: a workspace whose last run failed
@@ -176,6 +194,8 @@ export interface TestboardState {
   readonly snapshot?: TestSnapshot;
   readonly run?: RunProgress;
   readonly error?: TestboardError;
+  /** Present only on the preview's fixture runtime; never sent by the host. */
+  readonly demo?: DemoStage;
 }
 
 /** `POST /run` answer: an accepted run, or the reason it was refused. */

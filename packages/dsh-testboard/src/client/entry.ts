@@ -141,6 +141,15 @@ export function apply(ctx: TestboardClientContext): () => void {
       errorBusy: t("testboard.errorBusy"),
       errorBadScope: t("testboard.errorBadScope"),
       errorRunFailed: t("testboard.errorRunFailed"),
+      rerunning: t("testboard.rerunning"),
+      finished: t("testboard.finished"),
+      failing: t("testboard.failing"),
+      run: t("testboard.run"),
+      rerun: t("testboard.rerun"),
+      tests: t("testboard.tests"),
+      chartTitle: t("testboard.chartTitle"),
+      fixing: t("testboard.fixing"),
+      fixingModel: t("testboard.fixingModel"),
     } satisfies TestboardViewStrings,
     // The board now reads the host's live state instead of a committed
     // snapshot. The chunk loaders stay booted until the slice that removes them:

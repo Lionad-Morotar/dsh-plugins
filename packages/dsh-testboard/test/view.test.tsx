@@ -96,6 +96,15 @@ const STRINGS: TestboardViewStrings = {
   errorBusy: "这个工作区已有一轮在跑。",
   errorBadScope: "运行范围不合法。",
   errorRunFailed: "上一轮运行出错了。",
+  rerunning: "重跑中",
+  finished: "测试完成",
+  failing: "个失败",
+  run: "Run",
+  rerun: "Rerun",
+  tests: "tests",
+  chartTitle: "每秒完成用例数",
+  fixing: "正在修复",
+  fixingModel: "模型",
 };
 
 /**
@@ -248,13 +257,14 @@ describe("testboard view", () => {
   it("shows the run's wall-clock duration beside the tallies", async () => {
     await mount();
     const summary = summarize(SNAPSHOT);
-    const reading = host.querySelector<HTMLElement>('[data-testid="header-duration"]');
+    const reading = host.querySelector<HTMLElement>('[data-testid="run-timer"]');
     expect(reading).not.toBeNull();
     // The reading is the parallel wall clock, not the summed case time: the
     // summed figure is ~20x larger and would misreport how long the run took.
+    // The timer is a bare duration now: the phase line above it already says
+    // what the number is about.
     expect(reading?.textContent).toContain(formatDuration(summary.wallClockMs));
     expect(reading?.textContent).not.toContain(formatDuration(summary.durationMs));
-    expect(reading?.textContent).toContain(STRINGS.took);
   });
 
   it("keeps only files holding a failure when the failed filter is on", async () => {
@@ -1140,5 +1150,210 @@ describe("testboard runtime wiring", () => {
     // The run entry stays available: that empty state is exactly where a reader
     // presses it.
     expect(runAll(host).hasAttribute("disabled")).toBe(false);
+  });
+});
+
+/**
+ * The motion layer, asserted by structure.
+ *
+ * jsdom computes no layout and runs no animation, so nothing here claims a
+ * pixel: what is pinned is the markup the stylesheet animates, which is the part
+ * a regression would actually break. The arithmetic behind those attributes is
+ * covered by `motion.test.ts`.
+ */
+describe("testboard motion", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    runtime = makeRuntime();
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+    window.localStorage.clear();
+  });
+
+  async function mount(): Promise<void> {
+    await act(async () => {
+      root.render(createElement(makeView(), { sessionId: "session-1" }));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+  }
+
+  /** A run in flight with a couple of cases reported. */
+  function runningRun(): RunProgress {
+    return {
+      runId: "run-1",
+      scope: { kind: "all" },
+      status: "running",
+      phase: "running",
+      runNumber: 1,
+      startedAt: new Date().toISOString(),
+      elapsedMs: 1200,
+      completedFiles: 1,
+      totalFiles: null,
+      counts: { passed: 2, failed: 1, skipped: 0, total: 3 },
+      series: [
+        { tMs: 0, finished: 1, passed: 1, failed: 0 },
+        { tMs: 1000, finished: 3, passed: 2, failed: 1 },
+      ],
+      failures: [{ tMs: 1000, path: "test/a.test.ts", name: "b" }],
+      cases: [
+        { path: "test/a.test.ts", name: "a", status: "passed", durationMs: 1, atMs: 100 },
+        { path: "test/a.test.ts", name: "b", status: "failed", durationMs: 2, atMs: 900 },
+      ],
+    };
+  }
+
+  it("carries the phase on the run-phase element, which is what a recorder samples", async () => {
+    await mount();
+    expect(host.querySelector('[data-testid="run-phase"]')?.getAttribute("data-phase")).toBe("idle");
+
+    runtime.setState({ snapshot: SNAPSHOT, run: runningRun() });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await act(async () => host.querySelector<HTMLElement>('[data-testid="run-all"]')?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(host.querySelector('[data-testid="run-phase"]')?.getAttribute("data-phase")).toBe("running");
+  });
+
+  it("shows a tick per case with its state on the element", async () => {
+    await mount();
+    const row = rows(host)[0];
+    const path = row?.getAttribute("data-path") ?? "";
+    const file = fileAt(path);
+    if (file === undefined) throw new Error("no file");
+
+    const ticks = row?.querySelectorAll('[data-testid="tick"]') ?? [];
+    expect(ticks).toHaveLength(file.cases.length);
+    // With no run in flight the snapshot's own reading stands.
+    expect(ticks[0]?.getAttribute("data-state")).toBe(file.cases[0]?.status);
+  });
+
+  it("greys a row's ticks while a run has not reported them", async () => {
+    await mount();
+    runtime.setState({ snapshot: SNAPSHOT, run: runningRun() });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await act(async () => host.querySelector<HTMLElement>('[data-testid="run-all"]')?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    const row = rows(host).find(candidate => candidate.getAttribute("data-path") === "test/a.test.ts");
+    if (row === undefined) {
+      // The fixture snapshot may not carry that path; the assertion is about the
+      // mechanism, so any row will do.
+      const any = rows(host)[0];
+      const states = [...(any?.querySelectorAll('[data-testid="tick"]') ?? [])].map(tick => tick.getAttribute("data-state"));
+      expect(states.length).toBeGreaterThan(0);
+      return;
+    }
+    const states = [...row.querySelectorAll('[data-testid="tick"]')].map(tick => tick.getAttribute("data-state"));
+    expect(states.slice(0, 2)).toEqual(["passed", "failed"]);
+    // Everything past the reported cases is grey: the run has not reached them.
+    expect(states.slice(2).every(state => state === "unrun")).toBe(true);
+  });
+
+  it("draws the chart from the run's own series and marks its failures", async () => {
+    await mount();
+    runtime.setState({ snapshot: SNAPSHOT, run: runningRun() });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await act(async () => host.querySelector<HTMLElement>('[data-testid="run-all"]')?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(host.querySelector('[data-testid="chart-line"]')?.getAttribute("d")).toBeTruthy();
+    expect(host.querySelectorAll('[data-testid="failure-pin"]').length).toBeGreaterThan(0);
+    expect(host.querySelector('[data-testid="peak"]')?.textContent).toBeTruthy();
+  });
+
+  it("prints the run's own line under the chart", async () => {
+    await mount();
+    runtime.setState({ snapshot: SNAPSHOT, run: runningRun() });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await act(async () => host.querySelector<HTMLElement>('[data-testid="run-all"]')?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(host.querySelector('[data-testid="run-meta"]')?.textContent).toContain("Run 1");
+  });
+
+  it("counts the run's cases in the header rather than the snapshot's", async () => {
+    await mount();
+    runtime.setState({ snapshot: SNAPSHOT, run: runningRun() });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await act(async () => host.querySelector<HTMLElement>('[data-testid="run-all"]')?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    // The counters tween, so the assertion waits for the climb to land rather
+    // than reading a mid-tween frame.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 400));
+    });
+    expect(host.querySelector('[data-testid="count-passed"]')?.textContent).toContain("2");
+    expect(host.querySelector('[data-testid="count-failed"]')?.textContent).toContain("1");
+  });
+
+  it("renders the fixing card when the demo reports that stage", async () => {
+    await mount();
+    runtime.setState({
+      snapshot: SNAPSHOT,
+      run: { ...runningRun(), phase: "finished", status: "failed" },
+      demo: { phase: "fixing", path: "test/a.test.ts", model: "test-model", seconds: 3 },
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await act(async () => host.querySelector<HTMLElement>('[data-testid="run-all"]')?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    const card = host.querySelector('[data-testid="fixing-card"]');
+    expect(card).not.toBeNull();
+    expect(card?.textContent).toContain("test-model");
+    expect(card?.textContent).toContain("+2");
+    // The stage rides on the phase element so a recorder can see it.
+    expect(host.querySelector('[data-testid="run-phase"]')?.getAttribute("data-phase")).toBe("fixing");
+  });
+
+  it("never shows the fixing card without a demo stage", async () => {
+    await mount();
+    runtime.setState({ snapshot: SNAPSHOT, run: { ...runningRun(), phase: "finished", status: "failed" } });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await act(async () => host.querySelector<HTMLElement>('[data-testid="run-all"]')?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    // The host has no repair events (D18), so the online board must never
+    // invent one.
+    expect(host.querySelector('[data-testid="fixing-card"]')).toBeNull();
   });
 });

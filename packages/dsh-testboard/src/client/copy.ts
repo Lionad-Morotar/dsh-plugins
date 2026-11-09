@@ -41,6 +41,15 @@ export const ZH: Record<string, string> = {
   "testboard.errorBusy": "这个工作区已有一轮在跑。",
   "testboard.errorBadScope": "运行范围不合法。",
   "testboard.errorRunFailed": "上一轮运行出错了。",
+  "testboard.rerunning": "重跑中",
+  "testboard.finished": "测试完成",
+  "testboard.failing": "个失败",
+  "testboard.run": "第",
+  "testboard.rerun": "重跑",
+  "testboard.tests": "个用例",
+  "testboard.chartTitle": "每秒完成用例数",
+  "testboard.fixing": "正在修复",
+  "testboard.fixingModel": "模型",
 };
 
 export const EN: Record<string, string> = {
@@ -79,4 +88,13 @@ export const EN: Record<string, string> = {
   "testboard.errorBusy": "A run is already going in this workspace.",
   "testboard.errorBadScope": "That run scope is not valid.",
   "testboard.errorRunFailed": "The last run errored.",
+  "testboard.rerunning": "Rerunning",
+  "testboard.finished": "Tests finished",
+  "testboard.failing": "failing tests",
+  "testboard.run": "Run",
+  "testboard.rerun": "Rerun",
+  "testboard.tests": "tests",
+  "testboard.chartTitle": "Tests finished per second",
+  "testboard.fixing": "Fixing",
+  "testboard.fixingModel": "model",
 };

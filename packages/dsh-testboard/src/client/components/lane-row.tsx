@@ -20,7 +20,9 @@
 import type { ReactElement } from "react";
 
 import { fileNameOf, fileDirectoryOf, formatDuration } from "../format.ts";
+import type { CaseTick } from "../motion.ts";
 import type { TestFileRow } from "../model.ts";
+import { TickMatrix } from "./tick-matrix.tsx";
 
 /** Strings the row renders. */
 export interface LaneRowStrings {
@@ -37,6 +39,16 @@ export interface LaneRowProps {
   readonly optionId: string;
   /** Whether the host is running something, which disables this row's button. */
   readonly running: boolean;
+  /**
+   * One tick per case, already resolved by `caseTickStates`.
+   *
+   * The row does not compute them: the reading depends on the run's scope and
+   * phase, which the view owns, and a row that guessed would disagree with its
+   * neighbours.
+   */
+  readonly ticks: readonly CaseTick[];
+  /** Whether the reader asked for reduced motion. */
+  readonly reduced: boolean;
   readonly strings: LaneRowStrings;
   readonly onSelect: (path: string) => void;
   readonly onRun: (path: string) => void;
@@ -53,6 +65,8 @@ export function LaneRow({
   selected,
   optionId,
   running,
+  ticks,
+  reduced,
   strings,
   onSelect,
   onRun,
@@ -81,16 +95,7 @@ export function LaneRow({
         <span data-tst="lane-dir">{directory}</span>
       </span>
 
-      <span data-tst="ticks">
-        {row.cases.map((entry, index) => (
-          <span
-            key={`${entry.name}-${String(index)}`}
-            data-tst="tick"
-            data-status={entry.status}
-            title={entry.name}
-          />
-        ))}
-      </span>
+      <TickMatrix ticks={ticks} reduced={reduced} />
 
       <span data-tst="lane-reading">
         {row.hasFailed ? (

@@ -11,9 +11,20 @@
   --tst-ink-dim: var(--dsw-alias-label-secondary, #6b655c);
   --tst-ink-faint: var(--dsw-alias-label-tertiary, #a39c91);
   --tst-rule: var(--dsw-alias-border-l2, #e4e0d9);
-  --tst-pass: #2f8f4e;
-  --tst-fail: #c02b2b;
-  --tst-idle: #c9c3b8;
+  /* The reference's palette, in GitHub's light values. The dark block below
+     carries the same six roles in the dark values, so every rule that paints a
+     state reads one token and the theme switch is a token swap rather than a
+     second set of rules. */
+  --tst-pass: #1a7f37;
+  --tst-fail: #cf222e;
+  --tst-idle: #d0d7de;
+  --tst-chart-line: #57606a;
+  --tst-chart-area: color-mix(in srgb, var(--tst-chart-line) 12%, transparent);
+  --tst-tick-w: 3px;
+  --tst-tick-h: 10px;
+  --tst-tick-gap: 2px;
+  --tst-tick-ms: 120ms;
+  --tst-phase-ms: 150ms;
 
   position: relative;
   display: flex;
@@ -50,9 +61,11 @@
 }
 
 body[data-ds-dark-theme] [data-testid="testboard"] {
-  --tst-pass: #4ade80;
-  --tst-fail: #ff3b30;
-  --tst-idle: #3a3a40;
+  --tst-pass: #3fb950;
+  --tst-fail: #f85149;
+  --tst-idle: #30363d;
+  --tst-chart-line: #d0d7de;
+  --tst-chart-area: color-mix(in srgb, var(--tst-chart-line) 12%, transparent);
 }
 
 /* Header ------------------------------------------------------------------ */
@@ -73,6 +86,40 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--tst-ink);
+  /* The phase line swaps text as the run moves through its stages. The fade
+     plus the 2px rise is what makes that read as a change of state rather than
+     as a flicker; the key is on the element so a new phase remounts it. */
+  animation: tst-phase-in var(--tst-phase-ms) ease-out both;
+}
+
+@keyframes tst-phase-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The failure count is the one red thing in the header, and it pulses once when
+   it first becomes positive so a red run announces itself. */
+[data-tst="title"][data-tone="failed"] {
+  color: var(--tst-fail);
+}
+
+[data-tst="title"][data-tone="passed"] {
+  color: var(--tst-pass);
+}
+
+[data-tst="timer"] {
+  font-family: var(--tst-mono);
+  font-variant-numeric: tabular-nums;
+  /* A timer whose width changes as it counts makes the tallies beside it jump.
+     Tabular figures plus a floor keep the row still. */
+  min-width: 4.5ch;
+  text-align: right;
 }
 
 [data-tst="subtitle"] {margin: 2px 0 0;color: var(--tst-ink-dim)}
@@ -90,7 +137,17 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
 [data-tst="duration"],
 [data-tst="detail-file-failed"] {
   color: var(--tst-ink-dim);
-}[data-tst="tally-failed"][data-has-failed="true"],
+}[data-tst="count-failed"][data-pulse="true"] {
+  animation: tst-count-pulse 400ms ease-out;
+}
+
+@keyframes tst-count-pulse {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+
+[data-tst="tally-failed"][data-has-failed="true"],
 [data-tst="detail-file-failed"][data-has-failed="true"],
 [data-tst="detail-case-status"][data-status="failed"],
 [data-tst="lane-failed"] {
@@ -100,43 +157,72 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
   color: var(--tst-ink-faint);
 }
 
-/* Sparkline --------------------------------------------------------------- */
+/* Throughput chart -------------------------------------------------------- */
 
 [data-tst="throughput"] {
   flex: none;
   position: relative;
-  height: 56px;
-  margin: 14px 0 18px;
+  margin: 14px 0 6px;
+}
+
+[data-tst="chart-head"] {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+[data-tst="chart-title"] {
+  color: var(--tst-ink-dim);
+  font-size: var(--tst-fs-small);
 }
 
 [data-tst="spark"] {
   display: block;
   width: 100%;
-  height: 56px;
+  height: 96px;
   overflow: visible;
 }
 
 [data-tst="spark-line"] {
   fill: none;
-  stroke: var(--tst-ink-dim);
+  stroke: var(--tst-chart-line);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
 [data-tst="spark-area"] {
-  fill: var(--tst-ink);
-  opacity: 0.05;
+  fill: var(--tst-chart-area);
   stroke: none;
 }
 
+/* The red rule marks the second a failure landed in. It fades in rather than
+   appearing, because a line that pops into a chart reads as a rendering fault
+   rather than as an event. */
 [data-tst="pin"] {
   stroke: var(--tst-fail);
   stroke-width: 1;
-  opacity: 0.55;
+  opacity: 0.9;
   vector-effect: non-scaling-stroke;
+  animation: tst-pin-in 150ms ease-out both;
 }
 
-[data-tst="peak"] {position: absolute;top: 0;right: 0;color: var(--tst-ink-faint)}
+@keyframes tst-pin-in {
+  from { opacity: 0; }
+  to { opacity: 0.9; }
+}
+
+[data-tst="peak"] {color: var(--tst-ink-faint);font-size: var(--tst-fs-small)}
+
+/* The run's own line: which run this is, how many cases, how long. */
+[data-tst="run-meta"] {
+  flex: none;
+  margin: 0 0 14px;
+  color: var(--tst-ink-faint);
+  font-family: var(--tst-mono);
+  font-size: var(--tst-fs-small);
+}
 
 /* Toolbar ----------------------------------------------------------------- */
 
@@ -403,19 +489,65 @@ body.tst-pane-resizing {
   overflow: hidden;
 }
 
+/* One bar per case. The state is an attribute, so the lighting is a CSS
+   transition rather than a React render per bar: a file with hundreds of cases
+   costs one style recalculation, not hundreds of components. */
 [data-tst="tick"] {
   display: block;
-  flex: 0 0 2px;
-  width: 2px;
-  height: 11px;
+  flex: 0 0 var(--tst-tick-w);
+  width: var(--tst-tick-w);
+  height: var(--tst-tick-h);
   border-radius: 1px;
   background: var(--tst-idle);
-}[data-tst="tick"][data-status="passed"],
+  transform-origin: center;
+  transition:
+    background-color var(--tst-tick-ms) ease-out,
+    transform var(--tst-tick-ms) ease-out,
+    opacity var(--tst-tick-ms) ease-out;
+}
+
+/* A tick that has not been reported yet stays grey and slightly short: the
+   height difference is what makes the lit ones read as having landed. */
+[data-tst="tick"][data-state="unrun"] {
+  transform: scaleY(0.4);
+  opacity: 0.55;
+}
+
+[data-tst="tick"][data-state="passed"],
 [data-tst="case-dot"][data-status="passed"] {
   background: var(--tst-pass);
-}[data-tst="tick"][data-status="failed"],
+}
+
+[data-tst="tick"][data-state="passed"] {
+  transform: scaleY(1);
+  opacity: 1;
+}
+
+/* A failure gets a ring as well as the colour: colour alone is the one channel
+   a red-green colour-blind reader cannot use, and this board's whole job is
+   making a failure findable. */
+[data-tst="tick"][data-state="failed"],
 [data-tst="case-dot"][data-status="failed"] {
   background: var(--tst-fail);
+}
+
+[data-tst="tick"][data-state="failed"] {
+  transform: scaleY(1);
+  opacity: 1;
+  box-shadow: 0 0 0 1px var(--tst-fail);
+  animation: tst-tick-flash 320ms ease-out;
+}
+
+[data-tst="tick"][data-state="skipped"] {
+  background: var(--tst-idle);
+  transform: scaleY(0.7);
+  opacity: 0.8;
+}
+
+@keyframes tst-tick-flash {
+  0% { box-shadow: 0 0 0 1px var(--tst-fail); }
+  50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--tst-fail) 55%, transparent); }
+  100% { box-shadow: 0 0 0 1px var(--tst-fail); }
 }
 
 [data-tst="lane-reading"] {flex: 0 0 auto;color: var(--tst-ink-faint);text-align: right;min-width: 56px}
@@ -505,4 +637,96 @@ body.tst-pane-resizing {
   flex: 1 1 auto;
   height: 100%;
   min-height: 0;
+}
+
+/* Reduced motion ---------------------------------------------------------- */
+
+/* The reader asked for no animation, so every duration collapses to zero and
+   every keyframe resolves on its first frame. This is deliberately one block
+   rather than a branch in each rule: the state is always correct, and the only
+   thing that changes is whether the change is shown as a transition. */
+@media (prefers-reduced-motion: reduce) {
+  [data-testid="testboard"] *,
+  [data-testid="testboard"] *::before,
+  [data-testid="testboard"] *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  [data-tst="tick"] {
+    transform: none !important;
+  }
+
+  [data-tst="tick"][data-state="unrun"] {
+    opacity: 0.55 !important;
+  }
+}
+
+/* Fixing card ------------------------------------------------------------- */
+
+/* The preview's demo card, and only the preview's: the host has no agent repair
+   events (D18), so this element never renders online. It floats at the chart's
+   bottom right so it reads as an annotation on the run rather than as another
+   row of the board. */
+[data-tst="fixing-card"] {
+  position: absolute;
+  right: 0;
+  bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  max-width: 320px;
+  padding: 8px 10px;
+  border: 1px solid var(--tst-rule);
+  border-radius: 6px;
+  background: var(--tst-surface);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--tst-ink) 12%, transparent);
+  font-family: var(--tst-mono);
+  font-size: var(--tst-fs-small);
+  animation: tst-card-in 180ms ease-out both;
+}
+
+@keyframes tst-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+[data-tst="fixing-head"] {
+  color: var(--tst-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-tst="fixing-path"] {
+  color: var(--tst-ink-dim);
+}
+
+[data-tst="fixing-meta"] {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--tst-ink-faint);
+}
+
+[data-tst="fixing-diff"] {
+  display: flex;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-tst="diff-add"] {
+  color: var(--tst-pass);
+}
+
+[data-tst="diff-del"] {
+  color: var(--tst-fail);
 }

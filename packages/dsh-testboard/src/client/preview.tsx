@@ -16,7 +16,7 @@ import { createRoot } from "react-dom/client";
 
 import snapshotData from "./data/snapshot.json" with { type: "json" };
 import sourcesData from "./data/sources.json" with { type: "json" };
-import { createFixtureRuntime } from "./runtime.ts";
+import { createFixtureRuntime } from "./fixture-runtime.ts";
 import { ensureStyles } from "./styles.ts";
 import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
 import type { EditorChunkModule } from "./code-contract.ts";
@@ -66,6 +66,15 @@ const STRINGS: TestboardViewStrings = {
   errorBusy: "这个工作区已有一轮在跑。",
   errorBadScope: "运行范围不合法。",
   errorRunFailed: "上一轮运行出错了。",
+  rerunning: "重跑中",
+  finished: "测试完成",
+  failing: "个失败",
+  run: "第",
+  rerun: "重跑",
+  tests: "个用例",
+  chartTitle: "每秒完成用例数",
+  fixing: "正在修复",
+  fixingModel: "模型",
 };
 
 /**

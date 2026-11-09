@@ -26,9 +26,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 
 import type { TestSnapshot } from "./model.ts";
-import { groupFileRows, listFileRows, peakThroughput, summarize, throughputSeries, type RowFilter, type RowSort } from "./model.ts";
+import {
+  groupFileRows,
+  listFileRows,
+  summarize,
+  throughputSeries,
+  type RowFilter,
+  type RowSort,
+  type ThroughputBucket,
+} from "./model.ts";
 import type { TestboardRuntime } from "./runtime.ts";
-import type { RunProgress, RunScope, TestboardError, TestboardState } from "../shared.ts";
+import type { DemoStage, RunProgress, RunScope, TestboardError, TestboardState } from "../shared.ts";
+import {
+  caseTickStates,
+  defaultMotion,
+  elapsedOf,
+  isReducedMotion,
+  phaseLabel,
+  runMeta,
+  type MotionStrings,
+  type PhaseLabel,
+} from "./motion.ts";
 import { applyNavIntent, flattenNav, navKeyIntent, normalizeSelection, pageStep, type NavSelection } from "./nav.ts";
 import {
   paneWidthStorage,
@@ -42,8 +60,8 @@ import { CaseList } from "./components/case-list.tsx";
 import { DetailPane, type DetailPaneStrings } from "./components/detail-pane.tsx";
 import { LaneRow } from "./components/lane-row.tsx";
 import { PaneHandle } from "./components/pane-handle.tsx";
-import { SummaryHeader } from "./components/summary-header.tsx";
-import { ThroughputSparkline } from "./components/throughput-sparkline.tsx";
+import { AreaChart } from "./components/area-chart.tsx";
+import { RunHeader } from "./components/run-header.tsx";
 import { Toolbar } from "./components/toolbar.tsx";
 
 /** The attribute the host writes on `body` to select the dark palette. */
@@ -83,6 +101,15 @@ export interface TestboardViewStrings extends DetailPaneStrings {
   readonly errorBusy: string;
   readonly errorBadScope: string;
   readonly errorRunFailed: string;
+  readonly rerunning: string;
+  readonly finished: string;
+  readonly failing: string;
+  readonly run: string;
+  readonly rerun: string;
+  readonly tests: string;
+  readonly chartTitle: string;
+  readonly fixing: string;
+  readonly fixingModel: string;
 }
 
 /** Owner props the host passes to a `conversation.view` entry. */
@@ -149,6 +176,41 @@ function errorText(error: TestboardError, strings: TestboardViewStrings): string
 }
 
 /**
+ * Fold the snapshot's per-second buckets into the host's cumulative shape.
+ *
+ * The chart draws a running total, and the two sources report different things:
+ * the host's buckets are already cumulative, the snapshot's are deltas. Folding
+ * here keeps the chart with one input shape instead of a branch inside it.
+ *
+ * @param buckets - the snapshot's per-second completions.
+ * @returns the same reading, accumulated.
+ */
+function cumulativeOf(buckets: readonly ThroughputBucket[]): RunProgress["series"] {
+  let finished = 0;
+  let passed = 0;
+  let failed = 0;
+  return buckets.map(bucket => {
+    finished += bucket.completed;
+    failed += bucket.failed;
+    passed = finished - failed;
+    return { tMs: bucket.second * 1000, finished, passed, failed };
+  });
+}
+
+/**
+ * Read the reader's motion preference, when the environment has one.
+ *
+ * jsdom has no `matchMedia`, and the board has to render there too; an absent
+ * query means "motion allowed", which is the same default a browser without the
+ * feature gives.
+ * @returns the query's result, or undefined.
+ */
+function readReducedQuery(): { readonly matches: boolean } | undefined {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+  return window.matchMedia("(prefers-reduced-motion: reduce)");
+}
+
+/**
  * Read the host's current theme from the body attribute.
  * @returns the resolved theme.
  */
@@ -197,6 +259,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const [workspaceName, setWorkspaceName] = useState<string | undefined>(undefined);
     const [run, setRun] = useState<RunProgress | undefined>(undefined);
     const [stateError, setStateError] = useState<TestboardError | undefined>(undefined);
+    const [demo, setDemo] = useState<DemoStage | undefined>(undefined);
     const [loadError, setLoadError] = useState<string | undefined>(undefined);
     const [editor, setEditor] = useState<EditorChunkModule | undefined>(undefined);
     const [filter, setFilter] = useState<RowFilter>("all");
@@ -211,6 +274,30 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const listRef = useRef<HTMLDivElement | null>(null);
     const editorRequested = useRef(false);
     const lastSession = useRef<string | undefined>(sessionId);
+
+    // The reader's motion preference, read once and then followed: a reader who
+    // turns it on mid-run should stop seeing animation without a reload.
+    const [reduced, setReduced] = useState(() => isReducedMotion(readReducedQuery()));
+    useEffect(() => {
+      if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+      const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+      const sync = (): void => setReduced(isReducedMotion(query));
+      sync();
+      query.addEventListener?.("change", sync);
+      return () => query.removeEventListener?.("change", sync);
+    }, []);
+    const motion = useMemo(() => defaultMotion({ matches: reduced }), [reduced]);
+
+    // The clock the header's timer reads. It only runs while a run is going: a
+    // settled board has nothing to count, and a tab nobody is watching should
+    // not wake up ten times a second to redraw the same number.
+    const [nowMs, setNowMs] = useState(() => Date.now());
+    useEffect(() => {
+      if (run?.phase !== "running") return undefined;
+      setNowMs(Date.now());
+      const timer = setInterval(() => setNowMs(Date.now()), 100);
+      return () => clearInterval(timer);
+    }, [run?.phase]);
 
     const storage: PaneWidthStorage | null = useMemo(() => paneWidthStorage(), []);
     const [leftWidth, setLeftWidth] = useState<number | null>(() => readLeftPaneWidth(storage));
@@ -238,6 +325,9 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       setWorkspaceName(state.workspaceName);
       setRun(state.run);
       setStateError(state.error);
+      // Only the preview's fixture fills this in; on the host it is absent and
+      // the board never invents a fixing stage.
+      setDemo(state.demo);
     }, []);
 
     // The first load, and every session change. No session id means the host
@@ -267,8 +357,14 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     // A run is a process, not a value: while the host says one is going, the
     // board asks again until it settles. The timer is cleared whenever the phase
     // leaves `running`, and on unmount, so a closed tab stops polling.
+    //
+    // The preview's demo is the second reason to poll. Its loop keeps moving
+    // through stages the wire has no phase for (a fixing card, a hold before the
+    // next pass), so a run that reads `finished` there is not the end of the
+    // story; the demo stage is what says the loop is still going.
+    const polling = run?.phase === "running" || demo !== undefined;
     useEffect(() => {
-      if (run?.phase !== "running" || sessionId === undefined || sessionId === "") return undefined;
+      if (!polling || sessionId === undefined || sessionId === "") return undefined;
       let live = true;
       const timer = setInterval(() => {
         runtime.loadState(sessionId).then(
@@ -290,7 +386,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
         live = false;
         clearInterval(timer);
       };
-    }, [run?.phase, runtime, sessionId, applyState]);
+    }, [polling, runtime, sessionId, applyState]);
 
     // Source text is fetched per file and kept: the board no longer ships every
     // test file's text, and re-selecting a file must not refetch it.
@@ -429,6 +525,18 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       setSelection({ kind: "case", path, index });
     }, []);
 
+    /**
+     * The run's events for one file.
+     *
+     * The host reports events for the whole run, and a row only cares about its
+     * own cases; filtering here keeps the tick computation a pure function of
+     * one file.
+     */
+    const runCasesFor = useCallback(
+      (path: string): RunProgress["cases"] => (run === undefined ? [] : run.cases.filter(entry => entry.path === path)),
+      [run],
+    );
+
     const resetPaneWidth = useCallback((): void => {
       resetLeftPaneWidth(storage);
       setLeftWidth(null);
@@ -516,8 +624,50 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     }
 
     const summary = summarize(snapshot);
-    const series = throughputSeries(snapshot);
     const activeOption = resolved === undefined ? undefined : optionId(resolved);
+
+    const motionStrings: MotionStrings = {
+      running: strings.running,
+      rerunning: strings.rerunning,
+      finished: strings.finished,
+      failing: strings.failing,
+      notRunYet: strings.notRunYet,
+      run: strings.run,
+      rerun: strings.rerun,
+      tests: strings.tests,
+    };
+    // The preview's demo has a stage the wire does not: `fixing`. It is not a
+    // run phase (D18), so it is layered on here rather than taught to
+    // `phaseLabel`, which stays a function of the host's own state.
+    const label: PhaseLabel =
+      demo?.phase === "fixing"
+        ? {
+            phase: "finished",
+            text: `${strings.fixing} ${String(run?.counts.failed ?? 0)} ${strings.failing}`,
+            tone: "failed",
+          }
+        : phaseLabel(run, motionStrings);
+    // With no run in flight the header still has a number to show: the last
+    // reading's own duration. Reporting 0.0s would say the suite took no time.
+    const elapsedMs = run === undefined ? summary.wallClockMs : elapsedOf(run, nowMs);
+    // The chart reads the live run when there is one and the snapshot's own
+    // synthetic series otherwise, so an idle board still shows the last shape.
+    // The two bucket shapes differ (the snapshot's are per-second deltas, the
+    // host's are cumulative), so the synthetic one is folded into the same
+    // cumulative form rather than special-cased in the chart.
+    const chartSeries: RunProgress["series"] =
+      run === undefined ? cumulativeOf(throughputSeries(snapshot)) : run.series;
+    const chartFailures = run === undefined ? [] : run.failures;
+    const chartSpanMs = run === undefined ? Math.max(1000, summary.wallClockMs) : Math.max(1000, elapsedMs);
+    const meta = runMeta(run, motionStrings);
+    // The subtitle is `workspace · command`. The command half already names the
+    // project in the locale string, so the workspace is only prepended when it
+    // says something different: otherwise the line reads `dsh-plugins ·
+    // dsh-plugins · pnpm test`.
+    const subtitle =
+      workspaceName === undefined || strings.subtitle.startsWith(workspaceName)
+        ? strings.subtitle
+        : `${workspaceName} · ${strings.subtitle}`;
 
     return (
       <div
@@ -527,24 +677,47 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
         className={`tst-theme-${theme}`}
         data-theme={theme}
       >
-        <SummaryHeader
-          summary={summary}
-          strings={{
-            title: strings.title,
-            subtitle: strings.subtitle,
-            ago: strings.ago,
-            passed: strings.passed,
-            failed: strings.failed,
-            took: strings.took,
-          }}
+        <RunHeader
+          label={label}
+          demoPhase={demo?.phase}
+          subtitle={subtitle}
+          passed={run === undefined ? summary.passed : run.counts.passed}
+          failed={run === undefined ? summary.failed : run.counts.failed}
+          elapsedMs={elapsedMs}
+          running={running}
+          reduced={motion.reduced}
+          strings={{ passed: strings.passed, failed: strings.failed, took: strings.took }}
         />
-        <ThroughputSparkline series={series} peak={peakThroughput(series)} strings={{ peak: strings.peak, perSecond: strings.perSecond }} />
-        {running ? (
-          <p data-testid="run-status" data-tst="run-status">
-            {strings.running}
-            {run === undefined ? null : ` · ${String(run.counts.passed)} ${strings.passed} · ${String(run.counts.failed)} ${strings.failed}`}
+        <AreaChart
+          series={chartSeries}
+          failures={chartFailures}
+          spanMs={chartSpanMs}
+          reduced={motion.reduced}
+          strings={{ title: strings.chartTitle, peak: strings.peak, perSecond: strings.perSecond }}
+          overlay={
+            demo?.phase === "fixing" ? (
+              <aside data-testid="fixing-card" data-tst="fixing-card">
+                <div data-tst="fixing-head">
+                  {strings.fixing} <span data-tst="fixing-path">{demo.path ?? ""}</span>
+                </div>
+                <div data-tst="fixing-meta">
+                  <span data-tst="fixing-model">{demo.model ?? ""}</span>
+                  <span data-tst="fixing-sep">·</span>
+                  <span data-tst="fixing-seconds">{String(demo.seconds ?? 0)}s</span>
+                </div>
+                <div data-tst="fixing-diff">
+                  <span data-tst="diff-add">+2</span>
+                  <span data-tst="diff-del">−2</span>
+                </div>
+              </aside>
+            ) : null
+          }
+        />
+        {meta === "" ? null : (
+          <p data-testid="run-meta" data-tst="run-meta">
+            {meta}
           </p>
-        ) : null}
+        )}
         <Toolbar
           filter={filter}
           query={query}
@@ -595,6 +768,15 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
                           selected={isSelected}
                           optionId={optionId(fileItem)}
                           running={running}
+                          ticks={caseTickStates({
+                            snapshotCases: row.cases,
+                            runCases: runCasesFor(row.path),
+                            scope: run?.scope,
+                            rerunning: run !== undefined && run.runNumber > 1,
+                            running,
+                            path: row.path,
+                          })}
+                          reduced={motion.reduced}
                           strings={{ failed: strings.failed, runFile: strings.runFile }}
                           onSelect={onFileClick}
                           onRun={onRunFile}

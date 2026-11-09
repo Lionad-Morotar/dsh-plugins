@@ -16,7 +16,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { TestSnapshot } from "../src/client/model.ts";
-import { createFixtureRuntime, createHttpRuntime } from "../src/client/runtime.ts";
+import { createFixtureRuntime } from "../src/client/fixture-runtime.ts";
+import { createHttpRuntime } from "../src/client/runtime.ts";
 import { ROUTE_PREFIX, type TestboardState } from "../src/shared.ts";
 
 /** One recorded request, so the assertions can read the URL and the body. */
@@ -194,28 +195,30 @@ describe("createFixtureRuntime", () => {
   const SOURCES = { version: 1, files: { "test/a.test.ts": 'it("a", () => {});' } };
 
   it("reports the fixture snapshot as the workspace state", async () => {
-    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
 
     const state = await runtime.loadState("s1");
 
     expect(state.snapshot).toEqual(SNAPSHOT);
-    expect(state.workspaceName).toBe("fixture");
+    // The preview names a real-looking workspace so the header's subtitle reads
+    // like the tab's rather than like a placeholder.
+    expect(state.workspaceName).toBe("dsh-plugins");
   });
 
   it("serves source text from the fixture bundle", async () => {
-    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
 
     expect(await runtime.loadSource("s1", "test/a.test.ts")).toBe('it("a", () => {});');
   });
 
   it("rejects a path the fixture does not carry", async () => {
-    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
 
     await expect(runtime.loadSource("s1", "test/missing.test.ts")).rejects.toThrow();
   });
 
   it("accepts a run and reports it as running straight away", async () => {
-    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
 
     const started = await runtime.startRun("s1", { kind: "all" });
 
@@ -225,24 +228,69 @@ describe("createFixtureRuntime", () => {
     expect(state.run?.scope).toEqual({ kind: "all" });
   });
 
-  it("settles the run as finished once its delay has passed", async () => {
+  it("lights cases up as the demo's clock advances", async () => {
     vi.useFakeTimers();
     try {
-      const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+      const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
       await runtime.startRun("s1", { kind: "all" });
 
-      await vi.advanceTimersByTimeAsync(1500);
-      const state = await runtime.loadState("s1");
+      const before = (await runtime.loadState("s1")).run?.cases.length ?? 0;
+      await vi.advanceTimersByTimeAsync(400);
+      const after = (await runtime.loadState("s1")).run?.cases.length ?? 0;
 
-      expect(state.run?.phase).toBe("finished");
-      expect(state.run?.counts.total).toBeGreaterThan(0);
+      // The whole point of the demo loop: cases arrive over time, not at once.
+      expect(after).toBeGreaterThan(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("walks the demo through fixing, rerunning and finished", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
+      await runtime.startRun("s1", { kind: "all" });
+
+      const seen = new Set<string>();
+      // Sample across the whole cycle: the demo's stages are time-based, so a
+      // single advance would only ever see one of them.
+      for (let step = 0; step < 200; step += 1) {
+        await vi.advanceTimersByTimeAsync(100);
+        const state = await runtime.loadState("s1");
+        if (state.demo !== undefined) seen.add(state.demo.phase);
+      }
+
+      expect(seen.has("running")).toBe(true);
+      expect(seen.has("fixing")).toBe(true);
+      expect(seen.has("rerunning")).toBe(true);
+      expect(seen.has("finished")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("names the file and the model on the fixing card", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false, modelName: "test-model" });
+      await runtime.startRun("s1", { kind: "all" });
+
+      let fixing: { path?: string; model?: string } | undefined;
+      for (let step = 0; step < 200 && fixing === undefined; step += 1) {
+        await vi.advanceTimersByTimeAsync(100);
+        const state = await runtime.loadState("s1");
+        if (state.demo?.phase === "fixing") fixing = state.demo;
+      }
+
+      expect(fixing?.model).toBe("test-model");
+      expect(fixing?.path).toBeTypeOf("string");
     } finally {
       vi.useRealTimers();
     }
   });
 
   it("cancels a run that is still going", async () => {
-    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
     await runtime.startRun("s1", { kind: "all" });
 
     expect(await runtime.cancelRun("s1")).toBe(true);
@@ -250,7 +298,7 @@ describe("createFixtureRuntime", () => {
   });
 
   it("answers false when there is nothing to cancel", async () => {
-    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
 
     expect(await runtime.cancelRun("s1")).toBe(false);
   });
