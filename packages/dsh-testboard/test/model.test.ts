@@ -34,10 +34,10 @@ import {
 const REAL_SNAPSHOT = snapshotData as unknown as TestSnapshot;
 
 const CASES: TestCase[] = [
-  { path: "packages/a/test/one.test.ts", name: "passes quickly", status: "passed", durationMs: 4 },
-  { path: "packages/a/test/one.test.ts", name: "fails slowly", status: "failed", durationMs: 900 },
-  { path: "packages/b/test/two.test.ts", name: "passes slowly", status: "passed", durationMs: 700 },
-  { path: "packages/b/test/two.test.ts", name: "skipped one", status: "skipped", durationMs: 1 },
+  { path: "packages/a/test/one.test.ts", line: 1, name: "passes quickly", status: "passed", durationMs: 4 },
+  { path: "packages/a/test/one.test.ts", line: 1, name: "fails slowly", status: "failed", durationMs: 900 },
+  { path: "packages/b/test/two.test.ts", line: 1, name: "passes slowly", status: "passed", durationMs: 700 },
+  { path: "packages/b/test/two.test.ts", line: 1, name: "skipped one", status: "skipped", durationMs: 1 },
 ];
 
 const SNAPSHOT: TestSnapshot = {
@@ -122,8 +122,8 @@ describe("listRows", () => {
             {
               path: "packages/a/test/one.test.ts",
               cases: [
-                { path: "packages/a/test/one.test.ts", name: "zeta", status: "passed", durationMs: 5 },
-                { path: "packages/a/test/one.test.ts", name: "alpha", status: "passed", durationMs: 5 },
+                { path: "packages/a/test/one.test.ts", line: 1, name: "zeta", status: "passed", durationMs: 5 },
+                { path: "packages/a/test/one.test.ts", line: 1, name: "alpha", status: "passed", durationMs: 5 },
               ],
             },
           ],
@@ -193,11 +193,11 @@ describe("listFileRows", () => {
           files: [
             {
               path: "packages/a/test/zeta.test.ts",
-              cases: [{ path: "packages/a/test/zeta.test.ts", name: "z", status: "passed", durationMs: 5 }],
+              cases: [{ path: "packages/a/test/zeta.test.ts", line: 1, name: "z", status: "passed", durationMs: 5 }],
             },
             {
               path: "packages/a/test/alpha.test.ts",
-              cases: [{ path: "packages/a/test/alpha.test.ts", name: "a", status: "passed", durationMs: 5 }],
+              cases: [{ path: "packages/a/test/alpha.test.ts", line: 1, name: "a", status: "passed", durationMs: 5 }],
             },
           ],
         },
@@ -269,10 +269,10 @@ describe("throughputSeries", () => {
             {
               path: "packages/a/test/one.test.ts",
               cases: [
-                { path: "packages/a/test/one.test.ts", name: "first", status: "passed", durationMs: 500 },
+                { path: "packages/a/test/one.test.ts", line: 1, name: "first", status: "passed", durationMs: 500 },
                 // 30s of case time is 2.5s of wall clock across 12 processes, so
                 // this lands in the third second and leaves the second one quiet.
-                { path: "packages/a/test/one.test.ts", name: "late", status: "passed", durationMs: 30_000 },
+                { path: "packages/a/test/one.test.ts", line: 1, name: "late", status: "passed", durationMs: 30_000 },
               ],
             },
           ],
