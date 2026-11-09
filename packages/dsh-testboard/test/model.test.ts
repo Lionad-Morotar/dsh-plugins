@@ -234,14 +234,17 @@ describe("throughputSeries", () => {
     expect(series.map(bucket => bucket.completed)).toEqual([4]);
   });
 
-  it("spans about two hundred seconds for the repository's own suite", () => {
+  it("spans a few hundred seconds for the repository's own suite", () => {
     const series = throughputSeries(REAL_SNAPSHOT);
-    // 2,467,345ms of case time over 12 processes is ~206s of wall clock. The
-    // band is loose on purpose: it pins the order of magnitude, which is the
-    // thing that was wrong, without turning every regenerated snapshot into a
-    // red suite.
+    // The band pins the order of magnitude, which is the thing that was wrong
+    // (a serial sum drew a four-minute suite as forty), and nothing finer: the
+    // corpus grows on its own as packages, submodules and test files are added,
+    // so any tighter ceiling turns an unrelated commit into a red suite. The
+    // floor still catches the real regression, a snapshot that stopped summing
+    // case durations; the ceiling catches a sum that stopped being divided by
+    // the parallel-process count.
     expect(series.length).toBeGreaterThan(180);
-    expect(series.length).toBeLessThan(230);
+    expect(series.length).toBeLessThan(260);
   });
 
   it("keeps the peak readable once the run is folded onto wall clock", () => {

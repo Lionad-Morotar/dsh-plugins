@@ -5897,16 +5897,16 @@
             {"name":"groups file rows by package, package name ascending","line":214,"status":"passed","durationMs":235},
             {"name":"drops a package whose files were all filtered out","line":220,"status":"passed","durationMs":260},
             {"name":"buckets completions by wall clock, not by summed case time","line":227,"status":"passed","durationMs":790},
-            {"name":"spans about two hundred seconds for the repository's own suite","line":237,"status":"passed","durationMs":928},
-            {"name":"keeps the peak readable once the run is folded onto wall clock","line":247,"status":"passed","durationMs":664},
-            {"name":"is deterministic and never reads the clock","line":254,"status":"passed","durationMs":1171},
-            {"name":"returns a dense series, with a zero bucket for a quiet second","line":258,"status":"passed","durationMs":255},
-            {"name":"puts every failure pin in the second that failure finished","line":288,"status":"passed","durationMs":804},
-            {"name":"returns an empty series for an empty snapshot","line":299,"status":"passed","durationMs":422},
-            {"name":"folds the summed case time onto the parallel run","line":306,"status":"passed","durationMs":931},
-            {"name":"agrees with the summary's own reading","line":311,"status":"passed","durationMs":883},
-            {"name":"leaves the serial duration alone","line":315,"status":"passed","durationMs":876},
-            {"name":"reports zero for an empty snapshot","line":328,"status":"passed","durationMs":828}
+            {"name":"spans a few hundred seconds for the repository's own suite","line":237,"status":"passed","durationMs":872},
+            {"name":"keeps the peak readable once the run is folded onto wall clock","line":250,"status":"passed","durationMs":664},
+            {"name":"is deterministic and never reads the clock","line":257,"status":"passed","durationMs":1171},
+            {"name":"returns a dense series, with a zero bucket for a quiet second","line":261,"status":"passed","durationMs":255},
+            {"name":"puts every failure pin in the second that failure finished","line":291,"status":"passed","durationMs":804},
+            {"name":"returns an empty series for an empty snapshot","line":302,"status":"passed","durationMs":422},
+            {"name":"folds the summed case time onto the parallel run","line":309,"status":"passed","durationMs":931},
+            {"name":"agrees with the summary's own reading","line":314,"status":"passed","durationMs":883},
+            {"name":"leaves the serial duration alone","line":318,"status":"passed","durationMs":876},
+            {"name":"reports zero for an empty snapshot","line":331,"status":"passed","durationMs":828}
           ]
         },
         {
