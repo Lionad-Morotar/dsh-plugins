@@ -35,7 +35,7 @@
 
 ## 数据说明
 
-`src/client/data/snapshot.json` 由 `scripts/snapshot.mjs` 扫描本仓 `packages/*/test/**/*.test.{ts,tsx}` 生成，抽取 `it` / `test` 的用例标题（含 `.only` / `.skip` / `.each` 形态），当前覆盖 22 个包、305 个测试文件、约 4140 条用例（精确数字以 `src/client/data/snapshot.json` 为准）。
+`src/client/data/snapshot.json` 由 `scripts/snapshot.mjs` 扫描本仓 `packages/*/test/**/*.test.{ts,tsx}` 生成，抽取 `it` / `test` 的用例标题（含 `.only` / `.skip` / `.each` 形态），当前覆盖 22 个包、305 个测试文件、约 4200 条用例（精确数字以 `src/client/data/snapshot.json` 为准）。
 
 - 状态与耗时是**合成的**，快照里 `statusSource: "synthetic"` 明写这一点。本包不跑测试，也不读任何测试进程的输出。
 - 约 0.85% 用例标为 failed、1.27% 标为 skipped，让红色语义在界面上真的出现，又不至于让「failed」失去含义。
