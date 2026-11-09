@@ -53,10 +53,24 @@ function memoryStorageDomain(): StorageDomainFace & { records: Map<string, unkno
 
 const state: ArchWorkspaceState = {
   viewId: "index",
-  viewport: { scale: 0.8, tx: 330, ty: 438 },
+  viewports: {
+    index: { scale: 0.8, tx: 330, ty: 438 },
+    skin: { scale: 0.6, tx: -40, ty: 12 },
+  },
   viewHash: "QB5RYAt",
   offsets: {
     index: { user: { dx: 500, dy: 0, baseX: 0, baseY: 1160 } },
+  },
+  updatedAt: "2026-11-01T00:00:00.000Z",
+};
+
+/** What the store held before viewports were cached per view. */
+const legacyState = {
+  viewId: "skin",
+  viewport: { scale: 0.6, tx: -40, ty: 12 },
+  viewHash: "QB5RYAt",
+  offsets: {
+    skin: { title: { dx: 4, dy: 0, baseX: 0, baseY: 8 } },
   },
   updatedAt: "2026-11-01T00:00:00.000Z",
 };
@@ -80,6 +94,58 @@ describe("openArchStore", () => {
     // The on-disk shape parses: a record the schema rejects gets quarantined
     // on the next boot, so a persisted-but-unparsable state is a regression.
     expect(() => valueSchema.parse(state)).not.toThrow();
+  });
+
+  it("migrates a legacy single-viewport record when the table opens", async () => {
+    const domain = memoryStorageDomain();
+    domain.records.set("/w/legacy", legacyState);
+    const store = await openArchStore(domain);
+    // The schema must parse the old record rather than have the host
+    // quarantine it, which would also drop the node offsets beside it.
+    expect(await store?.loadWorkspace("/w/legacy")).toEqual({
+      viewId: "skin",
+      viewports: { skin: { scale: 0.6, tx: -40, ty: 12 } },
+      viewHash: "QB5RYAt",
+      offsets: legacyState.offsets,
+      updatedAt: "2026-11-01T00:00:00.000Z",
+    });
+    await store?.close();
+  });
+
+  it("normalizes a legacy record a host hands back unparsed", async () => {
+    const domain = memoryStorageDomain();
+    const store = await openArchStore(domain);
+    domain.records.set("/w/raw", legacyState);
+    expect((await store?.loadWorkspace("/w/raw"))?.viewports).toEqual({
+      skin: { scale: 0.6, tx: -40, ty: 12 },
+    });
+    await store?.close();
+  });
+
+  it("keeps the offsets when one stored viewport is unreadable", () => {
+    const valueSchema = ARCH_DOMAIN_SPEC.tables[ARCH_TABLE_NAME].valueSchema;
+    const parsed = valueSchema.parse({
+      viewId: "index",
+      viewports: {
+        index: { scale: 0.75, tx: 10, ty: 20 },
+        broken: { scale: "nope", tx: 0, ty: 0 },
+      },
+      viewHash: "h1",
+      offsets: {
+        index: { user: { dx: 40, dy: 0, baseX: 100, baseY: 200 } },
+      },
+      updatedAt: "2026-11-01T00:00:00.000Z",
+    });
+    // One broken frame costs that view its framing, not the workspace record
+    // (quarantine would also drop every node offset stored beside it).
+    expect(parsed.viewports).toEqual({ index: { scale: 0.75, tx: 10, ty: 20 } });
+    expect(parsed.offsets.index?.user?.dx).toBe(40);
+  });
+
+  it("rejects a record with no usable base so the host can quarantine it", () => {
+    const valueSchema = ARCH_DOMAIN_SPEC.tables[ARCH_TABLE_NAME].valueSchema;
+    expect(() => valueSchema.parse({ nonsense: true })).toThrow();
+    expect(() => valueSchema.parse({ viewId: "index", viewports: {}, offsets: null, viewHash: "", updatedAt: "" })).toThrow();
   });
 
   it("returns null for an unknown workspace instead of throwing", async () => {

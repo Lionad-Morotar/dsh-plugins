@@ -13,14 +13,15 @@
  * changes reach the panel through a throttled refresh poll; user state
  * leaves through the trailing write-back pump below.
  */
-import type {
-  ArchViewport,
-  WireStateGetResponse,
-  WireStatePutResponse,
-  WireViewsResponse,
-  WireModelResponse,
+import {
+  ROUTE_PREFIX,
+  readArchWorkspaceState,
+  type ArchViewport,
+  type WireStateGetResponse,
+  type WireStatePutResponse,
+  type WireViewsResponse,
+  type WireModelResponse,
 } from "../shared.ts";
-import { ROUTE_PREFIX } from "../shared.ts";
 import type { DiagramChunkModule } from "./chunk-loader.ts";
 import type { DiagramAnchor, DiagramHandle, DiagramInteractions, DiagramView, NodeAction } from "./chunk/diagram.ts";
 import { mountArchDetailsPane, readElement } from "./details.tsx";
@@ -541,10 +542,9 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
   };
 
   const interactions: DiagramInteractions = {
-    // The pump serializes viewState, so the new viewport lands there first;
-    // either a pan tail or a finished drag then arms the write-back window.
-    onViewportChange: viewport => {
-      viewState.setViewport(viewport);
+    // The mount point has already written the viewport against the view it
+    // mounted, so a pan tail only needs to arm the write-back window.
+    onViewportChange: () => {
       scheduleSave();
     },
     onNodeMove: () => scheduleSave(),
@@ -744,13 +744,11 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
 
     const restored = viewState.viewId;
     const initial = views.some(candidate => candidate.id === restored) ? (restored as string) : ((views[0]?.id ?? "") as string);
-    if (initial !== restored) {
-      // The restored view is gone (deleted from the model, or a first mount
-      // with nothing saved): the fallback view gets the readable default, not
-      // a viewport that belongs to a layout the user is no longer looking at.
-      const first = views[0];
-      if (first !== undefined) viewState.setViewport(defaultViewport(first.bounds, { width: 0, height: 0 }));
-    }
+    // No viewport fix-up here: the mount point reads the viewport stored for
+    // the view it is about to mount, and falls back to the readable default
+    // only for a view that has never been framed. A deleted view therefore
+    // cannot leave its viewport on the replacement, while a fallback view that
+    // was framed before keeps its own framing.
     if (initial !== "") select(initial);
     // A chip click that caused this mount left its element here; the views are
     // loaded now, so it can finally be applied.
@@ -815,8 +813,12 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
             degradedMode = true;
             const local = loadLocalState(options.sessionId);
             if (local !== null) viewState.restore(local);
-          } else if (saved.state !== null && saved.state !== undefined) {
-            viewState.restore(saved.state);
+          } else {
+            // Normalize rather than trust the wire type: a record written
+            // before per-view viewports carries the legacy single `viewport`,
+            // and it migrates to `viewports[viewId]` here.
+            const restored = readArchWorkspaceState(saved.state);
+            if (restored !== null) viewState.restore(restored);
           }
         }
       } catch {

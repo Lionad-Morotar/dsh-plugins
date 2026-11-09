@@ -15,6 +15,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
   ROUTE_PREFIX,
+  readArchViewport,
+  readArchWorkspaceState,
   type ArchWorkspaceState,
   type WireStateGetResponse,
   type WireStatePutResponse,
@@ -77,30 +79,35 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
 }
 
-/** A state is accepted only when its shape can round-trip the arch store. */
+/**
+ * A state is accepted only when its shape can round-trip the arch store.
+ *
+ * Both the per-view shape and the legacy single-viewport body are accepted:
+ * a client tab built before per-view caching can post the old shape while the
+ * host has already restarted on the new build.
+ */
 function coerceState(input: unknown): ArchWorkspaceState | undefined {
   if (typeof input !== "object" || input === null) return undefined;
   const candidate = input as Record<string, unknown>;
-  const { viewId, viewport, viewHash, offsets } = candidate;
-  const { scale, tx, ty } =
-    typeof viewport === "object" && viewport !== null
-      ? viewport as Record<string, unknown>
-      : { scale: undefined, tx: undefined, ty: undefined };
-  if (
-    typeof viewId !== "string" ||
-    typeof scale !== "number" ||
-    typeof tx !== "number" ||
-    typeof ty !== "number" ||
-    typeof offsets !== "object" ||
-    offsets === null
-  ) {
+  const { viewports, viewport } = candidate;
+  // The normalizer below is deliberately tolerant because it also reads
+  // possibly-quarantined records; a POST from a client must be exact. A
+  // malformed viewport section is a broken client, not a record to salvage.
+  if (viewports !== undefined) {
+    // An array is not a view-id map; without this check `Object.values([])`
+    // would pass the loop and the normalizer would silently discard it.
+    if (typeof viewports !== "object" || viewports === null || Array.isArray(viewports)) return undefined;
+    for (const raw of Object.values(viewports)) {
+      if (readArchViewport(raw) === null) return undefined;
+    }
+  } else if (readArchViewport(viewport) === null) {
     return undefined;
   }
+
+  const state = readArchWorkspaceState(candidate);
+  if (state === null) return undefined;
   return {
-    viewId,
-    viewport: { scale, tx, ty },
-    viewHash: typeof viewHash === "string" ? viewHash : "",
-    offsets: offsets as ArchWorkspaceState["offsets"],
+    ...state,
     // Server-stamped: the client clock is untrusted and the field exists for
     // humans reading the store file.
     updatedAt: new Date().toISOString(),

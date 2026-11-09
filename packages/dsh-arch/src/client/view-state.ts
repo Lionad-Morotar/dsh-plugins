@@ -1,6 +1,11 @@
 /**
- * Client-side Arch tab state: which view is open, its viewport, and the drag
- * offsets waiting to be written back to the host store.
+ * Client-side Arch tab state: which view is open, the viewport of every view
+ * the reader has framed, and the drag offsets waiting to be written back to
+ * the host store.
+ *
+ * Viewports and offsets are both per view because they describe one diagram:
+ * panning `index` and then visiting `skin` must not move `index` when the
+ * reader comes back. Only the selected tab id is global.
  *
  * The viewport default is a fixed readable scale centered on the view bounds,
  * deliberately not a fit-to-view: a 300px dock fits the repo's real views at
@@ -96,9 +101,21 @@ export function offsetFromDrag(node: { x: number; y: number }, displayX: number,
 
 export interface ViewStateHandle {
   readonly viewId: string | null;
+  /** Viewport of the selected view; null when nothing is saved for it. */
   readonly viewport: ArchViewport | null;
   setView(id: string): void;
+  /** Store the selected view's viewport; a no-op before any view is selected. */
   setViewport(viewport: ArchViewport): void;
+  /** Viewport saved for one view, selected or not; null when it has none. */
+  viewportFor(viewId: string): ArchViewport | null;
+  /**
+   * Store one view's viewport by id.
+   *
+   * The renderer reports viewport changes against the view it was mounted for,
+   * not against whatever tab is selected by the time the callback runs, so the
+   * tab-switch path writes through the id it mounted.
+   */
+  setViewportFor(viewId: string, viewport: ArchViewport): void;
   /** Committed plus queued offsets for one view, queued wins. */
   offsetsFor(viewId: string): Readonly<Record<string, ArchNodeOffset>>;
   queueOffset(viewId: string, nodeId: string, offset: ArchNodeOffset): void;
@@ -114,7 +131,7 @@ export interface ViewStateHandle {
  */
 export function createViewState(): ViewStateHandle {
   let viewId: string | null = null;
-  let viewport: ArchViewport | null = null;
+  let viewports: Record<string, ArchViewport> = {};
   let committed: Record<string, Record<string, ArchNodeOffset>> = {};
   const queued = new Map<string, ArchNodeOffset>();
   let queuedView: string | null = null;
@@ -134,13 +151,20 @@ export function createViewState(): ViewStateHandle {
       return viewId;
     },
     get viewport(): ArchViewport | null {
-      return viewport;
+      return viewId === null ? null : (viewports[viewId] ?? null);
     },
     setView(id: string): void {
       viewId = id;
     },
     setViewport(next: ArchViewport): void {
-      viewport = next;
+      if (viewId === null) return;
+      viewports[viewId] = next;
+    },
+    viewportFor(id: string): ArchViewport | null {
+      return viewports[id] ?? null;
+    },
+    setViewportFor(id: string, next: ArchViewport): void {
+      viewports[id] = next;
     },
     offsetsFor(id: string): Readonly<Record<string, ArchNodeOffset>> {
       const source = id === queuedView ? mergeQueued()[id] : committed[id];
@@ -165,7 +189,7 @@ export function createViewState(): ViewStateHandle {
       const offsets = mergeQueued();
       return {
         viewId: viewId ?? "",
-        viewport: viewport ?? defaultViewport({ x: 0, y: 0, width: 0, height: 0 }, { width: 0, height: 0 }),
+        viewports: { ...viewports },
         viewHash: hash,
         offsets,
         updatedAt: new Date().toISOString(),
@@ -173,7 +197,7 @@ export function createViewState(): ViewStateHandle {
     },
     restore(state: ArchWorkspaceState): void {
       viewId = state.viewId;
-      viewport = state.viewport;
+      viewports = { ...state.viewports };
       committed = {};
       for (const [id, offsets] of Object.entries(state.offsets)) committed[id] = { ...offsets };
       queued.clear();

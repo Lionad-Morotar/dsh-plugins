@@ -145,7 +145,7 @@ describe("write-back loop", () => {
     expect(body.sessionId).toBe("s1");
     expect(body.viewId).toBe("index");
     expect(body.viewHash).toBe(dump.views.index?.hash);
-    expect(body.viewport).toEqual(handle()?.viewport());
+    expect((body.viewports as Record<string, unknown>).index).toEqual(handle()?.viewport());
     expect(body.offsets).toMatchObject({ index: { user: { dx: 100, dy: 0, baseX: 0, baseY: 1160 } } });
     expect(typeof body.updatedAt).toBe("string");
     dispose();
@@ -163,13 +163,18 @@ describe("write-back loop", () => {
     await until(() => host.querySelector("[data-arch-body] svg") !== null);
 
     const before = mountView.handle()?.viewport().tx;
+    // Three pans inside one trailing window: the pump must fold them into a
+    // single post, not one per pointer event. They stay synchronous so the
+    // assertion measures the pump, not event-loop jitter.
     for (const [dx, dy] of [[10, 0], [10, 0], [10, 0]] as const) {
       mountView.handle()?.pan(dx, dy);
-      await sleep(5);
     }
+    await until(() => posts().length === 1);
+    // A second post would arrive only if a later pan re-armed the window.
     await sleep(40);
     expect(posts()).toHaveLength(1);
-    expect((posts()[0]?.body as { viewport: { tx: number } }).viewport.tx).toBe(before! + 30);
+    const viewports = (posts()[0]?.body as { viewports: Record<string, { tx: number }> }).viewports;
+    expect(viewports.index?.tx).toBe(before! + 30);
     dispose();
   });
 
@@ -190,7 +195,8 @@ describe("write-back loop", () => {
     dispose();
     // The panel is gone but the last state still reaches the wire.
     await until(() => posts().length === 1);
-    expect((posts()[0]?.body as { viewport: { tx: number } }).viewport.tx).toBe(before! - 12);
+    const viewports = (posts()[0]?.body as { viewports: Record<string, { tx: number }> }).viewports;
+    expect(viewports.index?.tx).toBe(before! - 12);
   });
 
   it("saves to localStorage and skips the POST when the store is degraded", async () => {
@@ -209,12 +215,16 @@ describe("write-back loop", () => {
     expect(posts()).toHaveLength(0);
     const raw = localStorage.getItem("dsh-arch:state:s1");
     expect(raw).not.toBeNull();
-    expect((JSON.parse(raw ?? "{}") as { viewport: { tx: number } }).viewport.tx).toBe(before! + 24);
+    const saved = JSON.parse(raw ?? "{}") as { viewId: string; viewports: Record<string, { tx: number }> };
+    expect(saved.viewId).toBe("index");
+    expect(saved.viewports.index?.tx).toBe(before! + 24);
     expect(calls.some(call => call.method === "POST")).toBe(false);
     dispose();
   });
 
-  it("restores from localStorage on the next mount when degraded", async () => {
+  it("migrates the legacy single-viewport localStorage state on the next degraded mount", async () => {
+    // The shape written before per-view caching: the viewport belonged to
+    // whichever tab was selected, and the migration puts it on that view only.
     localStorage.setItem(
       "dsh-arch:state:s1",
       JSON.stringify({

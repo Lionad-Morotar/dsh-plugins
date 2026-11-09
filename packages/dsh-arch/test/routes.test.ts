@@ -10,7 +10,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { describe, expect, it } from "vitest";
 
 import { registerArchRoutes, type ArchRouteDeps, type WebServerFace } from "../src/host/routes.ts";
-import { ROUTE_PREFIX } from "../src/shared.ts";
+import { ROUTE_PREFIX, type ArchWorkspaceState } from "../src/shared.ts";
 
 type RouteHandler = Parameters<WebServerFace["register"]>[0]["handler"];
 
@@ -117,12 +117,57 @@ describe("registerArchRoutes", () => {
       JSON.stringify({
         sessionId: "known",
         viewId: "index",
-        viewport: { scale: 0.8, tx: 0, ty: 0 },
+        viewports: { index: { scale: 0.8, tx: 0, ty: 0 } },
         offsets: {},
       }),
     );
     expect(put.status).toBe(200);
     expect(put.body).toEqual({ ok: false, degraded: true });
+  });
+
+  it("accepts the legacy single-viewport state body and migrates it per view", async () => {
+    const saved: ArchWorkspaceState[] = [];
+    const { webServer, handler: legacyHandler } = fakeWebServer();
+    registerArchRoutes(webServer, {
+      ...deps,
+      loadState: async () => null,
+      saveState: async (_workspace, state) => {
+        saved.push(state);
+        return true;
+      },
+    });
+    const put = await request(
+      legacyHandler(),
+      "POST",
+      "/arch/api/state",
+      JSON.stringify({
+        sessionId: "known",
+        viewId: "skin",
+        viewport: { scale: 0.6, tx: -40, ty: 12 },
+        viewHash: "hash-1",
+        offsets: { skin: { title: { dx: 4, dy: 0, baseX: 0, baseY: 8 } } },
+      }),
+    );
+    expect(put.status).toBe(200);
+    expect(put.body).toEqual({ ok: true, degraded: false });
+    expect(saved[0]?.viewId).toBe("skin");
+    expect(saved[0]?.viewports).toEqual({ skin: { scale: 0.6, tx: -40, ty: 12 } });
+    expect(saved[0]?.offsets.skin?.title).toEqual({ dx: 4, dy: 0, baseX: 0, baseY: 8 });
+  });
+
+  it("rejects an array viewport container with 400", async () => {
+    const captured = await request(
+      handler(),
+      "POST",
+      "/arch/api/state",
+      JSON.stringify({
+        sessionId: "known",
+        viewId: "index",
+        viewports: [{ scale: 1, tx: 0, ty: 0 }],
+        offsets: {},
+      }),
+    );
+    expect(captured.status).toBe(400);
   });
 
   it("rejects a malformed state body with 400", async () => {

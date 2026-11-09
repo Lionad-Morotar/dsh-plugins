@@ -341,8 +341,9 @@ export function apply(ctx: ArchClientContext): () => void {
  *
  * Offsets recorded for the view are applied to the render positions (invalid
  * ones drop out host-side of the renderer, per the half-a-node rule), the
- * initial viewport comes from the state or the readable default, and every
- * finished drag is queued back as a correction offset.
+ * initial viewport is that view's saved framing or the readable default, and
+ * every viewport change and finished drag is written back against the view it
+ * belongs to — never against whichever tab happens to be selected later.
  *
  * @param host - element the SVG renders into.
  * @param view - one laid-out view from the wire payload; never mutated.
@@ -365,14 +366,22 @@ export async function mountArchDiagram(
   const offsets = state.offsetsFor(view.id);
   const positions = applyViewOffsets(view.nodes, offsets);
 
+  // Select before reading: the viewport must be looked up for the incoming
+  // view, not for the tab that was selected when the switch started.
+  state.setView(view.id);
   const box = host.getBoundingClientRect();
-  const viewport = state.viewport ?? defaultViewport(view.bounds, { width: box.width, height: box.height });
+  const viewport = state.viewportFor(view.id) ?? defaultViewport(view.bounds, { width: box.width, height: box.height });
 
   const diagram = chunk.createDiagram(host, view, {
     viewport,
     positions,
     onSelect: interactions.onSelect,
-    onViewportChange: interactions.onViewportChange,
+    // Bound to the mounted view id: the renderer reports against the view it
+    // was created for, and a stale report must not overwrite another tab.
+    onViewportChange: next => {
+      state.setViewportFor(view.id, next);
+      interactions.onViewportChange?.(next);
+    },
     onEdgeClick: interactions.onEdgeClick,
     onNodeAction: interactions.onNodeAction,
     onBackgroundClick: interactions.onBackgroundClick,
@@ -384,8 +393,10 @@ export async function mountArchDiagram(
     },
   });
 
-  state.setView(view.id);
-  state.setViewport(diagram.viewport());
+  // The initial viewport reaches the state without a renderer notification
+  // (there is no change to report), so persist it here; a later pan reports
+  // through the bound callback above.
+  state.setViewportFor(view.id, diagram.viewport());
   return diagram;
 }
 

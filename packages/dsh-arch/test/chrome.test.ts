@@ -12,10 +12,16 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { centerOnNode, fitViewport, mountArchChrome, type ArchFocusSeam } from "../src/client/chrome.tsx";
+import {
+  centerOnNode,
+  fitViewport,
+  mountArchChrome,
+  type ArchFocusSeam,
+  type MountArchView,
+} from "../src/client/chrome.tsx";
 import { mountArchDiagram } from "../src/client/entry.ts";
 import { createDiagram } from "../src/client/chunk/diagram.ts";
-import type { DiagramView } from "../src/client/chunk/diagram.ts";
+import type { DiagramHandle, DiagramView } from "../src/client/chunk/diagram.ts";
 import type { WireViewsResponse } from "../src/shared.ts";
 
 interface DumpView {
@@ -36,6 +42,16 @@ const loadRealChunk = async () => ({ createDiagram });
 
 /** The chrome seam the entry wires: the real S2 mount point. */
 const mountView = mountArchDiagram;
+
+/** The same mount point, with the handle captured so a test can pan/zoom. */
+function capturingMount(): { mountView: MountArchView; handle: () => DiagramHandle | undefined } {
+  let captured: DiagramHandle | undefined;
+  const wrapper: MountArchView = async (host, target, state, load, interactions) => {
+    captured = await mountArchDiagram(host, target, state, load, interactions);
+    return captured;
+  };
+  return { mountView: wrapper, handle: () => captured };
+}
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return { ok, status, json: async () => body } as Response;
@@ -138,6 +154,40 @@ describe("mountArchChrome", () => {
     dispose();
   });
 
+  it("keeps each view's framing when the reader switches tabs back and forth", async () => {
+    const { fetch } = fakeFetch({
+      "/arch/api/views": () => jsonResponse(viewsResponse()),
+      "/arch/api/state": () => jsonResponse({ state: null, degraded: false }),
+    });
+    const mounted = capturingMount();
+    const { host } = mountHost();
+    const dispose = mountArchChrome(host, {
+      sessionId: "s1",
+      fetchImpl: fetch,
+      load: loadRealChunk,
+      mountView: mounted.mountView,
+    });
+    await until(() => host.querySelectorAll("[data-arch-body] g[data-id]").length === 10);
+
+    // Frame index, then frame skin differently; the two must not share state.
+    mounted.handle()?.pan(40, -25);
+    const indexFramed = viewportTransform(host);
+    host.querySelector<HTMLButtonElement>('button[data-view-id="skin"]')?.click();
+    await until(() => host.querySelectorAll("[data-arch-body] g[data-id]").length === 16);
+    mounted.handle()?.pan(-60, 15);
+    const skinFramed = viewportTransform(host);
+    expect(skinFramed).not.toBe(indexFramed);
+
+    host.querySelector<HTMLButtonElement>('button[data-view-id="index"]')?.click();
+    await until(() => host.querySelectorAll("[data-arch-body] g[data-id]").length === 10);
+    expect(viewportTransform(host)).toBe(indexFramed);
+
+    host.querySelector<HTMLButtonElement>('button[data-view-id="skin"]')?.click();
+    await until(() => host.querySelectorAll("[data-arch-body] g[data-id]").length === 16);
+    expect(viewportTransform(host)).toBe(skinFramed);
+    dispose();
+  });
+
   it("walks the view tabs with arrow keys while the diagram holds focus, and ignores them elsewhere", async () => {
     const { fetch } = fakeFetch({
       "/arch/api/views": () => jsonResponse(viewsResponse()),
@@ -175,7 +225,10 @@ describe("mountArchChrome", () => {
         jsonResponse({
           state: {
             viewId: "skin",
-            viewport: { scale: 0.6, tx: -40, ty: 12 },
+            viewports: {
+              index: { scale: 0.75, tx: 0, ty: 0 },
+              skin: { scale: 0.6, tx: -40, ty: 12 },
+            },
             viewHash: "hash-1",
             offsets: {},
             updatedAt: "2026-11-01T00:00:00.000Z",

@@ -1,6 +1,6 @@
 # dsh-arch
 
-会话顶栏的架构图 tab：在「对话 / 文件 / Git」这一排加一个「架构」标签（order 120，紧跟 Git），浏览当前工作区的 LikeC4 视图（`.planning/c4/*.c4`），平移缩放、节点选中看详情、拖拽微调布局，视图选择与视口按工作区持久化，重启 DSH 后续上。布局在宿主进程内经 `@likec4/language-services` 完成，客户端只收到算好的坐标（自建 SVG 渲染器，13.8KB 原始 / 5.5KB gzip），经 `/arch/api` 三条路由下发。
+会话顶栏的架构图 tab：在「对话 / 文件 / Git」这一排加一个「架构」标签（order 120，紧跟 Git），浏览当前工作区的 LikeC4 视图（`.planning/c4/*.c4`），平移缩放、节点选中看详情、拖拽微调布局，视图选择与每个视图各自的视口（缩放与平移）按工作区持久化，重启 DSH 后续上；切换视图标签不互相串台。布局在宿主进程内经 `@likec4/language-services` 完成，客户端只收到算好的坐标（自建 SVG 渲染器，13.8KB 原始 / 5.5KB gzip），经 `/arch/api` 三条路由下发。
 
 ## 安装
 
@@ -44,9 +44,9 @@ flow-dx 的 `agents-md` 流程派 `c4-mapper` 子代理产出的正是本包要�
 
 ## 行为细节
 
-- 模型变更刷新：宿主侧实例开 `watch`，文件保存后约 69ms 内重排完；面板每 2.5s 节流轮询一次视图签名（视图 id + hash + 诊断），变了才重挂当前视图。当前视图被删时回退列表首个视图并重置为可读默认视口，不悬空。
+- 模型变更刷新：宿主侧实例开 `watch`，文件保存后约 69ms 内重排完；面板每 2.5s 节流轮询一次视图签名（视图 id + hash + 诊断），变了才重挂当前视图。当前视图被删时回退列表首个视图：那个视图如果以前被调过视口就恢复它自己的，从没被调过才给可读默认，不悬空也不借用已删视图的视口。
 - watch baseline 窗口：实例 boot 后约 1.2s 内 watcher 的 baseline 会吞掉第一次文件变更（实测改文件 2.5s 无事件、新元素不出现），窗口内的重渲染请求等到窗口过再取布局，避免把旧图当「就绪」端出去。
-- 写回闭环：视口变更与节点拖拽经 500ms trailing 节流 POST `/arch/api/state`，面板卸载边沿 flush 未决状态，最后一次交互不丢。持久化单元是 nodeId → 坐标偏移（存 offset 时记布局基线，节点偏离基线超过半节点宽就丢弃该修正），不是整份布局快照——快照会冻结视图内容且不校验模型 hash（实测加新元素不可见、hash 不变），偏移是跨模型改动存活的正确抽象。
+- 写回闭环：视口变更与节点拖拽经 500ms trailing 节流 POST `/arch/api/state`，面板卸载边沿 flush 未决状态，最后一次交互不丢。两种持久化单元都按视图分组：视口是 `viewId → { scale, tx, ty }`，偏移是 `viewId → nodeId → 坐标偏移`（存 offset 时记布局基线，节点偏离基线超过半节点宽就丢弃该修正）。缩放与平移属于某一张图，切到另一张再切回来必须回到原样，所以不会出现「图二玩一会儿，图一被图二的视口顶掉」；两者都不是整份布局快照——快照会冻结视图内容且不校验模型 hash（实测加新元素不可见、hash 不变），偏移是跨模型改动存活的正确抽象。
 - 连线跟随拖拽：边的点集不是画一次就固定的。每帧都用「布局基线 + 两端节点当前位移」重算，位移沿曲线按归一化位置羽化，所以容器连它一起被拖时整条线刚性平移，只动一端时远端留在原地、近端弯过去；标签底板同样按弧长占比领取位移，不会吊在线上或掉在线外。基线只取布局原始坐标、绝不取上一帧，因此重复拖拽不会累积浮点漂移，重启后从宿主存储恢复的偏移也与同距离的实时拖拽落在完全相同的几何上——这一条是修 bug 换来的：此前只移动节点、不重算边，拖动卡片后所有关系线都留在原地，图被扯开。动作条同样随选中节点一起走，否则按钮会停在选中时的坐标上、离卡片越来越远。
 - 画布透明：SVG 自己不铺底色，容器节点只画边框与标题（不填色），所以整个视图叠在面板自己的背景上。最外层容器覆盖整张视图，它一旦填色就等于给画布刷了层白底，卡片与标签全被压在上面看不清。
 - 配色跟随宿主主题：卡片、文字、边线、标签底板、关系浮层全部经 `--dsw-alias-*` token 解析，亮暗切换由 CSS 自己完成，不重建 SVG、不换第二套样式表。元素卡片是「元素色 14% + 宿主表面色」的洗色，标题与说明用宿主的 label 墨色，所以文字永远不跟自己卡片的饱和度抢对比度；C4 的 `color` 语义（`primary` / `secondary` / tailwind 色名）只决定色调，中性色名共用一档 slate。首版是照深色主题写死的一套值（`#3b82f6` 卡片、`#1a1d23` 标签底板、`#8b93a1` 细线），到浅色宿主上蓝色卡片压住自己那行说明、细线溶进纸底、深色底板像贴纸——配色本该属于宿主，这版把它交还回去。
@@ -77,6 +77,7 @@ flow-dx 的 `agents-md` 流程派 `c4-mapper` 子代理产出的正是本包要�
 
 - 默认不往用户仓库写文件：拖拽与视口只写宿主存储（`~/.dsh/storages/` 下人类可读 JSON），`git status` 干净；完全不使用 `.likec4/*.snap`。
 - 存储域记录 schema 是 zod 不是 schemastery：宿主 `storageDomain.open()` 逐条 `tables[name].valueSchema.parse` 重读存量记录，经典 schemastery schema 根本没有 `parse` 方法；表规范要 `domainTable()` 的 `{ valueSchema }` 包装，裸传 schema 在表为空时不可见、第一条记录落盘后的下一次启动就是 fatal load failure。spec 已选 `invalidRecords: "backup-and-skip"`：未来 schema 演进时坏记录被移到一旁按不存在处理，不再打挂宿主启动。
+- 逐视图视口是后加的形状，存储 schema 读写分离：读 schema 只做「这像不像一份 arch 工作区状态」的形门（`viewId`、`offsets`、`viewHash`），随后交给共享归一化器；写 schema 严格校验 per-view 形状。宽容度必须落在读 schema 上而不只是归一化器里：宿主 `storageDomain.open()` 用读 schema 逐条 parse 存量记录，一条坏 viewport 若让它 parse 失败，`invalidRecords: "backup-and-skip"` 会把整条 workspace 记录隔离，连带丢掉全部节点偏移；宽容读 schema 下坏 viewport 只让那张图丢自己的取景，其余原样保留。旧记录里的单 `viewport` 也在这条读路径上迁移成 `viewports[viewId]`，再写回就是新形状。客户端 localStorage 那条降级路径走同一套归一化。
 - 宿主缺 `storageDomain` 时降级：状态写客户端 localStorage（按 sessionId 键控，不跨设备、不跨 profile，清缓存即丢），此时面板不发无谓的 POST。
 - 300px 高的 dock 默认视口是固定可读缩放（0.75）居中，不是 fitView——fitView 在这个高度把 12px 文字缩到 1.5px 不可读；要看全景开 dock 的 fullscreen（此时才 fitView，退出时回到可读缩放）。
 - 不做 DSL 编辑与 LikeC4 Edit 模式；不做 SSR；不接管其他插件的 `.c4` 预览诉求；布局状态不跨工作区共享。
@@ -87,7 +88,7 @@ flow-dx 的 `agents-md` 流程派 `c4-mapper` 子代理产出的正是本包要�
 
 ## 验证
 
-单包：`pnpm --filter dsh-arch test`、`typecheck`、`build`（断言启动包不含渲染器符号、chunk 名三处一致、体积预算）。写回闭环、详情侧栏三态、baseline 窗口、轮询刷新均有 vitest 用例钉住。箭头与线型（八种 marker 几何、三种 dash 模式、`dir=back` 对调）、边动效（默认 paused、active 转 running、reduced-motion 关掉、12px 命中区）、节点动作条（有/无 `navigateTo` 的按钮数、按按钮不触发拖拽）、关系解码与分组（完整记录/缺字段/未知 id）、面板 DOM（两组标题、胶囊、三路关闭）、边几何（羽化权重、两端同向刚性平移、单端固定远端、幂等不漂移、标签按弧长定位、退化路径安全、拖拽后端点仍贴节点、恢复偏移即位移、动作条随节点走）也都有用例。真实 LikeC4 布局走 `test/integration/from-workspace.test.ts` 的临时工作区集成测。
+单包：`pnpm --filter dsh-arch test`、`typecheck`、`build`（断言启动包不含渲染器符号、chunk 名三处一致、体积预算）。写回闭环（含两张图来回切各自视口互不覆盖、序列化后按视图恢复、旧单视口记录的迁移）、详情侧栏三态、baseline 窗口、轮询刷新均有 vitest 用例钉住。箭头与线型（八种 marker 几何、三种 dash 模式、`dir=back` 对调）、边动效（默认 paused、active 转 running、reduced-motion 关掉、12px 命中区）、节点动作条（有/无 `navigateTo` 的按钮数、按按钮不触发拖拽）、关系解码与分组（完整记录/缺字段/未知 id）、面板 DOM（两组标题、胶囊、三路关闭）、边几何（羽化权重、两端同向刚性平移、单端固定远端、幂等不漂移、标签按弧长定位、退化路径安全、拖拽后端点仍贴节点、恢复偏移即位移、动作条随节点走）也都有用例。真实 LikeC4 布局走 `test/integration/from-workspace.test.ts` 的临时工作区集成测。
 
 ## 结构
 

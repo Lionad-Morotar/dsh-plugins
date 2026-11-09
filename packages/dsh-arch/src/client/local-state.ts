@@ -8,16 +8,22 @@
  * must degrade to "nothing saved", never to a thrown error taking the panel
  * down with it.
  */
-import type { ArchWorkspaceState } from "../shared.ts";
+import { readArchWorkspaceState, type ArchWorkspaceState } from "../shared.ts";
 
 const keyOf = (sessionId: string): string => `dsh-arch:state:${sessionId}`;
 
-/** Read the locally kept state; null when none is stored or storage is unusable. */
+/**
+ * Read the locally kept state; null when none is stored or storage is unusable.
+ *
+ * The stored JSON goes through the same normalization as the host record, so a
+ * state written before viewports were cached per view migrates instead of
+ * being restored with its single viewport applied to the wrong tab.
+ */
 export function loadLocalState(sessionId: string): ArchWorkspaceState | null {
   try {
     const raw = localStorage.getItem(keyOf(sessionId));
     if (raw === null) return null;
-    return JSON.parse(raw) as ArchWorkspaceState;
+    return readArchWorkspaceState(JSON.parse(raw));
   } catch {
     return null;
   }

@@ -127,14 +127,93 @@ export interface ArchViewport {
  * content with no model-hash guard (a stale `.likec4.snap` hides new elements
  * while reporting the old hash — verified in the research), whereas offsets are
  * the user's correction intent, decoupled from any one model revision.
+ *
+ * Viewports are keyed by view id for the same reason offsets are: the pan/zoom
+ * a reader dialled in belongs to one diagram, and switching tabs must not carry
+ * it onto another. `viewId` only names the tab that is selected.
  */
 export interface ArchWorkspaceState {
   readonly viewId: string;
-  readonly viewport: ArchViewport;
+  readonly viewports: Readonly<Record<string, ArchViewport>>;
   /** Layout-source hash; diagnostics and cache key only, never a validity guard. */
   readonly viewHash: string;
   readonly offsets: Readonly<Record<string, Readonly<Record<string, ArchNodeOffset>>>>;
   readonly updatedAt: string;
+}
+
+/** One parsed viewport from a persisted state, or null when the value cannot be read. */
+export function readArchViewport(raw: unknown): ArchViewport | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const candidate = raw as Record<string, unknown>;
+  const { scale, tx, ty } = candidate;
+  if (typeof scale !== "number" || typeof tx !== "number" || typeof ty !== "number") return null;
+  if (!Number.isFinite(scale) || !Number.isFinite(tx) || !Number.isFinite(ty)) return null;
+  return { scale, tx, ty };
+}
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+/** One node correction from a persisted state, or null when any field is unusable. */
+function readArchNodeOffset(raw: unknown): ArchNodeOffset | null {
+  if (!isPlainObject(raw)) return null;
+  const { dx, dy, baseX, baseY } = raw;
+  if (!isFiniteNumber(dx) || !isFiniteNumber(dy) || !isFiniteNumber(baseX) || !isFiniteNumber(baseY)) return null;
+  return { dx, dy, baseX, baseY };
+}
+
+/**
+ * Normalize one persisted workspace state, accepting both the per-view shape
+ * and the single-viewport shape written before viewports were cached per view.
+ *
+ * The legacy shape stored the viewport of whichever tab was selected under
+ * `viewport`; it migrates to `viewports[viewId]`. Unreadable per-view entries
+ * are dropped instead of rejecting the whole record: a broken viewport costs
+ * one diagram its saved framing, while rejecting the record would also lose
+ * every node offset in `offsets`.
+ *
+ * @param raw - whatever JSON came back from the host store or localStorage.
+ * @returns the normalized state, or null when the record has no usable base.
+ */
+export function readArchWorkspaceState(raw: unknown): ArchWorkspaceState | null {
+  if (!isPlainObject(raw)) return null;
+  const viewId = typeof raw.viewId === "string" ? raw.viewId : null;
+  if (viewId === null || !isPlainObject(raw.offsets)) return null;
+
+  const viewports: Record<string, ArchViewport> = {};
+  if (isPlainObject(raw.viewports)) {
+    for (const [id, candidate] of Object.entries(raw.viewports)) {
+      const viewport = readArchViewport(candidate);
+      if (viewport !== null) viewports[id] = viewport;
+    }
+  } else {
+    const legacy = readArchViewport(raw.viewport);
+    if (legacy !== null && viewId !== "") viewports[viewId] = legacy;
+  }
+
+  // Corrections are filtered one by one: a single malformed offset must not
+  // take the rest of the view's corrections, or the record itself, down with
+  // it (the renderer reads offsets without a second shape check).
+  const offsets: Record<string, Record<string, ArchNodeOffset>> = {};
+  for (const [id, records] of Object.entries(raw.offsets)) {
+    if (!isPlainObject(records)) continue;
+    const kept: Record<string, ArchNodeOffset> = {};
+    for (const [nodeId, candidate] of Object.entries(records)) {
+      const offset = readArchNodeOffset(candidate);
+      if (offset !== null) kept[nodeId] = offset;
+    }
+    offsets[id] = kept;
+  }
+
+  return {
+    viewId,
+    viewports,
+    viewHash: typeof raw.viewHash === "string" ? raw.viewHash : "",
+    offsets,
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : new Date().toISOString(),
+  };
 }
 
 /**

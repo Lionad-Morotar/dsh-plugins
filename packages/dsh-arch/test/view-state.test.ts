@@ -113,7 +113,38 @@ describe("createViewState", () => {
     const state = createViewState();
     expect(state.viewId).toBeNull();
     expect(state.viewport).toBeNull();
-    expect(state.serialize("h0").offsets).toEqual({});
+    const saved = state.serialize("h0");
+    expect(saved.offsets).toEqual({});
+    expect(saved.viewports).toEqual({});
+  });
+
+  it("keeps one viewport per view when tabs switch", () => {
+    const state = createViewState();
+    state.setView("index");
+    state.setViewport({ scale: 0.75, tx: 10, ty: 20 });
+    state.setView("skin");
+    state.setViewport({ scale: 0.6, tx: -40, ty: 12 });
+
+    // Switching back reads the view's own framing, not the last one written.
+    state.setView("index");
+    expect(state.viewport).toEqual({ scale: 0.75, tx: 10, ty: 20 });
+    state.setView("skin");
+    expect(state.viewport).toEqual({ scale: 0.6, tx: -40, ty: 12 });
+    expect(state.viewportFor("never-framed")).toBeNull();
+  });
+
+  it("writes a view's viewport by id without selecting it", () => {
+    const state = createViewState();
+    state.setView("index");
+    state.setViewportFor("skin", { scale: 0.5, tx: 1, ty: 2 });
+    expect(state.viewportFor("skin")).toEqual({ scale: 0.5, tx: 1, ty: 2 });
+    expect(state.viewport).toBeNull();
+  });
+
+  it("ignores a current-view viewport write before any view is selected", () => {
+    const state = createViewState();
+    state.setViewport({ scale: 0.5, tx: 1, ty: 2 });
+    expect(state.serialize("h").viewports).toEqual({});
   });
 
   it("merges queued drag offsets into the serialized state", () => {
@@ -126,27 +157,32 @@ describe("createViewState", () => {
 
     const saved = state.serialize("hash-1");
     expect(saved.viewId).toBe("index");
-    expect(saved.viewport).toEqual({ scale: 0.75, tx: 10, ty: 20 });
+    expect(saved.viewports.index).toEqual({ scale: 0.75, tx: 10, ty: 20 });
     expect(saved.viewHash).toBe("hash-1");
     expect(saved.offsets.index?.user?.dx).toBe(60);
     expect(saved.offsets.jump?.keys?.dy).toBe(30);
     expect(typeof saved.updatedAt).toBe("string");
   });
 
-  it("survives a serialize → restore round-trip with viewport and offsets intact", () => {
+  it("survives a serialize → restore round-trip with every viewport and the offsets intact", () => {
     const first = createViewState();
     first.setView("index");
     first.setViewport({ scale: 0.6, tx: -40, ty: 12 });
+    first.setView("skin");
+    first.setViewport({ scale: 0.5, tx: 5, ty: 6 });
+    first.setView("index");
     first.queueOffset("index", "user", { dx: 40, dy: 0, baseX: 100, baseY: 200 });
 
+    const saved = first.serialize("hash-1");
     const second = createViewState();
-    second.restore(first.serialize("hash-1"));
+    second.restore(saved);
     expect(second.viewId).toBe("index");
     expect(second.viewport).toEqual({ scale: 0.6, tx: -40, ty: 12 });
+    expect(second.viewportFor("skin")).toEqual({ scale: 0.5, tx: 5, ty: 6 });
 
     const resaved = second.serialize("hash-2");
-    expect(resaved.viewport).toEqual(first.serialize("hash-1").viewport);
-    expect(resaved.offsets).toEqual(first.serialize("hash-1").offsets);
+    expect(resaved.viewports).toEqual(saved.viewports);
+    expect(resaved.offsets).toEqual(saved.offsets);
     expect(resaved.viewHash).toBe("hash-2");
   });
 

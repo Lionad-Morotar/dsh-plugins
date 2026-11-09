@@ -1,51 +1,5 @@
 // src/host/arch-store.ts
 import { z } from "zod";
-var ARCH_DOMAIN_NAME = "dsh_arch";
-var ARCH_TABLE_NAME = "workspaces";
-var nodeOffsetSchema = z.object({
-  dx: z.number(),
-  dy: z.number(),
-  baseX: z.number(),
-  baseY: z.number()
-});
-var workspaceStateSchema = z.object({
-  viewId: z.string(),
-  viewport: z.object({
-    scale: z.number(),
-    tx: z.number(),
-    ty: z.number()
-  }),
-  viewHash: z.string(),
-  offsets: z.record(z.string(), z.record(z.string(), nodeOffsetSchema)),
-  updatedAt: z.string()
-});
-var ARCH_DOMAIN_SPEC = {
-  name: ARCH_DOMAIN_NAME,
-  version: 1,
-  invalidRecords: "backup-and-skip",
-  tables: { [ARCH_TABLE_NAME]: { valueSchema: workspaceStateSchema } }
-};
-async function openArchStore(storageDomain) {
-  if (storageDomain === void 0) return null;
-  const domain = await storageDomain.open(ARCH_DOMAIN_SPEC);
-  const table = domain.table(ARCH_TABLE_NAME);
-  return {
-    async loadWorkspace(key) {
-      const stored = table.get(key);
-      return stored === void 0 || stored === null ? null : stored;
-    },
-    async saveWorkspace(key, state) {
-      await table.put(key, workspaceStateSchema.parse(state));
-    },
-    async close() {
-      await domain.close();
-    }
-  };
-}
-
-// src/host/discover.ts
-import { readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
 
 // src/shared.ts
 var PACKAGE_NAME = "dsh-arch";
@@ -62,8 +16,119 @@ var DISCOVER_SKIP_DIRS = [
   "zRefs",
   "temp"
 ];
+function readArchViewport(raw) {
+  if (typeof raw !== "object" || raw === null) return null;
+  const candidate = raw;
+  const { scale, tx, ty } = candidate;
+  if (typeof scale !== "number" || typeof tx !== "number" || typeof ty !== "number") return null;
+  if (!Number.isFinite(scale) || !Number.isFinite(tx) || !Number.isFinite(ty)) return null;
+  return { scale, tx, ty };
+}
+var isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
+function readArchNodeOffset(raw) {
+  if (!isPlainObject(raw)) return null;
+  const { dx, dy, baseX, baseY } = raw;
+  if (!isFiniteNumber(dx) || !isFiniteNumber(dy) || !isFiniteNumber(baseX) || !isFiniteNumber(baseY)) return null;
+  return { dx, dy, baseX, baseY };
+}
+function readArchWorkspaceState(raw) {
+  if (!isPlainObject(raw)) return null;
+  const viewId = typeof raw.viewId === "string" ? raw.viewId : null;
+  if (viewId === null || !isPlainObject(raw.offsets)) return null;
+  const viewports = {};
+  if (isPlainObject(raw.viewports)) {
+    for (const [id, candidate] of Object.entries(raw.viewports)) {
+      const viewport = readArchViewport(candidate);
+      if (viewport !== null) viewports[id] = viewport;
+    }
+  } else {
+    const legacy = readArchViewport(raw.viewport);
+    if (legacy !== null && viewId !== "") viewports[viewId] = legacy;
+  }
+  const offsets = {};
+  for (const [id, records] of Object.entries(raw.offsets)) {
+    if (!isPlainObject(records)) continue;
+    const kept = {};
+    for (const [nodeId, candidate] of Object.entries(records)) {
+      const offset = readArchNodeOffset(candidate);
+      if (offset !== null) kept[nodeId] = offset;
+    }
+    offsets[id] = kept;
+  }
+  return {
+    viewId,
+    viewports,
+    viewHash: typeof raw.viewHash === "string" ? raw.viewHash : "",
+    offsets,
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+
+// src/host/arch-store.ts
+var ARCH_DOMAIN_NAME = "dsh_arch";
+var ARCH_TABLE_NAME = "workspaces";
+var nodeOffsetSchema = z.object({
+  dx: z.number(),
+  dy: z.number(),
+  baseX: z.number(),
+  baseY: z.number()
+});
+var viewportSchema = z.object({
+  scale: z.number(),
+  tx: z.number(),
+  ty: z.number()
+});
+var offsetsSchema = z.record(z.string(), z.record(z.string(), nodeOffsetSchema));
+var writableStateSchema = z.object({
+  viewId: z.string(),
+  viewports: z.record(z.string(), viewportSchema),
+  viewHash: z.string(),
+  offsets: offsetsSchema,
+  updatedAt: z.string()
+});
+var readableStateSchema = z.object({
+  viewId: z.string(),
+  viewports: z.unknown().optional(),
+  viewport: z.unknown().optional(),
+  viewHash: z.string(),
+  offsets: z.unknown(),
+  updatedAt: z.string()
+}).transform((raw, ctx) => {
+  const state = readArchWorkspaceState(raw);
+  if (state === null) {
+    ctx.addIssue({ code: "custom", message: "arch workspace state has no usable base" });
+    return z.NEVER;
+  }
+  return state;
+});
+var ARCH_DOMAIN_SPEC = {
+  name: ARCH_DOMAIN_NAME,
+  version: 1,
+  invalidRecords: "backup-and-skip",
+  tables: { [ARCH_TABLE_NAME]: { valueSchema: readableStateSchema } }
+};
+async function openArchStore(storageDomain) {
+  if (storageDomain === void 0) return null;
+  const domain = await storageDomain.open(ARCH_DOMAIN_SPEC);
+  const table = domain.table(ARCH_TABLE_NAME);
+  return {
+    async loadWorkspace(key) {
+      const stored = table.get(key);
+      return stored === void 0 || stored === null ? null : readArchWorkspaceState(stored);
+    },
+    async saveWorkspace(key, state) {
+      await table.put(key, writableStateSchema.parse(state));
+    },
+    async close() {
+      await domain.close();
+    }
+  };
+}
 
 // src/host/discover.ts
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 async function isDirectory(path) {
   try {
     return (await stat(path)).isDirectory();
@@ -334,16 +399,19 @@ async function readJsonBody(req) {
 function coerceState(input) {
   if (typeof input !== "object" || input === null) return void 0;
   const candidate = input;
-  const { viewId, viewport, viewHash, offsets } = candidate;
-  const { scale, tx, ty } = typeof viewport === "object" && viewport !== null ? viewport : { scale: void 0, tx: void 0, ty: void 0 };
-  if (typeof viewId !== "string" || typeof scale !== "number" || typeof tx !== "number" || typeof ty !== "number" || typeof offsets !== "object" || offsets === null) {
+  const { viewports, viewport } = candidate;
+  if (viewports !== void 0) {
+    if (typeof viewports !== "object" || viewports === null || Array.isArray(viewports)) return void 0;
+    for (const raw of Object.values(viewports)) {
+      if (readArchViewport(raw) === null) return void 0;
+    }
+  } else if (readArchViewport(viewport) === null) {
     return void 0;
   }
+  const state = readArchWorkspaceState(candidate);
+  if (state === null) return void 0;
   return {
-    viewId,
-    viewport: { scale, tx, ty },
-    viewHash: typeof viewHash === "string" ? viewHash : "",
-    offsets,
+    ...state,
     // Server-stamped: the client clock is untrusted and the field exists for
     // humans reading the store file.
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()

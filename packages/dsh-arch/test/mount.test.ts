@@ -84,6 +84,46 @@ describe("mountArchDiagram", () => {
 
     const resaved = second.serialize("hash-2");
     expect(resaved.offsets).toEqual(saved.offsets);
-    expect(resaved.viewport).toEqual(saved.viewport);
+    expect(resaved.viewports).toEqual(saved.viewports);
+  });
+
+  it("mounts each view with its own saved viewport", async () => {
+    const state = createViewState();
+    state.restore({
+      viewId: "index",
+      viewports: {
+        index: { scale: 0.6, tx: -40, ty: 12 },
+        skin: { scale: 0.5, tx: 7, ty: 9 },
+      },
+      viewHash: "hash-1",
+      offsets: {},
+      updatedAt: "2026-11-01T00:00:00.000Z",
+    });
+
+    const indexHandle = await mountArchDiagram(mountHost(), indexView(), state, loadRealChunk);
+    expect(indexHandle.viewport()).toEqual({ scale: 0.6, tx: -40, ty: 12 });
+
+    const skin = dump.views.skin;
+    if (skin === undefined) throw new Error("fixture skin view missing");
+    const skinHandle = await mountArchDiagram(
+      mountHost(),
+      structuredClone(skin) as unknown as DiagramView,
+      state,
+      loadRealChunk,
+    );
+    expect(skinHandle.viewport()).toEqual({ scale: 0.5, tx: 7, ty: 9 });
+    // Mounting the second view must not have overwritten the first's framing.
+    expect(state.viewportFor("index")).toEqual({ scale: 0.6, tx: -40, ty: 12 });
+    expect(state.viewId).toBe("skin");
+  });
+
+  it("falls back to the readable default for a view that was never framed", async () => {
+    const state = createViewState();
+
+    const handle = await mountArchDiagram(mountHost(), indexView(), state, loadRealChunk);
+    // A first visit gets the readable default, and mounting records it for the
+    // next visit instead of borrowing another view's framing.
+    expect(handle.viewport().scale).toBe(0.75);
+    expect(state.viewportFor("index")).toEqual(handle.viewport());
   });
 });

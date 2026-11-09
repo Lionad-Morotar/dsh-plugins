@@ -148,7 +148,7 @@ describe("model-change refresh", () => {
       state: {
         state: {
           viewId: "skin",
-          viewport: { scale: 0.6, tx: -40, ty: 12 },
+          viewports: { skin: { scale: 0.6, tx: -40, ty: 12 } },
           viewHash: "hash-1",
           offsets: {},
           updatedAt: "2026-11-01T00:00:00.000Z",
