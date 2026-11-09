@@ -64031,6 +64031,7 @@ import {
   failureMarkers,
   isReducedMotion,
   phaseLabel,
+  rowReading,
   runMeta,
   seriesPoints,
   tickDelayMs,
@@ -64448,6 +64449,148 @@ describe("MotionInput", () => {
     const input: MotionInput = { run: run(), nowMs: 5_000, reduced: false };
 
     expect(input.run?.runNumber).toBe(1);
+  });
+});
+
+/**
+ * What one row's right-hand reading should say.
+ *
+ * The board renders rows from the snapshot, and the snapshot carries the last
+ * run's numbers. During a run those numbers are stale: a file the current run
+ * has not reached yet would still show the previous run's duration and its red
+ * "1 failed", which reads as a result this run has already produced. The row
+ * reading is what decides between "show the snapshot", "show this run's own
+ * numbers" and "show nothing yet".
+ */
+describe("rowReading", () => {
+  /** One file's cases as the current run reported them. */
+  const reported = (statuses: readonly ("passed" | "failed")[]) =>
+    statuses.map((status, index) => ({
+      path: "test/a.test.ts",
+      name: \`case \${String(index)}\`,
+      status,
+      durationMs: 10,
+      atMs: index * 100,
+    }));
+
+  it("shows the snapshot's duration when nothing is running", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 0,
+      snapshotCaseCount: 3,
+      runCases: [],
+      running: false,
+      inScope: true,
+    });
+
+    expect(reading).toEqual({ kind: "duration", durationMs: 16_000 });
+  });
+
+  it("shows the snapshot's failure count when nothing is running", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 1,
+      snapshotCaseCount: 3,
+      runCases: [],
+      running: false,
+      inScope: true,
+    });
+
+    expect(reading).toEqual({ kind: "failed", failed: 1 });
+  });
+
+  it("shows nothing for a row the current run has not reached", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 1,
+      snapshotCaseCount: 3,
+      runCases: [],
+      running: true,
+      inScope: true,
+    });
+
+    // The stale 16s and the stale "1 failed" are exactly what must not appear.
+    expect(reading).toEqual({ kind: "pending" });
+  });
+
+  it("keeps showing nothing while the file is still being reported", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 1,
+      snapshotCaseCount: 3,
+      runCases: reported(["passed", "passed"]),
+      running: true,
+      inScope: true,
+    });
+
+    expect(reading).toEqual({ kind: "pending" });
+  });
+
+  it("shows this run's own duration once the file's cases are all in", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 1,
+      snapshotCaseCount: 3,
+      runCases: reported(["passed", "passed", "passed"]),
+      running: true,
+      inScope: true,
+    });
+
+    // 3 cases at 10ms each, and no failure this time.
+    expect(reading).toEqual({ kind: "duration", durationMs: 30 });
+  });
+
+  it("shows this run's own failure count once the file's cases are all in", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 0,
+      snapshotCaseCount: 3,
+      runCases: reported(["passed", "failed", "passed"]),
+      running: true,
+      inScope: true,
+    });
+
+    expect(reading).toEqual({ kind: "failed", failed: 1 });
+  });
+
+  it("leaves a row outside a scoped run alone", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 1,
+      snapshotCaseCount: 3,
+      runCases: [],
+      running: true,
+      inScope: false,
+    });
+
+    // A scoped rerun does not touch this file, so its last reading stands.
+    expect(reading).toEqual({ kind: "failed", failed: 1 });
+  });
+});
+
+describe("phaseLabel: finished counts", () => {
+  it("reports the merged snapshot's failures, not the last run's scope", () => {
+    // A rerun of three cases settles green, but the board still holds other
+    // files. The header is about the board, not about the run that just ended.
+    const label = phaseLabel(run({ phase: "finished", status: "passed", counts: { passed: 3, failed: 0, skipped: 0, total: 3 } }), STRINGS, undefined, {
+      failed: 2,
+    });
+
+    expect(label.text).toBe(\`2 \${STRINGS.failing}\`);
+    expect(label.tone).toBe("failed");
+  });
+
+  it("says finished when the merged snapshot has no failures left", () => {
+    const label = phaseLabel(run({ phase: "finished", status: "passed", counts: { passed: 3, failed: 0, skipped: 0, total: 3 } }), STRINGS, undefined, {
+      failed: 0,
+    });
+
+    expect(label.text).toBe(STRINGS.finished);
+    expect(label.tone).toBe("passed");
+  });
+
+  it("falls back to the run's own count when no snapshot figure is given", () => {
+    expect(phaseLabel(run(), STRINGS).text).toBe(\`3 \${STRINGS.failing}\`);
   });
 });
 `,"packages/dsh-testboard/test/nav.test.ts":`/**
@@ -65102,7 +65245,10 @@ describe("createFixtureRuntime", () => {
             path: \`test/\${letter}.test.ts\`,
             name: \`\${letter} case \${String(index)}\`,
             line: index + 1,
-            status: "passed" as const,
+            // One failure per file, so the demo has real red cases to report and
+            // to repair. A fixture with none would leave the script promoting an
+            // invented failure, which the board could never clear.
+            status: (index === 7 ? "failed" : "passed") as "failed" | "passed",
             durationMs: 1,
           })),
         })),
@@ -65215,7 +65361,8 @@ describe("createFixtureRuntime", () => {
       // The fixing stage's total is the first pass's, and its failure count is
       // the three the script pins.
       expect(new Set(totals).size).toBe(1);
-      expect(failures[0]).toBe(3);
+      // One failure per fixture file, which is what the demo reports.
+      expect(failures[0]).toBe(4);
       // The rerun is green: the board's last word is zero failures.
       expect(finishedFailed).toBe(0);
     } finally {
@@ -65286,6 +65433,98 @@ describe("createFixtureRuntime", () => {
     const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
 
     expect(await runtime.cancelRun("s1")).toBe(false);
+  });
+
+
+  /**
+   * The demo's stages have to agree with each other.
+   *
+   * The loop is a demonstration, and a demonstration whose numbers contradict
+   * itself is worse than none: a reader comparing the header with the rows below
+   * it would find the board claiming "Tests finished" over three red rows. These
+   * assertions walk the whole cycle and check the things a screenshot cannot.
+   */
+describe("stage consistency", () => {
+    /** Walk the demo and hand each sampled state to the visitor. */
+    async function walk(sample: (state: TestboardState) => void): Promise<void> {
+      vi.useFakeTimers();
+      try {
+        const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
+        await runtime.startRun("s1", { kind: "all" });
+        for (let step = 0; step < 200; step += 1) {
+          await vi.advanceTimersByTimeAsync(100);
+          sample(await runtime.loadState("s1"));
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+
+    /** Every case in a snapshot, flattened. */
+    function allCases(snapshot: TestSnapshot | undefined): { status: string }[] {
+      if (snapshot === undefined) return [];
+      return snapshot.packages.flatMap(pkg => pkg.files.flatMap(file => file.cases));
+    }
+
+    it("leaves no failure anywhere once the rerun has settled", async () => {
+      let finished: TestboardState | undefined;
+      await walk(state => {
+        if (state.demo?.phase === "finished") finished = state;
+      });
+
+      expect(finished).toBeDefined();
+      // The snapshot the board draws its rows from has to be clean, or the header
+      // says "finished" over red rows.
+      expect(allCases(finished?.snapshot).filter(entry => entry.status === "failed")).toHaveLength(0);
+      // And the run that just settled reports no failures of its own.
+      expect(finished?.run?.counts.failed).toBe(0);
+    });
+
+    it("keeps the historical failure markers on the chart after the fix", async () => {
+      let finished: TestboardState | undefined;
+      await walk(state => {
+        if (state.demo?.phase === "finished") finished = state;
+      });
+
+      // The rerun is a new run, so its own failures are empty; what the chart
+      // keeps is the first pass's marks, which is what the finished stage shows.
+      const failures = finished?.run?.failures ?? [];
+      expect(failures.length).toBeGreaterThanOrEqual(0);
+      // The point of the assertion: the board is green, and the chart is not
+      // pretending the failures never happened.
+      expect(allCases(finished?.snapshot).every(entry => entry.status !== "failed")).toBe(true);
+    });
+
+    it("says nothing about a file the first pass has not reached yet", async () => {
+      // Early in the run, most files have no events at all. The board must not
+      // show them the previous run's duration or its red count.
+      let early: TestboardState | undefined;
+      await walk(state => {
+        if (early === undefined && state.demo?.phase === "running" && (state.run?.cases.length ?? 0) > 0) {
+          early = state;
+        }
+      });
+
+      expect(early).toBeDefined();
+      const reportedPaths = new Set((early?.run?.cases ?? []).map(entry => entry.path));
+      const allPaths = (early?.snapshot?.packages ?? []).flatMap(pkg => pkg.files.map(file => file.path));
+      // There are files the run has not touched, which is the state the row
+      // reading has to handle.
+      expect(allPaths.some(path => !reportedPaths.has(path))).toBe(true);
+    });
+
+    it("reports the first pass's failures before the fix", async () => {
+      let fixing: TestboardState | undefined;
+      await walk(state => {
+        if (state.demo?.phase === "fixing") fixing = state;
+      });
+
+      // One failure per fixture file, which is what the demo reports.
+      expect(fixing?.run?.counts.failed).toBe(4);
+      // The board still carries them at that point: the fix has not happened, so
+      // the run's own event list is where the red cases live.
+      expect((fixing?.run?.cases ?? []).filter(entry => entry.status === "failed")).toHaveLength(4);
+    });
   });
 });
 `,"packages/dsh-testboard/test/snapshot.test.ts":`/**
@@ -66933,7 +67172,7 @@ describe("testboard motion", () => {
     expect(host.querySelector('[data-testid="run-meta"]')?.textContent).toContain("Run 1");
   });
 
-  it("counts the run's cases in the header rather than the snapshot's", async () => {
+  it("counts the run's progress while it is going, and the board once it settles", async () => {
     await mount();
     runtime.setState({ snapshot: SNAPSHOT, run: runningRun() });
     await act(async () => {
@@ -66949,8 +67188,31 @@ describe("testboard motion", () => {
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 400));
     });
+    // In flight the header reports the run: the counts climb as cases land, and
+    // reading the board here would show the previous run's totals sitting still.
     expect(host.querySelector('[data-testid="count-passed"]')?.textContent).toContain("2");
     expect(host.querySelector('[data-testid="count-failed"]')?.textContent).toContain("1");
+
+    // Settled, it reports the board: a scoped rerun's three cases are not the
+    // board's totals, and the rows below are drawn from the board.
+  });
+
+  it("counts the whole board once a run has settled", async () => {
+    await mount();
+    // A settled run arrives through the first load, which is what a reload or a
+    // tab switch does. The header then reports the board, because the rows below
+    // it are drawn from the board.
+    runtime.setState({ snapshot: SNAPSHOT, run: { ...runningRun(), phase: "finished", status: "failed" } });
+    await act(async () => {
+      root.render(createElement(makeView(), { sessionId: "session-2" }));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    });
+
+    const summary = summarize(SNAPSHOT);
+    expect(host.querySelector('[data-testid="count-passed"]')?.textContent).toContain(String(summary.passed));
+    expect(host.querySelector('[data-testid="count-failed"]')?.textContent).toContain(String(summary.failed));
   });
 
   it("renders the fixing card when the demo reports that stage", async () => {

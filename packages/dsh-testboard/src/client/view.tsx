@@ -43,6 +43,7 @@ import {
   elapsedOf,
   isReducedMotion,
   phaseLabel,
+  rowReading,
   runMeta,
   type MotionStrings,
   type PhaseLabel,
@@ -173,6 +174,40 @@ function errorText(error: TestboardError, strings: TestboardViewStrings): string
     case "run-failed":
       return strings.errorRunFailed;
   }
+}
+
+/**
+ * Count the snapshot's failing cases.
+ *
+ * The header reports the board, and the board is the snapshot: a scoped rerun
+ * replaces part of it, and the merged result is what the rows show.
+ *
+ * @param snapshot - the snapshot the rows are drawn from.
+ * @returns how many of its cases failed.
+ */
+function countFailedIn(snapshot: TestSnapshot): number {
+  let failed = 0;
+  for (const pkg of snapshot.packages) {
+    for (const file of pkg.files) {
+      for (const entry of file.cases) if (entry.status === "failed") failed += 1;
+    }
+  }
+  return failed;
+}
+
+/**
+ * Count the snapshot's passing cases.
+ * @param snapshot - the snapshot the rows are drawn from.
+ * @returns how many of its cases passed.
+ */
+function countPassedIn(snapshot: TestSnapshot): number {
+  let passed = 0;
+  for (const pkg of snapshot.packages) {
+    for (const file of pkg.files) {
+      for (const entry of file.cases) if (entry.status === "passed") passed += 1;
+    }
+  }
+  return passed;
 }
 
 /**
@@ -650,14 +685,27 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     // The preview's demo has a stage the wire does not: `fixing`. It is not a
     // run phase (D18), so it is layered on here rather than taught to
     // `phaseLabel`, which stays a function of the host's own state.
+    // The header has two jobs, and they read from different places.
+    //
+    // While a run is going it reports that run's progress: the counts climb as
+    // cases land, which is the whole point of the live view. Reading the board
+    // here would show the previous run's totals sitting still.
+    //
+    // Once a run settles it reports the board, because that is what the rows
+    // below are drawn from. A scoped rerun reports only the cases it covered, so
+    // its own count would say "Tests finished" while other files still hold red
+    // rows.
+    const settled = run !== undefined && run.phase !== "running";
+    const boardFailed = run === undefined ? summary.failed : settled ? countFailedIn(snapshot) : run.counts.failed;
+    const boardPassed = run === undefined ? summary.passed : settled ? countPassedIn(snapshot) : run.counts.passed;
     const label: PhaseLabel =
       demo?.phase === "fixing"
         ? {
             phase: "finished",
-            text: `${strings.fixing} ${String(run?.counts.failed ?? 0)} ${strings.failing}`,
+            text: `${strings.fixing} ${String(boardFailed)} ${strings.failing}`,
             tone: "failed",
           }
-        : phaseLabel(run, motionStrings, { total: rerunTotal });
+        : phaseLabel(run, motionStrings, { total: rerunTotal }, { failed: boardFailed });
     // With no run in flight the header still has a number to show: the last
     // reading's own duration. Reporting 0.0s would say the suite took no time.
     const elapsedMs = run === undefined ? summary.wallClockMs : elapsedOf(run, nowMs);
@@ -670,7 +718,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       run === undefined ? cumulativeOf(throughputSeries(snapshot)) : run.series;
     const chartFailures = run === undefined ? [] : run.failures;
     const chartSpanMs = run === undefined ? Math.max(1000, summary.wallClockMs) : Math.max(1000, elapsedMs);
-    const meta = runMeta(run, motionStrings);
+    const meta = runMeta(run, motionStrings, elapsedMs);
     // The subtitle is `workspace · command`. The command half already names the
     // project in the locale string, so the workspace is only prepended when it
     // says something different: otherwise the line reads `dsh-plugins ·
@@ -692,8 +740,8 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
           label={label}
           demoPhase={demo?.phase}
           subtitle={subtitle}
-          passed={run === undefined ? summary.passed : run.counts.passed}
-          failed={run === undefined ? summary.failed : run.counts.failed}
+          passed={boardPassed}
+          failed={boardFailed}
           elapsedMs={elapsedMs}
           running={running}
           reduced={motion.reduced}
@@ -788,6 +836,17 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
                             path: row.path,
                           })}
                           reduced={motion.reduced}
+                          reading={rowReading({
+                            snapshotDurationMs: row.durationMs,
+                            snapshotFailed: row.failed,
+                            snapshotCaseCount: row.cases.length,
+                            runCases: runCasesFor(row.path),
+                            running,
+                            inScope:
+                              run === undefined ||
+                              run.scope.kind === "all" ||
+                              run.scope.path === row.path,
+                          })}
                           strings={{ failed: strings.failed, runFile: strings.runFile }}
                           onSelect={onFileClick}
                           onRun={onRunFile}

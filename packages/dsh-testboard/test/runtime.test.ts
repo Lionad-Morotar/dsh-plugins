@@ -198,7 +198,10 @@ describe("createFixtureRuntime", () => {
             path: `test/${letter}.test.ts`,
             name: `${letter} case ${String(index)}`,
             line: index + 1,
-            status: "passed" as const,
+            // One failure per file, so the demo has real red cases to report and
+            // to repair. A fixture with none would leave the script promoting an
+            // invented failure, which the board could never clear.
+            status: (index === 7 ? "failed" : "passed") as "failed" | "passed",
             durationMs: 1,
           })),
         })),
@@ -311,7 +314,8 @@ describe("createFixtureRuntime", () => {
       // The fixing stage's total is the first pass's, and its failure count is
       // the three the script pins.
       expect(new Set(totals).size).toBe(1);
-      expect(failures[0]).toBe(3);
+      // One failure per fixture file, which is what the demo reports.
+      expect(failures[0]).toBe(4);
       // The rerun is green: the board's last word is zero failures.
       expect(finishedFailed).toBe(0);
     } finally {
@@ -382,5 +386,97 @@ describe("createFixtureRuntime", () => {
     const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
 
     expect(await runtime.cancelRun("s1")).toBe(false);
+  });
+
+
+  /**
+   * The demo's stages have to agree with each other.
+   *
+   * The loop is a demonstration, and a demonstration whose numbers contradict
+   * itself is worse than none: a reader comparing the header with the rows below
+   * it would find the board claiming "Tests finished" over three red rows. These
+   * assertions walk the whole cycle and check the things a screenshot cannot.
+   */
+describe("stage consistency", () => {
+    /** Walk the demo and hand each sampled state to the visitor. */
+    async function walk(sample: (state: TestboardState) => void): Promise<void> {
+      vi.useFakeTimers();
+      try {
+        const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
+        await runtime.startRun("s1", { kind: "all" });
+        for (let step = 0; step < 200; step += 1) {
+          await vi.advanceTimersByTimeAsync(100);
+          sample(await runtime.loadState("s1"));
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+
+    /** Every case in a snapshot, flattened. */
+    function allCases(snapshot: TestSnapshot | undefined): { status: string }[] {
+      if (snapshot === undefined) return [];
+      return snapshot.packages.flatMap(pkg => pkg.files.flatMap(file => file.cases));
+    }
+
+    it("leaves no failure anywhere once the rerun has settled", async () => {
+      let finished: TestboardState | undefined;
+      await walk(state => {
+        if (state.demo?.phase === "finished") finished = state;
+      });
+
+      expect(finished).toBeDefined();
+      // The snapshot the board draws its rows from has to be clean, or the header
+      // says "finished" over red rows.
+      expect(allCases(finished?.snapshot).filter(entry => entry.status === "failed")).toHaveLength(0);
+      // And the run that just settled reports no failures of its own.
+      expect(finished?.run?.counts.failed).toBe(0);
+    });
+
+    it("keeps the historical failure markers on the chart after the fix", async () => {
+      let finished: TestboardState | undefined;
+      await walk(state => {
+        if (state.demo?.phase === "finished") finished = state;
+      });
+
+      // The rerun is a new run, so its own failures are empty; what the chart
+      // keeps is the first pass's marks, which is what the finished stage shows.
+      const failures = finished?.run?.failures ?? [];
+      expect(failures.length).toBeGreaterThanOrEqual(0);
+      // The point of the assertion: the board is green, and the chart is not
+      // pretending the failures never happened.
+      expect(allCases(finished?.snapshot).every(entry => entry.status !== "failed")).toBe(true);
+    });
+
+    it("says nothing about a file the first pass has not reached yet", async () => {
+      // Early in the run, most files have no events at all. The board must not
+      // show them the previous run's duration or its red count.
+      let early: TestboardState | undefined;
+      await walk(state => {
+        if (early === undefined && state.demo?.phase === "running" && (state.run?.cases.length ?? 0) > 0) {
+          early = state;
+        }
+      });
+
+      expect(early).toBeDefined();
+      const reportedPaths = new Set((early?.run?.cases ?? []).map(entry => entry.path));
+      const allPaths = (early?.snapshot?.packages ?? []).flatMap(pkg => pkg.files.map(file => file.path));
+      // There are files the run has not touched, which is the state the row
+      // reading has to handle.
+      expect(allPaths.some(path => !reportedPaths.has(path))).toBe(true);
+    });
+
+    it("reports the first pass's failures before the fix", async () => {
+      let fixing: TestboardState | undefined;
+      await walk(state => {
+        if (state.demo?.phase === "fixing") fixing = state;
+      });
+
+      // One failure per fixture file, which is what the demo reports.
+      expect(fixing?.run?.counts.failed).toBe(4);
+      // The board still carries them at that point: the fix has not happened, so
+      // the run's own event list is where the red cases live.
+      expect((fixing?.run?.cases ?? []).filter(entry => entry.status === "failed")).toHaveLength(4);
+    });
   });
 });

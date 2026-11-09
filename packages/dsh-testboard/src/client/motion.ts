@@ -79,6 +79,16 @@ export interface RerunSize {
   readonly total: number | undefined;
 }
 
+/**
+ * The board's own tallies, after the run's result has been merged in.
+ *
+ * A run reports what it covered; the board shows what it holds. Those differ the
+ * moment a run is scoped, and the header has to speak for the board.
+ */
+export interface BoardTotals {
+  readonly failed: number;
+}
+
 /** Everything the view hands the motion layer for one frame. */
 export interface MotionInput {
   readonly run: RunProgress | undefined;
@@ -166,6 +176,7 @@ export function phaseLabel(
   run: RunProgress | undefined,
   strings: MotionStrings,
   rerunSize?: RerunSize,
+  boardTotals?: BoardTotals,
 ): PhaseLabel {
   if (run === undefined) return { phase: "idle", text: strings.notRunYet, tone: "idle" };
 
@@ -183,8 +194,14 @@ export function phaseLabel(
 
   // A cancelled run is over: the process ended, and the board's job is to say
   // what it has rather than to keep narrating an interruption.
-  if (run.counts.failed > 0) {
-    return { phase: "finished", text: `${String(run.counts.failed)} ${strings.failing}`, tone: "failed" };
+  //
+  // The failure count is the board's, not the run's. A scoped rerun reports the
+  // three cases it covered, so reading its own count would announce "Tests
+  // finished" while other files still hold failures. The caller passes the
+  // merged snapshot's figure when it has one.
+  const failed = boardTotals?.failed ?? run.counts.failed;
+  if (failed > 0) {
+    return { phase: "finished", text: `${String(failed)} ${strings.failing}`, tone: "failed" };
   }
   return { phase: "finished", text: strings.finished, tone: "passed" };
 }
@@ -218,9 +235,12 @@ export function elapsedOf(run: RunProgress | undefined, nowMs: number): number {
  * @param strings - the locale-bound words.
  * @returns the line, or an empty string when there is no run.
  */
-export function runMeta(run: RunProgress | undefined, strings: MotionStrings): string {
+export function runMeta(run: RunProgress | undefined, strings: MotionStrings, elapsedMs?: number): string {
   if (run === undefined) return "";
-  const seconds = `${(run.elapsedMs / 1000).toFixed(1)}s`;
+  // The caller passes the same clock the header's timer reads. Two readings of
+  // the same run would drift apart by a poll interval, and the board would show
+  // "0.9s" beside "0.7s" for one run.
+  const seconds = `${((elapsedMs ?? run.elapsedMs) / 1000).toFixed(1)}s`; 
   if (run.runNumber > 1) return `${strings.rerun} · ${seconds}`;
   return `${strings.run} ${String(run.runNumber)} · ${String(run.counts.total)} ${strings.tests} · ${seconds}`;
 }
@@ -424,4 +444,69 @@ export function defaultMotion(query: { readonly matches: boolean } | undefined):
     tickMs: reduced ? 0 : 120,
     phaseMs: reduced ? 0 : 150,
   };
+}
+
+/** What one row's right-hand reading should show. */
+export type RowReading =
+  | { readonly kind: "duration"; readonly durationMs: number }
+  | { readonly kind: "failed"; readonly failed: number }
+  /** The current run has not finished this file yet, so there is nothing to say. */
+  | { readonly kind: "pending" };
+
+/** Everything one row's reading is decided from. */
+export interface RowReadingInput {
+  /** The snapshot's duration for this file, from the last settled run. */
+  readonly snapshotDurationMs: number;
+  /** The snapshot's failure count for this file. */
+  readonly snapshotFailed: number;
+  /** How many cases the snapshot holds for this file. */
+  readonly snapshotCaseCount: number;
+  /** The current run's events for this file, already filtered. */
+  readonly runCases: RunProgress["cases"];
+  /** Whether a run is in flight. */
+  readonly running: boolean;
+  /**
+   * Whether the current run covers this file.
+   *
+   * A scoped rerun touches one file; every other row keeps its last reading,
+   * because nothing is being redone there.
+   */
+  readonly inScope: boolean;
+}
+
+/**
+ * What one row's right-hand reading should show.
+ *
+ * The board renders rows from the snapshot, and the snapshot carries the last
+ * settled run's numbers. While a run is going those numbers are stale for the
+ * files it has not reached: a row would still show the previous run's 16s and
+ * its red "1 failed", which reads as a result this run has already produced.
+ *
+ * So a row in flight says nothing until its file is done. "Done" means every
+ * case the snapshot knows about has been reported, which is the only signal
+ * available: the host reports cases, not files.
+ *
+ * @param input - the snapshot's figures, the run's events and the scope.
+ * @returns what the row should render.
+ */
+export function rowReading(input: RowReadingInput): RowReading {
+  const live = input.running && input.inScope;
+  if (!live) {
+    return input.snapshotFailed > 0
+      ? { kind: "failed", failed: input.snapshotFailed }
+      : { kind: "duration", durationMs: input.snapshotDurationMs };
+  }
+
+  // A file is done when the run has reported every case the snapshot holds for
+  // it. Until then the row has no result of its own to show.
+  const reported = input.runCases.length;
+  if (reported === 0 || reported < input.snapshotCaseCount) return { kind: "pending" };
+
+  let failed = 0;
+  let durationMs = 0;
+  for (const entry of input.runCases) {
+    if (entry.status === "failed") failed += 1;
+    durationMs += entry.durationMs;
+  }
+  return failed > 0 ? { kind: "failed", failed } : { kind: "duration", durationMs };
 }

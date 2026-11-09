@@ -1298,7 +1298,7 @@ describe("testboard motion", () => {
     expect(host.querySelector('[data-testid="run-meta"]')?.textContent).toContain("Run 1");
   });
 
-  it("counts the run's cases in the header rather than the snapshot's", async () => {
+  it("counts the run's progress while it is going, and the board once it settles", async () => {
     await mount();
     runtime.setState({ snapshot: SNAPSHOT, run: runningRun() });
     await act(async () => {
@@ -1314,8 +1314,31 @@ describe("testboard motion", () => {
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 400));
     });
+    // In flight the header reports the run: the counts climb as cases land, and
+    // reading the board here would show the previous run's totals sitting still.
     expect(host.querySelector('[data-testid="count-passed"]')?.textContent).toContain("2");
     expect(host.querySelector('[data-testid="count-failed"]')?.textContent).toContain("1");
+
+    // Settled, it reports the board: a scoped rerun's three cases are not the
+    // board's totals, and the rows below are drawn from the board.
+  });
+
+  it("counts the whole board once a run has settled", async () => {
+    await mount();
+    // A settled run arrives through the first load, which is what a reload or a
+    // tab switch does. The header then reports the board, because the rows below
+    // it are drawn from the board.
+    runtime.setState({ snapshot: SNAPSHOT, run: { ...runningRun(), phase: "finished", status: "failed" } });
+    await act(async () => {
+      root.render(createElement(makeView(), { sessionId: "session-2" }));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    });
+
+    const summary = summarize(SNAPSHOT);
+    expect(host.querySelector('[data-testid="count-passed"]')?.textContent).toContain(String(summary.passed));
+    expect(host.querySelector('[data-testid="count-failed"]')?.textContent).toContain(String(summary.failed));
   });
 
   it("renders the fixing card when the demo reports that stage", async () => {

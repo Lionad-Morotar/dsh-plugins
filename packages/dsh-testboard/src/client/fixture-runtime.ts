@@ -93,6 +93,15 @@ interface DemoPlan {
   readonly fixingPath: string;
   /** How many cases the run covers, which never changes across the stages. */
   readonly total: number;
+  /**
+   * The board the demo draws.
+   *
+   * Only the files the script covers. The committed snapshot holds hundreds of
+   * files and dozens of failures the demo never touches, so serving it whole
+   * would put rows on screen that no stage can ever fix: the finished board
+   * would still show red rows the loop has no story for.
+   */
+  readonly board: TestSnapshot;
 }
 
 /**
@@ -169,17 +178,37 @@ function planDemo(snapshot: TestSnapshot): DemoPlan {
     cursor += 1;
   }
 
-  // The three failures are pinned to seconds that actually have cases. A fixed
-  // table of seconds would silently drop a failure whenever the slice was small
-  // enough to finish before that second arrived, and the demo would then claim
-  // two failures where the script says three.
-  const populated = [...new Set(cases.map(entry => entry.second))];
+  // The failures are the slice's own failed cases, not ones picked to fit a
+  // schedule. The board the demo serves is built from this same slice, so the
+  // rows and the run have to agree about which cases are red: a failure invented
+  // here would be a red tick with no red row behind it, and the rerun could not
+  // clear it because the snapshot never had it.
+  //
+  // They are spread across the run rather than left where the snapshot's order
+  // puts them, so the chart's red rules land at three different seconds.
+  const failedNames = new Set(
+    chosen.flatMap(file =>
+      (snapshot.packages.flatMap(pkg => pkg.files).find(candidate => candidate.path === file.path)?.cases ?? [])
+        .filter(entry => entry.status === "failed")
+        .map(entry => `${file.path}\u0000${entry.name}`),
+    ),
+  );
+  // Every case the snapshot marks failed is a failure of this run. Marking only
+  // a hand-picked three would leave the rest red on the board with no stage that
+  // ever clears them, which is exactly the inconsistency this demo exists to
+  // avoid.
   const failing: DemoCase[] = [];
-  for (const fraction of [0.25, 0.5, 0.75]) {
-    const second = populated[Math.min(populated.length - 1, Math.floor(populated.length * fraction))];
-    if (second === undefined) continue;
-    const at = cases.findIndex(entry => entry.second === second && !entry.fails);
-    if (at === -1) continue;
+  for (let index = 0; index < cases.length; index += 1) {
+    const entry = cases[index] as DemoCase;
+    if (!failedNames.has(`${entry.path}\u0000${entry.name}`)) continue;
+    const promoted = { ...entry, fails: true };
+    cases[index] = promoted;
+    failing.push(promoted);
+  }
+  // If the slice holds no real failure at all, promote one case so the script
+  // still has something to fix and the fixing stage is not empty.
+  if (failing.length === 0 && cases.length > 0) {
+    const at = Math.floor(cases.length / 2);
     const promoted = { ...(cases[at] as DemoCase), fails: true };
     cases[at] = promoted;
     failing.push(promoted);
@@ -201,12 +230,23 @@ function planDemo(snapshot: TestSnapshot): DemoPlan {
     series.push({ tMs: second * 1000, finished, passed, failed });
   }
 
+  // The board is the slice, grouped the same way the full snapshot is, so the
+  // preview's sections and rows read like the real tab's.
+  const chosenPaths = new Set(chosen.map(file => file.path));
+  const board: TestSnapshot = {
+    ...snapshot,
+    packages: snapshot.packages
+      .map(pkg => ({ ...pkg, files: pkg.files.filter(file => chosenPaths.has(file.path)) }))
+      .filter(pkg => pkg.files.length > 0),
+  };
+
   return {
     cases,
     series,
     failing,
     fixingPath: failing[0]?.path ?? chosen[0]?.path ?? "",
     total: cases.length,
+    board,
   };
 }
 
@@ -227,6 +267,15 @@ export function createFixtureRuntime(options: FixtureRuntimeOptions): TestboardR
   const plan = planDemo(snapshot);
 
   let run: RunProgress | undefined;
+  /**
+   * The board's current result.
+   *
+   * Starts as the committed snapshot and is replaced by the merged result after
+   * a rerun. The board draws its rows from this, so a rerun that only updated
+   * the run's own counts would leave every row showing the previous failure: the
+   * header would say "Tests finished" over a list of red rows.
+   */
+  let board: TestSnapshot = plan.board;
   let runCount = 0;
   let stageStartedMs = 0;
   let timers: ReturnType<typeof setTimeout>[] = [];
@@ -413,12 +462,49 @@ export function createFixtureRuntime(options: FixtureRuntimeOptions): TestboardR
     }, DEMO_TICK_MS);
   }
 
+  /**
+   * Fold a rerun's result into the board.
+   *
+   * The run reports the cases it covered; the board has to keep every other row
+   * as it was. So the rerun's cases are matched by name inside their file and
+   * their new status replaces the old one, which is what turns the three red
+   * rows green and leaves the rest untouched.
+   *
+   * @param repaired - the cases the rerun re-ran, all green.
+   * @returns the board with those cases updated.
+   */
+  function mergeRepaired(): TestSnapshot {
+    // The rerun is a fix, so the board it produces has no failures left in the
+    // slice. Matching by name would leave any failure the script did not happen
+    // to cover, which is the state that made the finished board disagree with
+    // its own header.
+    return {
+      ...board,
+      packages: board.packages.map(pkg => ({
+        ...pkg,
+        files: pkg.files.map(file => ({
+          ...file,
+          cases: file.cases.map(entry =>
+            entry.status === "failed" ? { ...entry, status: "passed" as const } : entry,
+          ),
+        })),
+      })),
+    };
+  }
+
   /** The rerun's settled result: the three cases are green and nothing is red. */
   function settleRerun(): void {
     if (run === undefined) return;
     const cases = plan.failing.map((entry, index) =>
       eventOf(entry, (index / Math.max(1, plan.failing.length)) * DEMO_RERUN_MS, false),
     );
+    // The board takes the repair before the run settles, so the header's count
+    // and the rows it is counting change together.
+    board = mergeRepaired();
+    // The chart keeps the first pass's shape and its red rules. The rerun only
+    // covered three cases, and drawing that as the finished chart would leave a
+    // single stub at the left edge with no history: the board's whole story is
+    // that a run happened, three things broke, and they were fixed.
     run = {
       ...run,
       phase: "finished",
@@ -427,8 +513,12 @@ export function createFixtureRuntime(options: FixtureRuntimeOptions): TestboardR
       elapsedMs: DEMO_RERUN_MS,
       completedFiles: 1,
       counts: { passed: cases.length, failed: 0, skipped: 0, total: cases.length },
-      series: [{ tMs: 0, finished: cases.length, passed: cases.length, failed: 0 }],
-      failures: [],
+      series: plan.series,
+      failures: plan.failing.map(entry => ({
+        tMs: (entry.second / DEMO_THROUGHPUT.length) * DEMO_RUN_MS,
+        path: entry.path,
+        name: entry.name,
+      })),
       cases,
     };
   }
@@ -437,6 +527,9 @@ export function createFixtureRuntime(options: FixtureRuntimeOptions): TestboardR
   function startDemo(): void {
     if (disposed) return;
     clearTimers();
+    // A new cycle is a new run: the board goes back to the slice's own starting
+    // state, so the loop can show the same failure being fixed again.
+    board = plan.board;
     demoPhase = "running";
     runCount += 1;
     stageStartedMs = Date.now();
@@ -478,7 +571,7 @@ export function createFixtureRuntime(options: FixtureRuntimeOptions): TestboardR
     return {
       workspace: "dsh-plugins",
       workspaceName: "dsh-plugins",
-      snapshot,
+      snapshot: board,
       ...(run === undefined ? {} : { run }),
       // The demo's own stage travels beside the wire shape: the fixing card is
       // not a run phase the host has, so it cannot be one here either.
