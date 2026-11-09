@@ -44,6 +44,7 @@ function evaluate(): LoadCall {
 function platform(): (specifier: string) => unknown {
   return (specifier) => {
     if (specifier === "react") return { useEffect: () => undefined, useRef: () => ({ current: undefined }) };
+    if (specifier === "react/jsx-runtime") return { Fragment: Symbol("Fragment"), jsx: () => null, jsxs: () => null };
     throw new Error(`unexpected platform module ${specifier}`);
   };
 }
@@ -91,7 +92,7 @@ describe("client bundle", () => {
 
   it("keeps React external", () => {
     const externalized = [...bundle.matchAll(/require\("([^"]+)"\)/gu)].map((match) => match[1]);
-    expect(new Set(externalized)).toEqual(new Set(["react"]));
+    expect(new Set(externalized)).toEqual(new Set(["react", "react/jsx-runtime"]));
   });
 
   it("calls the loader boot handover", () => {
