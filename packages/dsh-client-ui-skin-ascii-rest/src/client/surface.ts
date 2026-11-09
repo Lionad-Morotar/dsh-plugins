@@ -256,7 +256,14 @@ export function presentScene(presentation: Presentation, doc: Document = documen
   // "visible" to the document, so it kept painting at full rate behind whatever
   // the reader switched to. Pausing here costs one boolean and saves the frames.
   const onBlur = (): void => stop?.pause();
-  const onFocus = (): void => stop?.resume();
+  // Focus is one reason to play, not the only one. A surface held paused by
+  // something else (the splash covers the page while it is up) must stay paused:
+  // resuming from here would restart a loop nobody can see, which is the exact
+  // cost the pause was taken to avoid.
+  const onFocus = (): void => {
+    if (paused) return;
+    stop?.resume();
+  };
   /**
    * Bind or unbind the focus listeners.
    *
