@@ -12,9 +12,10 @@
  */
 import { LOCALE_NAMESPACE, PACKAGE_NAME, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
 import { EN, ZH } from "./copy.ts";
-import { boot as bootSnapshot, loadSnapshotChunk, type LoaderRequire } from "./snapshot-loader.ts";
+import { boot as bootSnapshot, type LoaderRequire } from "./snapshot-loader.ts";
 import { bootEditor, loadEditorChunk } from "./editor-loader.ts";
-import { bootSources, loadSourcesChunk } from "./sources-loader.ts";
+import { bootSources } from "./sources-loader.ts";
+import { createHttpRuntime } from "./runtime.ts";
 import { ensureStyles } from "./styles.ts";
 import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
 
@@ -126,9 +127,26 @@ export function apply(ctx: TestboardClientContext): () => void {
       paneResize: t("testboard.paneResize"),
       paneResizeHint: t("testboard.paneResizeHint"),
       listLabel: t("testboard.listLabel"),
+      runAll: t("testboard.runAll"),
+      cancel: t("testboard.cancel"),
+      runFile: t("testboard.runFile"),
+      running: t("testboard.running"),
+      notRunYet: t("testboard.notRunYet"),
+      notRunYetHint: t("testboard.notRunYetHint"),
+      noSession: t("testboard.noSession"),
+      errorNoSession: t("testboard.errorNoSession"),
+      errorUnknownWorkspace: t("testboard.errorUnknownWorkspace"),
+      errorNoVitest: t("testboard.errorNoVitest"),
+      errorNoSubprocess: t("testboard.errorNoSubprocess"),
+      errorBusy: t("testboard.errorBusy"),
+      errorBadScope: t("testboard.errorBadScope"),
+      errorRunFailed: t("testboard.errorRunFailed"),
     } satisfies TestboardViewStrings,
-    loadSnapshot: () => loadSnapshotChunk().then(chunk => chunk.snapshot),
-    loadSources: () => loadSourcesChunk().then(chunk => chunk.sources),
+    // The board now reads the host's live state instead of a committed
+    // snapshot. The chunk loaders stay booted until the slice that removes them:
+    // the build still emits those chunks, and a boot that stopped naming them
+    // would leave the files unreachable.
+    runtime: createHttpRuntime(),
     loadEditor: () => loadEditorChunk(),
   });
 

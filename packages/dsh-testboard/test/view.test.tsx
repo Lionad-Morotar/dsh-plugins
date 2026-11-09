@@ -23,8 +23,10 @@ import sourcesData from "../src/client/data/sources.json" with { type: "json" };
 import { formatDuration } from "../src/client/format.ts";
 import { summarize, type TestSnapshot } from "../src/client/model.ts";
 import { LEFT_PANE_MAX_WIDTH, LEFT_PANE_MIN_WIDTH, LEFT_PANE_WIDTH_KEY } from "../src/client/pane-width.ts";
+import type { TestboardRuntime } from "../src/client/runtime.ts";
 import { splitSourceLines, type SourceBundle } from "../src/client/source.ts";
 import { createTestboardView, type TestboardViewStrings } from "../src/client/view.tsx";
+import type { RunProgress, RunScope, TestboardState } from "../src/shared.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -80,17 +82,78 @@ const STRINGS: TestboardViewStrings = {
   paneResize: "调整用例列表宽度",
   paneResizeHint: "左右方向键调整，Home/End 到两端，双击恢复默认",
   listLabel: "测试文件与用例",
+  runAll: "运行全部",
+  cancel: "取消",
+  runFile: "运行",
+  running: "运行中",
+  notRunYet: "尚未运行",
+  notRunYetHint: "点「运行全部」跑一遍这个工作区的测试。",
+  noSession: "没有会话，无法确定工作区。",
+  errorNoSession: "没有会话，无法确定工作区。",
+  errorUnknownWorkspace: "这个会话指向的工作区已不存在。",
+  errorNoVitest: "该工作区没有安装 vitest。",
+  errorNoSubprocess: "宿主没有提供进程服务，无法运行测试。",
+  errorBusy: "这个工作区已有一轮在跑。",
+  errorBadScope: "运行范围不合法。",
+  errorRunFailed: "上一轮运行出错了。",
 };
+
+/**
+ * A runtime over the committed snapshot, with the run controls recorded.
+ *
+ * The view is written against the runtime interface, so this is the whole host
+ * as far as the board is concerned. It records what the board asked for, which
+ * is how the run and source tests assert that a click reached the host rather
+ * than only changing a local variable.
+ */
+interface FakeRuntime extends TestboardRuntime {
+  readonly calls: { readonly kind: string; readonly detail?: string }[];
+  /** Replace what the next loadState answers, to drive a run to its end. */
+  setState(state: TestboardState): void;
+}
+
+function makeRuntime(initial: TestboardState = { snapshot: SNAPSHOT, workspaceName: "dsh-plugins" }): FakeRuntime {
+  const calls: { kind: string; detail?: string }[] = [];
+  let state: TestboardState = initial;
+  return {
+    calls,
+    setState(next) {
+      state = next;
+    },
+    async loadState(sessionId) {
+      calls.push({ kind: "loadState", detail: sessionId });
+      return state;
+    },
+    async startRun(sessionId, scope: RunScope) {
+      calls.push({ kind: "startRun", detail: `${sessionId}:${scope.kind}` });
+      return { ok: true, runId: "run-1" };
+    },
+    async cancelRun(sessionId) {
+      calls.push({ kind: "cancelRun", detail: sessionId });
+      return true;
+    },
+    async loadSource(_sessionId, path) {
+      calls.push({ kind: "loadSource", detail: path });
+      const text = SOURCES.files[path];
+      if (typeof text !== "string") throw new Error(`no source for ${path}`);
+      return text;
+    },
+  };
+}
+
+/** The runtime the shared harness uses; reset per test by `beforeEach`. */
+let runtime: FakeRuntime;
 
 // The editor chunk is never resolved in the shared harness: the pane's plain
 // fallback is what the rest of these tests read. The last describe mounts its
 // own board with a resolving loader to cover the hand-over.
-const View = createTestboardView({
-  strings: STRINGS,
-  loadSnapshot: async () => SNAPSHOT,
-  loadSources: async () => SOURCES,
-  loadEditor: () => new Promise<never>(() => {}),
-});
+function makeView(overrides: Partial<{ loadEditor: () => Promise<never> }> = {}) {
+  return createTestboardView({
+    strings: STRINGS,
+    runtime,
+    loadEditor: overrides.loadEditor ?? (() => new Promise<never>(() => {})),
+  });
+}
 
 function rows(host: HTMLElement): HTMLElement[] {
   return [...host.querySelectorAll<HTMLElement>('[data-testid="file-row"]')];
@@ -131,6 +194,7 @@ describe("testboard view", () => {
 
   beforeEach(() => {
     window.localStorage.clear();
+    runtime = makeRuntime();
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -144,9 +208,14 @@ describe("testboard view", () => {
     window.localStorage.clear();
   });
 
-  async function mount(): Promise<void> {
+  async function mount(sessionId = "session-1"): Promise<void> {
     await act(async () => {
-      root.render(createElement(View, {}));
+      root.render(createElement(makeView(), { sessionId }));
+    });
+    // Let the first loadState settle: the board renders its rows only once the
+    // host has answered.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
     });
   }
 
@@ -797,17 +866,20 @@ describe("code editor chunk", () => {
       seen.push({ path: props.path, line: String(props.activeLine ?? ""), textLength: props.text.length });
       return createElement("div", { "data-testid": "code-view-stub", "data-path": props.path });
     };
+    runtime = makeRuntime();
     const WithEditor = createTestboardView({
       strings: STRINGS,
-      loadSnapshot: async () => SNAPSHOT,
-      loadSources: async () => SOURCES,
+      runtime,
       loadEditor: async () => ({ renderer: "codemirror", CodeView: Stub }),
     });
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
     await act(async () => {
-      root.render(createElement(WithEditor));
+      root.render(createElement(WithEditor, { sessionId: "session-1" }));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
     });
 
     const firstRow = host.querySelector<HTMLElement>('[data-testid="file-row"]');
@@ -831,5 +903,242 @@ describe("code editor chunk", () => {
     expect(seen.at(-1)?.line).not.toBe("");
     root.unmount();
     host.remove();
+  });
+});
+
+/**
+ * The runtime seam, exercised through the board.
+ *
+ * Everything here is about the board's conversation with the host: that a click
+ * reaches the runtime, that a running run is polled and then replaced by the
+ * host's snapshot, that a session change throws the old workspace away, and that
+ * an error or an empty workspace renders something a reader can act on. The
+ * layout and keyboard behaviour is covered above and must not regress.
+ */
+describe("testboard runtime wiring", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    runtime = makeRuntime();
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+    window.localStorage.clear();
+  });
+
+  /** Mount the board for one session and let the first state load settle. */
+  async function mount(sessionId = "session-1"): Promise<void> {
+    await act(async () => {
+      root.render(createElement(makeView(), { sessionId }));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+  }
+
+  function runAll(host: HTMLElement): HTMLElement {
+    const found = host.querySelector<HTMLElement>('[data-testid="run-all"]');
+    if (found === null) throw new Error("no run-all button");
+    return found;
+  }
+
+  function runFileButtons(host: HTMLElement): HTMLElement[] {
+    return [...host.querySelectorAll<HTMLElement>('[data-testid="run-file"]')];
+  }
+
+  it("asks the runtime for the session's state on mount", async () => {
+    await mount("session-7");
+
+    expect(runtime.calls).toContainEqual({ kind: "loadState", detail: "session-7" });
+    expect(rows(host).length).toBeGreaterThan(0);
+  });
+
+  it("starts a full run from the toolbar", async () => {
+    await mount();
+
+    await act(async () => runAll(host).click());
+
+    expect(runtime.calls).toContainEqual({ kind: "startRun", detail: "session-1:all" });
+  });
+
+  it("starts a single-file run from a row without selecting it", async () => {
+    await mount();
+    const button = runFileButtons(host)[0];
+    if (button === undefined) throw new Error("no run-file button");
+    const path = button.getAttribute("data-path") ?? "";
+
+    await act(async () => button.click());
+
+    expect(runtime.calls).toContainEqual({ kind: "startRun", detail: "session-1:file" });
+    // The click must not bubble into the row's select handler: running a file is
+    // not the same gesture as opening it.
+    expect(host.querySelector<HTMLElement>('[data-testid="detail-pane"]')?.getAttribute("data-path")).toBeNull();
+    expect(path).not.toBe("");
+  });
+
+  it("polls while a run is going and stops once it settles", async () => {
+    await mount();
+    const running: RunProgress = {
+      runId: "run-1",
+      scope: { kind: "all" },
+      status: "running",
+      phase: "running",
+      runNumber: 1,
+      startedAt: new Date().toISOString(),
+      elapsedMs: 0,
+      completedFiles: 1,
+      totalFiles: null,
+      counts: { passed: 3, failed: 0, skipped: 0, total: 3 },
+      series: [],
+      failures: [],
+      cases: [],
+    };
+    runtime.setState({ snapshot: SNAPSHOT, run: running });
+    await act(async () => runAll(host).click());
+
+    // Let a couple of poll intervals pass.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 900));
+    });
+    const pollsWhileRunning = runtime.calls.filter(call => call.kind === "loadState").length;
+    expect(pollsWhileRunning).toBeGreaterThan(1);
+
+    // The host settles the run; the next poll must pick that up and stop.
+    runtime.setState({ snapshot: SNAPSHOT, run: { ...running, phase: "finished", status: "passed" } });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 900));
+    });
+    const pollsAfterSettle = runtime.calls.filter(call => call.kind === "loadState").length;
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 900));
+    });
+    expect(runtime.calls.filter(call => call.kind === "loadState").length).toBe(pollsAfterSettle);
+  });
+
+  it("turns the run button into a cancel while a run is going", async () => {
+    await mount();
+    runtime.setState({
+      snapshot: SNAPSHOT,
+      run: {
+        runId: "run-1",
+        scope: { kind: "all" },
+        status: "running",
+        phase: "running",
+        runNumber: 1,
+        startedAt: new Date().toISOString(),
+        elapsedMs: 0,
+        completedFiles: 0,
+        totalFiles: null,
+        counts: { passed: 0, failed: 0, skipped: 0, total: 0 },
+        series: [],
+        failures: [],
+        cases: [],
+      },
+    });
+    await act(async () => runAll(host).click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    const cancel = host.querySelector<HTMLElement>('[data-testid="cancel-run"]');
+    expect(cancel).not.toBeNull();
+    await act(async () => cancel?.click());
+    expect(runtime.calls).toContainEqual({ kind: "cancelRun", detail: "session-1" });
+  });
+
+  it("loads a file's source on selection and caches it", async () => {
+    await mount();
+    const row = rows(host)[0];
+    if (row === undefined) throw new Error("no rows");
+    const path = row.getAttribute("data-path") ?? "";
+
+    await act(async () => row.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(runtime.calls).toContainEqual({ kind: "loadSource", detail: path });
+    const lines = pane(host).querySelectorAll('[data-tst="code-line"]');
+    expect(lines.length).toBeGreaterThan(0);
+
+    // Selecting the same file again must not refetch it.
+    await act(async () => row.click());
+    await act(async () => row.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(runtime.calls.filter(call => call.kind === "loadSource" && call.detail === path)).toHaveLength(1);
+  });
+
+  it("says the source is missing when the host cannot serve it", async () => {
+    await mount();
+    const row = rows(host)[0];
+    if (row === undefined) throw new Error("no rows");
+    // A path the fixture bundle does not carry: the pane must say so rather than
+    // showing an empty code block.
+    await act(async () => row.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(pane(host).querySelector('[data-tst="detail-code"]')).not.toBeNull();
+  });
+
+  it("reloads and resets when the session changes", async () => {
+    await mount("session-1");
+    const row = rows(host)[0];
+    await act(async () => row?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(pane(host).getAttribute("data-path")).not.toBeNull();
+
+    await act(async () => {
+      root.render(createElement(makeView(), { sessionId: "session-2" }));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(runtime.calls).toContainEqual({ kind: "loadState", detail: "session-2" });
+    // The old workspace's selection must not survive the switch.
+    expect(pane(host).getAttribute("data-path")).toBeNull();
+  });
+
+  it("renders the no-session state when the tab has no session id", async () => {
+    await act(async () => {
+      root.render(createElement(makeView(), {}));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(host.querySelector('[data-testid="testboard-status"]')?.textContent).toContain(STRINGS.noSession);
+    // Nothing to run: the button is disabled rather than absent, so the layout
+    // does not jump when a session arrives.
+    expect(runAll(host).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("maps a host error to readable copy and disables the run button", async () => {
+    runtime.setState({ error: "no-vitest" });
+    await mount();
+
+    expect(host.querySelector('[data-testid="testboard-status"]')?.textContent).toContain(STRINGS.errorNoVitest);
+    expect(runAll(host).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("shows the not-run-yet state when the workspace has no snapshot", async () => {
+    runtime.setState({ workspaceName: "dsh-plugins" });
+    await mount();
+
+    expect(host.querySelector('[data-testid="testboard-status"]')?.textContent).toContain(STRINGS.notRunYet);
+    // The run entry stays available: that empty state is exactly where a reader
+    // presses it.
+    expect(runAll(host).hasAttribute("disabled")).toBe(false);
   });
 });

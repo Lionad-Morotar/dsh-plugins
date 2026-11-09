@@ -64457,6 +64457,263 @@ describe("paneResizeKeyAction", () => {
     expect(paneResizeKeyAction("a", false)).toBeNull();
   });
 });
+`,"packages/dsh-testboard/test/runtime.test.ts":`// @vitest-environment node
+/**
+ * The runtime seam: one interface, two implementations.
+ *
+ * The view talks to the host through this module and nothing else, so the two
+ * things it must get right are pinned here rather than discovered in a browser:
+ * every request is a same-origin relative path under the route prefix (the GUI
+ * port changes on every boot, so an absolute URL would be stale), and a
+ * non-2xx answer or an unparseable body is an error rather than an empty state.
+ *
+ * The fixture implementation is the preview's half of the same interface. It is
+ * tested here because the preview is the only place the board can be looked at
+ * without a host, and a fixture that quietly diverges from the HTTP contract
+ * would make the preview lie about the panel.
+ */
+import { describe, expect, it, vi } from "vitest";
+
+import type { TestSnapshot } from "../src/client/model.ts";
+import { createFixtureRuntime, createHttpRuntime } from "../src/client/runtime.ts";
+import { ROUTE_PREFIX, type TestboardState } from "../src/shared.ts";
+
+/** One recorded request, so the assertions can read the URL and the body. */
+interface Call {
+  readonly url: string;
+  readonly init: RequestInit | undefined;
+}
+
+/**
+ * A fetch stand-in that answers from a table and records what it was asked.
+ * @param answers - one entry per call: a JSON body, or a status to fail with.
+ * @returns the fetch function and the calls it recorded.
+ */
+function makeFetch(answers: readonly (unknown | { readonly status: number })[]): {
+  fetchImpl: typeof fetch;
+  calls: Call[];
+} {
+  const calls: Call[] = [];
+  let index = 0;
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    const answer = answers[index] ?? answers[answers.length - 1];
+    index += 1;
+    const failed = typeof answer === "object" && answer !== null && "status" in answer;
+    const status = failed ? (answer as { status: number }).status : 200;
+    const body = failed ? { error: "nope" } : answer;
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => body,
+    } as unknown as Response;
+  }) as unknown as typeof fetch;
+  return { fetchImpl, calls };
+}
+
+const STATE: TestboardState = {
+  workspace: "/ws",
+  workspaceName: "ws",
+  snapshot: { version: 2, statusSource: "vitest", packages: [] },
+};
+
+describe("createHttpRuntime: loadState", () => {
+  it("asks the state route for one session, relative to the page", async () => {
+    const { fetchImpl, calls } = makeFetch([STATE]);
+    const runtime = createHttpRuntime(fetchImpl);
+
+    const state = await runtime.loadState("s1");
+
+    expect(state).toEqual(STATE);
+    expect(calls[0]?.url).toBe(\`\${ROUTE_PREFIX}/state?sessionId=s1\`);
+    // Relative on purpose: the host's port changes on every boot.
+    expect(calls[0]?.url.startsWith("/")).toBe(true);
+  });
+
+  it("encodes a session id that needs it", async () => {
+    const { fetchImpl, calls } = makeFetch([STATE]);
+    const runtime = createHttpRuntime(fetchImpl);
+
+    await runtime.loadState("a b/c");
+
+    // URLSearchParams encodes a space as \`+\`, which is the form a query string
+    // reader decodes back to a space; the slash is percent-encoded.
+    expect(calls[0]?.url).toBe(\`\${ROUTE_PREFIX}/state?sessionId=a+b%2Fc\`);
+  });
+
+  it("throws on a non-2xx answer instead of returning an empty state", async () => {
+    const { fetchImpl } = makeFetch([{ status: 500 }]);
+    const runtime = createHttpRuntime(fetchImpl);
+
+    await expect(runtime.loadState("s1")).rejects.toThrow(/500/u);
+  });
+
+  it("throws when the body is not JSON", async () => {
+    const fetchImpl = (async () =>
+      ({ ok: true, status: 200, json: async () => JSON.parse("{oops") }) as unknown as Response) as unknown as typeof fetch;
+    const runtime = createHttpRuntime(fetchImpl);
+
+    await expect(runtime.loadState("s1")).rejects.toThrow();
+  });
+});
+
+describe("createHttpRuntime: startRun", () => {
+  it("posts the session and the scope to the run route", async () => {
+    const { fetchImpl, calls } = makeFetch([{ ok: true, runId: "run-1" }]);
+    const runtime = createHttpRuntime(fetchImpl);
+
+    const result = await runtime.startRun("s1", { kind: "all" });
+
+    expect(result).toEqual({ ok: true, runId: "run-1" });
+    expect(calls[0]?.url).toBe(\`\${ROUTE_PREFIX}/run\`);
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ sessionId: "s1", scope: { kind: "all" } });
+  });
+
+  it("passes a file scope through unchanged", async () => {
+    const { fetchImpl, calls } = makeFetch([{ ok: true, runId: "run-2" }]);
+    const runtime = createHttpRuntime(fetchImpl);
+
+    await runtime.startRun("s1", { kind: "file", path: "test/a.test.ts" });
+
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      sessionId: "s1",
+      scope: { kind: "file", path: "test/a.test.ts" },
+    });
+  });
+
+  it("reports a refusal as a value, not an exception", async () => {
+    const { fetchImpl } = makeFetch([{ ok: false, error: "busy" }]);
+    const runtime = createHttpRuntime(fetchImpl);
+
+    expect(await runtime.startRun("s1", { kind: "all" })).toEqual({ ok: false, error: "busy" });
+  });
+});
+
+describe("createHttpRuntime: cancelRun", () => {
+  it("posts the session to the cancel route and reports whether anything stopped", async () => {
+    const { fetchImpl, calls } = makeFetch([{ ok: true }]);
+    const runtime = createHttpRuntime(fetchImpl);
+
+    expect(await runtime.cancelRun("s1")).toBe(true);
+    expect(calls[0]?.url).toBe(\`\${ROUTE_PREFIX}/cancel\`);
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ sessionId: "s1" });
+  });
+
+  it("answers false when the host had nothing running", async () => {
+    const { fetchImpl } = makeFetch([{ ok: false }]);
+    const runtime = createHttpRuntime(fetchImpl);
+
+    expect(await runtime.cancelRun("s1")).toBe(false);
+  });
+});
+
+describe("createHttpRuntime: loadSource", () => {
+  it("asks the source route for one path", async () => {
+    const { fetchImpl, calls } = makeFetch([{ text: 'it("a", () => {});' }]);
+    const runtime = createHttpRuntime(fetchImpl);
+
+    expect(await runtime.loadSource("s1", "test/a.test.ts")).toBe('it("a", () => {});');
+    expect(calls[0]?.url).toBe(\`\${ROUTE_PREFIX}/source?sessionId=s1&path=test%2Fa.test.ts\`);
+  });
+
+  it("encodes a path with spaces and slashes", async () => {
+    const { fetchImpl, calls } = makeFetch([{ text: "" }]);
+    const runtime = createHttpRuntime(fetchImpl);
+
+    await runtime.loadSource("s1", "packages/a b/test/one.test.ts");
+
+    expect(calls[0]?.url).toBe(\`\${ROUTE_PREFIX}/source?sessionId=s1&path=packages%2Fa+b%2Ftest%2Fone.test.ts\`);
+  });
+
+  it("throws on a missing file rather than returning empty text", async () => {
+    const { fetchImpl } = makeFetch([{ status: 404 }]);
+    const runtime = createHttpRuntime(fetchImpl);
+
+    await expect(runtime.loadSource("s1", "test/missing.test.ts")).rejects.toThrow(/404/u);
+  });
+});
+
+describe("createFixtureRuntime", () => {
+  const SNAPSHOT: TestSnapshot = {
+    version: 2,
+    statusSource: "synthetic",
+    packages: [
+      {
+        name: ".",
+        files: [
+          {
+            path: "test/a.test.ts",
+            cases: [{ path: "test/a.test.ts", name: "a", line: 1, status: "passed", durationMs: 1 }],
+          },
+        ],
+      },
+    ],
+  };
+  const SOURCES = { version: 1, files: { "test/a.test.ts": 'it("a", () => {});' } };
+
+  it("reports the fixture snapshot as the workspace state", async () => {
+    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+
+    const state = await runtime.loadState("s1");
+
+    expect(state.snapshot).toEqual(SNAPSHOT);
+    expect(state.workspaceName).toBe("fixture");
+  });
+
+  it("serves source text from the fixture bundle", async () => {
+    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+
+    expect(await runtime.loadSource("s1", "test/a.test.ts")).toBe('it("a", () => {});');
+  });
+
+  it("rejects a path the fixture does not carry", async () => {
+    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+
+    await expect(runtime.loadSource("s1", "test/missing.test.ts")).rejects.toThrow();
+  });
+
+  it("accepts a run and reports it as running straight away", async () => {
+    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+
+    const started = await runtime.startRun("s1", { kind: "all" });
+
+    expect(started.ok).toBe(true);
+    const state = await runtime.loadState("s1");
+    expect(state.run?.phase).toBe("running");
+    expect(state.run?.scope).toEqual({ kind: "all" });
+  });
+
+  it("settles the run as finished once its delay has passed", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+      await runtime.startRun("s1", { kind: "all" });
+
+      await vi.advanceTimersByTimeAsync(1500);
+      const state = await runtime.loadState("s1");
+
+      expect(state.run?.phase).toBe("finished");
+      expect(state.run?.counts.total).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a run that is still going", async () => {
+    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+    await runtime.startRun("s1", { kind: "all" });
+
+    expect(await runtime.cancelRun("s1")).toBe(true);
+    expect((await runtime.loadState("s1")).run?.phase).toBe("cancelled");
+  });
+
+  it("answers false when there is nothing to cancel", async () => {
+    const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES });
+
+    expect(await runtime.cancelRun("s1")).toBe(false);
+  });
+});
 `,"packages/dsh-testboard/test/snapshot.test.ts":`/**
  * The snapshot generator's contract.
  *
@@ -64827,8 +65084,10 @@ import sourcesData from "../src/client/data/sources.json" with { type: "json" };
 import { formatDuration } from "../src/client/format.ts";
 import { summarize, type TestSnapshot } from "../src/client/model.ts";
 import { LEFT_PANE_MAX_WIDTH, LEFT_PANE_MIN_WIDTH, LEFT_PANE_WIDTH_KEY } from "../src/client/pane-width.ts";
+import type { TestboardRuntime } from "../src/client/runtime.ts";
 import { splitSourceLines, type SourceBundle } from "../src/client/source.ts";
 import { createTestboardView, type TestboardViewStrings } from "../src/client/view.tsx";
+import type { RunProgress, RunScope, TestboardState } from "../src/shared.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -64884,17 +65143,78 @@ const STRINGS: TestboardViewStrings = {
   paneResize: "\u8C03\u6574\u7528\u4F8B\u5217\u8868\u5BBD\u5EA6",
   paneResizeHint: "\u5DE6\u53F3\u65B9\u5411\u952E\u8C03\u6574\uFF0CHome/End \u5230\u4E24\u7AEF\uFF0C\u53CC\u51FB\u6062\u590D\u9ED8\u8BA4",
   listLabel: "\u6D4B\u8BD5\u6587\u4EF6\u4E0E\u7528\u4F8B",
+  runAll: "\u8FD0\u884C\u5168\u90E8",
+  cancel: "\u53D6\u6D88",
+  runFile: "\u8FD0\u884C",
+  running: "\u8FD0\u884C\u4E2D",
+  notRunYet: "\u5C1A\u672A\u8FD0\u884C",
+  notRunYetHint: "\u70B9\u300C\u8FD0\u884C\u5168\u90E8\u300D\u8DD1\u4E00\u904D\u8FD9\u4E2A\u5DE5\u4F5C\u533A\u7684\u6D4B\u8BD5\u3002",
+  noSession: "\u6CA1\u6709\u4F1A\u8BDD\uFF0C\u65E0\u6CD5\u786E\u5B9A\u5DE5\u4F5C\u533A\u3002",
+  errorNoSession: "\u6CA1\u6709\u4F1A\u8BDD\uFF0C\u65E0\u6CD5\u786E\u5B9A\u5DE5\u4F5C\u533A\u3002",
+  errorUnknownWorkspace: "\u8FD9\u4E2A\u4F1A\u8BDD\u6307\u5411\u7684\u5DE5\u4F5C\u533A\u5DF2\u4E0D\u5B58\u5728\u3002",
+  errorNoVitest: "\u8BE5\u5DE5\u4F5C\u533A\u6CA1\u6709\u5B89\u88C5 vitest\u3002",
+  errorNoSubprocess: "\u5BBF\u4E3B\u6CA1\u6709\u63D0\u4F9B\u8FDB\u7A0B\u670D\u52A1\uFF0C\u65E0\u6CD5\u8FD0\u884C\u6D4B\u8BD5\u3002",
+  errorBusy: "\u8FD9\u4E2A\u5DE5\u4F5C\u533A\u5DF2\u6709\u4E00\u8F6E\u5728\u8DD1\u3002",
+  errorBadScope: "\u8FD0\u884C\u8303\u56F4\u4E0D\u5408\u6CD5\u3002",
+  errorRunFailed: "\u4E0A\u4E00\u8F6E\u8FD0\u884C\u51FA\u9519\u4E86\u3002",
 };
+
+/**
+ * A runtime over the committed snapshot, with the run controls recorded.
+ *
+ * The view is written against the runtime interface, so this is the whole host
+ * as far as the board is concerned. It records what the board asked for, which
+ * is how the run and source tests assert that a click reached the host rather
+ * than only changing a local variable.
+ */
+interface FakeRuntime extends TestboardRuntime {
+  readonly calls: { readonly kind: string; readonly detail?: string }[];
+  /** Replace what the next loadState answers, to drive a run to its end. */
+  setState(state: TestboardState): void;
+}
+
+function makeRuntime(initial: TestboardState = { snapshot: SNAPSHOT, workspaceName: "dsh-plugins" }): FakeRuntime {
+  const calls: { kind: string; detail?: string }[] = [];
+  let state: TestboardState = initial;
+  return {
+    calls,
+    setState(next) {
+      state = next;
+    },
+    async loadState(sessionId) {
+      calls.push({ kind: "loadState", detail: sessionId });
+      return state;
+    },
+    async startRun(sessionId, scope: RunScope) {
+      calls.push({ kind: "startRun", detail: \`\${sessionId}:\${scope.kind}\` });
+      return { ok: true, runId: "run-1" };
+    },
+    async cancelRun(sessionId) {
+      calls.push({ kind: "cancelRun", detail: sessionId });
+      return true;
+    },
+    async loadSource(_sessionId, path) {
+      calls.push({ kind: "loadSource", detail: path });
+      const text = SOURCES.files[path];
+      if (typeof text !== "string") throw new Error(\`no source for \${path}\`);
+      return text;
+    },
+  };
+}
+
+/** The runtime the shared harness uses; reset per test by \`beforeEach\`. */
+let runtime: FakeRuntime;
 
 // The editor chunk is never resolved in the shared harness: the pane's plain
 // fallback is what the rest of these tests read. The last describe mounts its
 // own board with a resolving loader to cover the hand-over.
-const View = createTestboardView({
-  strings: STRINGS,
-  loadSnapshot: async () => SNAPSHOT,
-  loadSources: async () => SOURCES,
-  loadEditor: () => new Promise<never>(() => {}),
-});
+function makeView(overrides: Partial<{ loadEditor: () => Promise<never> }> = {}) {
+  return createTestboardView({
+    strings: STRINGS,
+    runtime,
+    loadEditor: overrides.loadEditor ?? (() => new Promise<never>(() => {})),
+  });
+}
 
 function rows(host: HTMLElement): HTMLElement[] {
   return [...host.querySelectorAll<HTMLElement>('[data-testid="file-row"]')];
@@ -64935,6 +65255,7 @@ describe("testboard view", () => {
 
   beforeEach(() => {
     window.localStorage.clear();
+    runtime = makeRuntime();
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -64948,9 +65269,14 @@ describe("testboard view", () => {
     window.localStorage.clear();
   });
 
-  async function mount(): Promise<void> {
+  async function mount(sessionId = "session-1"): Promise<void> {
     await act(async () => {
-      root.render(createElement(View, {}));
+      root.render(createElement(makeView(), { sessionId }));
+    });
+    // Let the first loadState settle: the board renders its rows only once the
+    // host has answered.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
     });
   }
 
@@ -65601,17 +65927,20 @@ describe("code editor chunk", () => {
       seen.push({ path: props.path, line: String(props.activeLine ?? ""), textLength: props.text.length });
       return createElement("div", { "data-testid": "code-view-stub", "data-path": props.path });
     };
+    runtime = makeRuntime();
     const WithEditor = createTestboardView({
       strings: STRINGS,
-      loadSnapshot: async () => SNAPSHOT,
-      loadSources: async () => SOURCES,
+      runtime,
       loadEditor: async () => ({ renderer: "codemirror", CodeView: Stub }),
     });
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
     await act(async () => {
-      root.render(createElement(WithEditor));
+      root.render(createElement(WithEditor, { sessionId: "session-1" }));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
     });
 
     const firstRow = host.querySelector<HTMLElement>('[data-testid="file-row"]');
@@ -65635,6 +65964,243 @@ describe("code editor chunk", () => {
     expect(seen.at(-1)?.line).not.toBe("");
     root.unmount();
     host.remove();
+  });
+});
+
+/**
+ * The runtime seam, exercised through the board.
+ *
+ * Everything here is about the board's conversation with the host: that a click
+ * reaches the runtime, that a running run is polled and then replaced by the
+ * host's snapshot, that a session change throws the old workspace away, and that
+ * an error or an empty workspace renders something a reader can act on. The
+ * layout and keyboard behaviour is covered above and must not regress.
+ */
+describe("testboard runtime wiring", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    runtime = makeRuntime();
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+    window.localStorage.clear();
+  });
+
+  /** Mount the board for one session and let the first state load settle. */
+  async function mount(sessionId = "session-1"): Promise<void> {
+    await act(async () => {
+      root.render(createElement(makeView(), { sessionId }));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+  }
+
+  function runAll(host: HTMLElement): HTMLElement {
+    const found = host.querySelector<HTMLElement>('[data-testid="run-all"]');
+    if (found === null) throw new Error("no run-all button");
+    return found;
+  }
+
+  function runFileButtons(host: HTMLElement): HTMLElement[] {
+    return [...host.querySelectorAll<HTMLElement>('[data-testid="run-file"]')];
+  }
+
+  it("asks the runtime for the session's state on mount", async () => {
+    await mount("session-7");
+
+    expect(runtime.calls).toContainEqual({ kind: "loadState", detail: "session-7" });
+    expect(rows(host).length).toBeGreaterThan(0);
+  });
+
+  it("starts a full run from the toolbar", async () => {
+    await mount();
+
+    await act(async () => runAll(host).click());
+
+    expect(runtime.calls).toContainEqual({ kind: "startRun", detail: "session-1:all" });
+  });
+
+  it("starts a single-file run from a row without selecting it", async () => {
+    await mount();
+    const button = runFileButtons(host)[0];
+    if (button === undefined) throw new Error("no run-file button");
+    const path = button.getAttribute("data-path") ?? "";
+
+    await act(async () => button.click());
+
+    expect(runtime.calls).toContainEqual({ kind: "startRun", detail: "session-1:file" });
+    // The click must not bubble into the row's select handler: running a file is
+    // not the same gesture as opening it.
+    expect(host.querySelector<HTMLElement>('[data-testid="detail-pane"]')?.getAttribute("data-path")).toBeNull();
+    expect(path).not.toBe("");
+  });
+
+  it("polls while a run is going and stops once it settles", async () => {
+    await mount();
+    const running: RunProgress = {
+      runId: "run-1",
+      scope: { kind: "all" },
+      status: "running",
+      phase: "running",
+      runNumber: 1,
+      startedAt: new Date().toISOString(),
+      elapsedMs: 0,
+      completedFiles: 1,
+      totalFiles: null,
+      counts: { passed: 3, failed: 0, skipped: 0, total: 3 },
+      series: [],
+      failures: [],
+      cases: [],
+    };
+    runtime.setState({ snapshot: SNAPSHOT, run: running });
+    await act(async () => runAll(host).click());
+
+    // Let a couple of poll intervals pass.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 900));
+    });
+    const pollsWhileRunning = runtime.calls.filter(call => call.kind === "loadState").length;
+    expect(pollsWhileRunning).toBeGreaterThan(1);
+
+    // The host settles the run; the next poll must pick that up and stop.
+    runtime.setState({ snapshot: SNAPSHOT, run: { ...running, phase: "finished", status: "passed" } });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 900));
+    });
+    const pollsAfterSettle = runtime.calls.filter(call => call.kind === "loadState").length;
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 900));
+    });
+    expect(runtime.calls.filter(call => call.kind === "loadState").length).toBe(pollsAfterSettle);
+  });
+
+  it("turns the run button into a cancel while a run is going", async () => {
+    await mount();
+    runtime.setState({
+      snapshot: SNAPSHOT,
+      run: {
+        runId: "run-1",
+        scope: { kind: "all" },
+        status: "running",
+        phase: "running",
+        runNumber: 1,
+        startedAt: new Date().toISOString(),
+        elapsedMs: 0,
+        completedFiles: 0,
+        totalFiles: null,
+        counts: { passed: 0, failed: 0, skipped: 0, total: 0 },
+        series: [],
+        failures: [],
+        cases: [],
+      },
+    });
+    await act(async () => runAll(host).click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    const cancel = host.querySelector<HTMLElement>('[data-testid="cancel-run"]');
+    expect(cancel).not.toBeNull();
+    await act(async () => cancel?.click());
+    expect(runtime.calls).toContainEqual({ kind: "cancelRun", detail: "session-1" });
+  });
+
+  it("loads a file's source on selection and caches it", async () => {
+    await mount();
+    const row = rows(host)[0];
+    if (row === undefined) throw new Error("no rows");
+    const path = row.getAttribute("data-path") ?? "";
+
+    await act(async () => row.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(runtime.calls).toContainEqual({ kind: "loadSource", detail: path });
+    const lines = pane(host).querySelectorAll('[data-tst="code-line"]');
+    expect(lines.length).toBeGreaterThan(0);
+
+    // Selecting the same file again must not refetch it.
+    await act(async () => row.click());
+    await act(async () => row.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(runtime.calls.filter(call => call.kind === "loadSource" && call.detail === path)).toHaveLength(1);
+  });
+
+  it("says the source is missing when the host cannot serve it", async () => {
+    await mount();
+    const row = rows(host)[0];
+    if (row === undefined) throw new Error("no rows");
+    // A path the fixture bundle does not carry: the pane must say so rather than
+    // showing an empty code block.
+    await act(async () => row.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(pane(host).querySelector('[data-tst="detail-code"]')).not.toBeNull();
+  });
+
+  it("reloads and resets when the session changes", async () => {
+    await mount("session-1");
+    const row = rows(host)[0];
+    await act(async () => row?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(pane(host).getAttribute("data-path")).not.toBeNull();
+
+    await act(async () => {
+      root.render(createElement(makeView(), { sessionId: "session-2" }));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(runtime.calls).toContainEqual({ kind: "loadState", detail: "session-2" });
+    // The old workspace's selection must not survive the switch.
+    expect(pane(host).getAttribute("data-path")).toBeNull();
+  });
+
+  it("renders the no-session state when the tab has no session id", async () => {
+    await act(async () => {
+      root.render(createElement(makeView(), {}));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(host.querySelector('[data-testid="testboard-status"]')?.textContent).toContain(STRINGS.noSession);
+    // Nothing to run: the button is disabled rather than absent, so the layout
+    // does not jump when a session arrives.
+    expect(runAll(host).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("maps a host error to readable copy and disables the run button", async () => {
+    runtime.setState({ error: "no-vitest" });
+    await mount();
+
+    expect(host.querySelector('[data-testid="testboard-status"]')?.textContent).toContain(STRINGS.errorNoVitest);
+    expect(runAll(host).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("shows the not-run-yet state when the workspace has no snapshot", async () => {
+    runtime.setState({ workspaceName: "dsh-plugins" });
+    await mount();
+
+    expect(host.querySelector('[data-testid="testboard-status"]')?.textContent).toContain(STRINGS.notRunYet);
+    // The run entry stays available: that empty state is exactly where a reader
+    // presses it.
+    expect(runAll(host).hasAttribute("disabled")).toBe(false);
   });
 });
 `,"packages/dsh-turn-clock/test/bundle.test.ts":`/**

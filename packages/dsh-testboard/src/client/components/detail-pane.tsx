@@ -16,7 +16,7 @@ import { useEffect, useRef, type ReactElement } from "react";
 import type { EditorChunkModule } from "../code-contract.ts";
 import { fileNameOf, formatDuration, syntheticFailure } from "../format.ts";
 import type { TestCase, TestFileRow } from "../model.ts";
-import { splitSourceLines, type SourceBundle } from "../source.ts";
+import { splitSourceLines } from "../source.ts";
 
 /**
  * Strings the pane renders.
@@ -40,8 +40,14 @@ export interface DetailPaneProps {
   readonly row: TestFileRow | undefined;
   /** The selected case within that row, or undefined when only the file is selected. */
   readonly selectedCase: TestCase | undefined;
-  /** The loaded source bundle, or undefined while it is still being fetched. */
-  readonly sources: SourceBundle | undefined;
+  /**
+   * The selected file's text, or undefined while it is still being fetched.
+   *
+   * One file rather than a bundle: the board no longer ships every test file's
+   * text, so the pane is handed exactly the one it is about to render. Undefined
+   * therefore means "not here yet or not available", and the pane says so.
+   */
+  readonly source: string | undefined;
   /** The lazily loaded editor, or undefined until a selection asks for it. */
   readonly editor: EditorChunkModule | undefined;
   readonly theme: "dark" | "light";
@@ -53,7 +59,7 @@ export interface DetailPaneProps {
  * @param props - the selection, the source bundle and locale-bound strings.
  * @returns the pane element.
  */
-export function DetailPane({ row, selectedCase, sources, editor, theme, strings }: DetailPaneProps): ReactElement {
+export function DetailPane({ row, selectedCase, source, editor, theme, strings }: DetailPaneProps): ReactElement {
   const highlightRef = useRef<HTMLDivElement | null>(null);
   const highlightLine = selectedCase?.line;
 
@@ -74,7 +80,7 @@ export function DetailPane({ row, selectedCase, sources, editor, theme, strings 
     );
   }
 
-  const text = sources?.files[row.path];
+  const text = source;
   const lines = text === undefined ? [] : splitSourceLines(text);
 
   return (

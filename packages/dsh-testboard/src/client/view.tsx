@@ -4,12 +4,19 @@
  *
  * The view owns the reading state (filter, query, sort), which files are open,
  * what is selected, and how wide the case list is; everything else is derived
- * from the snapshot on each render. There is no fetching and no timer: the data
- * is a committed snapshot, and the board is a reading of it.
+ * from the snapshot on each render.
  *
- * Two lazy chunks feed it. The snapshot arrives on mount and paints the rows;
- * the sources arrive separately and only fill the code pane, so a reader who
- * never opens a file never pays for the megabytes of test text.
+ * All data comes through one `TestboardRuntime`. The board no longer reads a
+ * committed snapshot: it asks the host which workspace this session is in, what
+ * that workspace last ran, and starts runs itself. Two consequences shape the
+ * code below. The session id is the identity of everything on screen, so a
+ * change to it throws the whole reading state away rather than showing one
+ * workspace's rows under another's title. And a run is a process, not a value,
+ * so a running run is polled until the host says it settled.
+ *
+ * Source text is fetched per file and cached: the board can no longer carry
+ * every test file's text, and a reader who opens one file should not pay for the
+ * rest.
  *
  * Theme is tracked rather than left to CSS alone. The palette itself switches
  * through `body[data-ds-dark-theme]` in the stylesheet, but the container also
@@ -20,6 +27,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, 
 
 import type { TestSnapshot } from "./model.ts";
 import { groupFileRows, listFileRows, peakThroughput, summarize, throughputSeries, type RowFilter, type RowSort } from "./model.ts";
+import type { TestboardRuntime } from "./runtime.ts";
+import type { RunProgress, RunScope, TestboardError, TestboardState } from "../shared.ts";
 import { applyNavIntent, flattenNav, navKeyIntent, normalizeSelection, pageStep, type NavSelection } from "./nav.ts";
 import {
   paneWidthStorage,
@@ -29,7 +38,6 @@ import {
   type PaneWidthStorage,
 } from "./pane-width.ts";
 import type { EditorChunkModule } from "./code-contract.ts";
-import type { SourceBundle } from "./source.ts";
 import { CaseList } from "./components/case-list.tsx";
 import { DetailPane, type DetailPaneStrings } from "./components/detail-pane.tsx";
 import { LaneRow } from "./components/lane-row.tsx";
@@ -61,6 +69,20 @@ export interface TestboardViewStrings extends DetailPaneStrings {
   readonly paneResize: string;
   readonly paneResizeHint: string;
   readonly listLabel: string;
+  readonly runAll: string;
+  readonly cancel: string;
+  readonly runFile: string;
+  readonly running: string;
+  readonly notRunYet: string;
+  readonly notRunYetHint: string;
+  readonly noSession: string;
+  readonly errorNoSession: string;
+  readonly errorUnknownWorkspace: string;
+  readonly errorNoVitest: string;
+  readonly errorNoSubprocess: string;
+  readonly errorBusy: string;
+  readonly errorBadScope: string;
+  readonly errorRunFailed: string;
 }
 
 /** Owner props the host passes to a `conversation.view` entry. */
@@ -68,27 +90,62 @@ export interface ConversationViewProps {
   readonly sessionId?: string;
 }
 
-/** What the view needs to render; the loaders supply the data. */
+/** What the view needs to render. */
 export interface TestboardViewOptions {
   readonly strings: TestboardViewStrings;
   /**
-   * Resolves the snapshot. Called once on mount.
+   * Everything the board asks of the host.
    *
-   * A loader rather than a value: the data lives in a lazy chunk that must not
-   * be pulled into the startup bundle, so the fetch can only start after the tab
-   * is actually opened.
+   * An interface rather than a set of loaders: the preview serves the same one
+   * from a fixture, so the board has exactly one data path and the preview stays
+   * evidence about the real tab.
    */
-  readonly loadSnapshot: () => Promise<TestSnapshot>;
-  /**
-   * Resolves every test file's source text. Called once on mount, beside the
-   * snapshot and independently of it.
-   */
-  readonly loadSources: () => Promise<SourceBundle>;
+  readonly runtime: TestboardRuntime;
   /**
    * Resolves the code editor. Requested on the first row selection rather than
    * on mount: a reader who never selects a file never pays for CodeMirror.
    */
   readonly loadEditor: () => Promise<EditorChunkModule>;
+}
+
+/**
+ * How often a running run is polled.
+ *
+ * The host publishes progress as it parses the runner's stream, so the board's
+ * rows can light up while the suite is still going. 350ms is fast enough to look
+ * live and slow enough that a long suite costs a handful of requests a second
+ * rather than a stream of them.
+ */
+const RUN_POLL_MS = 350;
+
+/**
+ * Turn a wire error into the sentence a reader can act on.
+ *
+ * The wire carries short codes rather than prose so the client owns the wording
+ * and the locale. An unknown code still renders something: a blank panel would
+ * hide the fact that the host answered at all.
+ *
+ * @param error - the code the host sent.
+ * @param strings - the locale-bound table.
+ * @returns the sentence to show.
+ */
+function errorText(error: TestboardError, strings: TestboardViewStrings): string {
+  switch (error) {
+    case "no-session":
+      return strings.errorNoSession;
+    case "unknown-workspace":
+      return strings.errorUnknownWorkspace;
+    case "no-vitest":
+      return strings.errorNoVitest;
+    case "no-subprocess":
+      return strings.errorNoSubprocess;
+    case "busy":
+      return strings.errorBusy;
+    case "bad-scope":
+      return strings.errorBadScope;
+    case "run-failed":
+      return strings.errorRunFailed;
+  }
 }
 
 /**
@@ -132,30 +189,71 @@ function useHostTheme(): "dark" | "light" {
  * @returns the component the slot mounts.
  */
 export function createTestboardView(options: TestboardViewOptions): (props: ConversationViewProps) => ReactElement {
-  const { strings, loadSnapshot, loadSources, loadEditor } = options;
+  const { strings, runtime, loadEditor } = options;
 
-  return function TestboardView(): ReactElement {
+  return function TestboardView({ sessionId }: ConversationViewProps): ReactElement {
     const theme = useHostTheme();
     const [snapshot, setSnapshot] = useState<TestSnapshot | undefined>(undefined);
-    const [sources, setSources] = useState<SourceBundle | undefined>(undefined);
-    const [editor, setEditor] = useState<EditorChunkModule | undefined>(undefined);
+    const [workspaceName, setWorkspaceName] = useState<string | undefined>(undefined);
+    const [run, setRun] = useState<RunProgress | undefined>(undefined);
+    const [stateError, setStateError] = useState<TestboardError | undefined>(undefined);
     const [loadError, setLoadError] = useState<string | undefined>(undefined);
+    const [editor, setEditor] = useState<EditorChunkModule | undefined>(undefined);
     const [filter, setFilter] = useState<RowFilter>("all");
     const [query, setQuery] = useState("");
     const [sort, setSort] = useState<RowSort>("fail-first");
     const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
     const [selection, setSelection] = useState<NavSelection | undefined>(undefined);
+    const [sourceCache, setSourceCache] = useState<ReadonlyMap<string, string>>(() => new Map());
+    // Bumped on every session change, so a slow answer for the previous session
+    // cannot land on the new one's board.
+    const [sessionEpoch, setSessionEpoch] = useState(0);
     const listRef = useRef<HTMLDivElement | null>(null);
     const editorRequested = useRef(false);
+    const lastSession = useRef<string | undefined>(sessionId);
 
     const storage: PaneWidthStorage | null = useMemo(() => paneWidthStorage(), []);
     const [leftWidth, setLeftWidth] = useState<number | null>(() => readLeftPaneWidth(storage));
 
+    // A session is the identity of everything on screen: its workspace, its
+    // last run, its rows. Switching sessions therefore throws all of it away
+    // rather than letting one workspace's rows appear under another's title.
     useEffect(() => {
+      if (lastSession.current === sessionId) return;
+      lastSession.current = sessionId;
+      setSnapshot(undefined);
+      setWorkspaceName(undefined);
+      setRun(undefined);
+      setStateError(undefined);
+      setLoadError(undefined);
+      setSelection(undefined);
+      setExpanded(new Set());
+      setSourceCache(new Map());
+      setSessionEpoch(epoch => epoch + 1);
+    }, [sessionId]);
+
+    /** Fold one host answer into the board's state. */
+    const applyState = useCallback((state: TestboardState): void => {
+      if (state.snapshot !== undefined) setSnapshot(state.snapshot);
+      setWorkspaceName(state.workspaceName);
+      setRun(state.run);
+      setStateError(state.error);
+    }, []);
+
+    // The first load, and every session change. No session id means the host
+    // cannot say which workspace this is, so the board says so instead of
+    // guessing at the process cwd.
+    useEffect(() => {
+      if (sessionId === undefined || sessionId === "") {
+        setSnapshot(undefined);
+        setRun(undefined);
+        setStateError("no-session");
+        return undefined;
+      }
       let live = true;
-      loadSnapshot().then(
-        loaded => {
-          if (live) setSnapshot(loaded);
+      runtime.loadState(sessionId).then(
+        state => {
+          if (live) applyState(state);
         },
         (error: unknown) => {
           if (live) setLoadError(error instanceof Error ? error.message : String(error));
@@ -164,24 +262,62 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       return () => {
         live = false;
       };
-    }, [loadSnapshot]);
+    }, [runtime, sessionId, sessionEpoch, applyState]);
 
+    // A run is a process, not a value: while the host says one is going, the
+    // board asks again until it settles. The timer is cleared whenever the phase
+    // leaves `running`, and on unmount, so a closed tab stops polling.
     useEffect(() => {
+      if (run?.phase !== "running" || sessionId === undefined || sessionId === "") return undefined;
       let live = true;
-      loadSources().then(
-        loaded => {
-          if (live) setSources(loaded);
+      const timer = setInterval(() => {
+        runtime.loadState(sessionId).then(
+          state => {
+            if (!live) return;
+            applyState(state);
+            // The host's snapshot replaces the board wholesale once the run
+            // settled: it is authoritative, and the live events were only ever
+            // a preview of it.
+            if (state.run?.phase !== "running") setRun(state.run);
+          },
+          () => {
+            // A failed poll is not a failed run: the next tick tries again, and
+            // the run's own state is what decides when to stop.
+          },
+        );
+      }, RUN_POLL_MS);
+      return () => {
+        live = false;
+        clearInterval(timer);
+      };
+    }, [run?.phase, runtime, sessionId, applyState]);
+
+    // Source text is fetched per file and kept: the board no longer ships every
+    // test file's text, and re-selecting a file must not refetch it.
+    const selectedPath = selection?.path;
+    useEffect(() => {
+      if (selectedPath === undefined || sessionId === undefined || sessionId === "") return undefined;
+      if (sourceCache.has(selectedPath)) return undefined;
+      let live = true;
+      runtime.loadSource(sessionId, selectedPath).then(
+        text => {
+          if (!live) return;
+          setSourceCache(current => {
+            if (current.has(selectedPath)) return current;
+            const next = new Map<string, string>(current);
+            next.set(selectedPath, text);
+            return next;
+          });
         },
         () => {
-          // The rows are already on screen and the pane says the source is
-          // missing; failing the whole tab over the code view would be worse.
-          if (live) setSources(undefined);
+          // The pane says the source is missing; failing the tab over the code
+          // view would take the rows down with it.
         },
       );
       return () => {
         live = false;
       };
-    }, [loadSources]);
+    }, [selectedPath, sessionId, runtime, sourceCache]);
 
     // CodeMirror is the largest chunk this package ships, so it is fetched only
     // after the first selection, and a failed fetch leaves the plain source
@@ -298,6 +434,59 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       setLeftWidth(null);
     }, [storage]);
 
+    /**
+     * Ask the host to run something.
+     *
+     * A refusal is shown rather than swallowed: `busy` and `no-vitest` are the
+     * two a reader can act on, and a click that silently did nothing would look
+     * like a broken button.
+     */
+    const startRun = useCallback(
+      (scope: RunScope): void => {
+        if (sessionId === undefined || sessionId === "") return;
+        runtime.startRun(sessionId, scope).then(
+          result => {
+            if (result.ok) {
+              // The host's next state carries the run; asking immediately makes
+              // the running phase appear without waiting for a poll.
+              setStateError(undefined);
+              runtime.loadState(sessionId).then(applyState, () => undefined);
+              return;
+            }
+            setStateError(result.error);
+          },
+          (error: unknown) => setLoadError(error instanceof Error ? error.message : String(error)),
+        );
+      },
+      [runtime, sessionId, applyState],
+    );
+
+    const onRunAll = useCallback((): void => startRun({ kind: "all" }), [startRun]);
+    const onRunFile = useCallback((path: string): void => startRun({ kind: "file", path }), [startRun]);
+
+    const onCancel = useCallback((): void => {
+      if (sessionId === undefined || sessionId === "") return;
+      runtime.cancelRun(sessionId).then(
+        () => runtime.loadState(sessionId).then(applyState, () => undefined),
+        (error: unknown) => setLoadError(error instanceof Error ? error.message : String(error)),
+      );
+    }, [runtime, sessionId, applyState]);
+
+    const running = run?.phase === "running";
+    const canRun = sessionId !== undefined && sessionId !== "" && stateError === undefined && !running;
+
+    /**
+     * The sentence explaining an empty board, or undefined when there is one.
+     *
+     * Ordered by what the reader needs first: a failed request, then a host
+     * error, then "nothing has run here yet". The last one is not an error, and
+     * it is the state a fresh workspace is in, so it keeps the run button live.
+     */
+    const statusText =
+      loadError ??
+      (stateError === undefined ? undefined : errorText(stateError, strings)) ??
+      (snapshot === undefined ? strings.notRunYet : undefined);
+
     if (snapshot === undefined) {
       return (
         <div
@@ -307,7 +496,21 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
           className={`tst-theme-${theme}`}
           data-theme={theme}
         >
-          <p data-tst="status">{loadError ?? "…"}</p>
+          <div data-testid="testboard-status" data-tst="status-block">
+            <p data-tst="status">{statusText ?? "…"}</p>
+            {stateError === undefined && loadError === undefined ? (
+              <p data-tst="status-hint">{strings.notRunYetHint}</p>
+            ) : null}
+            <button
+              type="button"
+              data-testid="run-all"
+              data-tst="run-all"
+              disabled={!canRun}
+              onClick={onRunAll}
+            >
+              {strings.runAll}
+            </button>
+          </div>
         </div>
       );
     }
@@ -336,20 +539,33 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
           }}
         />
         <ThroughputSparkline series={series} peak={peakThroughput(series)} strings={{ peak: strings.peak, perSecond: strings.perSecond }} />
+        {running ? (
+          <p data-testid="run-status" data-tst="run-status">
+            {strings.running}
+            {run === undefined ? null : ` · ${String(run.counts.passed)} ${strings.passed} · ${String(run.counts.failed)} ${strings.failed}`}
+          </p>
+        ) : null}
         <Toolbar
           filter={filter}
           query={query}
           sort={sort}
+          running={running}
+          canRun={canRun}
           strings={{
             filterAll: strings.filterAll,
             filterFailed: strings.filterFailed,
             searchPlaceholder: strings.searchPlaceholder,
             sortFailFirst: strings.sortFailFirst,
             sortSlowFirst: strings.sortSlowFirst,
+            runAll: strings.runAll,
+            cancel: strings.cancel,
+            running: strings.running,
           }}
           onFilter={setFilter}
           onQuery={setQuery}
           onSort={setSort}
+          onRunAll={onRunAll}
+          onCancel={onCancel}
         />
 
         <div data-testid="split" data-tst="split" style={paneWidthStyle(leftWidth)}>
@@ -378,8 +594,10 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
                           expanded={expanded.has(row.path)}
                           selected={isSelected}
                           optionId={optionId(fileItem)}
-                          strings={{ failed: strings.failed }}
+                          running={running}
+                          strings={{ failed: strings.failed, runFile: strings.runFile }}
                           onSelect={onFileClick}
+                          onRun={onRunFile}
                         />
                         {expanded.has(row.path) ? (
                           <CaseList
@@ -406,7 +624,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
           <DetailPane
               row={selectedRow}
               selectedCase={selectedCase}
-              sources={sources}
+              source={selectedRow === undefined ? undefined : sourceCache.get(selectedRow.path)}
               editor={editor}
               theme={theme}
               strings={strings}

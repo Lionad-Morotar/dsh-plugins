@@ -8,13 +8,15 @@
  *
  * It is a preview, not a second implementation: the view, the stylesheet and the
  * snapshot are the shipped ones. The only things this file supplies are the
- * three seams the host would otherwise provide — the locale-bound strings, the
- * snapshot loader, and the theme attribute on `body`.
+ * seams the host would otherwise provide — the locale-bound strings, the runtime
+ * (a fixture one, serving the same interface the HTTP runtime does), and the
+ * theme attribute on `body`.
  */
 import { createRoot } from "react-dom/client";
 
 import snapshotData from "./data/snapshot.json" with { type: "json" };
 import sourcesData from "./data/sources.json" with { type: "json" };
+import { createFixtureRuntime } from "./runtime.ts";
 import { ensureStyles } from "./styles.ts";
 import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
 import type { EditorChunkModule } from "./code-contract.ts";
@@ -50,6 +52,20 @@ const STRINGS: TestboardViewStrings = {
   paneResize: "调整用例列表宽度",
   paneResizeHint: "左右方向键调整，Home/End 到两端，双击恢复默认",
   listLabel: "测试文件与用例",
+  runAll: "运行全部",
+  cancel: "取消",
+  runFile: "运行",
+  running: "运行中",
+  notRunYet: "尚未运行",
+  notRunYetHint: "点「运行全部」跑一遍这个工作区的测试。",
+  noSession: "没有会话，无法确定工作区。",
+  errorNoSession: "没有会话，无法确定工作区。",
+  errorUnknownWorkspace: "这个会话指向的工作区已不存在。",
+  errorNoVitest: "该工作区没有安装 vitest。",
+  errorNoSubprocess: "宿主没有提供进程服务，无法运行测试。",
+  errorBusy: "这个工作区已有一轮在跑。",
+  errorBadScope: "运行范围不合法。",
+  errorRunFailed: "上一轮运行出错了。",
 };
 
 /**
@@ -95,9 +111,11 @@ function wireThemeToggle(): void {
 /**
  * Mount the board into the page.
  *
- * Both loaders resolve from the bundles this page was built with: the preview
- * has no module loader to fetch chunks from, so the two artifacts are imported
- * directly and handed over as already-resolved promises.
+ * The runtime is the fixture one, serving the committed snapshot through the
+ * same interface the HTTP runtime does. That is what keeps this page honest: the
+ * board takes exactly one data path, so what renders here is what renders in the
+ * tab, and the run controls work against an invented run rather than being dead
+ * buttons.
  * @param host - the element the board renders into.
  * @param snapshot - the committed snapshot to render.
  * @param sources - every test file's text, for the code pane.
@@ -106,13 +124,14 @@ function mount(host: HTMLElement, snapshot: TestSnapshot, sources: SourceBundle)
   ensureStyles();
   const View = createTestboardView({
     strings: STRINGS,
-    loadSnapshot: async () => snapshot,
-    loadSources: async () => sources,
+    runtime: createFixtureRuntime({ snapshot, sources }),
     // The preview bundle has no ModuleLoader, so the editor chunk is a plain
     // dynamic import here; the page is a development surface, not the host.
     loadEditor: async () => (await import("./editor-chunk.ts")) as unknown as EditorChunkModule,
   });
-  createRoot(host).render(<View />);
+  // A session id, because the board treats a missing one as "unknown workspace"
+  // and would render its empty state instead of the board.
+  createRoot(host).render(<View sessionId="preview" />);
 }
 
 const host = document.getElementById("root");

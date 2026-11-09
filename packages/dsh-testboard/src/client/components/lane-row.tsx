@@ -10,6 +10,12 @@
  * the list owns the focus and the arrow keys, and a row that took focus itself
  * would fight that. It stays clickable, which is the pointer's equivalent of
  * selecting the row.
+ *
+ * The run button inside it is the one exception, and it is a real button: it
+ * stops the click from reaching the row, because running a file is not the same
+ * gesture as opening it. That also means it must not take the list's focus on
+ * click, which is why it is only reachable by pointer for now; the keyboard's
+ * run affordance is the toolbar's "run all".
  */
 import type { ReactElement } from "react";
 
@@ -19,6 +25,7 @@ import type { TestFileRow } from "../model.ts";
 /** Strings the row renders. */
 export interface LaneRowStrings {
   readonly failed: string;
+  readonly runFile: string;
 }
 
 /** Props the row takes. */
@@ -28,8 +35,11 @@ export interface LaneRowProps {
   readonly selected: boolean;
   /** DOM id, so the listbox can point `aria-activedescendant` at this row. */
   readonly optionId: string;
+  /** Whether the host is running something, which disables this row's button. */
+  readonly running: boolean;
   readonly strings: LaneRowStrings;
   readonly onSelect: (path: string) => void;
+  readonly onRun: (path: string) => void;
 }
 
 /**
@@ -37,7 +47,16 @@ export interface LaneRowProps {
  * @param props - the row, its expanded and selected state, and the click handler.
  * @returns the row element.
  */
-export function LaneRow({ row, expanded, selected, optionId, strings, onSelect }: LaneRowProps): ReactElement {
+export function LaneRow({
+  row,
+  expanded,
+  selected,
+  optionId,
+  running,
+  strings,
+  onSelect,
+  onRun,
+}: LaneRowProps): ReactElement {
   // The package section header already names the package; repeating it in every
   // row is what pushed the path into an ellipsis once the list became a column.
   const packagePrefix = `packages/${row.packageName}/`;
@@ -82,6 +101,25 @@ export function LaneRow({ row, expanded, selected, optionId, strings, onSelect }
           <span data-tst="lane-duration">{formatDuration(row.durationMs)}</span>
         )}
       </span>
+
+      <button
+        type="button"
+        data-testid="run-file"
+        data-tst="run-file"
+        data-path={row.path}
+        disabled={running}
+        title={strings.runFile}
+        aria-label={`${strings.runFile} ${row.path}`}
+        onClick={event => {
+          // Without this the click would also select and expand the row, which
+          // is a different gesture: the reader asked to run this file, not to
+          // open it.
+          event.stopPropagation();
+          onRun(row.path);
+        }}
+      >
+        {strings.runFile}
+      </button>
     </div>
   );
 }
