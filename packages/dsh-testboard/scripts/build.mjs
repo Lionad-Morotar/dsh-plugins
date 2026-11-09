@@ -123,6 +123,9 @@ async function bundle(entry, format, { external = [], minify = false } = {}) {
   const result = await build({
     entryPoints: [entry],
     bundle: true,
+    // esbuild writes its source comments relative to this directory, so pinning
+    // it keeps the committed bytes identical no matter where the build runs.
+    absWorkingDir: packageRoot,
     format,
     platform: host ? "node" : "browser",
     target: "es2022",

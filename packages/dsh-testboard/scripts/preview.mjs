@@ -56,13 +56,28 @@ function pageHtml() {
     --dsh-content-font-size: 14px;
     --dsh-code-font-size: 11px;
   }
-  body {
-    background: #0d0d0f;
-    color: #ececee;
+  /* The host's semantic tokens, copied from the desktop theme so this page
+     paints the same surface the tab sits on. Without them the board would fall
+     back to its own palette and stop being a faithful preview. */
+  :root {
+    --dsw-alias-bg-base: #ffffff;
+    --dsw-alias-bg-layer-2: #ffffff;
+    --dsw-alias-label-primary: #0f1115;
+    --dsw-alias-label-secondary: #61666b;
+    --dsw-alias-label-tertiary: #81858c;
+    --dsw-alias-border-l2: #0000001a;
   }
-  body:not([data-ds-dark-theme]) {
-    background: #faf9f7;
-    color: #14110d;
+  body[data-ds-dark-theme] {
+    --dsw-alias-bg-base: #151517;
+    --dsw-alias-bg-layer-2: #2c2c2e;
+    --dsw-alias-label-primary: #f9fafb;
+    --dsw-alias-label-secondary: #cfd3d6;
+    --dsw-alias-label-tertiary: #adb2b8;
+    --dsw-alias-border-l2: #ffffff1f;
+  }
+  body {
+    background: var(--dsw-alias-bg-base);
+    color: var(--dsw-alias-label-primary);
   }
   #root {
     height: calc(100% - 30px);

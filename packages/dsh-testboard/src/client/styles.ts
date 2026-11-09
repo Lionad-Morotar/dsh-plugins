@@ -26,24 +26,23 @@ const CSS = `
   --tst-fs-title: calc(var(--dsh-content-font-size, 14px) * 17 / 14);
   --tst-fs-small: calc(var(--dsh-content-font-size, 14px) * 12 / 14);
 
-  --tst-bg: #faf9f7;
-  --tst-surface: #ffffff;
-  --tst-surface-hover: #f2f0ec;
-  --tst-ink: #14110d;
-  --tst-ink-dim: #6b655c;
-  --tst-ink-faint: #a39c91;
-  --tst-rule: #e4e0d9;
+  --tst-surface: var(--dsw-alias-bg-layer-2, #ffffff);
+  --tst-surface-hover: color-mix(in srgb, var(--dsw-alias-label-primary, #14110d) 7%, transparent);
+  --tst-ink: var(--dsw-alias-label-primary, #14110d);
+  --tst-ink-dim: var(--dsw-alias-label-secondary, #6b655c);
+  --tst-ink-faint: var(--dsw-alias-label-tertiary, #a39c91);
+  --tst-rule: var(--dsw-alias-border-l2, #e4e0d9);
   --tst-pass: #2f8f4e;
   --tst-fail: #c02b2b;
   --tst-idle: #c9c3b8;
 
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
   box-sizing: border-box;
-  overflow: auto;
-  padding: 22px 26px 40px;
-  background: var(--tst-bg);
+  overflow: hidden;
+  padding: 22px 26px 0;
   color: var(--tst-ink);
   font-family: var(--dsh-font-sans, ui-sans-serif, system-ui, sans-serif);
   font-size: var(--tst-fs);
@@ -51,13 +50,6 @@ const CSS = `
 }
 
 body[data-ds-dark-theme] [data-testid="testboard"] {
-  --tst-bg: #0d0d0f;
-  --tst-surface: #131316;
-  --tst-surface-hover: #1b1b1f;
-  --tst-ink: #ececee;
-  --tst-ink-dim: #8b8b93;
-  --tst-ink-faint: #55555c;
-  --tst-rule: #232327;
   --tst-pass: #4ade80;
   --tst-fail: #ff3b30;
   --tst-idle: #3a3a40;
@@ -66,6 +58,7 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
 /* Header ------------------------------------------------------------------ */
 
 [data-tst="header"] {
+  flex: none;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -127,6 +120,7 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
 /* Sparkline --------------------------------------------------------------- */
 
 [data-tst="throughput"] {
+  flex: none;
   position: relative;
   height: 56px;
   margin: 14px 0 18px;
@@ -171,6 +165,7 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
 /* Toolbar ----------------------------------------------------------------- */
 
 [data-tst="toolbar"] {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -217,7 +212,7 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
   border: 1px solid var(--tst-rule);
   border-radius: 5px;
   padding: 3px 9px;
-  background: var(--tst-surface);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary, #14110d) 4%, transparent);
   color: var(--tst-ink);
   font-family: var(--dsh-font-mono, ui-monospace, SFMono-Regular, monospace);
   font-size: var(--tst-fs-code);
@@ -235,10 +230,14 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
 /* Lanes ------------------------------------------------------------------- */
 
 [data-tst="lanes"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 18px;
-  padding-top: 16px;
+  padding: 16px 0 40px;
 }
 
 [data-tst="package-name"] {
@@ -401,13 +400,11 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
 /* Hover card -------------------------------------------------------------- */
 
 [data-tst="card-anchor"] {
-  position: sticky;
-  bottom: 0;
+  position: absolute;
+  right: 26px;
+  bottom: 16px;
   z-index: 2;
   pointer-events: none;
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 8px;
 }
 
 [data-tst="card"] {

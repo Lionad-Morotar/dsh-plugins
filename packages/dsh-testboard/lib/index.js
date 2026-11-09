@@ -1,4 +1,4 @@
-// packages/dsh-testboard/src/index.ts
+// src/index.ts
 var name = "dsh-testboard";
 var inject = [];
 function apply() {
