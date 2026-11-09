@@ -5744,6 +5744,17 @@
       "name": "dsh-testboard",
       "files": [
         {
+          "path": "packages/dsh-testboard/test/css-plugin.test.ts",
+          "cases": [
+            {"name":"keeps the whitespace around a calc plus","line":28,"status":"passed","durationMs":278},
+            {"name":"still squeezes the punctuation that never needs whitespace","line":37,"status":"passed","durationMs":376},
+            {"name":"drops the comment and the trailing semicolon","line":43,"status":"passed","durationMs":186},
+            {"name":"leaves a selector combinator's meaning intact","line":49,"status":"passed","durationMs":674},
+            {"name":"keeps a subtraction inside calc working","line":55,"status":"passed","durationMs":1020},
+            {"name":"is idempotent","line":63,"status":"passed","durationMs":209}
+          ]
+        },
+        {
           "path": "packages/dsh-testboard/test/editor.test.ts",
           "cases": [
             {"name":"maps the test-file extensions the board shows","line":29,"status":"passed","durationMs":907},
@@ -6098,36 +6109,6 @@
           ]
         },
         {
-          "path": "packages/dsh-testboard/test/snapshot.test.ts",
-          "cases": [
-            {"name":"reads the plain it and test forms","line":33,"status":"passed","durationMs":313},
-            {"name":"first case","line":35,"status":"passed","durationMs":957},
-            {"name":"second case","line":36,"status":"passed","durationMs":648},
-            {"name":"third case","line":37,"status":"passed","durationMs":714},
-            {"name":"reads the modified forms the repo uses","line":42,"status":"passed","durationMs":337},
-            {"name":"focused case","line":44,"status":"passed","durationMs":250},
-            {"name":"skipped case","line":45,"status":"passed","durationMs":849},
-            {"name":"concurrent case","line":46,"status":"passed","durationMs":150},
-            {"name":"reads the title of an each table, not the table itself","line":51,"status":"passed","durationMs":67},
-            {"name":"treats %s as mid-submit","line":54,"status":"passed","durationMs":927},
-            {"name":"ignores regex and method calls that merely end in test","line":61,"status":"passed","durationMs":70},
-            {"name":"the only real case","line":65,"status":"passed","durationMs":1189},
-            {"name":"unescapes quoted titles and keeps them single-line","line":70,"status":"passed","durationMs":11},
-            {"name":"quotes \\","line":71,"status":"passed","durationMs":333},
-            {"name":"skips a case whose title is not a string literal","line":75,"status":"passed","durationMs":663},
-            {"name":"a static one","line":78,"status":"passed","durationMs":307},
-            {"name":"exports the snapshot under a named key, not as the module itself","line":85,"status":"passed","durationMs":178},
-            {"name":"carries the same corpus the generator produces","line":94,"status":"passed","durationMs":162},
-            {"name":"scans the repository's test files and finds their cases","line":104,"status":"passed","durationMs":233},
-            {"name":"marks every status as synthetic","line":109,"status":"passed","durationMs":1057},
-            {"name":"keeps the failed share inside the band that makes red visible","line":113,"status":"passed","durationMs":1186},
-            {"name":"is deterministic across runs","line":120,"status":"passed","durationMs":967},
-            {"name":"carries no clock, no absolute path and no random field","line":124,"status":"passed","durationMs":982},
-            {"name":"keeps file paths repo-relative, and both levels sorted","line":131,"status":"passed","durationMs":682},
-            {"name":"gives every case a positive integer duration","line":145,"status":"passed","durationMs":144}
-          ]
-        },
-        {
           "path": "packages/dsh-testboard/test/source.test.ts",
           "cases": [
             {"name":"splits on newlines and keeps every line","line":15,"status":"passed","durationMs":149},
@@ -6139,22 +6120,6 @@
             {"name":"returns the file's text","line":45,"status":"passed","durationMs":755},
             {"name":"returns undefined for a path the bundle does not carry","line":49,"status":"passed","durationMs":276},
             {"name":"returns undefined before the bundle has loaded","line":53,"status":"passed","durationMs":517}
-          ]
-        },
-        {
-          "path": "packages/dsh-testboard/test/sources.test.ts",
-          "cases": [
-            {"name":"counts the newlines before the offset, 1-based","line":39,"status":"passed","durationMs":1047},
-            {"name":"reports line 1 for an offset in an empty file","line":47,"status":"passed","durationMs":431},
-            {"name":"reports the offset of the title, not of the call","line":53,"status":"passed","durationMs":224},
-            {"name":"covers exactly the files the snapshot lists","line":65,"status":"passed","durationMs":270},
-            {"name":"is versioned independently of the snapshot","line":73,"status":"passed","durationMs":187},
-            {"name":"puts every case's recorded line on the line its title is written","line":78,"status":"passed","durationMs":647},
-            {"name":"gives every case a line inside its own file","line":100,"status":"passed","durationMs":1172},
-            {"name":"derives both artifacts from one walk, so their file sets agree","line":116,"status":"passed","durationMs":173},
-            {"name":"keeps the bundle's keys in the walk's order, which is sorted","line":121,"status":"passed","durationMs":1039},
-            {"name":"serializes the bundle deterministically","line":126,"status":"passed","durationMs":355},
-            {"name":"carries no clock and no absolute path in its own keys","line":130,"status":"passed","durationMs":323}
           ]
         },
         {

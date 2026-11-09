@@ -7,8 +7,7 @@
  * selection and caches the result.
  */
 import type { EditorChunkModule } from "./code-contract.ts";
-import { PACKAGE_NAME, EDITOR_CHUNK } from "../shared.ts";
-import type { LoaderRequire } from "./snapshot-loader.ts";
+import { PACKAGE_NAME, EDITOR_CHUNK, type LoaderRequire } from "../shared.ts";
 
 /** One package-local chunk, named once. */
 export interface EditorChunkRoute {

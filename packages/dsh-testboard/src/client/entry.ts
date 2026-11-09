@@ -10,35 +10,28 @@
  *   property read instead of yielding undefined, so `inject` names exactly the
  *   two services used here.
  */
-import { LOCALE_NAMESPACE, PACKAGE_NAME, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
+import { LOCALE_NAMESPACE, PACKAGE_NAME, VIEW_ID, VIEW_ORDER, VIEW_SLOT, type LoaderRequire } from "../shared.ts";
 import { EN, ZH } from "./copy.ts";
-import { boot as bootSnapshot, type LoaderRequire } from "./snapshot-loader.ts";
 import { bootEditor, loadEditorChunk } from "./editor-loader.ts";
-import { bootSources } from "./sources-loader.ts";
 import { createHttpRuntime } from "./runtime.ts";
 import { ensureStyles } from "./styles.ts";
 import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
 
 /** The `require` the ModuleLoader factory hands over. */
-export type { LoaderRequire } from "./snapshot-loader.ts";
+export type { LoaderRequire } from "../shared.ts";
 
 /**
  * The loader hand-over, re-exported so the ModuleLoader factory can reach it.
  *
  * The factory appends `module.exports.boot?.(require)` to this bundle, which is
- * the only point where the chunk-capable `require` exists; each loader keeps it
- * until the board mounts. Re-exporting (rather than importing for side effects)
- * is also what keeps both chunk file names in this bundle: the build asserts the
- * startup half still names the files it emitted.
+ * the only point where the chunk-capable `require` exists; the editor loader
+ * keeps it until a reader selects a file.
  *
- * One `boot` for both loaders rather than two exports: the factory calls exactly
- * one hand-over point, so a second name would never be called and its chunk
- * would be fetched by nobody.
+ * One hand-over point, not one per loader: the factory calls exactly one, so a
+ * second export would never be called and its chunk would be fetched by nobody.
  * @param require - the factory's require, with `async` attached.
  */
 export function boot(require: LoaderRequire): void {
-  bootSnapshot(require);
-  bootSources(require);
   bootEditor(require);
 }
 
@@ -151,10 +144,8 @@ export function apply(ctx: TestboardClientContext): () => void {
       fixing: t("testboard.fixing"),
       fixingModel: t("testboard.fixingModel"),
     } satisfies TestboardViewStrings,
-    // The board now reads the host's live state instead of a committed
-    // snapshot. The chunk loaders stay booted until the slice that removes them:
-    // the build still emits those chunks, and a boot that stopped naming them
-    // would leave the files unreachable.
+    // The board reads the host's live state; the committed snapshot is the
+    // preview's fixture and the tests' corpus, not something the tab fetches.
     runtime: createHttpRuntime(),
     loadEditor: () => loadEditorChunk(),
   });

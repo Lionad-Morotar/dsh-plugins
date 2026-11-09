@@ -46,14 +46,11 @@
      has to reserve its height itself or the last rows sit under the input. The
      host writes the measured height; the fallback is its own default.
 
-     Written as `- -12px` rather than `+ 12px` on purpose: the stylesheet is
-     minified by scripts/css-plugin.mjs, whose whitespace pass strips the space
-     around `+`, and CSS requires whitespace on both sides of `+` inside calc.
-     The mangled `calc(...+12px)` is an invalid value, which invalidates the
-     whole shorthand and silently drops all three paddings. Subtraction is not
-     in that pass's character class, so this spelling survives the build and
-     computes the same length. */
-  padding: 22px 26px calc(var(--dsh-composer-height, 140px) - -12px);
+     The stylesheet is minified by scripts/css-plugin.mjs, whose whitespace pass
+     leaves the space around `+` alone: CSS requires it on both sides of the
+     operator inside calc, and squeezing it out would make the whole shorthand
+     an invalid value that silently drops all three paddings. */
+  padding: 22px 26px calc(var(--dsh-composer-height, 140px) + 12px);
   color: var(--tst-ink);
   font-family: var(--dsh-font-sans, ui-sans-serif, system-ui, sans-serif);
   font-size: var(--tst-fs);

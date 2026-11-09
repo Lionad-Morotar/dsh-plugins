@@ -17,6 +17,14 @@
  * of whitespace and drops the space around the punctuation that never needs it.
  * It does not touch values, selectors or at-rules, so a rule that survives
  * minification is the same rule the source declares.
+ *
+ * `+` is deliberately NOT in the punctuation class. Inside `calc()` the plus is
+ * an operator and CSS requires whitespace on both sides of it; squeezing
+ * `calc(a + b)` into `calc(a+b)` produces an invalid value, which invalidates
+ * the whole declaration and silently drops it. Subtraction and division are not
+ * in the class for the same reason, and multiplication is written without an
+ * operator at all.
+ *
  * @param css - the stylesheet text.
  * @returns the minified text.
  */
@@ -24,7 +32,7 @@ export function minifyCss(css) {
   return css
     .replace(/\/\*[\s\S]*?\*\//gu, "")
     .replace(/\s+/gu, " ")
-    .replace(/\s*([{};:,>~+])\s*/gu, "$1")
+    .replace(/\s*([{};:,>~])\s*/gu, "$1")
     .replace(/;\}/gu, "}")
     // A declaration that is the last in its block needs no terminator, and the
     // space after a comma in a selector list is never significant.

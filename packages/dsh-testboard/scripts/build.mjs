@@ -7,8 +7,13 @@
  *
  *   lib/index.js             Host half, plain ESM (Node imports it directly).
  *   lib/client.js            Browser half, CJS wrapped in a ModuleLoader factory.
- *   lib/client.snapshot.js   Lazy chunk: the board's data snapshot.
- *   lib/client.sources.js    Lazy chunk: every test file's source text.
+ *   lib/client.editor.js     Lazy chunk: CodeMirror and the highlighted code view.
+ *
+ * Three artifacts, and the third is the only lazy one. The board reads its data
+ * from the host's `/testboard/api` routes now, so the snapshot and source
+ * bundles it used to fetch are gone from the browser half entirely: the
+ * committed JSON under `src/client/data/` is the preview's fixture and the
+ * tests' corpus, and it never reaches a page.
  *
  * The host half stays unminified so the committed output remains readable
  * evidence of what `src/` produced; only the browser halves pay for
@@ -29,14 +34,11 @@ const require = createRequire(join(packageRoot, "package.json"));
 const manifest = require(join(packageRoot, "package.json"));
 
 /**
- * The lazy chunks' file names; must match `SNAPSHOT_CHUNK` and `SOURCES_CHUNK`
- * in src/shared.ts.
+ * The one lazy chunk's file name; must match `EDITOR_CHUNK` in src/shared.ts.
  *
  * The build script cannot import the TS module, so the agreement is enforced by
- * asserting the bundled entry still names these literals instead of by trust.
+ * asserting the bundled entry still names this literal instead of by trust.
  */
-const SNAPSHOT_CHUNK = "client.snapshot.js";
-const SOURCES_CHUNK = "client.sources.js";
 const EDITOR_CHUNK = "client.editor.js";
 
 /** Host-half platform packages: the Harness install provides its own copies. */
@@ -51,51 +53,17 @@ const CLIENT_EXTERNALS = ["react", "react/jsx-runtime", "react-dom", "@deepseek-
  *
  * The line has moved twice, both times for the same reason: the panel stopped
  * being a prototype. It went to 40KB when the split view, keyboard navigation
- * and the resize handle landed; it moves to 64KB now that the run header, the
- * throughput chart and the motion layer are startup code too.
+ * and the resize handle landed; it moved to 64KB when the run header, the
+ * throughput chart and the motion layer became startup code too.
  *
- * What the ceiling still guards is the thing that actually matters: the two
- * payloads that must never be inlined. CodeMirror stays in its own chunk and the
- * snapshot and source bundles stay in theirs, and the assertions below fail if
- * any of them creeps in. Those are the megabytes; this bundle is tens of
- * kilobytes, and gzipped it is well under 20KB.
+ * What the ceiling guards is the payload that must never be inlined: CodeMirror
+ * stays in its own chunk, and the assertion below fails if it creeps in. That is
+ * the megabyte; this bundle is tens of kilobytes, and gzipped it is under 20KB.
  */
 const CLIENT_MAX_BYTES = 64 * 1024;
 
-/**
- * The lazy chunks' budgets.
- *
- * Both are fetched once, on first mount, and cached by their loaders, so they
- * are allowed to be large; the ceilings exist to catch a regression that starts
- * inlining something else into them. The committed snapshot is ~550KB of
- * readable JSON and the source bundle is ~2.5MB of test text, which minify to
- * well under these numbers.
- */
-const SNAPSHOT_MAX_BYTES = 700_000;
-const SOURCES_MAX_BYTES = 4_200_000;
 /** CodeMirror's view, state, language and JavaScript parser, minified. */
 const EDITOR_MAX_BYTES = 1_200_000;
-
-/**
- * Fields that only exist in the snapshot payload.
- *
- * The startup bundle must not contain any of them: if one appears, the data was
- * pulled into the boot path and every page pays for a tab most users never open.
- *
- * These are payload markers, not field names the model happens to mention.
- * `durationMs` is deliberately absent: the read model sums durations from the
- * cases it is handed, so the identifier legitimately appears in the startup half
- * while the data stays in the chunk.
- */
-const SNAPSHOT_ONLY_FIELDS = ["statusSource"];
-
-/**
- * Fields that only exist in the source bundle.
- *
- * Same rule as the snapshot's markers: the startup half must not carry the test
- * files' text, or every page pays for a code view most readers never open.
- */
-const SOURCES_ONLY_FIELDS = ["packages/dsh-testboard/test/"];
 
 /**
  * Literals that must survive bundling. The slot name and the view id are the
@@ -184,20 +152,8 @@ function assertClientHalf(clientText) {
   if (!clientText.includes("__ModuleLoader__")) {
     throw new Error("lib/client.js is not wrapped in the ModuleLoader factory");
   }
-  for (const chunk of [SNAPSHOT_CHUNK, SOURCES_CHUNK, EDITOR_CHUNK]) {
-    if (!clientText.includes(`"${chunk}"`)) {
-      throw new Error(`lib/client.js no longer names its lazy chunk ${chunk}; the tab would fetch a file nobody built`);
-    }
-  }
-  for (const field of SNAPSHOT_ONLY_FIELDS) {
-    if (clientText.includes(field)) {
-      throw new Error(`lib/client.js contains ${field}; the snapshot data must stay in ${SNAPSHOT_CHUNK}`);
-    }
-  }
-  for (const field of SOURCES_ONLY_FIELDS) {
-    if (clientText.includes(field)) {
-      throw new Error(`lib/client.js contains ${field}; the test source must stay in ${SOURCES_CHUNK}`);
-    }
+  if (!clientText.includes(`"${EDITOR_CHUNK}"`)) {
+    throw new Error(`lib/client.js no longer names its lazy chunk ${EDITOR_CHUNK}; the tab would fetch a file nobody built`);
   }
   // The editor must stay in its chunk: a stray import here would pull
   // CodeMirror into every page boot.
@@ -209,42 +165,6 @@ function assertClientHalf(clientText) {
   const bytes = Buffer.byteLength(clientText);
   if (bytes > CLIENT_MAX_BYTES) {
     throw new Error(`lib/client.js is ${bytes}B (> ${CLIENT_MAX_BYTES}B); the startup bundle blew its budget`);
-  }
-}
-
-/**
- * Assert the snapshot chunk registers its own file name and carries the data.
- * @param chunkText - built `client.snapshot.js`, wrapper included.
- * @throws when the chunk field or the payload is missing, or it is over budget.
- */
-function assertSnapshotChunk(chunkText) {
-  if (!chunkText.includes(`chunk: "${SNAPSHOT_CHUNK}"`)) {
-    throw new Error(`${SNAPSHOT_CHUNK} does not register its own name in its chunk: field`);
-  }
-  if (!chunkText.includes("statusSource")) {
-    throw new Error(`${SNAPSHOT_CHUNK} does not carry the snapshot payload`);
-  }
-  const bytes = Buffer.byteLength(chunkText);
-  if (bytes > SNAPSHOT_MAX_BYTES) {
-    throw new Error(`${SNAPSHOT_CHUNK} is ${bytes}B (> ${SNAPSHOT_MAX_BYTES}B); the snapshot chunk blew its budget`);
-  }
-}
-
-/**
- * Assert the sources chunk registers its own file name and carries the text.
- * @param chunkText - built `client.sources.js`, wrapper included.
- * @throws when the chunk field or the payload is missing, or it is over budget.
- */
-function assertSourcesChunk(chunkText) {
-  if (!chunkText.includes(`chunk: "${SOURCES_CHUNK}"`)) {
-    throw new Error(`${SOURCES_CHUNK} does not register its own name in its chunk: field`);
-  }
-  if (!chunkText.includes("packages/")) {
-    throw new Error(`${SOURCES_CHUNK} does not carry any file text`);
-  }
-  const bytes = Buffer.byteLength(chunkText);
-  if (bytes > SOURCES_MAX_BYTES) {
-    throw new Error(`${SOURCES_CHUNK} is ${bytes}B (> ${SOURCES_MAX_BYTES}B); the sources chunk blew its budget`);
   }
 }
 
@@ -297,20 +217,6 @@ const client = await bundle(join(packageRoot, "src", "client", "entry.ts"), "cjs
 const clientText = wrap(manifest.name, client, { boot: true });
 await writeFile(join(libRoot, "client.js"), clientText, "utf8");
 
-const snapshot = await bundle(join(packageRoot, "src", "client", "snapshot-chunk.ts"), "cjs", {
-  external: CLIENT_EXTERNALS,
-  minify: true,
-});
-const snapshotText = wrap(manifest.name, snapshot, { chunk: SNAPSHOT_CHUNK });
-await writeFile(join(libRoot, SNAPSHOT_CHUNK), snapshotText, "utf8");
-
-const sources = await bundle(join(packageRoot, "src", "client", "sources-chunk.ts"), "cjs", {
-  external: CLIENT_EXTERNALS,
-  minify: true,
-});
-const sourcesText = wrap(manifest.name, sources, { chunk: SOURCES_CHUNK });
-await writeFile(join(libRoot, SOURCES_CHUNK), sourcesText, "utf8");
-
 const editor = await bundle(join(packageRoot, "src", "client", "editor-chunk.ts"), "cjs", {
   external: CLIENT_EXTERNALS,
   minify: true,
@@ -319,12 +225,10 @@ const editorText = wrap(manifest.name, editor, { chunk: EDITOR_CHUNK });
 await writeFile(join(libRoot, EDITOR_CHUNK), editorText, "utf8");
 
 assertClientHalf(clientText);
-assertSnapshotChunk(snapshotText);
-assertSourcesChunk(sourcesText);
 assertEditorChunk(editorText);
 await assertHostHalf(join(libRoot, "index.js"));
 
-const written = ["index.js", "client.js", SNAPSHOT_CHUNK, SOURCES_CHUNK, EDITOR_CHUNK];
+const written = ["index.js", "client.js", EDITOR_CHUNK];
 const sizes = await Promise.all(
   written.map(async file => {
     const bytes = await readFile(join(libRoot, file));
