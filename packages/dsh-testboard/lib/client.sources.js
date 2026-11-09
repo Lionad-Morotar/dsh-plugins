@@ -63440,6 +63440,7 @@ import {
   flattenNav,
   navKeyIntent,
   normalizeSelection,
+  pageStep,
   type NavSelection,
 } from "../src/client/nav.ts";
 
@@ -63681,6 +63682,54 @@ describe("applyNavIntent", () => {
     const empty = applyNavIntent("down", state(undefined), []);
     expect(empty.selection).toBeUndefined();
     expect(empty.reveal).toBeUndefined();
+  });
+});
+
+/**
+ * The half-screen step.
+ *
+ * PageUp/PageDown move the selection by what a reader can actually see, which is
+ * a layout question the pure model cannot answer on its own: it takes the two
+ * measurements the DOM reports and turns them into a row count. Pinning it here
+ * keeps the view's handler from growing its own arithmetic, and keeps the
+ * degenerate cases (no layout, one row) out of the browser.
+ */
+describe("pageStep", () => {
+  it("moves by half the visible rows", () => {
+    // 400px viewport over 20px rows is 20 rows on screen, so half is 10.
+    expect(pageStep(400, 2000, 100)).toBe(10);
+  });
+
+  it("rounds down so a half row never overshoots the fold", () => {
+    // 21 visible rows halve to 10.5; landing on 10 keeps the target on screen.
+    expect(pageStep(420, 2000, 100)).toBe(10);
+  });
+
+  it("never moves less than one row", () => {
+    // A viewport shorter than two rows still has to advance, or the key is dead.
+    expect(pageStep(20, 2000, 100)).toBe(1);
+  });
+
+  it("never moves the whole list, which is what Home and End are for", () => {
+    // A viewport taller than the content would otherwise step past the end.
+    expect(pageStep(4000, 2000, 10)).toBe(9);
+  });
+
+  it("falls back to one row when the layout reports nothing", () => {
+    // jsdom reports zeroes for every box; a zero step would swallow the key.
+    expect(pageStep(0, 0, 100)).toBe(1);
+    expect(pageStep(0, 2000, 100)).toBe(1);
+    expect(pageStep(400, 0, 100)).toBe(1);
+  });
+
+  it("falls back to one row for a list with no rows", () => {
+    expect(pageStep(400, 2000, 0)).toBe(1);
+  });
+
+  it("falls back to one row for a single row", () => {
+    // max(1, rowCount - 1) is 1 here, so a one-row list still reports a step
+    // rather than a zero the caller would have to special-case.
+    expect(pageStep(400, 20, 1)).toBe(1);
   });
 });
 `,"packages/dsh-testboard/test/pane-width.test.ts":`/**
@@ -64424,6 +64473,23 @@ describe("testboard view", () => {
   });
 
   describe("split layout", () => {
+    it("marks the root as the composer overlay so the host gives it a fixed height", async () => {
+      await mount();
+      const board = host.querySelector<HTMLElement>('[data-testid="testboard"]');
+      // The host only tightens the conversation view's height chain when this
+      // attribute is present, and it also turns the composer into an overlay
+      // whose height the panel has to reserve for itself.
+      expect(board?.hasAttribute("data-conversation-composer-overlay")).toBe(true);
+    });
+
+    it("declares the list as the owner of the page keys", async () => {
+      await mount();
+      // better-keybindings releases PageUp/PageDown wholesale to an element
+      // carrying this attribute; without it the global handler would page the
+      // conversation instead of the list.
+      expect(list(host).getAttribute("data-page-keys")).toBe("own");
+    });
+
     it("puts the list, a separator and the detail pane in one split region", async () => {
       await mount();
       const split = host.querySelector<HTMLElement>('[data-testid="split"]');
@@ -64668,6 +64734,145 @@ describe("testboard view", () => {
       const active = list(host).getAttribute("aria-activedescendant");
       expect(active).toBe(rows(host)[0]?.id);
       expect(rows(host)[0]?.getAttribute("role")).toBe("option");
+    });
+
+    describe("half-screen paging", () => {
+      /**
+       * Give the list a measured box, which jsdom never computes.
+       *
+       * The step is derived from the viewport and the content height, so a test
+       * that wants a specific step has to supply both numbers the browser would
+       * have reported.
+       */
+      function stubMetrics(viewportPx: number, contentPx: number): void {
+        const element = list(host);
+        Object.defineProperty(element, "clientHeight", { value: viewportPx, configurable: true });
+        Object.defineProperty(element, "scrollHeight", { value: contentPx, configurable: true });
+      }
+
+      /** The index of the selected row in the rendered order, or -1. */
+      function selectedIndex(): number {
+        return rows(host).findIndex(row => row.getAttribute("aria-selected") === "true");
+      }
+
+      /**
+       * The step the view should derive from the stubbed box.
+       *
+       * Derived rather than pinned to a literal: the row count comes from the
+       * committed snapshot, which is regenerated whenever this repo's own test
+       * files change, and a literal here would turn every such regeneration
+       * into a red suite that has nothing to do with paging.
+       *
+       * Counted over the flat order, which is what the scroll height covers: an
+       * open file's cases are rendered rows, so dividing the content height by
+       * the file count alone would overstate each row and shrink the step.
+       */
+      function expectedStep(viewportPx: number, contentPx: number): number {
+        const rendered = host.querySelectorAll('[data-testid="file-row"], [data-testid="case-item"]').length;
+        const rowHeight = Math.max(1, contentPx / Math.max(1, rendered));
+        return Math.max(1, Math.floor(viewportPx / rowHeight / 2));
+      }
+
+      it("moves down by half the visible rows", async () => {
+        await mount();
+        stubMetrics(400, 4000);
+        const step = expectedStep(400, 4000);
+        expect(step).toBeGreaterThan(1);
+
+        await press("Home");
+        expect(selectedIndex()).toBe(0);
+
+        await press("PageDown");
+        expect(selectedIndex()).toBe(step);
+      });
+
+      it("moves up by half the visible rows", async () => {
+        await mount();
+        stubMetrics(400, 4000);
+        const step = expectedStep(400, 4000);
+        await press("End");
+        const last = selectedIndex();
+
+        await press("PageUp");
+        expect(selectedIndex()).toBe(last - step);
+      });
+
+      it("stops at the ends instead of wrapping", async () => {
+        await mount();
+        stubMetrics(400, 4000);
+        await press("End");
+        await press("PageDown");
+        expect(selectedIndex()).toBe(rows(host).length - 1);
+
+        await press("Home");
+        await press("PageUp");
+        expect(selectedIndex()).toBe(0);
+      });
+
+      it("selects the first row when nothing is selected yet", async () => {
+        await mount();
+        stubMetrics(400, 4000);
+        expect(selectedIndex()).toBe(-1);
+
+        await press("PageDown");
+        // Nothing selected means the page starts at the top, not 20 rows down.
+        expect(selectedIndex()).toBe(0);
+      });
+
+      it("still advances one row when the layout reports nothing", async () => {
+        await mount();
+        // jsdom's default: every box is zero. The key must not become a no-op.
+        await press("Home");
+        await press("PageDown");
+        expect(selectedIndex()).toBe(1);
+      });
+
+      it("swallows the stroke it handles so the list does not also scroll", async () => {
+        await mount();
+        stubMetrics(400, 4000);
+        await press("Home");
+        const event = new KeyboardEvent("keydown", { key: "PageDown", bubbles: true, cancelable: true });
+        await act(async () => {
+          list(host).dispatchEvent(event);
+        });
+        expect(event.defaultPrevented).toBe(true);
+      });
+
+      it("leaves a modified PageDown to the host", async () => {
+        await mount();
+        stubMetrics(400, 4000);
+        await press("Home");
+        const event = new KeyboardEvent("keydown", { key: "PageDown", shiftKey: true, bubbles: true, cancelable: true });
+        await act(async () => {
+          list(host).dispatchEvent(event);
+        });
+        // Shift+PageDown belongs to the global paging plugin, which pages the
+        // conversation; the selection must not move and the stroke must pass.
+        expect(event.defaultPrevented).toBe(false);
+        expect(selectedIndex()).toBe(0);
+      });
+
+      it("pages through an open file's cases as part of the flat order", async () => {
+        await mount();
+        stubMetrics(400, 4000);
+        await press("Home");
+        await press("ArrowRight");
+        const caseCount = host.querySelectorAll('[data-testid="case-item"]').length;
+        expect(caseCount).toBeGreaterThan(0);
+
+        const step = expectedStep(400, 4000);
+        await press("PageDown");
+
+        // The step counts rendered rows, and an open file's cases are rendered
+        // rows: the selection lands inside the case list rather than on a file
+        // row, which is exactly what walking the flat order means.
+        const selectedCase = host.querySelector<HTMLElement>('[data-testid="case-item"][aria-selected="true"]');
+        expect(selectedCase).not.toBeNull();
+        const flatPosition = [...host.querySelectorAll<HTMLElement>('[data-testid="file-row"], [data-testid="case-item"]')].indexOf(
+          selectedCase as HTMLElement,
+        );
+        expect(flatPosition).toBe(step);
+      });
     });
   });
 

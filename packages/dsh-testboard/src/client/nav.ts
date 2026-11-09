@@ -26,7 +26,17 @@ export type NavSelection =
 export type NavItem = NavSelection;
 
 /** What one keypress asks the board to do. */
-export type NavIntent = "down" | "up" | "expand" | "collapse" | "activate" | "back" | "first" | "last";
+export type NavIntent =
+  | "down"
+  | "up"
+  | "expand"
+  | "collapse"
+  | "activate"
+  | "back"
+  | "first"
+  | "last"
+  | "page-down"
+  | "page-up";
 
 /** The board's navigation state. */
 export interface NavState {
@@ -118,9 +128,42 @@ export function navKeyIntent(key: string, modifierHeld: boolean): NavIntent | nu
       return "first";
     case "End":
       return "last";
+    case "PageDown":
+      return "page-down";
+    case "PageUp":
+      return "page-up";
     default:
       return null;
   }
+}
+
+/**
+ * How many rows one page key moves.
+ *
+ * A page is half of what the reader can see, which is the convention every list
+ * with a row cursor uses: a full viewport would leave no overlap, so the reader
+ * loses the thread between one screen and the next.
+ *
+ * The row height is derived from the two measurements the DOM reports rather
+ * than taken as a parameter, because the board's rows are not a fixed height:
+ * an expanded file carries its cases, and the font follows the host's own axes.
+ *
+ * @param viewportPx - the list's visible height.
+ * @param contentPx - the list's full scroll height.
+ * @param rowCount - how many rows the flat order holds.
+ * @returns the row count to move, never less than 1 and never the whole list.
+ */
+export function pageStep(viewportPx: number, contentPx: number, rowCount: number): number {
+  // A zero measurement is what jsdom reports for every box, and it is also what
+  // a collapsed panel reports. Stepping by zero would swallow the key, so the
+  // degenerate case degrades to a single row rather than to nothing.
+  if (!(viewportPx > 0) || !(contentPx > 0)) return 1;
+  const rowHeight = Math.max(1, contentPx / Math.max(1, rowCount));
+  const visibleRows = viewportPx / rowHeight;
+  // The ceiling keeps the key distinct from Home and End: a viewport taller than
+  // the content would otherwise step past the end of the list in one press.
+  const ceiling = Math.max(1, rowCount - 1);
+  return Math.min(ceiling, Math.max(1, Math.floor(visibleRows / 2)));
 }
 
 /**
@@ -156,9 +199,17 @@ function toggle(expanded: ReadonlySet<string>, path: string): ReadonlySet<string
  * @param intent - what the keypress asked for.
  * @param state - the current selection and expanded set.
  * @param rows - the file rows currently on screen.
+ * @param pageRows - how far a page key moves; the view measures it, since only
+ *   the DOM knows how many rows fit. Defaults to one so a caller that never
+ *   sends a page key needs no measurement.
  * @returns the next state and the row to reveal.
  */
-export function applyNavIntent(intent: NavIntent, state: NavState, rows: readonly TestFileRow[]): NavResult {
+export function applyNavIntent(
+  intent: NavIntent,
+  state: NavState,
+  rows: readonly TestFileRow[],
+  pageRows = 1,
+): NavResult {
   const items = flattenNav(rows, state.expanded);
   const selection = normalizeSelection(state.selection, rows, state.expanded);
   const current = items.findIndex(item => sameItem(item, selection));
@@ -177,6 +228,12 @@ export function applyNavIntent(intent: NavIntent, state: NavState, rows: readonl
       return current === -1 ? moveTo(0) : moveTo(current + 1);
     case "up":
       return current === -1 ? moveTo(items.length - 1) : moveTo(current - 1);
+    case "page-down":
+      // Nothing selected means the reader is at the top of the list, so the page
+      // starts there rather than skipping the first screen.
+      return current === -1 ? moveTo(0) : moveTo(current + pageRows);
+    case "page-up":
+      return current === -1 ? moveTo(items.length - 1) : moveTo(current - pageRows);
     case "first":
       return moveTo(0);
     case "last":

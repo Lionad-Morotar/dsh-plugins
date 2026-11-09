@@ -18,10 +18,31 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  /* The host only gives the conversation view a definite height when the panel
+     declares itself a composer overlay (see the attribute in view.tsx); this is
+     the other half of that contract. Without `flex: 1 1 auto` plus
+     `align-self: stretch` the panel sits at its content height inside a
+     column flex parent, and `height: 100%` then resolves against an auto
+     parent, which is the chain that used to break at `min-height` and clip the
+     board instead of scrolling it. */
+  flex: 1 1 auto;
+  align-self: stretch;
   height: 100%;
+  min-height: 0;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 22px 26px 0;
+  /* The composer is an overlay once the host tightens the view, so the panel
+     has to reserve its height itself or the last rows sit under the input. The
+     host writes the measured height; the fallback is its own default.
+
+     Written as `- -12px` rather than `+ 12px` on purpose: the stylesheet is
+     minified by scripts/css-plugin.mjs, whose whitespace pass strips the space
+     around `+`, and CSS requires whitespace on both sides of `+` inside calc.
+     The mangled `calc(...+12px)` is an invalid value, which invalidates the
+     whole shorthand and silently drops all three paddings. Subtraction is not
+     in that pass's character class, so this spelling survives the build and
+     computes the same length. */
+  padding: 22px 26px calc(var(--dsh-composer-height, 140px) - -12px);
   color: var(--tst-ink);
   font-family: var(--dsh-font-sans, ui-sans-serif, system-ui, sans-serif);
   font-size: var(--tst-fs);
@@ -466,11 +487,22 @@ body.tst-pane-resizing {
 /* When the editor is mounted it owns the scrolling; the wrapper only sizes it. */
 [data-tst="detail-code"][data-editor="true"] {
   overflow: hidden;
+  min-height: 0;
   padding-bottom: 0;
+  display: flex;
+  flex-direction: column;
 }
 
+/* The editor has to be told how tall it is, all the way down: CodeMirror's own
+   theme sets `height: 100%` on `.cm-editor`, but a percentage against an auto
+   parent resolves to auto, and then `.cm-scroller` grows to the document's full
+   height and never scrolls, so a long file is clipped by the pane instead. Each
+   link in the chain therefore gets an explicit `min-height: 0` and a flex
+   basis, which is what makes the last one a real scroller. */
 [data-tst="code-view"],
-[data-tst="code-view"] .cm-editor {
+[data-tst="code-view"] .cm-editor,
+[data-tst="code-view"] .cm-scroller {
+  flex: 1 1 auto;
   height: 100%;
   min-height: 0;
 }

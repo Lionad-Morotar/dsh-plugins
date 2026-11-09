@@ -16,6 +16,7 @@ import {
   flattenNav,
   navKeyIntent,
   normalizeSelection,
+  pageStep,
   type NavSelection,
 } from "../src/client/nav.ts";
 
@@ -257,5 +258,53 @@ describe("applyNavIntent", () => {
     const empty = applyNavIntent("down", state(undefined), []);
     expect(empty.selection).toBeUndefined();
     expect(empty.reveal).toBeUndefined();
+  });
+});
+
+/**
+ * The half-screen step.
+ *
+ * PageUp/PageDown move the selection by what a reader can actually see, which is
+ * a layout question the pure model cannot answer on its own: it takes the two
+ * measurements the DOM reports and turns them into a row count. Pinning it here
+ * keeps the view's handler from growing its own arithmetic, and keeps the
+ * degenerate cases (no layout, one row) out of the browser.
+ */
+describe("pageStep", () => {
+  it("moves by half the visible rows", () => {
+    // 400px viewport over 20px rows is 20 rows on screen, so half is 10.
+    expect(pageStep(400, 2000, 100)).toBe(10);
+  });
+
+  it("rounds down so a half row never overshoots the fold", () => {
+    // 21 visible rows halve to 10.5; landing on 10 keeps the target on screen.
+    expect(pageStep(420, 2000, 100)).toBe(10);
+  });
+
+  it("never moves less than one row", () => {
+    // A viewport shorter than two rows still has to advance, or the key is dead.
+    expect(pageStep(20, 2000, 100)).toBe(1);
+  });
+
+  it("never moves the whole list, which is what Home and End are for", () => {
+    // A viewport taller than the content would otherwise step past the end.
+    expect(pageStep(4000, 2000, 10)).toBe(9);
+  });
+
+  it("falls back to one row when the layout reports nothing", () => {
+    // jsdom reports zeroes for every box; a zero step would swallow the key.
+    expect(pageStep(0, 0, 100)).toBe(1);
+    expect(pageStep(0, 2000, 100)).toBe(1);
+    expect(pageStep(400, 0, 100)).toBe(1);
+  });
+
+  it("falls back to one row for a list with no rows", () => {
+    expect(pageStep(400, 2000, 0)).toBe(1);
+  });
+
+  it("falls back to one row for a single row", () => {
+    // max(1, rowCount - 1) is 1 here, so a one-row list still reports a step
+    // rather than a zero the caller would have to special-case.
+    expect(pageStep(400, 20, 1)).toBe(1);
   });
 });

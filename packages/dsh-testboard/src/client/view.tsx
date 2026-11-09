@@ -20,7 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, 
 
 import type { TestSnapshot } from "./model.ts";
 import { groupFileRows, listFileRows, peakThroughput, summarize, throughputSeries, type RowFilter, type RowSort } from "./model.ts";
-import { applyNavIntent, navKeyIntent, normalizeSelection, type NavSelection } from "./nav.ts";
+import { applyNavIntent, flattenNav, navKeyIntent, normalizeSelection, pageStep, type NavSelection } from "./nav.ts";
 import {
   paneWidthStorage,
   paneWidthStyle,
@@ -247,7 +247,22 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
         // The list is the scroll container, so every one of these keys would
         // otherwise also scroll it under the selection.
         event.preventDefault();
-        const result = applyNavIntent(intent, { selection: resolved, expanded }, rows);
+        // Only the page keys need a measurement, and only the DOM has one: the
+        // row height is not fixed (an open file carries its cases, and the font
+        // follows the host's axes), so the step is derived from the box the list
+        // actually occupies. The row count has to be the flat order, not the
+        // file count: the scroll height covers the expanded cases too, and
+        // dividing it by the file count would overstate every row's height and
+        // shrink the step.
+        const step =
+          intent === "page-down" || intent === "page-up"
+            ? pageStep(
+                listRef.current?.clientHeight ?? 0,
+                listRef.current?.scrollHeight ?? 0,
+                flattenNav(rows, expanded).length,
+              )
+            : 1;
+        const result = applyNavIntent(intent, { selection: resolved, expanded }, rows, step);
         setSelection(result.selection);
         setExpanded(result.expanded);
         reveal(result.reveal);
@@ -285,7 +300,13 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
 
     if (snapshot === undefined) {
       return (
-        <div data-testid="testboard" data-tst="board" className={`tst-theme-${theme}`} data-theme={theme}>
+        <div
+          data-testid="testboard"
+          data-tst="board"
+          data-conversation-composer-overlay=""
+          className={`tst-theme-${theme}`}
+          data-theme={theme}
+        >
           <p data-tst="status">{loadError ?? "…"}</p>
         </div>
       );
@@ -296,7 +317,13 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const activeOption = resolved === undefined ? undefined : optionId(resolved);
 
     return (
-      <div data-testid="testboard" data-tst="board" className={`tst-theme-${theme}`} data-theme={theme}>
+      <div
+        data-testid="testboard"
+        data-tst="board"
+        data-conversation-composer-overlay=""
+        className={`tst-theme-${theme}`}
+        data-theme={theme}
+      >
         <SummaryHeader
           summary={summary}
           strings={{
@@ -330,6 +357,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
               ref={listRef}
               data-testid="lanes"
               data-tst="lanes"
+              data-page-keys="own"
               role="listbox"
               aria-label={strings.listLabel}
               aria-activedescendant={activeOption}
