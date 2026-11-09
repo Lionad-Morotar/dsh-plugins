@@ -204,5 +204,9 @@ export function TerminalScreen({ binding, label, readOnly, fontSize = 12, focusT
     terminal.focus();
   }, [focusToken, readOnly]);
 
-  return <div ref={holder} data-workbench-terminal-screen={label} />;
+  // PageUp/PageDown belong to the program running in the terminal: xterm turns
+  // them into the keys a pager or editor inside the shell expects. The global
+  // page-key plugin must not scroll the viewport underneath it, so the screen
+  // declares itself the owner.
+  return <div ref={holder} data-workbench-terminal-screen={label} data-page-keys="own" />;
 }

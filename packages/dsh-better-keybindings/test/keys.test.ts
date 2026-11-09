@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   HALF_PAGE,
+  claimsPageKeys,
   isBody,
   landsInScrollport,
   matchCaretKey,
@@ -179,6 +180,25 @@ describe("page routing", () => {
   it("anything else keeps its native paging", () => {
     // A sidebar list, a picker or a menu owns its own PageUp/PageDown.
     expect(route({})).toBe("native");
+  });
+});
+
+describe("page key ownership", () => {
+  const whoseAncestorMatches = (found: boolean) => ({
+    closest: () => (found ? {} : null),
+  });
+
+  it("recognizes a target inside a surface that owns the page keys", () => {
+    expect(claimsPageKeys(whoseAncestorMatches(true) as unknown as EventTarget, '[data-page-keys="own"]')).toBe(true);
+  });
+
+  it("rejects a target outside it", () => {
+    expect(claimsPageKeys(whoseAncestorMatches(false) as unknown as EventTarget, '[data-page-keys="own"]')).toBe(false);
+  });
+
+  it("tolerates a null or non-element target", () => {
+    expect(claimsPageKeys(null, '[data-page-keys="own"]')).toBe(false);
+    expect(claimsPageKeys({} as EventTarget, '[data-page-keys="own"]')).toBe(false);
   });
 });
 
