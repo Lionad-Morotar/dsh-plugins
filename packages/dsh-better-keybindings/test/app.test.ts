@@ -747,6 +747,34 @@ describe("pointer paging", () => {
     expect(second.scrollTop).toBe(2380);
   });
 
+  it("a surface that declares page-key ownership keeps the stroke untouched", () => {
+    // List panes and the terminal handle these keys through their own keymap
+    // (row cursor, program input). A global scroll here would either leave the
+    // cursor behind or swallow a keystroke the program was waiting for.
+    const owned = doc.createElement("div");
+    owned.setAttribute("data-page-keys", "own");
+    owned.style.overflowY = "auto";
+    Object.defineProperties(owned, {
+      scrollTop: { value: 1000, writable: true, configurable: true },
+      scrollHeight: { value: 3760, configurable: true },
+      clientHeight: { value: 760, configurable: true },
+      scrollWidth: { value: 400, configurable: true },
+      clientWidth: { value: 400, configurable: true },
+    });
+    const row = doc.createElement("div");
+    row.tabIndex = 0;
+    owned.append(row);
+    doc.body.append(owned);
+    mount({ pointerElementAt: () => owned });
+    win.dispatchEvent(mousemoveAt(20, 40));
+
+    const e = keydown({ key: "PageDown" });
+    row.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(false);
+    expect(owned.scrollTop).toBe(1000);
+  });
+
   it("the mousemove listener is removed by the symmetric teardown", () => {
     const addSpy = vi.spyOn(win, "addEventListener");
     const teardown = createApp({ window: win, pointerElementAt: () => null }).apply();
@@ -804,6 +832,45 @@ describe("sidebar paging", () => {
     doc.body.dispatchEvent(keydown({ key: "PageUp", shiftKey: true }));
 
     expect(list.scrollTop).toBe(620);
+  });
+
+  it("a focused session row pages its own list, wherever the pointer is", () => {
+    // The keyboard is inside the session list: a reader who clicked a row
+    // expects the page keys to walk that list, not whatever sits under the
+    // pointer.
+    const list = sessionList(1000);
+    const row = list.querySelector<HTMLElement>("[data-row-key]");
+    mount();
+    expect(row).not.toBeNull();
+
+    const e = keydown({ key: "PageDown" });
+    row?.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(true);
+    expect(list.scrollTop).toBe(1380);
+  });
+
+  it("a focused session row wins over a pointer resting on another panel", () => {
+    const list = sessionList(1000);
+    const row = list.querySelector<HTMLElement>("[data-row-key]");
+    const preview = doc.createElement("div");
+    preview.style.overflowY = "auto";
+    Object.defineProperties(preview, {
+      scrollTop: { value: 1000, writable: true, configurable: true },
+      scrollHeight: { value: 3760, configurable: true },
+      clientHeight: { value: 760, configurable: true },
+      scrollLeft: { value: 0, writable: true, configurable: true },
+      scrollWidth: { value: 400, configurable: true },
+      clientWidth: { value: 400, configurable: true },
+    });
+    doc.body.append(preview);
+    mount({ pointerElementAt: () => preview });
+    win.dispatchEvent(mousemoveAt(20, 40));
+
+    row?.dispatchEvent(keydown({ key: "PageDown" }));
+
+    expect(list.scrollTop).toBe(1380);
+    expect(preview.scrollTop).toBe(1000);
   });
 
   it("without Shift the session list is not touched", () => {

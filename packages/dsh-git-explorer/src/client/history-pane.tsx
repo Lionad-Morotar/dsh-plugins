@@ -12,7 +12,7 @@ import {
 } from "react";
 
 import { computeWindow, graphLaneCount, HISTORY_ROW_HEIGHT, relativeTime, revealRowIndex, type ChangeGroup, type GraphRow } from "./model.ts";
-import { cursorActionOf, nearTail, stepCursor } from "./cursor.ts";
+import { cursorActionOf, nearTail, pageRowCount, stepCursor } from "./cursor.ts";
 import type { Translate } from "./copy.ts";
 import { useRowHeight } from "./font-scale.ts";
 import type { GitCommitNode } from "../host/types.ts";
@@ -499,7 +499,7 @@ export function HistoryPane(props: HistoryPaneProps) {
       // With no cursor yet, the walk starts from the row the detail pane is
       // showing: the reader is looking at it, so "next" means the one below it.
       const seed = cursor ?? (selectedIndex >= 0 ? selectedIndex : undefined);
-      const next = stepCursor(seed, action, rowCount);
+      const next = stepCursor(seed, action, rowCount, pageRowCount(height === 0 ? 480 : height, rowHeight));
       if (next === undefined) return;
       setCursor(next);
       // Moving the cursor is selecting: the detail pane is what the reader is
@@ -511,7 +511,7 @@ export function HistoryPane(props: HistoryPaneProps) {
       const commit = commits[next - rowOffset];
       if (commit !== undefined) onSelect(commit.hash);
     },
-    [commits, cursor, hasUncommitted, onSelect, onSelectUncommitted, rowCount, rowOffset, selectedIndex],
+    [commits, cursor, hasUncommitted, height, onSelect, onSelectUncommitted, rowCount, rowHeight, rowOffset, selectedIndex],
   );
 
   // The virtual window is computed over the row set, not the commit array: the
@@ -692,6 +692,7 @@ export function HistoryPane(props: HistoryPaneProps) {
             ref={scroller}
             tabIndex={0}
             data-testid="git-history-scroll"
+            data-page-keys="own"
             onScroll={handleScroll}
             onKeyDown={handleKeyDown}
           >

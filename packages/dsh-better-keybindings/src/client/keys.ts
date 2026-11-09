@@ -195,6 +195,22 @@ export function routePage(input: PageRouteInput): PageRoute {
 }
 
 /**
+ * Whether the owner of the event declared itself the authority on page keys.
+ *
+ * A list pane moves its own row cursor half a viewport and scrolls after it; a
+ * terminal forwards the keys to the program it runs. Neither wants a global
+ * scroll written underneath it, and neither can be recognized by shape, so the
+ * surface says so: an ancestor carrying `data-page-keys="own"` keeps the stroke.
+ * Claiming it would either scroll a pane whose cursor stayed behind, or swallow
+ * a keystroke the terminal program was waiting for.
+ */
+export function claimsPageKeys(target: EventTarget | null, selector: string): boolean {
+  const element = target as Element | null;
+  if (element === null || typeof element !== "object" || typeof element.closest !== "function") return false;
+  return element.closest(selector) !== null;
+}
+
+/**
  * Whether the stroke was reported against the document body.
  *
  * With no element owning focus the browser dispatches key events at BODY (or

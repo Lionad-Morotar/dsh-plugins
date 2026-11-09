@@ -75,6 +75,9 @@ const INPUT_PROPS = {
   autoComplete: "off",
   "data-dcp-query": "",
   "data-modal-autofocus": "",
+  // PageUp/PageDown move the list cursor here, not the scroll container. The
+  // global page-key plugin respects this claim and leaves the stroke alone.
+  "data-page-keys": "own",
 } as const;
 
 /** What a confirm key means for the panel, once its modifiers are read. */

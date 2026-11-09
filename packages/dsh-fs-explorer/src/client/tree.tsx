@@ -29,6 +29,8 @@ import {
   firstChildIndex,
   formatSize,
   iconFor,
+  pageEntryIndex,
+  pageRowCount,
   revealScrollTop,
   type TreeRow,
 } from "./model.ts";
@@ -593,6 +595,21 @@ export function TreeBody({
         if (previous !== undefined) moveCursor(previous);
         return;
       }
+      if (event.key === "PageDown" || event.key === "PageUp") {
+        // Half a viewport of rows, the same reading step the transcript and the
+        // editor use. The cursor leads; the keep-visible effect scrolls after
+        // it with the least movement.
+        event.preventDefault();
+        const viewport = scroller.current?.clientHeight || height || 480;
+        const target = pageEntryIndex(
+          entryIndexes,
+          cursor,
+          event.key === "PageUp" ? -1 : 1,
+          pageRowCount(viewport, rowHeight),
+        );
+        if (target !== undefined) moveCursor(target);
+        return;
+      }
       if (cursor === undefined) return;
       const row = rows[cursor];
       if (row === undefined || row.type !== "entry") return;
@@ -685,7 +702,7 @@ export function TreeBody({
       // the preview, which is the whole point of the jump.
       if (landed.kind !== "directory") onSelect(landed.path);
     },
-    [cursor, entryIndexes, moveCursor, onToggle, onSelect, openRowMenu, rowHeight, rows],
+    [cursor, entryIndexes, height, moveCursor, onToggle, onSelect, openRowMenu, rowHeight, rows],
   );
 
   useEffect(() => {
@@ -772,6 +789,7 @@ export function TreeBody({
       onContextMenu={handleBlankContextMenu}
       tabIndex={0}
       data-testid="fs-tree-scroll"
+      data-page-keys="own"
       role="tree"
       aria-label={t("view.tree")}
     >

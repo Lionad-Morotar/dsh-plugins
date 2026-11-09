@@ -15,6 +15,7 @@
  * chat area keeps its own Home/End whenever no text field is focused.
  */
 import {
+  claimsPageKeys,
   classifyTarget,
   isBody,
   landsInScrollport,
@@ -107,6 +108,16 @@ const DEFAULT_SCROLLPORT_SELECTOR = "[data-conversation-scroll]";
  * first scrollbar above it when the tree itself does not scroll.
  */
 const SIDEBAR_ROW_SELECTOR = "[data-row-key], [role=tree] > [role=treeitem]";
+
+/**
+ * The attribute a surface sets when its own keymap owns PageUp/PageDown.
+ *
+ * List panes move a row cursor half a viewport and scroll after it; the terminal
+ * forwards the keys to the program it runs. A global page step here would either
+ * scroll a pane whose cursor stayed behind or eat a keystroke the program was
+ * waiting for, so the surface says which one it is.
+ */
+const PAGE_KEYS_OWNER_SELECTOR = '[data-page-keys="own"]';
 
 export interface KeysApp {
   /** Mount the window listener. Returns the symmetric teardown. */
@@ -211,6 +222,22 @@ export function createApp(deps: AppDeps = {}): KeysApp {
     }
     const picked = pickScrollContainer(candidates);
     return picked === null ? null : (nodes[picked] as HTMLElement);
+  }
+
+  /**
+   * Whether the stroke landed on a session-list row rather than inside the
+   * transcript.
+   *
+   * A row is a place the keyboard can be: the host makes rows focusable, and a
+   * reader who clicked one expects the page keys to walk that list. Rows inside
+   * the transcript's own trees (the JSON viewer) are not the session list, so
+   * they are excluded the same way {@link sidebarAnchor} excludes them.
+   */
+  function landsInSidebarRow(target: EventTarget | null): boolean {
+    const element = target as Element | null;
+    if (element === null || typeof element !== "object" || typeof element.closest !== "function") return false;
+    const row = element.closest(SIDEBAR_ROW_SELECTOR);
+    return row !== null && row.closest(scrollportSelector) === null;
   }
 
   /**
@@ -366,6 +393,10 @@ export function createApp(deps: AppDeps = {}): KeysApp {
         // plugin never claims.
         const scroll = matchScrollKey(like, true);
         const focusTarget = classifyTarget(event.target);
+        // A surface that owns the page keys keeps them untouched. Checked before
+        // any routing so neither the pointer chain nor the transcript fallback
+        // can claim a stroke the surface is about to handle.
+        if (scroll !== null && claimsPageKeys(event.target, PAGE_KEYS_OWNER_SELECTOR)) return;
         if (scroll !== null && scroll.target === "sidebar") {
           // Shift names the session list outright, so none of the three
           // levels below run: a focused composer, the pointer and the
@@ -377,6 +408,15 @@ export function createApp(deps: AppDeps = {}): KeysApp {
           // A stroke aimed at the session list must not also move the caret of
           // whatever holds focus.
           if (focusTarget !== "none") event.stopPropagation();
+          const box = sidebarScroller();
+          if (box !== null) pageContainer(box, scroll.direction, scroll.fraction);
+          return;
+        }
+        if (scroll !== null && focusTarget === "none" && landsInSidebarRow(event.target)) {
+          // The keyboard is inside the session list itself: page that list,
+          // wherever the pointer happens to rest. Shift already names this
+          // surface outright; here the focused row names it.
+          event.preventDefault();
           const box = sidebarScroller();
           if (box !== null) pageContainer(box, scroll.direction, scroll.fraction);
           return;

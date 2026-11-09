@@ -14,6 +14,8 @@ import {
   iconFor,
   joinPath,
   listingPath,
+  pageEntryIndex,
+  pageRowCount,
   parseFocus,
   type TreeLevel,
 } from "../src/client/model.ts";
@@ -579,5 +581,37 @@ describe("adoptsOpenFile", () => {
   it("adopts the open file when the cursor's row is gone", () => {
     // A collapse or a refreshed listing can remove the row the cursor named.
     expect(adoptsOpenFile({ cursorPath: undefined, selectionMoved: false })).toBe(true);
+  });
+});
+
+describe("page steps", () => {
+  it("measures half a viewport of rows, never less than one", () => {
+    // 480 / 2 / 22 floors to ten rows; a viewport too short for a row still
+    // steps one, so the key never becomes a no-op on a collapsed pane.
+    expect(pageRowCount(480, 22)).toBe(10);
+    expect(pageRowCount(100, 22)).toBe(2);
+    expect(pageRowCount(0, 22)).toBe(1);
+    expect(pageRowCount(480, 0)).toBe(240);
+  });
+
+  it("walks the entry list by one page and clamps at both ends", () => {
+    const entries = [0, 2, 4, 6, 8, 10];
+    expect(pageEntryIndex(entries, 2, 1, 2)).toBe(6);
+    expect(pageEntryIndex(entries, 2, -1, 2)).toBe(0);
+    expect(pageEntryIndex(entries, 2, 1, 99)).toBe(10);
+    expect(pageEntryIndex(entries, 2, -1, 99)).toBe(0);
+    expect(pageEntryIndex(entries, 10, 1, 2)).toBeUndefined();
+  });
+
+  it("skips rows that are not cursor stops", () => {
+    // Status lines and group headings sit between entries; a page walks the
+    // entry list, not arithmetic on row numbers.
+    expect(pageEntryIndex([1, 4, 9], 1, 1, 2)).toBe(9);
+  });
+
+  it("starts from the edge the move heads away from when the cursor is unset", () => {
+    expect(pageEntryIndex([0, 3, 7], undefined, 1, 3)).toBe(0);
+    expect(pageEntryIndex([0, 3, 7], undefined, -1, 3)).toBe(7);
+    expect(pageEntryIndex([], 0, 1, 3)).toBeUndefined();
   });
 });

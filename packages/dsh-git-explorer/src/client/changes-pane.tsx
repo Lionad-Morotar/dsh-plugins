@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { basename, statusLetter, type ChangeEntry, type ChangeGroup } from "./model.ts";
-import { cursorActionOf, stepCursor } from "./cursor.ts";
+import { cursorActionOf, pageRowCount, stepCursor } from "./cursor.ts";
 import { filterChangeGroups } from "./filter.ts";
 import type { Translate } from "./copy.ts";
 
@@ -192,7 +192,17 @@ export function ChangesPane({ groups, stats, t, onOpen, claimFocus, onFocusClaim
         if (row?.kind === "file" && !row.file.isDirectory) onOpen(row.file.path, 1);
         return;
       }
-      const next = stepCursor(cursor < 0 ? undefined : cursor, action, rows.length);
+      // Group headers are shorter than file rows, so the page height is
+      // measured off a mounted row rather than assumed.
+      const viewport = scroller.current?.clientHeight ?? 480;
+      const mounted = scroller.current?.querySelector<HTMLElement>(".gx-file, .gx-group-head");
+      const rowHeight = mounted?.getBoundingClientRect().height ?? 26;
+      const next = stepCursor(
+        cursor < 0 ? undefined : cursor,
+        action,
+        rows.length,
+        pageRowCount(viewport, rowHeight),
+      );
       if (next !== undefined) moveCursor(next);
     },
     [cursor, moveCursor, onOpen, rows],
@@ -217,7 +227,14 @@ export function ChangesPane({ groups, stats, t, onOpen, claimFocus, onFocusClaim
           onChange={event => setQuery(event.currentTarget.value)}
         />
       </header>
-      <div className="gx-scroll" ref={scroller} tabIndex={0} data-testid="git-changes-scroll" onKeyDown={handleKeyDown}>
+      <div
+        className="gx-scroll"
+        ref={scroller}
+        tabIndex={0}
+        data-testid="git-changes-scroll"
+        data-page-keys="own"
+        onKeyDown={handleKeyDown}
+      >
         {total === 0 ? (
           <div className="gx-empty gx-empty-inline">
             <strong>{t("changes.empty")}</strong>
