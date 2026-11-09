@@ -5,6 +5,11 @@
  * cases in order, so a single red tick in a run of green is visible without
  * reading anything. They are spans rather than an SVG because a row can hold
  * dozens of them and the layout is a flex line.
+ *
+ * The row is an `option` inside the left column's listbox rather than a button:
+ * the list owns the focus and the arrow keys, and a row that took focus itself
+ * would fight that. It stays clickable, which is the pointer's equivalent of
+ * selecting the row.
  */
 import type { ReactElement } from "react";
 
@@ -20,34 +25,33 @@ export interface LaneRowStrings {
 export interface LaneRowProps {
   readonly row: TestFileRow;
   readonly expanded: boolean;
+  readonly selected: boolean;
+  /** DOM id, so the listbox can point `aria-activedescendant` at this row. */
+  readonly optionId: string;
   readonly strings: LaneRowStrings;
-  readonly onToggle: (path: string) => void;
-  readonly onHover: (path: string | undefined) => void;
+  readonly onSelect: (path: string) => void;
 }
 
 /**
  * Render one file lane.
- *
- * The row is a button so it is reachable by keyboard and announces its expanded
- * state; the hover handlers only drive the detail card, which is decoration on
- * top of the same information the click reveals.
- * @param props - the row, its expanded state and the handlers.
+ * @param props - the row, its expanded and selected state, and the click handler.
  * @returns the row element.
  */
-export function LaneRow({ row, expanded, strings, onToggle, onHover }: LaneRowProps): ReactElement {
+export function LaneRow({ row, expanded, selected, optionId, strings, onSelect }: LaneRowProps): ReactElement {
   const directory = fileDirectoryOf(row.path);
   return (
-    <button
-      type="button"
+    <div
+      id={optionId}
+      role="option"
       data-testid="file-row"
       data-tst="lane"
       data-path={row.path}
       data-has-failed={row.hasFailed ? "true" : "false"}
       data-expanded={expanded ? "true" : "false"}
+      data-selected={selected ? "true" : "false"}
+      aria-selected={selected}
       aria-expanded={expanded}
-      onClick={() => onToggle(row.path)}
-      onMouseEnter={() => onHover(row.path)}
-      onMouseLeave={() => onHover(undefined)}
+      onClick={() => onSelect(row.path)}
     >
       <span data-tst="lane-name">
         <span data-tst="lane-file">{fileNameOf(row.path)}</span>
@@ -74,6 +78,6 @@ export function LaneRow({ row, expanded, strings, onToggle, onHover }: LaneRowPr
           <span data-tst="lane-duration">{formatDuration(row.durationMs)}</span>
         )}
       </span>
-    </button>
+    </div>
   );
 }

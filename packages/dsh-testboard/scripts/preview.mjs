@@ -13,6 +13,7 @@
  * and from a bare static server, with no network and no host.
  */
 import { build } from "esbuild";
+import { cssTextPlugin } from "./css-plugin.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -126,6 +127,7 @@ const result = await build({
   platform: "browser",
   target: "es2022",
   jsx: "automatic",
+  plugins: [cssTextPlugin()],
   minify: true,
   write: false,
   legalComments: "none",

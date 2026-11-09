@@ -12,20 +12,32 @@
  */
 import { LOCALE_NAMESPACE, PACKAGE_NAME, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
 import { EN, ZH } from "./copy.ts";
-import { loadSnapshotChunk } from "./snapshot-loader.ts";
+import { boot as bootSnapshot, loadSnapshotChunk, type LoaderRequire } from "./snapshot-loader.ts";
+import { bootSources, loadSourcesChunk } from "./sources-loader.ts";
 import { ensureStyles } from "./styles.ts";
 import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
+
+/** The `require` the ModuleLoader factory hands over. */
+export type { LoaderRequire } from "./snapshot-loader.ts";
 
 /**
  * The loader hand-over, re-exported so the ModuleLoader factory can reach it.
  *
  * The factory appends `module.exports.boot?.(require)` to this bundle, which is
- * the only point where the chunk-capable `require` exists; the snapshot loader
- * keeps it until the board mounts. Re-exporting (rather than importing for
- * side effects) is also what keeps the chunk's file name in this bundle: the
- * build asserts the startup half still names the file it emitted.
+ * the only point where the chunk-capable `require` exists; each loader keeps it
+ * until the board mounts. Re-exporting (rather than importing for side effects)
+ * is also what keeps both chunk file names in this bundle: the build asserts the
+ * startup half still names the files it emitted.
+ *
+ * One `boot` for both loaders rather than two exports: the factory calls exactly
+ * one hand-over point, so a second name would never be called and its chunk
+ * would be fetched by nobody.
+ * @param require - the factory's require, with `async` attached.
  */
-export { boot } from "./snapshot-loader.ts";
+export function boot(require: LoaderRequire): void {
+  bootSnapshot(require);
+  bootSources(require);
+}
 
 /** The slice of the client context this entry uses. */
 export interface TestboardClientContext {
@@ -106,9 +118,15 @@ export function apply(ctx: TestboardClientContext): () => void {
       perSecond: t("testboard.perSecond"),
       empty: t("testboard.empty"),
       cases: t("testboard.cases"),
-      detailHint: t("testboard.detailHint"),
+      detailEmpty: t("testboard.detailEmpty"),
+      line: t("testboard.line"),
+      sourceMissing: t("testboard.sourceMissing"),
+      paneResize: t("testboard.paneResize"),
+      paneResizeHint: t("testboard.paneResizeHint"),
+      listLabel: t("testboard.listLabel"),
     } satisfies TestboardViewStrings,
     loadSnapshot: () => loadSnapshotChunk().then(chunk => chunk.snapshot),
+    loadSources: () => loadSourcesChunk().then(chunk => chunk.sources),
   });
 
   // `inject` is a deferred registration: the factory runs when the slot itself
