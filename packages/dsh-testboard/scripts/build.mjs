@@ -37,6 +37,7 @@ const manifest = require(join(packageRoot, "package.json"));
  */
 const SNAPSHOT_CHUNK = "client.snapshot.js";
 const SOURCES_CHUNK = "client.sources.js";
+const EDITOR_CHUNK = "client.editor.js";
 
 /** Host-half platform packages: the Harness install provides its own copies. */
 const HOST_EXTERNALS = ["@deepseek-ai/*"];
@@ -65,6 +66,8 @@ const CLIENT_MAX_BYTES = 40 * 1024;
  */
 const SNAPSHOT_MAX_BYTES = 700_000;
 const SOURCES_MAX_BYTES = 4_200_000;
+/** CodeMirror's view, state, language and JavaScript parser, minified. */
+const EDITOR_MAX_BYTES = 1_200_000;
 
 /**
  * Fields that only exist in the snapshot payload.
@@ -174,7 +177,7 @@ function assertClientHalf(clientText) {
   if (!clientText.includes("__ModuleLoader__")) {
     throw new Error("lib/client.js is not wrapped in the ModuleLoader factory");
   }
-  for (const chunk of [SNAPSHOT_CHUNK, SOURCES_CHUNK]) {
+  for (const chunk of [SNAPSHOT_CHUNK, SOURCES_CHUNK, EDITOR_CHUNK]) {
     if (!clientText.includes(`"${chunk}"`)) {
       throw new Error(`lib/client.js no longer names its lazy chunk ${chunk}; the tab would fetch a file nobody built`);
     }
@@ -187,6 +190,13 @@ function assertClientHalf(clientText) {
   for (const field of SOURCES_ONLY_FIELDS) {
     if (clientText.includes(field)) {
       throw new Error(`lib/client.js contains ${field}; the test source must stay in ${SOURCES_CHUNK}`);
+    }
+  }
+  // The editor must stay in its chunk: a stray import here would pull
+  // CodeMirror into every page boot.
+  for (const symbol of ["EditorView", "CodeMirror", "@codemirror/"]) {
+    if (clientText.includes(symbol)) {
+      throw new Error(`lib/client.js contains ${symbol}; the editor must stay in ${EDITOR_CHUNK}`);
     }
   }
   const bytes = Buffer.byteLength(clientText);
@@ -228,6 +238,24 @@ function assertSourcesChunk(chunkText) {
   const bytes = Buffer.byteLength(chunkText);
   if (bytes > SOURCES_MAX_BYTES) {
     throw new Error(`${SOURCES_CHUNK} is ${bytes}B (> ${SOURCES_MAX_BYTES}B); the sources chunk blew its budget`);
+  }
+}
+
+/**
+ * Assert the editor chunk registers its own name and really carries CodeMirror.
+ * @param chunkText - built `client.editor.js`, wrapper included.
+ * @throws when the chunk field, the renderer marker or the budget is wrong.
+ */
+function assertEditorChunk(chunkText) {
+  if (!chunkText.includes(`chunk: "${EDITOR_CHUNK}"`)) {
+    throw new Error(`${EDITOR_CHUNK} does not register its own name in its chunk: field`);
+  }
+  if (!chunkText.includes("codemirror")) {
+    throw new Error(`${EDITOR_CHUNK} does not carry the CodeMirror renderer`);
+  }
+  const bytes = Buffer.byteLength(chunkText);
+  if (bytes > EDITOR_MAX_BYTES) {
+    throw new Error(`${EDITOR_CHUNK} is ${bytes}B (> ${EDITOR_MAX_BYTES}B); the editor chunk blew its budget`);
   }
 }
 
@@ -276,12 +304,20 @@ const sources = await bundle(join(packageRoot, "src", "client", "sources-chunk.t
 const sourcesText = wrap(manifest.name, sources, { chunk: SOURCES_CHUNK });
 await writeFile(join(libRoot, SOURCES_CHUNK), sourcesText, "utf8");
 
+const editor = await bundle(join(packageRoot, "src", "client", "editor-chunk.ts"), "cjs", {
+  external: CLIENT_EXTERNALS,
+  minify: true,
+});
+const editorText = wrap(manifest.name, editor, { chunk: EDITOR_CHUNK });
+await writeFile(join(libRoot, EDITOR_CHUNK), editorText, "utf8");
+
 assertClientHalf(clientText);
 assertSnapshotChunk(snapshotText);
 assertSourcesChunk(sourcesText);
+assertEditorChunk(editorText);
 await assertHostHalf(join(libRoot, "index.js"));
 
-const written = ["index.js", "client.js", SNAPSHOT_CHUNK, SOURCES_CHUNK];
+const written = ["index.js", "client.js", SNAPSHOT_CHUNK, SOURCES_CHUNK, EDITOR_CHUNK];
 const sizes = await Promise.all(
   written.map(async file => {
     const bytes = await readFile(join(libRoot, file));

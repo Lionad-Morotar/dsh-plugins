@@ -17,6 +17,7 @@ import snapshotData from "./data/snapshot.json" with { type: "json" };
 import sourcesData from "./data/sources.json" with { type: "json" };
 import { ensureStyles } from "./styles.ts";
 import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
+import type { EditorChunkModule } from "./code-contract.ts";
 import type { TestSnapshot } from "./model.ts";
 import type { SourceBundle } from "./source.ts";
 
@@ -107,6 +108,9 @@ function mount(host: HTMLElement, snapshot: TestSnapshot, sources: SourceBundle)
     strings: STRINGS,
     loadSnapshot: async () => snapshot,
     loadSources: async () => sources,
+    // The preview bundle has no ModuleLoader, so the editor chunk is a plain
+    // dynamic import here; the page is a development surface, not the host.
+    loadEditor: async () => (await import("./editor-chunk.ts")) as unknown as EditorChunkModule,
   });
   createRoot(host).render(<View />);
 }

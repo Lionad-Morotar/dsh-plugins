@@ -38,3 +38,12 @@ export const SNAPSHOT_CHUNK = "client.snapshot.js";
  * opens a file, and a failed fetch of one chunk leaves the other usable.
  */
 export const SOURCES_CHUNK = "client.sources.js";
+
+/**
+ * Lazy client chunk carrying CodeMirror and the highlighted code view.
+ *
+ * The editor is hundreds of kilobytes of this package's browser half and only
+ * matters once a reader selects a file, so it is fetched on first selection and
+ * never folded into the startup bundle.
+ */
+export const EDITOR_CHUNK = "client.editor.js";

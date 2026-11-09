@@ -446,3 +446,31 @@ body.tst-pane-resizing {
   font-size: var(--tst-fs-small);
 }
 
+
+/* Syntax colours ---------------------------------------------------------- */
+
+/* The editor resolves these against the host's semantic states, so the code
+   highlights follow light/dark without a second palette. The board itself stays
+   near-monochrome; colour appears only inside code. */
+[data-testid="testboard"] {
+  --tst-syn-keyword: var(--dsw-alias-state-business-primary, #3b82f6);
+  --tst-syn-string: var(--dsw-alias-state-success-primary, #2f8f4e);
+  --tst-syn-number: var(--dsw-alias-state-warn-primary, #b7791f);
+  --tst-syn-comment: var(--dsw-alias-label-tertiary, #a39c91);
+  --tst-syn-function: color-mix(in oklab, var(--dsw-alias-state-business-primary, #3b82f6) 70%, var(--dsw-alias-label-primary, #14110d));
+  --tst-syn-type: var(--dsw-alias-state-error-primary, #c02b2b);
+  --tst-syn-property: var(--dsw-alias-label-secondary, #6b655c);
+  --tst-syn-invalid: var(--dsw-alias-state-error-primary, #c02b2b);
+}
+
+/* When the editor is mounted it owns the scrolling; the wrapper only sizes it. */
+[data-tst="detail-code"][data-editor="true"] {
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+[data-tst="code-view"],
+[data-tst="code-view"] .cm-editor {
+  height: 100%;
+  min-height: 0;
+}

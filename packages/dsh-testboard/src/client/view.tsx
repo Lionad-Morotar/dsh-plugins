@@ -28,6 +28,7 @@ import {
   resetLeftPaneWidth,
   type PaneWidthStorage,
 } from "./pane-width.ts";
+import type { EditorChunkModule } from "./code-contract.ts";
 import type { SourceBundle } from "./source.ts";
 import { CaseList } from "./components/case-list.tsx";
 import { DetailPane, type DetailPaneStrings } from "./components/detail-pane.tsx";
@@ -83,6 +84,11 @@ export interface TestboardViewOptions {
    * snapshot and independently of it.
    */
   readonly loadSources: () => Promise<SourceBundle>;
+  /**
+   * Resolves the code editor. Requested on the first row selection rather than
+   * on mount: a reader who never selects a file never pays for CodeMirror.
+   */
+  readonly loadEditor: () => Promise<EditorChunkModule>;
 }
 
 /**
@@ -126,12 +132,13 @@ function useHostTheme(): "dark" | "light" {
  * @returns the component the slot mounts.
  */
 export function createTestboardView(options: TestboardViewOptions): (props: ConversationViewProps) => ReactElement {
-  const { strings, loadSnapshot, loadSources } = options;
+  const { strings, loadSnapshot, loadSources, loadEditor } = options;
 
   return function TestboardView(): ReactElement {
     const theme = useHostTheme();
     const [snapshot, setSnapshot] = useState<TestSnapshot | undefined>(undefined);
     const [sources, setSources] = useState<SourceBundle | undefined>(undefined);
+    const [editor, setEditor] = useState<EditorChunkModule | undefined>(undefined);
     const [loadError, setLoadError] = useState<string | undefined>(undefined);
     const [filter, setFilter] = useState<RowFilter>("all");
     const [query, setQuery] = useState("");
@@ -139,6 +146,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
     const [selection, setSelection] = useState<NavSelection | undefined>(undefined);
     const listRef = useRef<HTMLDivElement | null>(null);
+    const editorRequested = useRef(false);
 
     const storage: PaneWidthStorage | null = useMemo(() => paneWidthStorage(), []);
     const [leftWidth, setLeftWidth] = useState<number | null>(() => readLeftPaneWidth(storage));
@@ -174,6 +182,27 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
         live = false;
       };
     }, [loadSources]);
+
+    // CodeMirror is the largest chunk this package ships, so it is fetched only
+    // after the first selection, and a failed fetch leaves the plain source
+    // lines in place rather than failing the tab. The flag is cleared on failure
+    // so the next selection retries.
+    useEffect(() => {
+      if (selection === undefined || editorRequested.current) return undefined;
+      editorRequested.current = true;
+      let live = true;
+      loadEditor().then(
+        loaded => {
+          if (live) setEditor(loaded);
+        },
+        () => {
+          if (live) editorRequested.current = false;
+        },
+      );
+      return () => {
+        live = false;
+      };
+    }, [selection, loadEditor]);
 
     // The rows are grouped before anything reads them, and the flat navigation
     // order is built from the groups rather than from the sorted row list: the
@@ -350,6 +379,8 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
               row={selectedRow}
               selectedCase={selectedCase}
               sources={sources}
+              editor={editor}
+              theme={theme}
               strings={strings}
           />
         </div>

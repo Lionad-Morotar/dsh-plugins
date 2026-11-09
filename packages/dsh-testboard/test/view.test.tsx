@@ -14,7 +14,7 @@
  * supplies the two things the gesture reads (capture success and a measured
  * pane width) rather than pretending the browser would.
  */
-import { act, createElement } from "react";
+import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -82,10 +82,14 @@ const STRINGS: TestboardViewStrings = {
   listLabel: "测试文件与用例",
 };
 
+// The editor chunk is never resolved in the shared harness: the pane's plain
+// fallback is what the rest of these tests read. The last describe mounts its
+// own board with a resolving loader to cover the hand-over.
 const View = createTestboardView({
   strings: STRINGS,
   loadSnapshot: async () => SNAPSHOT,
   loadSources: async () => SOURCES,
+  loadEditor: () => new Promise<never>(() => {}),
 });
 
 function rows(host: HTMLElement): HTMLElement[] {
@@ -623,5 +627,53 @@ describe("testboard view", () => {
       expect(split?.style.getPropertyValue("--tst-left-pane")).toBe("512px");
       expect(handle(host).getAttribute("aria-valuenow")).toBe("512");
     });
+  });
+});
+
+/**
+ * The editor seam: the pane keeps plain lines until the chunk resolves, then
+ * hands the file's text and the selected case's line to the loaded component.
+ */
+describe("code editor chunk", () => {
+  it("swaps the plain fallback for the loaded editor and forwards the selected line", async () => {
+    const seen: { path: string; line: string; textLength: number }[] = [];
+    const Stub = (props: { text: string; path: string; activeLine?: number }): ReactElement => {
+      seen.push({ path: props.path, line: String(props.activeLine ?? ""), textLength: props.text.length });
+      return createElement("div", { "data-testid": "code-view-stub", "data-path": props.path });
+    };
+    const WithEditor = createTestboardView({
+      strings: STRINGS,
+      loadSnapshot: async () => SNAPSHOT,
+      loadSources: async () => SOURCES,
+      loadEditor: async () => ({ renderer: "codemirror", CodeView: Stub }),
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(createElement(WithEditor));
+    });
+
+    const firstRow = host.querySelector<HTMLElement>('[data-testid="file-row"]');
+    const path = firstRow?.getAttribute("data-path") ?? "";
+    await act(async () => {
+      firstRow?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // Let the loader's promise settle: a macrotask flushes the microtask chain
+    // the loader resolves on, so React's update stays inside act().
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(host.querySelector('[data-testid="code-view-stub"]')?.getAttribute("data-path")).toBe(path);
+    expect(seen.at(-1)?.textLength ?? 0).toBeGreaterThan(0);
+    expect(seen.at(-1)?.line).toBe("");
+
+    const firstCase = host.querySelector<HTMLElement>('[data-testid="case-item"]');
+    await act(async () => {
+      firstCase?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(seen.at(-1)?.line).not.toBe("");
+    root.unmount();
+    host.remove();
   });
 });

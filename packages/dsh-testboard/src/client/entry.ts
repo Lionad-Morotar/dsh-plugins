@@ -13,6 +13,7 @@
 import { LOCALE_NAMESPACE, PACKAGE_NAME, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../shared.ts";
 import { EN, ZH } from "./copy.ts";
 import { boot as bootSnapshot, loadSnapshotChunk, type LoaderRequire } from "./snapshot-loader.ts";
+import { bootEditor, loadEditorChunk } from "./editor-loader.ts";
 import { bootSources, loadSourcesChunk } from "./sources-loader.ts";
 import { ensureStyles } from "./styles.ts";
 import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
@@ -37,6 +38,7 @@ export type { LoaderRequire } from "./snapshot-loader.ts";
 export function boot(require: LoaderRequire): void {
   bootSnapshot(require);
   bootSources(require);
+  bootEditor(require);
 }
 
 /** The slice of the client context this entry uses. */
@@ -127,6 +129,7 @@ export function apply(ctx: TestboardClientContext): () => void {
     } satisfies TestboardViewStrings,
     loadSnapshot: () => loadSnapshotChunk().then(chunk => chunk.snapshot),
     loadSources: () => loadSourcesChunk().then(chunk => chunk.sources),
+    loadEditor: () => loadEditorChunk(),
   });
 
   // `inject` is a deferred registration: the factory runs when the slot itself

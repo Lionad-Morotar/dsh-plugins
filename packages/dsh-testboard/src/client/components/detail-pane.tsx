@@ -13,6 +13,7 @@
  */
 import { useEffect, useRef, type ReactElement } from "react";
 
+import type { EditorChunkModule } from "../code-contract.ts";
 import { fileNameOf, formatDuration, syntheticFailure } from "../format.ts";
 import type { TestCase, TestFileRow } from "../model.ts";
 import { splitSourceLines, type SourceBundle } from "../source.ts";
@@ -41,6 +42,9 @@ export interface DetailPaneProps {
   readonly selectedCase: TestCase | undefined;
   /** The loaded source bundle, or undefined while it is still being fetched. */
   readonly sources: SourceBundle | undefined;
+  /** The lazily loaded editor, or undefined until a selection asks for it. */
+  readonly editor: EditorChunkModule | undefined;
+  readonly theme: "dark" | "light";
   readonly strings: DetailPaneStrings;
 }
 
@@ -49,7 +53,7 @@ export interface DetailPaneProps {
  * @param props - the selection, the source bundle and locale-bound strings.
  * @returns the pane element.
  */
-export function DetailPane({ row, selectedCase, sources, strings }: DetailPaneProps): ReactElement {
+export function DetailPane({ row, selectedCase, sources, editor, theme, strings }: DetailPaneProps): ReactElement {
   const highlightRef = useRef<HTMLDivElement | null>(null);
   const highlightLine = selectedCase?.line;
 
@@ -111,10 +115,10 @@ export function DetailPane({ row, selectedCase, sources, strings }: DetailPanePr
         </div>
       )}
 
-      <div data-testid="detail-code" data-tst="detail-code">
+      <div data-testid="detail-code" data-tst="detail-code" data-editor={editor === undefined ? undefined : "true"}>
         {text === undefined ? (
           <p data-tst="detail-code-missing">{strings.sourceMissing}</p>
-        ) : (
+        ) : editor === undefined ? (
           <div data-tst="code-lines">
             {lines.map((content, index) => {
               const lineNumber = index + 1;
@@ -133,6 +137,8 @@ export function DetailPane({ row, selectedCase, sources, strings }: DetailPanePr
               );
             })}
           </div>
+        ) : (
+          <editor.CodeView text={text} path={row.path} activeLine={highlightLine} theme={theme} />
         )}
       </div>
     </div>
