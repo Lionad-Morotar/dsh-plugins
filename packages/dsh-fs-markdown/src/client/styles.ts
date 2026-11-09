@@ -51,11 +51,13 @@ export const MARKDOWN_STYLES = `
   line-height: 1.72;
   scrollbar-width: thin;
 }
+/* The pane is the measure: the workbench already gives the reader a resizable
+   split, so a second width cap inside it only adds margins the reader cannot
+   reclaim. The body fills the width it was given; the scroller's own padding
+   keeps the text off the edges. */
 .fmd-editor .cm-content {
   box-sizing: border-box;
   width: 100%;
-  max-width: 72ch;
-  margin: 0 auto;
   padding: 0;
   caret-color: var(--fmd-text);
 }
