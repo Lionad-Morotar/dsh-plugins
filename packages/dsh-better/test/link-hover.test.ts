@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   COPY_FEEDBACK_MS,
+  LINK_HOVER_DEPART_MS,
   LINK_HOVER_ADDRESS_CLASS,
   LINK_HOVER_COPY_CLASS,
   LINK_HOVER_PANEL_CLASS,
@@ -394,6 +395,28 @@ describe("how the panel goes away", () => {
     expect(visible()).toBe(true);
   });
 
+  it("stays open across the gap, long enough to reach the copy button", async () => {
+    vi.useFakeTimers();
+    const { anchor } = flowLink();
+    hover(anchor);
+    // The gap belongs to the transcript, so the destination is the page, not the panel.
+    leave(anchor, document.body);
+    expect(visible()).toBe(true);
+    hover(copyButton());
+    await vi.advanceTimersByTimeAsync(LINK_HOVER_DEPART_MS);
+    expect(visible()).toBe(true);
+  });
+
+  it("closes once the pointer leaves the link and never reaches the panel", async () => {
+    vi.useFakeTimers();
+    const { anchor } = flowLink();
+    hover(anchor);
+    leave(anchor, document.body);
+    expect(visible()).toBe(true);
+    await vi.advanceTimersByTimeAsync(LINK_HOVER_DEPART_MS);
+    expect(visible()).toBe(false);
+  });
+
   it("closes once the pointer leaves the panel", () => {
     const { anchor } = flowLink();
     hover(anchor);
@@ -464,6 +487,10 @@ describe("the panel as a surface", () => {
     // sheet must wrap it and cap the width against the viewport.
     expect(LINK_HOVER_SHEET).toContain("max-width: min(480px, calc(100vw - 24px))");
     expect(LINK_HOVER_SHEET).toContain("overflow-wrap: anywhere");
+    // The pads are what the pointer actually crosses. Without them the 8px
+    // gap belongs to the transcript and the panel closes on the way to the button.
+    expect(LINK_HOVER_SHEET).toContain(".dshBetter_linkHover::before");
+    expect(LINK_HOVER_SHEET).toContain("top: -20px");
     expect(LINK_HOVER_SHEET).not.toContain("text-overflow: ellipsis");
     expect(LINK_HOVER_SHEET).not.toContain("-webkit-line-clamp");
   });

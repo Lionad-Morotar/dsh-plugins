@@ -30,6 +30,17 @@ export {
 /** How long the copy button keeps its outcome before offering the copy again. */
 export const COPY_FEEDBACK_MS = 1200;
 
+/**
+ * How long the panel stays after the pointer leaves the link.
+ *
+ * The panel sits 8px off the link, and that gap belongs to the transcript, not
+ * to the panel. A `mouseout` fired there names the paragraph as its destination,
+ * so closing in the same event makes the copy button unreachable: the panel is
+ * gone before the pointer can arrive. The wait is long enough to cross the gap
+ * and short enough that moving away still dismisses it.
+ */
+export const LINK_HOVER_DEPART_MS = 300;
+
 /** Gap between the link and the panel, in pixels. */
 const ANCHOR_GAP = 8;
 
@@ -223,6 +234,14 @@ export function installLinkHover(doc: Document, deps: LinkHoverDeps): () => void
   let copy: HTMLButtonElement | null = null;
   let current: { readonly anchor: Element; readonly href: string } | null = null;
   let restore: ReturnType<typeof setTimeout> | null = null;
+  let depart: ReturnType<typeof setTimeout> | null = null;
+
+  /** Drop a pending close. The pointer reached the panel, or came back to the link. */
+  const cancelDepart = (): void => {
+    if (depart === null) return;
+    clearTimeout(depart);
+    depart = null;
+  };
 
   /** Build the panel once, on the first link that deserves one. */
   const ensurePanel = (): HTMLElement => {
@@ -283,6 +302,7 @@ export function installLinkHover(doc: Document, deps: LinkHoverDeps): () => void
   /** Close the panel and forget the link it described. */
   const close = (): void => {
     current = null;
+    cancelDepart();
     if (restore !== null) {
       clearTimeout(restore);
       restore = null;
@@ -317,20 +337,37 @@ export function installLinkHover(doc: Document, deps: LinkHoverDeps): () => void
     panel !== null && target instanceof view.Node && panel.contains(target);
 
   const onOver = (event: Event): void => {
+    // Arriving at the panel, including by crossing the gap under the link,
+    // is the moment the pending close must be dropped. Checked before the
+    // link test: the panel is not an anchor, so it would otherwise be ignored.
+    if (inPanel(event.target)) {
+      cancelDepart();
+      return;
+    }
     const found = linkOf(event.target);
     if (found === undefined) return;
+    cancelDepart();
     open(found.anchor, found.href);
   };
 
   const onOut = (event: Event): void => {
     if (current === null) return;
     const to = (event as MouseEvent).relatedTarget;
-    // The pointer crossing from the link into the panel is the gesture that
-    // makes the copy button reachable at all, so it must not close anything.
     if (inPanel(to)) return;
     if (to instanceof view.Node && current.anchor.contains(to)) return;
     const from = event.target;
-    if (from instanceof view.Node && (current.anchor.contains(from) || inPanel(from))) close();
+    if (!(from instanceof view.Node)) return;
+    if (current.anchor.contains(from)) {
+      // The destination is the gap, not the panel. Closing now is what makes
+      // the copy button impossible to reach, so the close waits.
+      cancelDepart();
+      depart = setTimeout(() => {
+        depart = null;
+        close();
+      }, LINK_HOVER_DEPART_MS);
+      return;
+    }
+    if (inPanel(from)) close();
   };
 
   const onFocusIn = (event: Event): void => {
@@ -375,6 +412,7 @@ export function installLinkHover(doc: Document, deps: LinkHoverDeps): () => void
     doc.removeEventListener("focusout", onFocusOut, true);
     doc.removeEventListener("keydown", onKeyDown, true);
     doc.removeEventListener("scroll", onScroll, true);
+    cancelDepart();
     if (restore !== null) {
       clearTimeout(restore);
       restore = null;

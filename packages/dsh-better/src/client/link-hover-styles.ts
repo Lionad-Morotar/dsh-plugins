@@ -56,6 +56,29 @@ export const LINK_HOVER_SHEET = `
   line-height: 18px;
   animation: dshBetterLinkHoverIn 120ms ease-out;
 }
+/*
+ * The panel is placed 8px off the link. That strip is not the panel, so a
+ * pointer crossing it fires mouseout with the transcript as the destination
+ * and the panel used to close before the copy button could be reached.
+ * These two pads belong to the panel for hit testing only: one reaches up
+ * toward a link above, one reaches down toward a link the panel flipped over.
+ * They are invisible and wider than the gap, so the pointer never has to
+ * cross a dead pixel to get to the button.
+ */
+.${LINK_HOVER_PANEL_CLASS}::before,
+.${LINK_HOVER_PANEL_CLASS}::after {
+  content: "";
+  position: absolute;
+  left: -12px;
+  right: -12px;
+  height: 20px;
+}
+.${LINK_HOVER_PANEL_CLASS}::before {
+  top: -20px;
+}
+.${LINK_HOVER_PANEL_CLASS}::after {
+  bottom: -20px;
+}
 .${LINK_HOVER_PANEL_CLASS}[hidden] {
   display: none;
 }

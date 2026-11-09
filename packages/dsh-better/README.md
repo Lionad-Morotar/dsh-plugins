@@ -163,7 +163,7 @@ fork 会话只算自己的：seeded 会话的日志前缀是父会话的事件�
 
 复制先走 `navigator.clipboard.writeText`，被拒时退到临时 textarea 加 `document.execCommand("copy")`。成功后按钮文案变成「已复制」，两路都失败变成「复制失败」，1200ms 后回到「复制」。按钮的 click 阻止默认行为与冒泡。
 
-关闭条件：指针离开链接且离开面板、链接失焦且焦点不在面板内、Escape、窗口滚动。指针从链接移进面板不关，否则复制按钮永远够不着。`(hover: none)` 的设备整个不挂面板，`prefers-reduced-motion: reduce` 时不做位移与淡入。颜色全部走宿主 `--dsw-alias-*` token，与技能面板同一套，亮暗主题自动跟随。样式表落在自己的 `#dsh-better-link-hover` 标签里，热重载再挂不会插第二份。
+关闭条件：指针离开链接且离开面板、链接失焦且焦点不在面板内、Escape、窗口滚动。链接和面板之间有 8px 空隙，空隙属于正文，指针经过时 `mouseout` 的落点不是面板。所以离开链接后先等 300ms 再关，这段时间里进入面板就取消关闭。面板上下各有一条透明的命中垫，盖住这 8px，指针不用穿过死区。否则复制按钮永远够不着。`(hover: none)` 的设备整个不挂面板，`prefers-reduced-motion: reduce` 时不做位移与淡入。颜色全部走宿主 `--dsw-alias-*` token，与技能面板同一套，亮暗主题自动跟随。样式表落在自己的 `#dsh-better-link-hover` 标签里，热重载再挂不会插第二份。
 
 ## 技能别名
 
