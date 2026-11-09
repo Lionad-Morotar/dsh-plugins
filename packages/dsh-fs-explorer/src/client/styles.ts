@@ -1106,8 +1106,6 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 }
 
 .fx-md {
-  max-width: 72ch;
-  margin: 0 auto;
   padding: 18px 24px 64px;
   font-size: calc(var(--fx-fs) * 0.9286);
   line-height: 1.72;
