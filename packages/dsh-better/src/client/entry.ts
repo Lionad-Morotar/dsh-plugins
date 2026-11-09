@@ -562,7 +562,7 @@ export const clientPlugin = {
       "dsh-better: compaction count",
     );
 
-    // The continue button under an interrupted turn. The send action is injected
+    // The continue button under a stopped turn. The send action is injected
     // rather than imported by the component: the slot hands every entry the
     // owner's position value and the standard kit, and the one thing it cannot
     // hand over is a way to send, so that is what `inject` adds. The closure is

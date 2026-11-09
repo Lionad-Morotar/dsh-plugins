@@ -80,8 +80,8 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "skill.usage.workspace": "本工作区调用",
     "skill.params": "参数",
     "skill.hint.insert": "点击插入",
-    // The continue offer under an interrupted turn. `sending` is the pressed
-    // state, so the button never looks inert while the message is in flight.
+    // The continue offer under a stopped turn. `sending` is the pressed state,
+    // so the button never looks inert while the message is in flight.
     "continue.label": "继续",
     "continue.sending": "继续中…",
     // The link address panel. The button's own label doubles as its accessible
