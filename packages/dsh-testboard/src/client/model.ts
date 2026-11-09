@@ -18,6 +18,14 @@ export interface TestCase {
   readonly line: number;
   readonly status: TestStatus;
   readonly durationMs: number;
+  /**
+   * The runner's own failure text, when it produced one.
+   *
+   * Carried per case rather than per file because the detail pane shows one
+   * case: a file-level message would have to be re-split to find the case it
+   * belongs to, and the reporter already attributes it.
+   */
+  readonly message?: string;
 }
 
 /** One test file and its cases. */
@@ -38,11 +46,27 @@ export interface TestPackage {
  * `statusSource` is part of the data, not a comment: the board renders a
  * prototype, and a reader (or a later slice) must be able to tell a synthetic
  * reading from a real run without consulting this package's source.
+ *
+ * The three optional fields are only present on a real run: a synthetic
+ * snapshot is generated at build time and has no workspace, no stamp and no
+ * measured elapsed time (its `wallClockMs` is derived from the parallel-process
+ * assumption instead).
  */
 export interface TestSnapshot {
   readonly version: number;
-  readonly statusSource: "synthetic";
+  readonly statusSource: "synthetic" | "vitest";
   readonly packages: readonly TestPackage[];
+  /** Absolute workspace the run happened in; absent on a synthetic snapshot. */
+  readonly workspace?: string;
+  /** ISO stamp of when the run finished. */
+  readonly generatedAt?: string;
+  /**
+   * How long the run actually took.
+   *
+   * A real run measures this, so it replaces the parallel-process estimate the
+   * header otherwise derives. Absent means "derive it", not "zero".
+   */
+  readonly wallClockMs?: number;
 }
 
 /** Totals for the board's header. */
@@ -145,9 +169,10 @@ export function summarize(snapshot: TestSnapshot): TestSummary {
     failed,
     skipped,
     durationMs,
-    // Derived from the same sum, so the header's duration and the timeline can
-    // never disagree about how long the run took.
-    wallClockMs: Math.ceil(durationMs / PARALLEL_TEST_PROCESSES),
+    // A measured run reports what it measured; only a synthetic snapshot falls
+    // back to the parallel-process estimate, and then from the same sum, so the
+    // header's duration and the timeline can never disagree.
+    wallClockMs: snapshot.wallClockMs ?? Math.ceil(durationMs / PARALLEL_TEST_PROCESSES),
   };
 }
 

@@ -1,11 +1,225 @@
-// Host half of dsh-testboard. The Loader mounts both halves by package name,
-// so this entry must resolve even though the tab lives entirely in the client
-// bundle; apply stays empty until a host-side service is needed.
-export const name = "dsh-testboard";
-export const inject: string[] = [];
+/**
+ * Host half: `/testboard/api` — the board's live data and its run control.
+ *
+ * The tab used to render a snapshot committed at build time; it now follows the
+ * session's workspace and can start a run in it. That makes this half the only
+ * place in the package that touches the filesystem or spawns a process, and the
+ * three services it needs are declared in `inject` rather than probed:
+ *
+ * - `subprocess`, `sessions` and `sessionPersistence` are host guarantees, so a
+ *   declaration is correct: a host missing one should keep this row pending
+ *   rather than let it half-work.
+ * - `webServer` is NOT declared. It arrives after this row activates in the
+ *   desktop composition, and a declaration would keep the whole plugin pending
+ *   forever on a host that never provides it. It is polled through `ctx.get`
+ *   instead, bounded, and a host without one simply gets no routes.
+ */
+import { access, readFile, stat } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 
-export function apply(): () => void {
-  return () => {};
+import type { Context } from "@deepseek-ai/cordis";
+
+import { createRunEngine, type SubprocessLike } from "./host/run-engine.ts";
+import { registerTestboardRoutes, type TestboardRouteDeps, type WebServerFace } from "./host/routes.ts";
+import {
+  resolveSessionRoot,
+  type SessionPersistenceFace,
+  type SessionsFace,
+} from "./host/workspace.ts";
+import { PACKAGE_NAME, type RunScope, type TestboardState, type WireRunStartResponse } from "./shared.ts";
+
+export { PACKAGE_NAME };
+
+/** Loader row name; matches `package.json#name` and the patch row id. */
+export const name = PACKAGE_NAME;
+
+/** Services the host half needs before it can answer a request. */
+export const inject = ["subprocess", "sessions", "sessionPersistence"];
+
+/** Structural slice of the Cordis context this package reads. */
+interface HostContext {
+  get?(name: string): unknown;
+  effect?(setup: () => (() => void | Promise<void>) | Promise<void> | void): void;
+}
+
+/**
+ * How often to re-read `webServer` while it is still absent, and how long to
+ * keep trying. The desktop web app provides it well inside the first second;
+ * the cap exists so a host without one does not poll forever.
+ */
+const WEB_SERVER_POLL_MS = 250;
+const WEB_SERVER_WAIT_MS = 15000;
+
+function readService(ctx: HostContext, name: string): unknown {
+  const value = ctx.get?.(name);
+  return value === null ? undefined : value;
+}
+
+/**
+ * Register the routes once `webServer` exists.
+ *
+ * A one-shot `ctx.get("webServer")` during `apply` misses the desktop
+ * composition: this row activates before the web app provides the server, so the
+ * probe reads undefined and the routes would never be registered. `ctx.inject`
+ * and the `internal/service` event only re-check the scope that provided the
+ * service, and a loader row's scope does not inherit the root's isolation table,
+ * so its own `ctx.get` never observes a service the root provides (verified
+ * against cordis 4). Polling is what actually sees it.
+ *
+ * @param host - the context `apply` received.
+ * @param register - mounts the prefix; receives the server it registers on.
+ */
+function whenWebServer(host: HostContext, register: (webServer: WebServerFace) => void): void {
+  const found = (): WebServerFace | undefined => readService(host, "webServer") as WebServerFace | undefined;
+  const present = found();
+  if (present !== undefined) {
+    register(present);
+    return;
+  }
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    const webServer = found();
+    if (webServer === undefined) {
+      if (Date.now() - startedAt > WEB_SERVER_WAIT_MS) clearInterval(timer);
+      return;
+    }
+    clearInterval(timer);
+    register(webServer);
+  }, WEB_SERVER_POLL_MS);
+}
+
+/**
+ * Whether a workspace has a vitest to run.
+ *
+ * Checked before spawning so the board can say "no runner in this workspace"
+ * instead of surfacing a spawn failure. The binary is what actually gets
+ * executed, so its presence is the honest test.
+ *
+ * @param workspace - canonical workspace path.
+ * @returns true when the local binary exists.
+ */
+async function hasVitest(workspace: string): Promise<boolean> {
+  try {
+    await access(join(workspace, "node_modules", ".bin", "vitest"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether a path is a directory that still exists.
+ *
+ * @param path - absolute path.
+ * @returns true when it is a directory.
+ */
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read one file out of a workspace, synchronously.
+ *
+ * The line lookup runs inside the reporter parse, which is synchronous by
+ * design (it is pure over a payload), so this one read cannot be awaited. It is
+ * a test file of a few kilobytes, read once per run.
+ *
+ * @param workspace - canonical workspace path.
+ * @param path - workspace-relative path.
+ * @returns the text, or undefined when it is not a readable file.
+ */
+function readWorkspaceFileSync(workspace: string, path: string): string | undefined {
+  try {
+    return readFileSync(join(workspace, path), "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read one file out of a workspace.
+ *
+ * The path has already been normalized and confined by the route, so this only
+ * has to refuse a directory and an unreadable file.
+ *
+ * @param workspace - canonical workspace path.
+ * @param path - workspace-relative path.
+ * @returns the text, or undefined when it is not a readable file.
+ */
+async function readWorkspaceFile(workspace: string, path: string): Promise<string | undefined> {
+  try {
+    const info = await stat(join(workspace, path));
+    if (!info.isFile()) return undefined;
+    return await readFile(join(workspace, path), "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+export function apply(ctx: Context): void {
+  const host = ctx as unknown as HostContext;
+
+  whenWebServer(host, webServer => {
+    const sessions = readService(host, "sessions") as SessionsFace | undefined;
+    const sessionPersistence = readService(host, "sessionPersistence") as SessionPersistenceFace | undefined;
+    const subprocess = readService(host, "subprocess") as SubprocessLike | undefined;
+
+    // The line lookup needs the file's text, which needs the workspace; the
+    // engine hands both back so this stays a pure read with no ambient state.
+    const engine = createRunEngine({
+      subprocess: subprocess ?? {
+        // A host without a subprocess service cannot run anything. The engine is
+        // still built so state reads work; `startRun` refuses before reaching it.
+        spawn: () => ({ done: Promise.reject(new Error("no subprocess service")), collected: {} }),
+      },
+      fileTextOf: (workspace, path) => readWorkspaceFileSync(workspace, path),
+    });
+
+    async function resolveWorkspaceRoot(sessionId: string): Promise<string | undefined> {
+      return resolveSessionRoot(sessionId, sessions, sessionPersistence);
+    }
+
+    async function readState(workspace: string): Promise<TestboardState> {
+      // A session can outlive the directory it pointed at (a deleted checkout, a
+      // renamed folder). Saying so is more useful than an empty board that looks
+      // like a workspace with no tests.
+      if (!(await isDirectory(workspace))) return { workspace, error: "unknown-workspace" };
+      const state = engine.getState(workspace);
+      return {
+        workspace,
+        workspaceName: basename(workspace),
+        ...state,
+        // The last run's error is also the board's: a reader who reloads after a
+        // crashed run must still see why the numbers are stale.
+        ...(state.run?.status === "error" ? { error: "run-failed" as const } : {}),
+      };
+    }
+
+    async function startRun(workspace: string, scope: RunScope): Promise<WireRunStartResponse> {
+      if (subprocess === undefined) return { ok: false, error: "no-subprocess" };
+      if (!(await hasVitest(workspace))) return { ok: false, error: "no-vitest" };
+      const started = engine.start(workspace, scope);
+      return started.ok ? { ok: true, runId: started.runId } : started;
+    }
+
+    const deps: TestboardRouteDeps = {
+      resolveWorkspaceRoot,
+      readState,
+      startRun,
+      cancelRun: workspace => engine.cancel(workspace),
+      readSource: (workspace, path) => readWorkspaceFile(workspace, path),
+    };
+
+    const unregister = registerTestboardRoutes(webServer, deps);
+    host.effect?.(() => () => {
+      unregister();
+    });
+  });
 }
 
 export default { name, inject, apply };
