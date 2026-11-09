@@ -531,7 +531,11 @@ export function createFixtureRuntime(options: FixtureRuntimeOptions): TestboardR
     // state, so the loop can show the same failure being fixed again.
     board = plan.board;
     demoPhase = "running";
-    runCount += 1;
+    // The numbering restarts with the cycle. `runNumber` is what the header uses
+    // to tell a first run from a rerun, so carrying the previous cycle's count
+    // into the next one would open every loop after the first on "Rerunning N
+    // tests" while the board is actually starting over.
+    runCount = 1;
     stageStartedMs = Date.now();
     run = {
       runId: `demo-run-${String(runCount)}`,

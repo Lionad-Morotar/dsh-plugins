@@ -661,7 +661,9 @@ describe("createRunEngine: streaming", () => {
   function tailReader(state: { text: string }): { readFrom(from: number): { text: string; lossy: boolean } } {
     return {
       readFrom(from) {
-        return { text: state.text.slice(from), lossy: false };
+        // `from` is a byte offset, which is what the host service takes. Slicing
+        // the string by that number would only agree while the text is ASCII.
+        return { text: Buffer.from(state.text, "utf8").subarray(from).toString("utf8"), lossy: false };
       },
     };
   }
@@ -737,5 +739,158 @@ describe("createRunEngine: streaming", () => {
     await startOk(engine, WORKSPACE, ALL).done;
 
     expect(engine.getState(WORKSPACE).run?.cases.map(entry => entry.name)).toEqual(["one", "two"]);
+  });
+});
+
+/**
+ * The incremental read's unit: bytes, not characters.
+ *
+ * `readFrom(fromByte)` takes a byte offset, and the engine used to advance its
+ * cursor by the string's own length. Those agree only while the output is ASCII.
+ * A vitest run in a repository with Chinese test titles or an emoji in a failure
+ * message produces multi-byte characters, and a cursor that counts characters
+ * drifts behind the byte offset it is feeding back: every poll then re-reads a
+ * slice it already parsed, and cases get counted twice or lost.
+ */
+describe("createRunEngine: UTF-8 stream cursor", () => {
+  /**
+   * A reader over a UTF-8 buffer, sliced at byte offsets.
+   *
+   * This is the host service's contract: the offset is bytes into the collected
+   * output. `chunkBytes` makes the child look like it flushed in pieces, which
+   * is what forces the multi-byte boundary case.
+   */
+  function byteReader(buffer: Buffer, chunkBytes: number) {
+    return {
+      readFrom(fromByte: number): { text: string; lossy: boolean } {
+        const slice = buffer.subarray(fromByte, fromByte + chunkBytes);
+        // A slice that ends mid-character decodes to a replacement character,
+        // which is exactly what the engine has to hold back rather than parse.
+        return { text: slice.toString("utf8"), lossy: false };
+      },
+    };
+  }
+
+  /**
+   * A reader that hands back the whole tail, like the host service does.
+   *
+   * The sliced reader above exists for the boundary case; this one is the
+   * normal path, and it is what a real run looks like.
+   */
+  function wholeTailReader(buffer: Buffer) {
+    return {
+      readFrom(fromByte: number): { text: string; lossy: boolean } {
+        return { text: buffer.subarray(fromByte).toString("utf8"), lossy: false };
+      },
+    };
+  }
+
+  it("keeps every case when the output holds multi-byte characters", async () => {
+    // Chinese titles and an emoji, so the byte length and the character length
+    // differ on nearly every line.
+    const stream = [
+      " \u2713 test/a.test.ts > 套件 > 第一个用例 1ms",
+      " \u2713 test/a.test.ts > 套件 > 第二个用例 2ms",
+      " \u00d7 test/a.test.ts > 套件 > 会失败的用例 3ms",
+      "   \u2192 期望 1 等于 2 \ud83d\ude80",
+      "",
+    ].join("\n");
+    const buffer = Buffer.from(stream, "utf8");
+
+    // One byte at a time is the worst case: every multi-byte character is split.
+    const subprocess: SubprocessLike = {
+      spawn(spec) {
+        const outputFile = spec.argv[spec.argv.indexOf("--outputFile") + 1] ?? "";
+        const done = (async () => {
+          await writeFile(outputFile, JSON.stringify(REPORT), "utf8");
+          return { exitCode: 1 };
+        })();
+        return {
+          done,
+          collected: { stdout: wholeTailReader(buffer), stderr: wholeTailReader(Buffer.from("")) },
+        };
+      },
+    };
+    const engine = createRunEngine({ subprocess });
+
+    await startOk(engine, WORKSPACE, ALL).done;
+    const cases = engine.getState(WORKSPACE).run?.cases ?? [];
+
+    // Three cases, each exactly once: a cursor off by a byte would either drop
+    // one or report it twice.
+    expect(cases.map(entry => entry.name)).toEqual(["第一个用例", "第二个用例", "会失败的用例"]);
+    expect(engine.getState(WORKSPACE).run?.counts.total).toBe(3);
+  });
+
+  it("flushes a last line that has no trailing newline", async () => {
+    // The reporter's final line is not followed by a newline, so the tail has to
+    // be flushed after the child exits or the last case never lands.
+    const stream = " \u2713 test/a.test.ts > 套件 > 最后一个 5ms";
+    const buffer = Buffer.from(stream, "utf8");
+
+    const subprocess: SubprocessLike = {
+      spawn(spec) {
+        const outputFile = spec.argv[spec.argv.indexOf("--outputFile") + 1] ?? "";
+        const done = (async () => {
+          await writeFile(outputFile, JSON.stringify(REPORT), "utf8");
+          return { exitCode: 0 };
+        })();
+        return {
+          done,
+          collected: { stdout: wholeTailReader(buffer), stderr: wholeTailReader(Buffer.from("")) },
+        };
+      },
+    };
+    const engine = createRunEngine({ subprocess });
+
+    await startOk(engine, WORKSPACE, ALL).done;
+
+    expect(engine.getState(WORKSPACE).run?.cases.map(entry => entry.name)).toEqual(["最后一个"]);
+  });
+
+  it("does not corrupt a multi-byte character that spans two polls", async () => {
+    // The reader hands back decoded text, so it can only ever return whole
+    // characters; what it cannot do is tell the engine how many bytes it
+    // consumed. The engine therefore advances by the byte length of what it
+    // received, and holds back a trailing partial character so the line is
+    // parsed once, whole.
+    //
+    // This test grows the stream between polls: the first read stops inside the
+    // title, the second completes it. A cursor that counted characters would
+    // re-read from the wrong offset and the case would be lost.
+    const firstHalf = " \u2713 test/a.test.ts > 套件 > \u4e2d";
+    const full = " \u2713 test/a.test.ts > 套件 > \u4e2d\u6587 1ms\n";
+    const state = { text: firstHalf };
+
+    const subprocess: SubprocessLike = {
+      spawn(spec) {
+        const outputFile = spec.argv[spec.argv.indexOf("--outputFile") + 1] ?? "";
+        const done = (async () => {
+          await new Promise(resolve => setTimeout(resolve, 260));
+          state.text = full;
+          await new Promise(resolve => setTimeout(resolve, 260));
+          await writeFile(outputFile, JSON.stringify(REPORT), "utf8");
+          return { exitCode: 0 };
+        })();
+        return {
+          done,
+          collected: {
+            // The reader reads the live state, so the second poll sees the rest
+            // of the line the child printed in between.
+            stdout: {
+              readFrom(fromByte: number) {
+                return { text: Buffer.from(state.text, "utf8").subarray(fromByte).toString("utf8"), lossy: false };
+              },
+            },
+            stderr: wholeTailReader(Buffer.from("")),
+          },
+        };
+      },
+    };
+    const engine = createRunEngine({ subprocess });
+
+    await startOk(engine, WORKSPACE, ALL).done;
+
+    expect(engine.getState(WORKSPACE).run?.cases.map(entry => entry.name)).toEqual(["中文"]);
   });
 });

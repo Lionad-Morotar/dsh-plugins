@@ -7,10 +7,15 @@
  * a workspace, a path that escapes it — so the error codes are pinned rather
  * than discovered from a browser.
  */
-import { describe, expect, it } from "vitest";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { RunScope, TestboardState } from "../src/shared.ts";
 import { handleRequest, type TestboardRouteDeps } from "../src/host/routes.ts";
+import { readWorkspaceFile, readWorkspaceFileSync } from "../src/index.ts";
 
 const WORKSPACE = "/ws";
 
@@ -295,5 +300,65 @@ describe("scope validation", () => {
     const response = await post(deps, "/testboard/api/run", { sessionId: "known", scope: { kind: "file", path: "" } });
 
     expect(response.status).toBe(400);
+  });
+});
+
+/**
+ * The source route's real boundary: the workspace, not the string.
+ *
+ * `safeRelativePath` rejects `..`, which stops a caller from walking out with a
+ * path. It does not stop a symlink inside the workspace from pointing out, and a
+ * workspace is exactly the kind of tree that holds symlinks: a linked package, a
+ * vendored checkout, a fixture that links to `/etc`. So the reader resolves the
+ * target and checks where it actually landed.
+ */
+describe("readWorkspaceFile: symlink escape", () => {
+  const created: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(created.splice(0).map(dir => rm(dir, { recursive: true, force: true })));
+  });
+
+  /** A workspace with one real file and one symlink pointing outside it. */
+  async function makeWorkspace(): Promise<{ workspace: string; outside: string }> {
+    const root = await mkdtemp(join(tmpdir(), "dsh-testboard-src-"));
+    created.push(root);
+    const workspace = join(root, "ws");
+    const outside = join(root, "outside");
+    await mkdir(workspace, { recursive: true });
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(workspace, "inside.test.ts"), 'it("inside", () => {});', "utf8");
+    await writeFile(join(outside, "secret.test.ts"), 'it("secret", () => {});', "utf8");
+    await symlink(join(outside, "secret.test.ts"), join(workspace, "escape.test.ts"));
+    return { workspace, outside };
+  }
+
+  it("reads a file that really lives in the workspace", async () => {
+    const { workspace } = await makeWorkspace();
+
+    expect(await readWorkspaceFile(workspace, "inside.test.ts")).toBe('it("inside", () => {});');
+    expect(readWorkspaceFileSync(workspace, "inside.test.ts")).toBe('it("inside", () => {});');
+  });
+
+  it("refuses a symlink that points outside the workspace", async () => {
+    const { workspace } = await makeWorkspace();
+
+    // The path is workspace-relative and contains no `..`, so the string check
+    // passes; only resolving the target catches it.
+    expect(await readWorkspaceFile(workspace, "escape.test.ts")).toBeUndefined();
+    expect(readWorkspaceFileSync(workspace, "escape.test.ts")).toBeUndefined();
+  });
+
+  it("refuses a path that climbs out even when the target exists", async () => {
+    const { workspace } = await makeWorkspace();
+
+    expect(await readWorkspaceFile(workspace, "../outside/secret.test.ts")).toBeUndefined();
+    expect(readWorkspaceFileSync(workspace, "../outside/secret.test.ts")).toBeUndefined();
+  });
+
+  it("refuses a directory", async () => {
+    const { workspace } = await makeWorkspace();
+
+    expect(await readWorkspaceFile(workspace, ".")).toBeUndefined();
   });
 });

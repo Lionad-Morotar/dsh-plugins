@@ -466,7 +466,49 @@ describe("stage consistency", () => {
       expect(allPaths.some(path => !reportedPaths.has(path))).toBe(true);
     });
 
-    it("reports the first pass's failures before the fix", async () => {
+  
+  it("starts the second cycle as a fresh full run, not a rerun", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
+      await runtime.startRun("s1", { kind: "all" });
+
+      // Walk past the whole first cycle: running, fixing, rerunning, finished,
+      // and the hold before the loop restarts.
+      let firstCycleDone = false;
+      let secondCycleStart: TestboardState | undefined;
+      for (let step = 0; step < 400; step += 1) {
+        await vi.advanceTimersByTimeAsync(100);
+        const state = await runtime.loadState("s1");
+        if (state.demo?.phase === "finished") firstCycleDone = true;
+        // The first running frame after the finished stage is the second cycle's
+        // opening frame.
+        if (firstCycleDone && state.demo?.phase === "running") {
+          secondCycleStart = state;
+          break;
+        }
+      }
+
+      expect(secondCycleStart).toBeDefined();
+      // A new cycle is a new run of everything, so the board says "running" and
+      // the scope covers the whole slice. Starting it as a scoped rerun would
+      // make the loop open on "Rerunning N tests", which is the previous cycle's
+      // ending rather than this one's beginning.
+      expect(secondCycleStart?.run?.scope).toEqual({ kind: "all" });
+      expect(secondCycleStart?.run?.phase).toBe("running");
+      // The header tells a first run from a rerun by the run number, so a cycle
+      // that carried the previous one's count would open on the wrong line even
+      // with the right scope.
+      expect(secondCycleStart?.run?.runNumber).toBe(1); 
+      // And the counters start over rather than carrying the last cycle's totals.
+      expect(secondCycleStart?.run?.counts.total).toBeLessThan(20);
+      expect(secondCycleStart?.run?.cases.length).toBeLessThan(20);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports the first pass's failures before the fix", async () => {
       let fixing: TestboardState | undefined;
       await walk(state => {
         if (state.demo?.phase === "fixing") fixing = state;
