@@ -66,6 +66,19 @@ export interface MotionStrings {
   readonly tests: string;
 }
 
+/**
+ * What a rerun is about to redo.
+ *
+ * A scoped run starts with no cases reported, so its own `counts.total` is zero
+ * for the first frames. The header would then announce "Rerunning 0 tests",
+ * which is both wrong and the one number a reader would notice. The size has to
+ * come from outside the run.
+ */
+export interface RerunSize {
+  /** How many cases the scope covers, when the caller knows. */
+  readonly total: number | undefined;
+}
+
 /** Everything the view hands the motion layer for one frame. */
 export interface MotionInput {
   readonly run: RunProgress | undefined;
@@ -146,18 +159,26 @@ export function countTween(input: CountTweenInput): number {
  *
  * @param run - the run, or undefined before anything has run.
  * @param strings - the locale-bound words.
+ * @param rerunSize - how many cases a rerun covers, when the caller knows.
  * @returns the phase, its text and its tone.
  */
-export function phaseLabel(run: RunProgress | undefined, strings: MotionStrings): PhaseLabel {
+export function phaseLabel(
+  run: RunProgress | undefined,
+  strings: MotionStrings,
+  rerunSize?: RerunSize,
+): PhaseLabel {
   if (run === undefined) return { phase: "idle", text: strings.notRunYet, tone: "idle" };
 
   if (run.phase === "running") {
     // A scoped run, or any run after the first, is rerunning: the board already
     // has a result and this one is replacing part or all of it.
     const rerun = run.runNumber > 1 || run.scope.kind === "file";
-    return rerun
-      ? { phase: "rerunning", text: `${strings.rerunning} ${String(run.counts.total)} ${strings.tests}`, tone: "idle" }
-      : { phase: "running", text: strings.running, tone: "idle" };
+    if (!rerun) return { phase: "running", text: strings.running, tone: "idle" };
+    // A scoped run reports nothing for its first frames, so its own total is
+    // zero then. The scope's size is what the line is about, not how far it has
+    // got, so the caller's figure wins when it has one.
+    const size = rerunSize?.total ?? run.counts.total;
+    return { phase: "rerunning", text: `${strings.rerunning} ${String(size)} ${strings.tests}`, tone: "idle" };
   }
 
   // A cancelled run is over: the process ended, and the board's job is to say
@@ -207,10 +228,10 @@ export function runMeta(run: RunProgress | undefined, strings: MotionStrings): s
 /**
  * The chart's points, in viewBox units.
  *
- * The y axis is the cumulative total, not the per-second delta: the reference's
- * line climbs, and a delta line would sawtooth. The peak reading beside the
- * chart is the delta's maximum, which is a different number and is computed
- * separately.
+ * The y axis is what finished in each second, not the running total. The chart's
+ * own title says "per second", and a cumulative line can only ever rise: a suite
+ * that sprints and then stalls would draw the same straight diagonal as one that
+ * ticks along evenly, which is the one thing this chart exists to tell apart.
  *
  * @param series - the host's cumulative buckets.
  * @param box - the viewBox.
@@ -221,13 +242,16 @@ export function seriesPoints(
   box: ChartBox,
 ): ChartPoint[] {
   if (series.length === 0) return [];
-  const max = series.reduce((peak, bucket) => Math.max(peak, bucket.finished), 0);
+  // The series is cumulative, so each second's own figure is the difference
+  // from the bucket before it.
+  const perSecond = series.map((bucket, index) => bucket.finished - (series[index - 1]?.finished ?? 0));
+  const max = perSecond.reduce((peak, value) => Math.max(peak, value), 0);
   const step = series.length <= 1 ? 0 : box.width / (series.length - 1);
-  return series.map((bucket, index) => ({
+  return perSecond.map((value, index) => ({
     x: series.length <= 1 ? 0 : index * step,
     // A flat run of zero completions draws on the baseline; the small inset
     // keeps the stroke inside the box rather than half-clipped by its edge.
-    y: max === 0 ? box.height : box.height - (bucket.finished / max) * box.height,
+    y: max === 0 ? box.height : box.height - (value / max) * box.height,
   }));
 }
 

@@ -123,7 +123,13 @@ export function LaneRow({
           onRun(row.path);
         }}
       >
-        {strings.runFile}
+        {/* A glyph rather than the word: the row is a reading, and a labelled
+            button on every line turned the list into a toolbar. The accessible
+            name still comes from `aria-label`, so nothing is lost to a screen
+            reader. */}
+        <span aria-hidden="true" data-tst="run-file-glyph">
+          ▶
+        </span>
       </button>
     </div>
   );

@@ -258,6 +258,9 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const [snapshot, setSnapshot] = useState<TestSnapshot | undefined>(undefined);
     const [workspaceName, setWorkspaceName] = useState<string | undefined>(undefined);
     const [run, setRun] = useState<RunProgress | undefined>(undefined);
+    // The last settled run, kept so a scoped rerun can say how many cases it is
+    // about to redo before it has reported any.
+    const previousRunRef = useRef<RunProgress | undefined>(undefined);
     const [stateError, setStateError] = useState<TestboardError | undefined>(undefined);
     const [demo, setDemo] = useState<DemoStage | undefined>(undefined);
     const [loadError, setLoadError] = useState<string | undefined>(undefined);
@@ -323,6 +326,8 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const applyState = useCallback((state: TestboardState): void => {
       if (state.snapshot !== undefined) setSnapshot(state.snapshot);
       setWorkspaceName(state.workspaceName);
+      // A settled run becomes the reference for the next scoped rerun's size.
+      if (state.run !== undefined && state.run.phase !== "running") previousRunRef.current = state.run;
       setRun(state.run);
       setStateError(state.error);
       // Only the preview's fixture fills this in; on the host it is absent and
@@ -636,6 +641,12 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       rerun: strings.rerun,
       tests: strings.tests,
     };
+    // A scoped rerun's line is about what it covers, not how far it has got, so
+    // the size comes from the previous run's failure count. Reading the run's own
+    // total would make the line count up from zero as the rerun progresses, which
+    // is the opposite of what the line is for.
+    const rerunTotal =
+      run !== undefined && run.scope.kind === "file" ? previousRunRef.current?.counts.failed : undefined;
     // The preview's demo has a stage the wire does not: `fixing`. It is not a
     // run phase (D18), so it is layered on here rather than taught to
     // `phaseLabel`, which stays a function of the host's own state.
@@ -646,7 +657,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
             text: `${strings.fixing} ${String(run?.counts.failed ?? 0)} ${strings.failing}`,
             tone: "failed",
           }
-        : phaseLabel(run, motionStrings);
+        : phaseLabel(run, motionStrings, { total: rerunTotal });
     // With no run in flight the header still has a number to show: the last
     // reading's own duration. Reporting 0.0s would say the suite took no time.
     const elapsedMs = run === undefined ? summary.wallClockMs : elapsedOf(run, nowMs);

@@ -177,18 +177,31 @@ describe("createHttpRuntime: loadSource", () => {
 });
 
 describe("createFixtureRuntime", () => {
+  /**
+   * A snapshot big enough for the demo's script.
+   *
+   * The demo picks a slice of whole files and lays its cases out across a
+   * throughput table, so a one-case fixture would leave it with nothing to
+   * schedule: the stages would all report a single case and the chart would have
+   * one bucket. Four files of fifty cases is the smallest shape that exercises
+   * the real path.
+   */
   const SNAPSHOT: TestSnapshot = {
     version: 2,
     statusSource: "synthetic",
     packages: [
       {
         name: ".",
-        files: [
-          {
-            path: "test/a.test.ts",
-            cases: [{ path: "test/a.test.ts", name: "a", line: 1, status: "passed", durationMs: 1 }],
-          },
-        ],
+        files: ["a", "b", "c", "d"].map(letter => ({
+          path: `test/${letter}.test.ts`,
+          cases: Array.from({ length: 50 }, (_unused, index) => ({
+            path: `test/${letter}.test.ts`,
+            name: `${letter} case ${String(index)}`,
+            line: index + 1,
+            status: "passed" as const,
+            durationMs: 1,
+          })),
+        })),
       },
     ],
   };
@@ -252,8 +265,9 @@ describe("createFixtureRuntime", () => {
       await runtime.startRun("s1", { kind: "all" });
 
       const seen = new Set<string>();
-      // Sample across the whole cycle: the demo's stages are time-based, so a
-      // single advance would only ever see one of them.
+      // Sample across the whole cycle. The demo reads the wall clock as well as
+      // the timer queue, so the clock has to move with the timers; advancing
+      // only the queue would leave every stage frozen at its first frame.
       for (let step = 0; step < 200; step += 1) {
         await vi.advanceTimersByTimeAsync(100);
         const state = await runtime.loadState("s1");
@@ -264,6 +278,73 @@ describe("createFixtureRuntime", () => {
       expect(seen.has("fixing")).toBe(true);
       expect(seen.has("rerunning")).toBe(true);
       expect(seen.has("finished")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps one total across every stage of the demo", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
+      await runtime.startRun("s1", { kind: "all" });
+
+      const totals: number[] = [];
+      const failures: number[] = [];
+      let finishedFailed: number | undefined;
+      for (let step = 0; step < 200; step += 1) {
+        await vi.advanceTimersByTimeAsync(100);
+        const state = await runtime.loadState("s1");
+        const run = state.run;
+        if (run === undefined) continue;
+        // A first pass reports a growing total; the settled stages report the
+        // same one. What must never happen is a stage claiming more cases than
+        // the run contains.
+        if (state.demo?.phase === "fixing") {
+          totals.push(run.counts.total);
+          failures.push(run.counts.failed);
+        }
+        if (state.demo?.phase === "finished") finishedFailed = run.counts.failed;
+      }
+
+      expect(totals.length).toBeGreaterThan(0);
+      // The fixing stage's total is the first pass's, and its failure count is
+      // the three the script pins.
+      expect(new Set(totals).size).toBe(1);
+      expect(failures[0]).toBe(3);
+      // The rerun is green: the board's last word is zero failures.
+      expect(finishedFailed).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("varies the per-second completions so the chart has a shape", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
+      await runtime.startRun("s1", { kind: "all" });
+
+      // Sample while the first pass is still going: once it settles the demo
+      // moves on to the fixing card and the series belongs to that stage.
+      let series: readonly { finished: number }[] = [];
+      for (let step = 0; step < 70; step += 1) {
+        await vi.advanceTimersByTimeAsync(100);
+        const state = await runtime.loadState("s1");
+        if (state.demo?.phase === "running" && (state.run?.series.length ?? 0) > series.length) {
+          series = state.run?.series ?? series;
+        }
+      }
+      expect(series.length).toBeGreaterThan(4);
+
+      // The deltas are what the chart plots; a constant ramp would be a
+      // synthetic-looking straight line.
+      const deltas = series.map((point, index) => point.finished - (series[index - 1]?.finished ?? 0));
+      const distinct = new Set(deltas);
+      // The shape is what matters, not the absolute numbers: the table is scaled
+      // to whatever slice the snapshot provides, so a small fixture finishes
+      // fewer cases a second than the preview's real one.
+      expect(distinct.size).toBeGreaterThan(3); expect(Math.max(...deltas)).toBeGreaterThan(Math.min(...deltas)); expect(Math.min(...deltas)).toBeGreaterThan(0); 
     } finally {
       vi.useRealTimers();
     }

@@ -217,18 +217,20 @@ describe("seriesPoints", () => {
     expect(points[2]?.x).toBe(100);
   });
 
-  it("puts the busiest second at the top of the box", () => {
+  it("plots each second's own completions, not the running total", () => {
     const points = seriesPoints(
       [
         { tMs: 0, finished: 10, passed: 10, failed: 0 },
         { tMs: 1000, finished: 50, passed: 50, failed: 0 },
+        { tMs: 2000, finished: 55, passed: 55, failed: 0 },
       ],
       { width: 100, height: 50 },
     );
 
-    // The chart draws completions per second, so the higher cumulative total is
-    // higher on the canvas.
+    // 10, then 40, then 5: the middle second is the busiest, so it sits highest
+    // and the last one drops back down. A cumulative plot could only ever rise.
     expect(points[1]?.y).toBeLessThan(points[0]?.y ?? 0);
+    expect(points[2]?.y).toBeGreaterThan(points[1]?.y ?? 0);
   });
 
   it("is empty for an empty series, which is what an unstarted run reports", () => {
