@@ -11,7 +11,7 @@
  */
 
 /** One keyboard move a list understands. */
-export type CursorAction = "up" | "down" | "first" | "last" | "activate";
+export type CursorAction = "up" | "down" | "first" | "last" | "pageUp" | "pageDown" | "activate";
 
 /** Where one row sits in the scroll port, in the port's own coordinates. */
 export interface RevealSpan {
@@ -43,6 +43,22 @@ export function revealSpan(span: RevealSpan): number {
   if (top < scrollTop) return top;
   if (top + height > scrollTop + viewport) return Math.max(0, top + height - viewport);
   return scrollTop;
+}
+
+/**
+ * How many rows one half-viewport page covers.
+ *
+ * Half of what is on screen, the same step the transcript and the editor take,
+ * so the upper half of the previous screen stays as context. A viewport that has
+ * not been measured yet, or a row height the caller could not read, falls back
+ * to one row rather than turning the key into a no-op.
+ * @param viewport - height of the scroll port in px.
+ * @param rowHeight - height of one row in px.
+ * @returns rows per page, at least one.
+ */
+export function pageRowCount(viewport: number, rowHeight: number): number {
+  const height = rowHeight > 0 ? rowHeight : 1;
+  return Math.max(1, Math.floor(Math.max(0, viewport) / 2 / height));
 }
 
 /** The modifier state a keydown carries, narrowed to what the cursor reads. */
@@ -77,6 +93,10 @@ export function cursorActionOf(state: CursorKeyState): CursorAction | null {
       return "first";
     case "End":
       return "last";
+    case "PageDown":
+      return "pageDown";
+    case "PageUp":
+      return "pageUp";
     case "Enter":
       return "activate";
     default:
@@ -96,9 +116,15 @@ export function cursorActionOf(state: CursorKeyState): CursorAction | null {
  * @param count - rows currently on screen.
  * @returns the new index, or undefined when there is no row to point at.
  */
-export function stepCursor(index: number | undefined, action: CursorAction, count: number): number | undefined {
+export function stepCursor(
+  index: number | undefined,
+  action: CursorAction,
+  count: number,
+  pageSize = 10,
+): number | undefined {
   if (count <= 0) return undefined;
   const last = count - 1;
+  const page = Math.max(1, Math.floor(pageSize));
   switch (action) {
     case "down":
       return index === undefined ? 0 : Math.min(index + 1, last);
@@ -108,6 +134,10 @@ export function stepCursor(index: number | undefined, action: CursorAction, coun
       return 0;
     case "last":
       return last;
+    case "pageDown":
+      return index === undefined ? Math.min(page, last) : Math.min(index + page, last);
+    case "pageUp":
+      return index === undefined ? Math.max(last - page, 0) : Math.max(index - page, 0);
     default:
       return index === undefined ? 0 : Math.min(Math.max(index, 0), last);
   }

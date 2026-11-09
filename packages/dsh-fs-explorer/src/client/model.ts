@@ -337,6 +337,46 @@ export function revealScrollTop(input: {
 }
 
 /**
+ * How many rows one half-viewport page covers in a list of fixed-height rows.
+ *
+ * The same step the transcript and the editor take: half of what is on screen,
+ * so the upper half of the previous page stays as context. A viewport that has
+ * not been measured yet falls back to a single row, which keeps the key alive
+ * during the first frame instead of turning it into a no-op.
+ */
+export function pageRowCount(viewport: number, rowHeight: number): number {
+  const height = rowHeight > 0 ? rowHeight : 1;
+  return Math.max(1, Math.floor(Math.max(0, viewport) / 2 / height));
+}
+
+/**
+ * The entry row one page step lands on.
+ *
+ * `entryIndexes` are the row indexes the cursor may rest on (group headings and
+ * other non-rows are skipped), so a page walks that list rather than arithmetic
+ * on row numbers. A page that runs past either end lands on the last entry in
+ * that direction, which is the same clamp an arrow key has.
+ * @param entryIndexes - cursor-addressable rows, ascending.
+ * @param cursor - current row index, undefined when the cursor is unset.
+ * @param direction - -1 walks toward the start, 1 toward the end.
+ * @param page - rows per step, at least one.
+ * @returns the row index to move to, or undefined when there is nowhere to go.
+ */
+export function pageEntryIndex(
+  entryIndexes: readonly number[],
+  cursor: number | undefined,
+  direction: -1 | 1,
+  page: number,
+): number | undefined {
+  if (entryIndexes.length === 0) return undefined;
+  const step = Math.max(1, page);
+  if (cursor === undefined) return direction < 0 ? entryIndexes[entryIndexes.length - 1] : entryIndexes[0];
+  const ahead = direction < 0 ? entryIndexes.filter(index => index < cursor) : entryIndexes.filter(index => index > cursor);
+  if (ahead.length === 0) return undefined;
+  return direction < 0 ? (ahead[ahead.length - step] ?? ahead[0]) : (ahead[step - 1] ?? ahead[ahead.length - 1]);
+}
+
+/**
  * Map the tree's level key to the path `workspaceFiles.list` accepts.
  *
  * The ledger keys the root as `""`, but the host refuses an empty path

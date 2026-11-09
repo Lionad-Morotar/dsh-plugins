@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   cursorActionOf,
   nearTail,
+  pageRowCount,
   revealSpan,
   stepCursor,
   type CursorKeyState,
@@ -14,16 +15,18 @@ function key(key: string, overrides: Partial<CursorKeyState> = {}): CursorKeySta
 }
 
 describe("cursorActionOf", () => {
-  it("maps the five keys a list owns to moves", () => {
+  it("maps the keys a list owns to moves", () => {
     expect(cursorActionOf(key("ArrowDown"))).toBe("down");
     expect(cursorActionOf(key("ArrowUp"))).toBe("up");
     expect(cursorActionOf(key("Home"))).toBe("first");
     expect(cursorActionOf(key("End"))).toBe("last");
+    expect(cursorActionOf(key("PageDown"))).toBe("pageDown");
+    expect(cursorActionOf(key("PageUp"))).toBe("pageUp");
     expect(cursorActionOf(key("Enter"))).toBe("activate");
   });
 
   it("leaves typed characters to the typeahead and the search fields", () => {
-    for (const other of ["a", "PageDown", "Escape", " ", "Tab", "Backspace"]) {
+    for (const other of ["a", "Escape", " ", "Tab", "Backspace"]) {
       expect(cursorActionOf(key(other))).toBeNull();
     }
   });
@@ -66,6 +69,33 @@ describe("stepCursor", () => {
   it("reports no cursor rather than index 0 for an empty list", () => {
     expect(stepCursor(undefined, "down", 0)).toBeUndefined();
     expect(stepCursor(0, "last", 0)).toBeUndefined();
+  });
+});
+
+describe("page moves", () => {
+  it("moves a page and clamps at both ends", () => {
+    expect(stepCursor(0, "pageDown", 100, 10)).toBe(10);
+    expect(stepCursor(95, "pageDown", 100, 10)).toBe(99);
+    expect(stepCursor(50, "pageUp", 100, 10)).toBe(40);
+    expect(stepCursor(3, "pageUp", 100, 10)).toBe(0);
+  });
+
+  it("starts a page from the edge the move heads away from when the cursor is unset", () => {
+    expect(stepCursor(undefined, "pageDown", 100, 10)).toBe(10);
+    expect(stepCursor(undefined, "pageUp", 100, 10)).toBe(89);
+  });
+
+  it("never steps less than one row", () => {
+    expect(stepCursor(0, "pageDown", 100, 0)).toBe(1);
+    expect(stepCursor(10, "pageUp", 100, -5)).toBe(9);
+  });
+});
+
+describe("pageRowCount", () => {
+  it("measures half a viewport of rows, never less than one", () => {
+    expect(pageRowCount(480, 24)).toBe(10);
+    expect(pageRowCount(0, 24)).toBe(1);
+    expect(pageRowCount(480, 0)).toBe(240);
   });
 });
 
