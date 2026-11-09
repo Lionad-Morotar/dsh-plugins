@@ -69,21 +69,83 @@ export type RunScope = { readonly kind: "all" } | { readonly kind: "file"; reado
 export type RunStatus = "running" | "passed" | "failed" | "cancelled" | "error";
 
 /**
+ * The coarse phase the board narrates.
+ *
+ * Separate from `status` on purpose: `status` answers "did the suite pass", and
+ * `phase` answers "is the process still going". A finished run with failures is
+ * `phase: "finished"` and `status: "failed"`, which is what lets the panel say
+ * "N failing tests" instead of implying the run itself broke.
+ */
+export type RunPhase = "running" | "finished" | "cancelled" | "error";
+
+/** One case that finished, in completion order. */
+export interface RunCaseEvent {
+  /** Workspace-relative test file path. */
+  readonly path: string;
+  /** The case's own title, without its describe chain. */
+  readonly name: string;
+  readonly status: "passed" | "failed" | "skipped";
+  readonly durationMs: number;
+  /** Milliseconds since the run started, which is what places it on the chart. */
+  readonly atMs: number;
+}
+
+/** One second of the run: what had finished by then. */
+export interface RunSeriesPoint {
+  /** Milliseconds since the run started, on a one-second grid. */
+  readonly tMs: number;
+  /** Cumulative cases finished by this second. */
+  readonly finished: number;
+  readonly passed: number;
+  readonly failed: number;
+}
+
+/** One failing case, with the moment it failed. */
+export interface RunFailure {
+  readonly tMs: number;
+  readonly path: string;
+  readonly name: string;
+}
+
+/** The run's tallies, as far as they are known. */
+export interface RunCounts {
+  readonly passed: number;
+  readonly failed: number;
+  readonly skipped: number;
+  readonly total: number;
+}
+
+/**
  * The board's view of one run.
  *
  * `completedFiles` is best-effort: the json reporter only speaks at the end, so
- * the count comes from the default reporter's stdout and may lag or stay at
- * zero. It is progress decoration, never the result.
+ * the count comes from the verbose reporter's per-case lines and may lag. It is
+ * progress decoration, never the result.
+ *
+ * `cases` is the incremental half: every case that finished, appended in
+ * completion order, so a polling client can light rows up while the suite is
+ * still running. The json report replaces the snapshot at the end and is
+ * authoritative; these events are what the board shows until then.
  */
 export interface RunProgress {
   readonly runId: string;
   readonly scope: RunScope;
   readonly status: RunStatus;
+  readonly phase: RunPhase;
+  /** 1-based, per workspace: the board labels a rerun with it. */
+  readonly runNumber: number;
   readonly startedAt: string;
   readonly finishedAt?: string;
+  /** Wall clock since the run started, or the final duration once it settled. */
+  readonly elapsedMs: number;
   readonly completedFiles: number;
   /** Null when the scope is "all": nobody knows the file count up front. */
   readonly totalFiles: number | null;
+  readonly counts: RunCounts;
+  /** One point per second that has elapsed, cumulative. */
+  readonly series: readonly RunSeriesPoint[];
+  readonly failures: readonly RunFailure[];
+  readonly cases: readonly RunCaseEvent[];
   readonly message?: string;
 }
 

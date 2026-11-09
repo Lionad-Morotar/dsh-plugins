@@ -23,10 +23,16 @@ const SNAPSHOT_VERSION = 2;
  * that has not installed vitest should fail as "no runner here", not silently
  * run this repository's copy against another project's config.
  *
+ * Two reporters, on purpose. `verbose` writes one line per case as it finishes,
+ * which is the only live signal available: the json reporter speaks once, at the
+ * end, and a board that waited for it could not light a row up while the suite
+ * ran. The json file stays authoritative for the final snapshot because it
+ * carries statuses and failure messages the human lines do not.
+ *
  * `--outputFile` is passed as two argv entries because the reporter accepts the
  * separated form and an `=` would have to be quoted if a path ever contained one.
  *
- * @param options - workspace, scope and where the reporter should write.
+ * @param options - workspace, scope and where the json reporter should write.
  * @returns the argv, executable first.
  */
 export function buildVitestArgv(options: {
@@ -39,7 +45,7 @@ export function buildVitestArgv(options: {
     "run",
   ];
   if (options.scope.kind === "file") argv.push(options.scope.path);
-  argv.push("--reporter=json", "--outputFile", options.outputFile);
+  argv.push("--reporter=verbose", "--reporter=json", "--outputFile", options.outputFile);
   return argv;
 }
 
@@ -250,4 +256,132 @@ export function completedFileOf(line: string): string | undefined {
   const cleaned = line.replace(/\u001B\[[0-9;]*m/gu, "").trim();
   const match = /^(?:[✓×❯✗↓]|\[[^\]]*\])\s+(\S+\.test\.tsx?)\b/u.exec(cleaned);
   return match?.[1];
+}
+
+/** One case the verbose reporter announced as finished. */
+export interface VerboseCaseEvent {
+  readonly kind: "case";
+  readonly path: string;
+  readonly name: string;
+  readonly status: TestStatus;
+  readonly durationMs: number;
+}
+
+/** One failing case, from the summary block the reporter prints at the end. */
+export interface VerboseFailureEvent {
+  readonly kind: "failure";
+  readonly path: string;
+  readonly name: string;
+}
+
+export type VerboseEvent = VerboseCaseEvent | VerboseFailureEvent;
+
+/**
+ * Strip the ANSI colour a reporter emits when stdout is a TTY.
+ *
+ * The engine collects a pipe, so in practice the text arrives plain; a host that
+ * ever wires a pseudo-terminal would otherwise make every marker unmatchable.
+ * @param line - one raw line.
+ * @returns the line without colour escapes.
+ */
+function stripAnsi(line: string): string {
+  return line.replace(/\u001B\[[0-9;]*[A-Za-z]/gu, "");
+}
+
+/**
+ * Read a duration the reporter printed.
+ *
+ * Vitest prints `12ms` for fast cases and `1.53s` for slow ones, and omits the
+ * figure entirely for a skipped case. All three are legal here.
+ * @param raw - the duration token, or undefined when the line has none.
+ * @returns milliseconds, or 0 when there was no figure.
+ */
+function parseDuration(raw: string | undefined): number {
+  if (raw === undefined) return 0;
+  const match = /^([0-9]+(?:\.[0-9]+)?)(ms|s)$/u.exec(raw);
+  if (match === null) return 0;
+  const value = Number.parseFloat(match[1] ?? "0");
+  return match[2] === "s" ? value * 1000 : value;
+}
+
+/**
+ * Split a reporter location into its file path and the case's own title.
+ *
+ * The reporter prints `path > describe > describe > title`, so the path is the
+ * first segment and the title is the last. Everything between is the describe
+ * chain: it identifies the case in the file but is not part of its name, and a
+ * reader comparing the board against the source looks for the title alone.
+ *
+ * @param location - the part of the line after the status marker.
+ * @returns the path and title, or undefined when the line is not a location.
+ */
+function splitLocation(location: string): { path: string; name: string } | undefined {
+  const segments = location.split(" > ");
+  if (segments.length < 2) return undefined;
+  const path = segments[0]?.trim() ?? "";
+  const name = segments[segments.length - 1]?.trim() ?? "";
+  if (path === "" || name === "") return undefined;
+  return { path, name };
+}
+
+/**
+ * Read one line of the verbose reporter's output.
+ *
+ * The format, as this repository's vitest prints it:
+ *
+ *   ` ✓ test/a.test.ts > suite > title 1ms`
+ *   ` × test/a.test.ts > suite > title 3ms`
+ *   ` ↓ test/a.test.ts > suite > title`        (skipped and todo alike)
+ *   ` FAIL  test/a.test.ts > suite > title`    (in the summary block)
+ *
+ * Everything else is ignored: the run header, the assertion detail under a case,
+ * the source excerpt, the separators and the tallies. That last one matters: the
+ * tally line is printed once at the end and would double-count a stream that
+ * also carried per-case lines.
+ *
+ * @param line - one line of stdout.
+ * @returns the event, or undefined when the line carries none.
+ */
+export function parseVerboseLine(line: string): VerboseEvent | undefined {
+  const cleaned = stripAnsi(line);
+  // The marker is the first non-space character. The source excerpt under a
+  // failure also starts with `❯`, but it is indented and carries a `:line:col`
+  // suffix, which `splitLocation` rejects because it has no ` > ` chain.
+  const match = /^\s*([✓×↓])\s+(.+)$/u.exec(cleaned);
+  if (match !== null) {
+    const marker = match[1];
+    const rest = match[2] ?? "";
+    // A trailing duration is optional: a skipped case has none.
+    const withDuration = /^(.*?)\s+([0-9]+(?:\.[0-9]+)?(?:ms|s))$/u.exec(rest);
+    const location = withDuration === null ? rest : (withDuration[1] ?? "");
+    const durationMs = withDuration === null ? 0 : parseDuration(withDuration[2]);
+    const split = splitLocation(location);
+    if (split === undefined) return undefined;
+    const status: TestStatus = marker === "✓" ? "passed" : marker === "×" ? "failed" : "skipped";
+    return { kind: "case", path: split.path, name: split.name, status, durationMs };
+  }
+
+  const failure = /^\s*FAIL\s+(.+)$/u.exec(cleaned);
+  if (failure !== null) {
+    const split = splitLocation(failure[1] ?? "");
+    if (split === undefined) return undefined;
+    return { kind: "failure", path: split.path, name: split.name };
+  }
+
+  return undefined;
+}
+
+/**
+ * Read a whole verbose stream.
+ *
+ * @param text - the collected stdout.
+ * @returns every event, in the order the reporter printed them.
+ */
+export function parseVerboseOutput(text: string): VerboseEvent[] {
+  const events: VerboseEvent[] = [];
+  for (const line of text.split("\n")) {
+    const event = parseVerboseLine(line);
+    if (event !== undefined) events.push(event);
+  }
+  return events;
 }
