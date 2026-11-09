@@ -14,6 +14,8 @@ export type TestStatus = "passed" | "failed" | "skipped";
 export interface TestCase {
   readonly path: string;
   readonly name: string;
+  /** 1-based line in the file where this case's title starts; the code pane highlights it. */
+  readonly line: number;
   readonly status: TestStatus;
   readonly durationMs: number;
 }

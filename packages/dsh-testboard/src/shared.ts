@@ -29,3 +29,12 @@ export const LOCALE_NAMESPACE = "testboard";
  * a mismatch is a tab that never loads its data.
  */
 export const SNAPSHOT_CHUNK = "client.snapshot.js";
+
+/**
+ * Lazy client chunk carrying every test file's source text.
+ *
+ * Separate from the snapshot chunk on purpose: the row list renders from the
+ * snapshot alone, so the code pane's megabytes are only paid for by a reader who
+ * opens a file, and a failed fetch of one chunk leaves the other usable.
+ */
+export const SOURCES_CHUNK = "client.sources.js";

@@ -7,11 +7,18 @@
  * shows up as a diff nobody can review. Nothing here may read the clock, the
  * absolute path of the checkout, or a random number.
  *
- *   node scripts/snapshot.mjs           rewrite src/client/data/snapshot.json
- *   node scripts/snapshot.mjs --check   regenerate and compare, exit 1 on drift
+ *   node scripts/snapshot.mjs           rewrite snapshot.json and sources.json
+ *   node scripts/snapshot.mjs --check   regenerate and compare both, exit 1 on drift
  *
  * Statuses and durations are synthetic and labelled as such (`statusSource`):
  * this prototype does not run the suites, it only needs a realistic board.
+ *
+ * Two artifacts are written from one walk of the corpus. `snapshot.json` is the
+ * board's data; `sources.json` is every scanned file's text, which the right
+ * pane renders beside it. They are generated together because they must cover
+ * the same set of files: a snapshot entry whose source is missing would leave
+ * the code pane permanently empty, and a source nobody lists would be dead
+ * weight in a chunk the browser has to download.
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -25,8 +32,14 @@ const REPO_ROOT = resolve(here, "../../..");
 /** Where the generated snapshot is committed. */
 const SNAPSHOT_PATH = join(here, "..", "src", "client", "data", "snapshot.json");
 
+/** Where the generated source bundle is committed. */
+const SOURCES_PATH = join(here, "..", "src", "client", "data", "sources.json");
+
 /** Bumped when the shape changes, so a stale committed file is obvious. */
-const SNAPSHOT_VERSION = 1;
+const SNAPSHOT_VERSION = 2;
+
+/** The source bundle's own shape version, bumped independently of the snapshot. */
+const SOURCES_VERSION = 1;
 
 /**
  * Share of cases reported as failed.
@@ -168,19 +181,21 @@ function skipBalanced(source, index) {
 }
 
 /**
- * Extract every case title from one test file's source.
+ * Extract every case from one test file's source, with the offset its title
+ * starts at.
  *
  * Titles are collected in source order, which is also the order the runner
- * reports them in, so the snapshot reads like the suite.
+ * reports them in, so the snapshot reads like the suite. The offset is what
+ * lets the board point at a case's own line instead of just naming it.
  *
  * A case whose title is not a string literal (a computed name) is skipped: the
  * board cannot render it, and inventing one would put a row on screen that no
  * suite contains.
  * @param source - file text.
- * @returns the titles, in source order.
+ * @returns the cases, in source order.
  */
-export function extractCaseTitles(source) {
-  const titles = [];
+export function extractCases(source) {
+  const cases = [];
   CASE_CALL.lastIndex = 0;
   for (const match of source.matchAll(CASE_CALL)) {
     let cursor = skipTrivia(source, (match.index ?? 0) + match[0].length);
@@ -194,9 +209,32 @@ export function extractCaseTitles(source) {
       cursor = skipTrivia(source, cursor + 1);
     }
     const title = readStringLiteral(source, cursor);
-    if (title !== undefined && title.length > 0) titles.push(title);
+    if (title !== undefined && title.length > 0) cases.push({ name: title, offset: cursor });
   }
-  return titles;
+  return cases;
+}
+
+/**
+ * Extract every case title from one test file's source.
+ * @param source - file text.
+ * @returns the titles, in source order.
+ */
+export function extractCaseTitles(source) {
+  return extractCases(source).map(entry => entry.name);
+}
+
+/**
+ * The 1-based line a character offset sits on.
+ * @param source - file text.
+ * @param offset - a character offset into it.
+ * @returns the line number, counting the newlines before the offset.
+ */
+export function lineOfOffset(source, offset) {
+  let line = 1;
+  for (let index = 0; index < offset && index < source.length; index += 1) {
+    if (source[index] === "\n") line += 1;
+  }
+  return line;
 }
 
 /**
@@ -273,27 +311,48 @@ function listTestFiles() {
 }
 
 /**
- * Build the snapshot from the current corpus.
+ * Build the snapshot and the source bundle from the current corpus.
  *
- * Files whose source yields no title are kept with an empty case list rather
- * than dropped: a file that stops parsing should be visible on the board, not
- * silently absent from it.
- * @returns the snapshot object.
+ * One walk feeds both, so the two artifacts can never disagree about which
+ * files exist. Files whose source yields no title are kept with an empty case
+ * list rather than dropped: a file that stops parsing should be visible on the
+ * board, not silently absent from it.
+ * @returns the snapshot object and the source bundle object.
  */
-export function buildSnapshot() {
+export function buildArtifacts() {
   const byPackage = new Map();
+  const files = {};
   for (const path of listTestFiles()) {
     const packageName = path.split("/")[1] ?? "";
     const source = readFileSync(join(REPO_ROOT, path), "utf8");
-    const cases = extractCaseTitles(source).map(name => ({ path, name, ...synthesize(path, name) }));
-    const files = byPackage.get(packageName) ?? [];
-    files.push({ path, cases });
-    byPackage.set(packageName, files);
+    const cases = extractCases(source).map(entry => ({
+      path,
+      name: entry.name,
+      line: lineOfOffset(source, entry.offset),
+      ...synthesize(path, entry.name),
+    }));
+    const packageFiles = byPackage.get(packageName) ?? [];
+    packageFiles.push({ path, cases });
+    byPackage.set(packageName, packageFiles);
+    // Insertion order is the walk's order, which is sorted, so the bundle's keys
+    // are deterministic without a second sort.
+    files[path] = source;
   }
   const packages = [...byPackage.entries()]
-    .map(([name, files]) => ({ name, files }))
+    .map(([name, packageFiles]) => ({ name, files: packageFiles }))
     .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
-  return { version: SNAPSHOT_VERSION, statusSource: "synthetic", packages };
+  return {
+    snapshot: { version: SNAPSHOT_VERSION, statusSource: "synthetic", packages },
+    sources: { version: SOURCES_VERSION, files },
+  };
+}
+
+/**
+ * Build the snapshot from the current corpus.
+ * @returns the snapshot object.
+ */
+export function buildSnapshot() {
+  return buildArtifacts().snapshot;
 }
 
 /**
@@ -313,7 +372,7 @@ export function serialize(snapshot) {
     pkg.files.forEach((file, fileIndex) => {
       lines.push("        {", `          "path": ${JSON.stringify(file.path)},`, '          "cases": [');
       file.cases.forEach((entry, caseIndex) => {
-        const body = `{"name":${JSON.stringify(entry.name)},"status":${JSON.stringify(entry.status)},"durationMs":${entry.durationMs}}`;
+        const body = `{"name":${JSON.stringify(entry.name)},"line":${entry.line},"status":${JSON.stringify(entry.status)},"durationMs":${entry.durationMs}}`;
         lines.push(`            ${body}${caseIndex === file.cases.length - 1 ? "" : ","}`);
       });
       lines.push("          ]");
@@ -326,25 +385,60 @@ export function serialize(snapshot) {
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * Serialize the source bundle to the exact bytes committed to disk.
+ *
+ * One file per line, each value a JSON string. The bundle is megabytes of test
+ * source and nobody reviews a test file's text in a diff of this artifact, so
+ * pretty-printing it would multiply the bytes for no reader's benefit. Keys
+ * follow the walk's order, which is sorted, so the bytes are stable.
+ * @param sources - the source bundle object.
+ * @returns the file text.
+ */
+export function serializeSources(sources) {
+  const entries = Object.entries(sources.files).map(
+    ([path, text]) => `    ${JSON.stringify(path)}: ${JSON.stringify(text)}`,
+  );
+  return `{\n  "version": ${sources.version},\n  "files": {\n${entries.join(",\n")}\n  }\n}\n`;
+}
+
+/**
+ * Compare one generated artifact with what is committed.
+ * @param path - absolute path of the committed file.
+ * @param text - the text the generator would write.
+ * @returns an error message, or null when the committed file is current.
+ */
+function driftOf(path, text) {
+  let committed = "";
+  try {
+    committed = readFileSync(path, "utf8");
+  } catch {
+    return `${relative(REPO_ROOT, path)} is missing; run without --check`;
+  }
+  return committed === text ? null : `${relative(REPO_ROOT, path)} is stale; run without --check`;
+}
+
 const isMain = process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 
 if (isMain) {
-  const text = serialize(buildSnapshot());
+  const { snapshot, sources } = buildArtifacts();
+  const snapshotText = serialize(snapshot);
+  const sourcesText = serializeSources(sources);
   if (process.argv.includes("--check")) {
-    let committed = "";
-    try {
-      committed = readFileSync(SNAPSHOT_PATH, "utf8");
-    } catch {
-      process.stderr.write(`snapshot: ${relative(REPO_ROOT, SNAPSHOT_PATH)} is missing; run without --check\n`);
+    // Both artifacts are checked: they come from one walk, and a half-stale pair
+    // would ship a board whose code pane disagrees with its own row list.
+    const drift = driftOf(SNAPSHOT_PATH, snapshotText) ?? driftOf(SOURCES_PATH, sourcesText);
+    if (drift !== null) {
+      process.stderr.write(`snapshot: ${drift}\n`);
       process.exit(1);
     }
-    if (committed !== text) {
-      process.stderr.write(`snapshot: ${relative(REPO_ROOT, SNAPSHOT_PATH)} is stale; run without --check\n`);
-      process.exit(1);
-    }
-    process.stdout.write(`snapshot: up to date (${text.length} bytes)\n`);
+    process.stdout.write(`snapshot: up to date (${snapshotText.length} + ${sourcesText.length} bytes)\n`);
   } else {
-    writeFileSync(SNAPSHOT_PATH, text, "utf8");
-    process.stdout.write(`snapshot: wrote ${relative(REPO_ROOT, SNAPSHOT_PATH)} (${text.length} bytes)\n`);
+    writeFileSync(SNAPSHOT_PATH, snapshotText, "utf8");
+    writeFileSync(SOURCES_PATH, sourcesText, "utf8");
+    process.stdout.write(
+      `snapshot: wrote ${relative(REPO_ROOT, SNAPSHOT_PATH)} (${snapshotText.length} bytes)\n` +
+        `snapshot: wrote ${relative(REPO_ROOT, SOURCES_PATH)} (${sourcesText.length} bytes)\n`,
+    );
   }
 }

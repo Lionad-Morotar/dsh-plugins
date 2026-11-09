@@ -1,0 +1,448 @@
+[data-tst="subtitle"],[data-tst="header-stats"],[data-tst="peak"],[data-tst="search"],[data-tst="detail-file-name"],[data-tst="detail-file-path"], [data-tst="lane-dir"],[data-tst="detail-file-stats"],[data-tst="detail-case-meta"],[data-tst="detail-case-error"],[data-tst="code-lines"],[data-tst="package-name"],[data-tst="lane-file"],[data-tst="lane-reading"],[data-tst="case-duration"],[data-tst="case-error"]{font-family: var(--tst-mono);font-size: var(--tst-fs-code)}[data-testid="testboard"] {
+  --tst-mono: var(--dsh-font-mono, ui-monospace, SFMono-Regular, monospace);
+  --tst-fs: var(--dsh-content-font-size, 14px);
+  --tst-fs-code: var(--dsh-code-font-size, 11px);
+  --tst-fs-title: calc(var(--dsh-content-font-size, 14px) * 17 / 14);
+  --tst-fs-small: calc(var(--dsh-content-font-size, 14px) * 12 / 14);
+
+  --tst-surface: var(--dsw-alias-bg-layer-2, #ffffff);
+  --tst-surface-hover: color-mix(in srgb, var(--dsw-alias-label-primary, #14110d) 7%, transparent);
+  --tst-ink: var(--dsw-alias-label-primary, #14110d);
+  --tst-ink-dim: var(--dsw-alias-label-secondary, #6b655c);
+  --tst-ink-faint: var(--dsw-alias-label-tertiary, #a39c91);
+  --tst-rule: var(--dsw-alias-border-l2, #e4e0d9);
+  --tst-pass: #2f8f4e;
+  --tst-fail: #c02b2b;
+  --tst-idle: #c9c3b8;
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 22px 26px 0;
+  color: var(--tst-ink);
+  font-family: var(--dsh-font-sans, ui-sans-serif, system-ui, sans-serif);
+  font-size: var(--tst-fs);
+  line-height: 1.45;
+}
+
+body[data-ds-dark-theme] [data-testid="testboard"] {
+  --tst-pass: #4ade80;
+  --tst-fail: #ff3b30;
+  --tst-idle: #3a3a40;
+}
+
+/* Header ------------------------------------------------------------------ */
+
+[data-tst="header"] {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--tst-rule);
+}
+
+[data-tst="title"] {
+  margin: 0;
+  font-size: var(--tst-fs-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--tst-ink);
+}
+
+[data-tst="subtitle"] {margin: 2px 0 0;color: var(--tst-ink-dim)}
+
+[data-tst="header-stats"] {display: flex;align-items: baseline;gap: 14px;color: var(--tst-ink-dim);white-space: nowrap}
+
+[data-tst="tally"] {
+  display: inline-flex;
+  gap: 6px;
+}[data-tst="tally-passed"],
+[data-tst="detail-file-passed"],
+[data-tst="detail-case-status"][data-status="passed"] {
+  color: var(--tst-pass);
+}[data-tst="tally-failed"],
+[data-tst="duration"],
+[data-tst="detail-file-failed"] {
+  color: var(--tst-ink-dim);
+}[data-tst="tally-failed"][data-has-failed="true"],
+[data-tst="detail-file-failed"][data-has-failed="true"],
+[data-tst="detail-case-status"][data-status="failed"],
+[data-tst="lane-failed"] {
+  color: var(--tst-fail);
+}[data-tst="tally-sep"],
+[data-tst="search"]::placeholder {
+  color: var(--tst-ink-faint);
+}
+
+/* Sparkline --------------------------------------------------------------- */
+
+[data-tst="throughput"] {
+  flex: none;
+  position: relative;
+  height: 56px;
+  margin: 14px 0 18px;
+}
+
+[data-tst="spark"] {
+  display: block;
+  width: 100%;
+  height: 56px;
+  overflow: visible;
+}
+
+[data-tst="spark-line"] {
+  fill: none;
+  stroke: var(--tst-ink-dim);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+[data-tst="spark-area"] {
+  fill: var(--tst-ink);
+  opacity: 0.05;
+  stroke: none;
+}
+
+[data-tst="pin"] {
+  stroke: var(--tst-fail);
+  stroke-width: 1;
+  opacity: 0.55;
+  vector-effect: non-scaling-stroke;
+}
+
+[data-tst="peak"] {position: absolute;top: 0;right: 0;color: var(--tst-ink-faint)}
+
+/* Toolbar ----------------------------------------------------------------- */
+
+[data-tst="toolbar"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--tst-rule);
+}
+
+[data-tst="segmented"] {
+  display: inline-flex;
+  border: 1px solid var(--tst-rule);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+[data-tst="segment"] {
+  appearance: none;
+  border: 0;
+  padding: 3px 10px;
+  background: transparent;
+  color: var(--tst-ink-dim);
+  font: inherit;
+  font-size: var(--tst-fs-small);
+  cursor: pointer;
+}
+
+[data-tst="segment"] + [data-tst="segment"] {
+  border-left: 1px solid var(--tst-rule);
+}[data-tst="segment"]:hover,
+[data-tst="segment"][data-active="true"] {
+  background: var(--tst-surface-hover);
+  color: var(--tst-ink);
+}
+
+[data-tst="search"] {flex: 1;min-width: 120px;appearance: none;border: 1px solid var(--tst-rule);border-radius: 5px;padding: 3px 9px;background: color-mix(in srgb, var(--dsw-alias-label-primary, #14110d) 4%, transparent);color: var(--tst-ink)}
+
+[data-tst="search"]:focus {
+  outline: none;
+  border-color: var(--tst-ink-faint);
+}
+
+/* Lanes ------------------------------------------------------------------- */
+
+/* Split ------------------------------------------------------------------- */
+
+/* The three fixed bands above stay full width; everything below them is the
+   split. The left track is a custom property so a drag can pin it to pixels
+   while a fresh install keeps the proportional default. */
+[data-tst="split"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--tst-left-pane, minmax(300px, 42%)) 10px minmax(0, 1fr);
+  gap: 0;
+}
+
+[data-tst="lanes"] {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 16px 0 40px;
+}
+
+/* The list is a focus target, and its own ring would sit inside the panel's
+   edge; the selected row is the visible cue instead. */[data-tst="lanes"]:focus,
+[data-tst="pane-handle"]:focus-visible {
+  outline: none;
+}
+
+/* The divider. A hairline that only shows on hover or keyboard focus: a
+   permanent line at 10px wide reads as a border, not as a handle. */
+[data-tst="pane-handle"] {
+  position: relative;
+  width: 10px;
+  justify-self: center;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+[data-tst="pane-handle"]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-0.5px);
+  background: var(--tst-ink-faint);
+  opacity: 0;
+}[data-tst="pane-handle"]:hover::before,
+[data-tst="pane-handle"]:focus-visible::before {
+  opacity: 0.55;
+}
+
+/* The handle is 10px wide, so the default focus ring collapses into noise; the
+   keyboard focus reuses the hover line instead. */
+
+/* Applied to the document body while a drag is live: no text selection under a
+   moving pointer and a stable cursor wherever it travels. */
+body.tst-pane-resizing {
+  user-select: none;
+  cursor: col-resize;
+}
+
+/* Detail pane ------------------------------------------------------------- */
+
+/* Only the code scrolls: one scroller for the whole pane carried the case
+   detail off the top exactly when the highlighted line was revealed. */
+[data-tst="detail-pane"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 16px 0 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}[data-testid="detail-pane"][data-empty="true"] {
+  align-items: center;
+  justify-content: center;
+}[data-tst="detail-empty"],
+[data-tst="detail-code-missing"] {
+  margin: 0;
+  max-width: 30ch;
+  text-align: center;
+  color: var(--tst-ink-faint);
+  font-size: var(--tst-fs-small);
+}
+
+[data-tst="detail-file"] {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--tst-rule);
+}
+
+[data-tst="detail-file-main"] {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+[data-tst="detail-file-name"] {color: var(--tst-ink);white-space: nowrap}[data-tst="detail-file-path"],
+[data-tst="lane-dir"] {color: var(--tst-ink-faint);overflow: hidden;text-overflow: ellipsis;white-space: nowrap}
+
+[data-tst="detail-file-stats"] {display: flex;align-items: baseline;gap: 10px;flex: 0 0 auto;color: var(--tst-ink-dim);white-space: nowrap}
+
+[data-tst="detail-case"] {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--tst-rule);
+  border-radius: 6px;
+}
+
+[data-tst="detail-case-name"] {
+  font-size: var(--tst-fs);
+  color: var(--tst-ink);
+}
+
+[data-tst="detail-case-meta"] {display: flex;align-items: baseline;gap: 12px;color: var(--tst-ink-dim)}
+
+[data-tst="detail-case-error"] {color: var(--tst-fail)}
+
+[data-tst="detail-code"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 40px;
+}
+
+[data-tst="code-lines"] {line-height: 1.55}
+
+[data-tst="code-line"] {
+  display: grid;
+  grid-template-columns: 4ch minmax(0, 1fr);
+  gap: 10px;
+  white-space: pre;
+}
+
+[data-tst="code-line"][data-highlighted="true"] {
+  background: color-mix(in srgb, var(--tst-ink) 10%, transparent);
+  border-radius: 3px;
+}
+
+[data-tst="code-number"] {
+  color: var(--tst-ink-faint);
+  text-align: right;
+  user-select: none;
+}
+
+[data-tst="code-text"] {
+  color: var(--tst-ink-dim);
+  overflow-x: auto;
+}[data-tst="code-line"][data-highlighted="true"] [data-tst="code-text"],
+[data-tst="case"][data-status="failed"] [data-tst="case-name"] {
+  color: var(--tst-ink);
+}
+
+[data-tst="package-name"] {margin: 0 0 4px;font-weight: 500;color: var(--tst-ink-faint);letter-spacing: 0.04em}
+
+[data-tst="lane"] {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 4px;
+  padding: 3px 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}[data-tst="lane"]:hover, [data-tst="lane"][data-expanded="true"],
+[data-tst="case"]:hover {
+  background: var(--tst-surface-hover);
+}
+
+/* Selection outranks hover and open state: the reader has to be able to tell
+   which row the right pane is describing, and a hover wash is too faint to
+   carry that. The inset rule keeps it from reading as a second border. */
+[data-tst="lane"][data-selected="true"] {
+  background: color-mix(in srgb, var(--tst-ink) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--tst-ink);
+}
+
+[data-tst="case"][data-selected="true"] {
+  background: color-mix(in srgb, var(--tst-ink) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--tst-ink);
+  color: var(--tst-ink);
+}
+
+[data-tst="lane-name"] {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 46%;
+}
+
+[data-tst="lane-file"] {color: var(--tst-ink);overflow: hidden;text-overflow: ellipsis;white-space: nowrap}
+
+[data-tst="ticks"] {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+[data-tst="tick"] {
+  display: block;
+  flex: 0 0 2px;
+  width: 2px;
+  height: 11px;
+  border-radius: 1px;
+  background: var(--tst-idle);
+}[data-tst="tick"][data-status="passed"],
+[data-tst="case-dot"][data-status="passed"] {
+  background: var(--tst-pass);
+}[data-tst="tick"][data-status="failed"],
+[data-tst="case-dot"][data-status="failed"] {
+  background: var(--tst-fail);
+}
+
+[data-tst="lane-reading"] {flex: 0 0 auto;color: var(--tst-ink-faint);text-align: right;min-width: 56px}
+
+/* Expanded cases ---------------------------------------------------------- */
+
+[data-tst="case-list"] {
+  list-style: none;
+  margin: 2px 0 6px;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+[data-tst="case"] {
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: var(--tst-fs-small);
+  color: var(--tst-ink-dim);
+  cursor: pointer;
+}
+
+[data-tst="case-dot"] {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--tst-idle);
+  align-self: center;
+}
+
+[data-tst="case-name"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-tst="case-duration"] {color: var(--tst-ink-faint)}
+
+[data-tst="case-error"] {grid-column: 2 / -1;color: var(--tst-fail)}
+
+[data-tst="empty"],
+[data-tst="status"] {
+  color: var(--tst-ink-dim);
+  font-size: var(--tst-fs-small);
+}
+
