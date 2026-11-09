@@ -1,0 +1,5 @@
+# Mount the external wakeup channel: HTTP endpoint + optional watch directory
+# that steer a running session as a user message.
+- insert:
+    - id: wakeup
+      name: 'dsh-wakeup'
