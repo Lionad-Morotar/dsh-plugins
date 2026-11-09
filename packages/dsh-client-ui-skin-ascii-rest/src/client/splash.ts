@@ -68,8 +68,15 @@ export interface SplashOptions {
   doc: Document;
   /** The scene to play, as the catalog describes it. */
   scene: SceneEntry;
-  /** The scene's module, already imported. */
-  module: SceneModule;
+  /**
+   * The scene's module, or the promise of it.
+   *
+   * A scene that is not built into the entry arrives as a chunk fetch, and the
+   * layer cannot wait for that: the boot page it covers is already painted. So
+   * the layer and its ground go up synchronously either way, and only the canvas
+   * waits.
+   */
+  module: SceneModule | Promise<SceneModule>;
   /** The scene's own frame options. */
   pieceOptions: Record<string, number | boolean>;
   /** Which colour treatment the light scheme uses. */
@@ -210,47 +217,68 @@ export function playSplash(options: SplashOptions): Splash {
     pollTimer = setTimeout(poll, timing.pollMs);
   };
 
-  try {
-    surface = presentScene(
-      {
-        scene,
-        module: options.module,
-        pieceOptions: options.pieceOptions,
-        opacity: 1,
-        blur: 0,
-        veil: 0,
-        scrim: 0,
-        scrimAngle: 180,
-        still: options.still,
-        // The splash is the only thing on screen, so a lost focus is not a
-        // reason to stop: the reader is looking at it while the app starts.
-        pauseOnBlur: false,
-        fps: options.fps,
-        resolution: options.resolution,
-        lightMode: options.lightMode,
-        geometry: { fit: "cover", anchor: "center", zoom: 1 },
-        onError: fail,
-      },
-      doc,
-    );
-  } catch (error) {
-    fail(error);
-    return { element, dispose };
-  }
+  /**
+   * Put the scene's canvas inside the layer.
+   *
+   * Split out because it may run later than the layer: a scene that is not built
+   * into the entry arrives as a chunk, and by then the reader may already be
+   * looking at the shell.
+   */
+  const attach = (module: SceneModule): void => {
+    if (disposed) return;
+    let next: Surface;
+    try {
+      next = presentScene(
+        {
+          scene,
+          module,
+          pieceOptions: options.pieceOptions,
+          opacity: 1,
+          blur: 0,
+          veil: 0,
+          scrim: 0,
+          scrimAngle: 180,
+          still: options.still,
+          // The splash is the only thing on screen, so a lost focus is not a
+          // reason to stop: the reader is looking at it while the app starts.
+          pauseOnBlur: false,
+          fps: options.fps,
+          resolution: options.resolution,
+          lightMode: options.lightMode,
+          geometry: { fit: "cover", anchor: "center", zoom: 1 },
+          onError: fail,
+        },
+        doc,
+      );
+    } catch (error) {
+      fail(error);
+      return;
+    }
 
-  if (disposed) {
     // `presentScene` reports through `onError` before it returns, so the layer
     // may already be gone; the surface it handed back is still live.
-    surface.dispose();
-    surface = null;
-    return { element, dispose };
+    if (disposed) {
+      next.dispose();
+      return;
+    }
+
+    // `presentScene` puts its layer behind the shell, which is right for the
+    // background and wrong inside the splash: a negative index would drop the
+    // scene under the layer's own ground colour.
+    next.element.style.zIndex = "0";
+    surface = next;
+    element.append(next.element);
+  };
+
+  if (typeof (options.module as Promise<SceneModule>).then === "function") {
+    void (options.module as Promise<SceneModule>).then(attach, fail);
+  } else {
+    attach(options.module as SceneModule);
   }
 
-  // `presentScene` puts its layer behind the shell, which is right for the
-  // background and wrong inside the splash: a negative index would drop the
-  // scene under the layer's own ground colour.
-  surface.element.style.zIndex = "0";
-  element.append(surface.element);
+  // A scene that failed on the spot has already taken the layer down, and a
+  // splash that is gone has nothing left to wait for.
+  if (disposed) return { element, dispose };
 
   pollTimer = setTimeout(poll, timing.pollMs);
   deadlineTimer = setTimeout(fade, timing.maxWaitMs);

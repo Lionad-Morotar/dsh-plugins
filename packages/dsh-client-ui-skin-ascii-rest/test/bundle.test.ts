@@ -340,6 +340,66 @@ describe("the built client bundle", () => {
     expect(window.localStorage.getItem("dsh-skin:ascii-rest:settings")).toBe(stored);
   });
 
+  it("opens on the scene when the host is still showing its boot page", () => {
+    const dom = makeDom();
+    const exports = materialize(dom);
+    const { ctx, window } = makeContext(dom);
+
+    // The host paints its boot page before the client mounts, so its presence at
+    // apply time is the one reliable sign that this is a cold start.
+    const boot = window.document.createElement("div");
+    boot.setAttribute("data-dsh-boot", "");
+    window.document.body.append(boot);
+
+    (exports.apply as (ctx: unknown) => void)(ctx);
+
+    expect(window.document.querySelector("[data-ascii-rest-splash]")).not.toBeNull();
+  });
+
+  it("does not open on the scene when the reader turned it off", () => {
+    const dom = makeDom();
+    const exports = materialize(dom);
+    const { ctx, window } = makeContext(dom);
+
+    window.localStorage.setItem("dsh-skin:ascii-rest:settings", JSON.stringify({ splash: false }));
+    const boot = window.document.createElement("div");
+    boot.setAttribute("data-dsh-boot", "");
+    window.document.body.append(boot);
+
+    (exports.apply as (ctx: unknown) => void)(ctx);
+
+    expect(window.document.querySelector("[data-ascii-rest-splash]")).toBeNull();
+  });
+
+  it("does not open on the scene when the skin is switched on mid-session", () => {
+    const dom = makeDom();
+    const exports = materialize(dom);
+    const { ctx, window } = makeContext(dom);
+
+    // No boot page: the app is already up, and covering it would be a flash of
+    // picture over a workspace the reader is using.
+    (exports.apply as (ctx: unknown) => void)(ctx);
+
+    expect(window.document.querySelector("[data-ascii-rest-splash]")).toBeNull();
+  });
+
+  it("takes the splash away with the rest of the skin", () => {
+    const dom = makeDom();
+    const exports = materialize(dom);
+    const { ctx, effects, window } = makeContext(dom);
+
+    const boot = window.document.createElement("div");
+    boot.setAttribute("data-dsh-boot", "");
+    window.document.body.append(boot);
+
+    (exports.apply as (ctx: unknown) => void)(ctx);
+    expect(window.document.querySelector("[data-ascii-rest-splash]")).not.toBeNull();
+
+    for (const dispose of effects) dispose();
+
+    expect(window.document.querySelector("[data-ascii-rest-splash]")).toBeNull();
+  });
+
   it("leaves the page as it found it on teardown", () => {
     const dom = makeDom();
     const exports = materialize(dom);
@@ -354,6 +414,7 @@ describe("the built client bundle", () => {
     // The background layer is the plugin's only DOM write outside the settings
     // page, so it must be gone too.
     expect(window.document.querySelectorAll("[data-ascii-rest-layer]")).toHaveLength(0);
+    expect(window.document.querySelectorAll("[data-ascii-rest-splash]")).toHaveLength(0);
     expect(window.document.querySelectorAll("style[data-plugin-css]")).toHaveLength(0);
   });
 });

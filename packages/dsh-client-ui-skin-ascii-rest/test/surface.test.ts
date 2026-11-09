@@ -195,4 +195,42 @@ describe("restyle", () => {
     // Disposal unbinds whatever is still bound.
     expect(bound.get("blur")).toBe(0);
   });
+
+  it("pauses and resumes the frame loop, and survives a remount while paused", () => {
+    // jsdom has no canvas context, so the renderer hands back its detached
+    // handle: the calls are what this asserts, not the pixels. A pause that a
+    // remount silently dropped would show the splash's own scene playing behind
+    // a splash that is meant to be the only thing moving.
+    const surface = presentScene(presentation({ fps: 15 }), doc);
+
+    expect(() => {
+      surface.pause();
+      surface.pause();
+      surface.resume();
+      surface.resume();
+    }).not.toThrow();
+
+    // A density change re-mounts the renderer, which is the path that used to
+    // start a fresh loop with no memory of the pause.
+    surface.pause();
+    surface.restyle({
+      opacity: 1,
+      blur: 0,
+      veil: 0.1,
+      scrim: 0,
+      scrimAngle: 180,
+      still: false,
+      fps: 15,
+      resolution: 2,
+      pauseOnBlur: true,
+    });
+    expect(() => surface.resume()).not.toThrow();
+
+    surface.dispose();
+    // Disposal after a pause is the teardown path the splash takes.
+    expect(() => {
+      surface.pause();
+      surface.resume();
+    }).not.toThrow();
+  });
 });

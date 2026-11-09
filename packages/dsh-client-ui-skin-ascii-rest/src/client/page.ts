@@ -65,6 +65,10 @@ export interface PageCopy {
   scrimAngle: string;
   pauseOnBlur: string;
   pauseOnBlurNote: string;
+  splash: string;
+  splashNote: string;
+  splashOn: string;
+  splashOff: string;
 }
 
 /** The slice of React this page uses; the rest comes from the host. */
@@ -84,6 +88,8 @@ export interface PageProps {
   onAppearance(change: Partial<Settings["appearance"]>): void;
   onPlacement(change: Partial<Settings["options"]>): void;
   onRegions(change: Partial<Settings["regions"]>): void;
+  /** Whether a cold start opens on the scene before the shell. */
+  onSplash(open: boolean): void;
   onOpenPanel(): void;
   onReset(): void;
   copy: PageCopy;
@@ -408,6 +414,22 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
     ),
   );
 
+  // The splash is about the moment before there is a shell, so it sits with the
+  // actions rather than among the controls that change how the picture looks.
+  const splashLabels: Record<string, string> = { on: copy.splashOn, off: copy.splashOff };
+  const splashSection = React.createElement(
+    "section",
+    { className: "ascii-rest-section" },
+    React.createElement("h4", { className: "ascii-rest-section__title" }, copy.splash),
+    React.createElement("p", { className: "ascii-rest-section__note" }, copy.splashNote),
+    field(
+      copy.splash,
+      pick(copy.splash, ["on", "off"], splashLabels, settings.splash ? "on" : "off", (value) =>
+        props.onSplash(value === "on"),
+      ),
+    ),
+  );
+
   const lightLabels: Record<string, string> = { ink: copy.lightInk, duotone: copy.lightDuotone };
   const light = React.createElement(
     "section",
@@ -490,6 +512,7 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
       ? null
       : React.createElement(Preview, { scene: current, options: settings.options, loadPreview: props.loadPreview, copy, React }),
     actions,
+    splashSection,
     light,
     placement,
     regions,

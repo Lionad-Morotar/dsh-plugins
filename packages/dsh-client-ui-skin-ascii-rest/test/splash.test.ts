@@ -16,6 +16,7 @@ import { JSDOM } from "jsdom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { sceneColors } from "ascii-rest-scenes";
+import type { SceneModule } from "ascii-rest-scenes";
 
 import { DEFAULT_SPLASH_TIMING, playSplash, type SplashOptions } from "../src/client/splash.ts";
 
@@ -239,6 +240,50 @@ describe("playSplash", () => {
     vi.advanceTimersByTime(1);
     expect(layer()).toBeNull();
     expect(onEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("covers the page before the scene has even arrived", async () => {
+    // The boot page is already painted when this runs, so the layer and its
+    // ground cannot wait for a chunk fetch: only the canvas may.
+    let deliver: (module: SceneModule) => void = () => {};
+    const pending = new Promise<SceneModule>((resolve) => {
+      deliver = resolve;
+    });
+    playSplash(splashOptions({ module: pending }));
+
+    expect(layer()).not.toBeNull();
+    expect(layer()?.style.backgroundColor).toBe(rgbOf(sceneColors(SCENE, "light", "ink").ground));
+    expect(layer()?.querySelector("canvas")).toBeNull();
+
+    deliver(MODULE as unknown as SceneModule);
+    await Promise.resolve();
+
+    expect(layer()?.querySelector("canvas")).not.toBeNull();
+  });
+
+  it("reports a scene promise that never delivers and leaves nothing behind", async () => {
+    const onError = vi.fn();
+    playSplash(splashOptions({ module: Promise.reject(new Error("chunk 404")), onError }));
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(layer()).toBeNull();
+  });
+
+  it("does not mount a scene that arrives after the layer was disposed", async () => {
+    let deliver: (module: SceneModule) => void = () => {};
+    const pending = new Promise<SceneModule>((resolve) => {
+      deliver = resolve;
+    });
+    const splash = playSplash(splashOptions({ module: pending }));
+    splash.dispose();
+
+    deliver(MODULE as unknown as SceneModule);
+    await Promise.resolve();
+
+    expect(layer()).toBeNull();
   });
 
   it("reports a scene that will not mount and leaves nothing behind", () => {
