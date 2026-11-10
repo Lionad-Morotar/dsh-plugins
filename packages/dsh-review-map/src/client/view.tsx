@@ -511,6 +511,13 @@ export function createReviewMapView({
     // list with no tab stop at all.
     const selected = files.some(file => file.path === selectedPath) ? selectedPath : files[0]?.path;
     const openFile = openPath === undefined ? undefined : files.find(file => file.path === openPath);
+    // The panel is open only while its file is still in the list. A refresh can
+    // drop the file the panel is showing (the change was committed, or reverted),
+    // and a panel left standing would name a path the reader can no longer find
+    // in the list beside it, with no status and no churn to explain it. Deriving
+    // this rather than clearing it in an effect also covers the scope and session
+    // switches, which change the list for the same reason.
+    const panelPath = openFile === undefined ? undefined : openPath;
 
     const open = (path: string): void => {
       if (sessionId === undefined || sessionId === "") return;
@@ -621,7 +628,7 @@ export function createReviewMapView({
               </div>
             </div>
 
-            <div data-rm="split" data-open={openPath === undefined ? "false" : "true"}>
+            <div data-rm="split" data-open={panelPath === undefined ? "false" : "true"}>
               <div data-rm="list" role="listbox" aria-label={strings.title}>
                 <div data-rm="list-meta">
                   <span data-rm="list-scope">{meta}</span>
@@ -643,9 +650,9 @@ export function createReviewMapView({
                   ))
                 )}
               </div>
-              {openPath === undefined || detailPhase === undefined ? null : (
+              {panelPath === undefined || detailPhase === undefined ? null : (
                 <DetailPanel
-                  path={openPath}
+                  path={panelPath}
                   file={openFile}
                   phase={detailPhase}
                   strings={strings}
