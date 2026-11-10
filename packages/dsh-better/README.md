@@ -218,6 +218,27 @@ fork 会话只算自己的：seeded 会话的日志前缀是父会话的事件�
 
 两个面板有明确分工：参数面板打开期间悬浮面板让位，免得两个浮层抢同一块位置；在悬浮面板里点参数是追加到草稿末尾，在参数面板里点候选是替换正在输入的 token。参数面板不接管方向键、Enter 与 Tab，提交与菜单语义仍然归宿主；它只做前缀过滤，不补参数值，`<a|b>` 这类值始终只是提示。
 
+### 目录面板
+
+参数候选只能列出 flag。值本身是一份目录时（工作流 slug、以后还可能是别的清单），技能在自己的 `SKILL.md` 里声明哪个词由目录填充：
+
+```yaml
+metadata:
+  assist:
+    - slot: run
+      kind: catalog
+      title: 工作流
+      source: workflows
+```
+
+`slot` 是草稿里那个完整词，`kind` 目前只认 `catalog`，`source` 目前只认 `workflows`，`title` 可省，省了就用 slot 本身当标题。缺字段、认不出的 kind 或 source 整条丢掉，同一个 slot 只留第一条。这一列表不进悬浮面板那张已经拍平的 metadata 表，两边各看各的。
+
+`workflows` 源读三处清单，同名 slug 先出现的赢：会话工作区的 `.claude/workflows/index.md`、`.agents/workflows/index.md`，再加 `~/.data/flow-workflow/index.md`。行要以列表符号开头，slug 是行首的 kebab token，冒号后是一句话目标。读不到的文件跳过。没有这条声明就不读盘。
+
+打开条件看的是 token 而不是前缀：草稿以该技能开头，slot 词本身是一个完整 token，而且它就是值前面那一个 token。`/flow-workflow run` 后面还没打字时列出全部；`run dev` 按 slug 或目标筛选。slug 前缀命中排在 slug 包含之前，目标里的命中排最后，同一档保持清单原顺序。命中片段高亮，原文大小写保留。值写完再跟别的 token 就关闭。`--dynamic run ` 仍然打开，因为 `run` 依然是完整的 slot 词。末尾正在输 `--` 时让给参数面板。
+
+点击或回车把正在输入的值替换成 slug 加一个尾空格，不写目标文本。目录面板打开时接管上下键与回车，不接管 Tab；输入法正在组字时回车仍归输入法。Escape 关闭，草稿再变就重开。
+
 ## 开发
 
 ```sh
