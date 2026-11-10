@@ -35,7 +35,9 @@ focus 语法：`compare:` 前缀之后按第一个冒号切成两段。ref 名�
 
 跳转顺序是 request、switch、take-if-delivered：目标视图可能还没挂载，队列是唯一能跨过这个间隙的东西；switch 报告 `focused: true` 时说明 focus 已直接交付，队列里那份要取走，否则下次挂载会重放一个读者已经看过的目标。tab 回退只能切视图、带不了 focus，所以队列条目要留着。
 
-宿主没有 workbench 时，本视图照常工作，两个跳转按钮不渲染。
+focus 有两条互不重叠的交付路径，本视图两条都消费：调用方自己持有宿主 `openView(id, focus)` 能力时，请求以 owner props 的 `viewRequest` 直接交给视图（消费后回执 `completeViewRequest`）；调用方没有该能力时，请求留在 `viewFocus` 队列里，视图挂载或存活期间取走。只实现一条会静默丢掉另一半来源的跳转。
+
+客户端半把 `workbench` 声明进 `inject`：服务由另一个客户端插件提供，插件加载顺序不保证，晚于服务就绪的挂载只能声明等待，不能靠一次 `ctx.get` 的瞬时结果。视图本身仍允许没有核心（两个跳转按钮不渲染），但注入层面缺核心时标签不会挂载，与 fs/git-explorer 的约定一致。
 
 ## 安装
 
