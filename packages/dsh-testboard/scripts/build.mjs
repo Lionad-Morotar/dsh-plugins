@@ -51,16 +51,18 @@ const CLIENT_EXTERNALS = ["react", "react/jsx-runtime", "react-dom", "@deepseek-
  * Startup-bundle budget. `client.js` is evaluated on every page boot whether or
  * not the tab is ever opened, so growth here is a cost every user pays.
  *
- * The line has moved twice, both times for the same reason: the panel stopped
+ * The line has moved three times, always for the same reason: the panel stopped
  * being a prototype. It went to 40KB when the split view, keyboard navigation
- * and the resize handle landed; it moved to 64KB when the run header, the
- * throughput chart and the motion layer became startup code too.
+ * and the resize handle landed; to 64KB when the run header, the throughput
+ * chart and the motion layer became startup code; and to 72KB when the context
+ * menu and the reference source/writer arrived, which the composer needs
+ * registered from the first paint because a draft can already hold a chip.
  *
  * What the ceiling guards is the payload that must never be inlined: CodeMirror
  * stays in its own chunk, and the assertion below fails if it creeps in. That is
  * the megabyte; this bundle is tens of kilobytes, and gzipped it is under 20KB.
  */
-const CLIENT_MAX_BYTES = 64 * 1024;
+const CLIENT_MAX_BYTES = 72 * 1024;
 
 /** CodeMirror's view, state, language and JavaScript parser, minified. */
 const EDITOR_MAX_BYTES = 1_200_000;

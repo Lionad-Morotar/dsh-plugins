@@ -105,6 +105,18 @@ const STRINGS: TestboardViewStrings = {
   chartTitle: "每秒完成用例数",
   fixing: "正在修复",
   fixingModel: "模型",
+  menuReference: "引用",
+  menuRunFile: "运行此文件",
+  menuCopyPath: "复制路径",
+  referenceNoSession: "当前没有可写入的会话",
+  referenceNoComposer: "当前输入框不支持引用",
+  referenceNoSource: "引用通道尚未就绪",
+  menuRunInFlight: "正在运行",
+  noticeReferenced: "已插入引用",
+  noticeReferencedText: "已插入引用文本",
+  noticeReferenceFailed: "引用插入失败",
+  noticeCopied: "已复制路径",
+  noticeCopyFailed: "复制失败",
 };
 
 /**
@@ -1378,5 +1390,206 @@ describe("testboard motion", () => {
     // The host has no repair events (D18), so the online board must never
     // invent one.
     expect(host.querySelector('[data-testid="fixing-card"]')).toBeNull();
+  });
+});
+
+/**
+ * Right-click references and the chip's return trip.
+ *
+ * The composer is the one part of the host these tests replace: the view only
+ * ever talks to `inputActions` (span capture and plain-text insert) and to the
+ * session facade (the structured chip), so both are recorded fakes. That is the
+ * whole seam, and asserting against it is asserting what a real composer would
+ * receive.
+ */
+describe("testboard references", () => {
+  interface FacadeCall {
+    readonly insert: {
+      readonly source: string;
+      readonly ref: string;
+      readonly label: string;
+      readonly clipboardText: string;
+      readonly appearance?: string;
+    };
+    readonly span: { readonly start: number; readonly end: number; readonly draftRev: number };
+  }
+
+  let host: HTMLDivElement;
+  let root: Root;
+  let calls: FacadeCall[];
+  let copied: string | undefined;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    calls = [];
+    copied = undefined;
+    runtime = makeRuntime();
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          copied = text;
+        },
+      },
+    });
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+    window.localStorage.clear();
+  });
+
+  function view(options: { readonly source?: boolean } = {}) {
+    return createTestboardView({
+      strings: STRINGS,
+      runtime,
+      loadEditor: () => new Promise<never>(() => {}),
+      reference: () => ({
+        insertReference: (insert, span) => {
+          calls.push({ insert, span });
+          return true;
+        },
+      }),
+      referenceSourceAvailable: () => options.source !== false,
+    });
+  }
+
+  async function mount(options: { readonly source?: boolean } = {}, props: Record<string, unknown> = {}): Promise<void> {
+    // The composer's own half: span capture and the plain-text fallback. The
+    // view receives these as slot props on the host, so the fake composer
+    // supplies the same shape here.
+    const inputActions = {
+      captureInsertion: () => ({ start: 0, end: 0, draftRev: 1 }),
+      insertText: () => true,
+    };
+    await act(async () => root.render(createElement(view(options), { sessionId: "session-1", inputActions, ...props })));
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+  }
+
+  async function rightClick(element: Element): Promise<void> {
+    await act(async () => {
+      element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 90 }));
+    });
+  }
+
+  function menuItem(action: string): HTMLElement | null {
+    return host.querySelector<HTMLElement>(`[data-testid="tb-menu-item"][data-action="${action}"]`);
+  }
+
+  async function choose(action: string): Promise<void> {
+    const item = menuItem(action);
+    if (item === null) throw new Error(`no menu item ${action}`);
+    await act(async () => item.click());
+  }
+
+  it("opens a menu on a file row and writes a file reference chip", async () => {
+    await mount();
+    const row = rows(host)[0];
+    if (row === undefined) throw new Error("no rows");
+    const path = row.getAttribute("data-path") ?? "";
+    await rightClick(row);
+    const menu = host.querySelector('[data-testid="tb-menu"]');
+    expect(menu).not.toBeNull();
+    expect(menuItem("reference.input")?.textContent).toContain(STRINGS.menuReference);
+    expect(menuItem("reference.input")?.getAttribute("data-disabled")).toBe("false");
+
+    await choose("reference.input");
+    // The menu closes first: the write is what the click meant.
+    expect(host.querySelector('[data-testid="tb-menu"]')).toBeNull();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.insert.source).toBe("lionad.testboard");
+    expect(calls[0]?.insert.appearance).toBe("file");
+    const record = JSON.parse(calls[0]?.insert.ref ?? "{}") as { path?: string; kind?: string };
+    expect(record.path).toBe(path);
+    expect(record.kind).toBe("file");
+    expect(host.querySelector('[data-testid="board-notice"]')?.textContent).toContain(STRINGS.noticeReferenced);
+  });
+
+  it("references one case with the case's own name and a session chip", async () => {
+    await mount();
+    const row = rows(host)[0];
+    if (row === undefined) throw new Error("no rows");
+    const path = row.getAttribute("data-path") ?? "";
+    const file = fileAt(path);
+    await act(async () => row.click());
+
+    const cases = host.querySelectorAll<HTMLElement>('[data-testid="case-item"]');
+    expect(cases.length).toBeGreaterThan(0);
+    const caseName = file?.cases[0]?.name ?? "";
+    await rightClick(cases[0] as Element);
+    await choose("reference.input");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.insert.appearance).toBe("session");
+    expect(calls[0]?.insert.label).toContain(caseName);
+    const record = JSON.parse(calls[0]?.insert.ref ?? "{}") as { kind?: string; name?: string; path?: string };
+    expect(record.kind).toBe("case");
+    expect(record.name).toBe(caseName);
+    expect(record.path).toBe(path);
+  });
+
+  it("disables the reference row with a reason when the source is not registered", async () => {
+    await mount({ source: false });
+    const row = rows(host)[0];
+    if (row === undefined) throw new Error("no rows");
+    await rightClick(row);
+
+    const item = menuItem("reference.input");
+    expect(item?.getAttribute("data-disabled")).toBe("true");
+    expect(item?.textContent).toContain(STRINGS.referenceNoSource);
+    await choose("reference.input");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("copies a row's path from the context menu", async () => {
+    await mount();
+    const row = rows(host)[0];
+    if (row === undefined) throw new Error("no rows");
+    const path = row.getAttribute("data-path") ?? "";
+    await rightClick(row);
+    await choose("copy.path");
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(copied).toBe(path);
+    expect(host.querySelector('[data-testid="board-notice"]')?.textContent).toContain(STRINGS.noticeCopied);
+  });
+
+  it("runs the file a row names from the context menu", async () => {
+    await mount();
+    const row = rows(host)[0];
+    if (row === undefined) throw new Error("no rows");
+    const path = row.getAttribute("data-path") ?? "";
+    await rightClick(row);
+    await choose("run.file");
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(path).not.toBe("");
+    expect(runtime.calls.some(call => call.kind === "startRun" && call.detail === "session-1:file")).toBe(true);
+  });
+
+  it("selects the row a view request names when the tab is opened from a chip", async () => {
+    const complete = { calls: 0 };
+    const target = SNAPSHOT.packages.flatMap(pkg => pkg.files)[0]?.path ?? "";
+    expect(target).not.toBe("");
+    await mount(
+      {},
+      {
+        viewRequest: { view: "testboard", focus: `file:${target}` },
+        completeViewRequest: () => {
+          complete.calls += 1;
+        },
+      },
+    );
+    const row = rows(host).find(candidate => candidate.getAttribute("data-path") === target);
+    expect(row?.getAttribute("data-selected")).toBe("true");
+    expect(complete.calls).toBeGreaterThan(0);
   });
 });

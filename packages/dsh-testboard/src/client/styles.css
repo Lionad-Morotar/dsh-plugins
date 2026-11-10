@@ -784,3 +784,94 @@ body.tst-pane-resizing {
 [data-tst="lane"]:has([data-tst="run-file"]:disabled):hover [data-tst="run-file"] {
   opacity: 0;
 }
+
+/* The board's own right-click menu. Fixed rather than absolute: the list that
+   opened it scrolls, and a menu anchored inside that scroll box would be
+   clipped by it at the first row near the bottom. */
+[data-testid="tb-menu"] {
+  position: fixed;
+  z-index: 40;
+  min-width: 172px;
+  padding: 4px;
+  border: 1px solid var(--tst-rule);
+  border-radius: 8px;
+  background: var(--tst-surface);
+  box-shadow: 0 12px 32px color-mix(in srgb, #000 18%, transparent);
+  color: var(--tst-ink);
+  font-size: var(--tst-fs-small);
+  animation: tst-menu-in 90ms ease-out both;
+}
+
+[data-testid="tb-menu"] [role="menuitem"] {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+[data-testid="tb-menu"] [role="menuitem"]:hover:not([data-disabled="true"]) {
+  background: var(--tst-surface-hover);
+}
+
+[data-testid="tb-menu"] [role="menuitem"]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--tst-ink) 25%, transparent);
+  outline-offset: -2px;
+}
+
+[data-testid="tb-menu"] [data-disabled="true"] {
+  cursor: default;
+  color: var(--tst-ink-faint);
+}
+
+[data-tst="menu-reason"] {
+  font-size: var(--tst-fs-code);
+  color: var(--tst-ink-faint);
+}
+
+/* The action result, for the rows whose effect is in the composer rather than
+   on the board. It sits above the composer overlay's reserved strip so it never
+   covers the last row of the list. */
+[data-testid="board-notice"] {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--dsh-composer-height, 140px) + 18px);
+  transform: translateX(-50%);
+  z-index: 41;
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--tst-rule);
+  border-radius: 999px;
+  background: var(--tst-surface);
+  color: var(--tst-ink-dim);
+  font-size: var(--tst-fs-small);
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 14%, transparent);
+  pointer-events: none;
+}
+
+[data-testid="board-notice"][data-tone="error"] {
+  color: var(--tst-fail);
+}
+
+[data-testid="board-notice"][data-tone="ok"] {
+  color: var(--tst-pass);
+}
+
+@keyframes tst-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

@@ -29,6 +29,7 @@
 - **键盘导航**（左栏聚焦后）：↑↓ 在当前可见的扁平序列（文件行 + 已展开文件下的用例行）里移动且不循环，→ 展开，← 用例退回其文件、文件收起，Enter/Space 切换展开，Esc 逐级退回，Home/End 到首尾。
 - **PageUp / PageDown**：左栏声明 `data-page-keys="own"`，`dsh-better-keybindings` 据此整条放行。半屏步长由 DOM 实测的 `clientHeight` 与 `scrollHeight` 推导，因为行高不固定（展开的文件带用例，字号跟宿主轴）；零测量退化为一行，上限是 `rowCount-1`，免得与 Home/End 同义。
 - **分隔条**：拖拽改左栏宽度（clamp 260–760px），双击回到 42% 流式默认；聚焦后左右方向键 ±16px、Home/End 到两端、Backspace/Delete 重置。
+- **右键引用**：文件行与展开后的用例行右键出菜单，三项：引用、运行此文件、复制路径。引用走宿主 `inputTriggers`，source 名 `lionad.testboard`：文件引用拼成 `@<path>`（复用宿主文件气泡规则），用例引用带文件和用例名、外观为 session chip。引用通道未就绪时该行灰显并给出原因，不会让点击落空。点引用 chip 回到看板并选中对应行：优先走 workbench 的会话级 `openView`，没有时先排队 focus 再切视图，切换失败撤回 focus。
 - **源码**：按需取并缓存，选中文件才请求，取不到显示「该文件的源码不在快照里」。编辑器 chunk 懒加载，第一次选中文件才拉。
 - **主题**：底色、正文与分割线取宿主语义 token（`--dsw-alias-bg-base` / `--dsw-alias-label-*` / `--dsw-alias-border-*`），字号跟 `--dsh-content-font-size` 与 `--dsh-code-font-size`。通过 / 失败 / 未跑三个语义色由看板自己定义，暗亮两套各自调过。
 
@@ -56,7 +57,7 @@
 | `lib/client.js` | 浏览器半，CJS 包在 ModuleLoader factory 里 |
 | `lib/client.editor.js` | 懒 chunk：CodeMirror 与高亮代码视图 |
 
-启动包有 64KB 预算（gzip 后约 15KB）。这条线抬过两次，都是因为面板不再是原型：40KB 时是分栏、键盘与拖拽落地，64KB 时是运行头、面积图与动效层成为启动代码。真正要守的是 CodeMirror 不进启动包，那条断言还在。
+启动包有 72KB 预算（gzip 后约 19KB）。这条线抬过三次，都是因为面板不再是原型：40KB 时是分栏、键盘与拖拽落地，64KB 时是运行头、面积图与动效层成为启动代码，72KB 时是右键菜单与引用通道（输入框可能在首帧就持有 chip，source 必须从首帧注册）。真正要守的是 CodeMirror 不进启动包，那条断言还在。
 
 `src/client/data/snapshot.json` 与 `sources.json` 由 `scripts/snapshot.mjs` 扫描本仓 `packages/*/test/**/*.test.{ts,tsx}` 生成。它们现在只服务两处：预览页的 fixture runtime，以及测试语料。线上看板不读它们。
 

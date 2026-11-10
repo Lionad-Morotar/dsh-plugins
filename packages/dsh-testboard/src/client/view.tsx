@@ -36,7 +36,7 @@ import {
   type ThroughputBucket,
 } from "./model.ts";
 import type { TestboardRuntime } from "./runtime.ts";
-import type { DemoStage, RunProgress, RunScope, TestboardError, TestboardState } from "../shared.ts";
+import { VIEW_ID, type DemoStage, type RunProgress, type RunScope, type TestboardError, type TestboardState } from "../shared.ts";
 import {
   caseTickStates,
   defaultMotion,
@@ -49,6 +49,18 @@ import {
   type PhaseLabel,
 } from "./motion.ts";
 import { applyNavIntent, flattenNav, navKeyIntent, normalizeSelection, pageStep, type NavSelection } from "./nav.ts";
+import { buildTestboardMenu, menuCopyText, TESTBOARD_MENU_ACTION } from "./context-menu.ts";
+import {
+  insertTestboardReference,
+  parseTestboardFocus,
+  testboardReferencePayload,
+  type ReferenceTargetFacts,
+  type ReferenceWiring,
+  type ReferenceWiringResolver,
+  type TestboardReferenceInsert,
+  type TestboardReferenceSpan,
+  type TestboardReferenceTarget,
+} from "./reference.ts";
 import {
   paneWidthStorage,
   paneWidthStyle,
@@ -58,6 +70,7 @@ import {
 } from "./pane-width.ts";
 import type { EditorChunkModule } from "./code-contract.ts";
 import { CaseList } from "./components/case-list.tsx";
+import { ContextMenu } from "./components/context-menu.tsx";
 import { DetailPane, type DetailPaneStrings } from "./components/detail-pane.tsx";
 import { LaneRow } from "./components/lane-row.tsx";
 import { PaneHandle } from "./components/pane-handle.tsx";
@@ -111,11 +124,43 @@ export interface TestboardViewStrings extends DetailPaneStrings {
   readonly chartTitle: string;
   readonly fixing: string;
   readonly fixingModel: string;
+  readonly menuReference: string;
+  readonly menuRunFile: string;
+  readonly menuCopyPath: string;
+  readonly referenceNoSession: string;
+  readonly referenceNoComposer: string;
+  readonly referenceNoSource: string;
+  readonly menuRunInFlight: string;
+  readonly noticeReferenced: string;
+  readonly noticeReferencedText: string;
+  readonly noticeReferenceFailed: string;
+  readonly noticeCopied: string;
+  readonly noticeCopyFailed: string;
+}
+
+/** The request the conversation shell carries when `openView` targets this tab. */
+export interface ViewRequestLike {
+  readonly view: string;
+  readonly focus: string;
+}
+
+/** The slice of the composer face the reference writer reads. */
+export interface ReferenceInputActions {
+  captureInsertion?(): TestboardReferenceSpan;
+  insertText?(text: string, span: TestboardReferenceSpan): boolean;
 }
 
 /** Owner props the host passes to a `conversation.view` entry. */
 export interface ConversationViewProps {
   readonly sessionId?: string;
+  readonly viewRequest?: ViewRequestLike | null;
+  readonly completeViewRequest?: () => void;
+  /**
+   * The composer's standard props. `conversation.view` is a session-scope slot,
+   * so the host hands these to every entry; they are optional here because the
+   * view also mounts on hosts and in tests that publish neither.
+   */
+  readonly inputActions?: ReferenceInputActions;
 }
 
 /** What the view needs to render. */
@@ -134,6 +179,16 @@ export interface TestboardViewOptions {
    * on mount: a reader who never selects a file never pays for CodeMirror.
    */
   readonly loadEditor: () => Promise<EditorChunkModule>;
+  /** The session input facade, probed per click; absent on hosts without one. */
+  readonly reference?: ReferenceWiringResolver;
+  /**
+   * Whether the chip's trigger source is registered right now.
+   *
+   * A getter because registration can land after this view is built, and a
+   * boolean captured here would keep the menu disabled on a host that finished
+   * wiring the source a moment later.
+   */
+  readonly referenceSourceAvailable?: () => boolean;
 }
 
 /**
@@ -286,9 +341,14 @@ function useHostTheme(): "dark" | "light" {
  * @returns the component the slot mounts.
  */
 export function createTestboardView(options: TestboardViewOptions): (props: ConversationViewProps) => ReactElement {
-  const { strings, runtime, loadEditor } = options;
+  const { strings, runtime, loadEditor, reference, referenceSourceAvailable } = options;
 
-  return function TestboardView({ sessionId }: ConversationViewProps): ReactElement {
+  return function TestboardView({
+    sessionId,
+    viewRequest,
+    completeViewRequest,
+    inputActions,
+  }: ConversationViewProps): ReactElement {
     const theme = useHostTheme();
     const [snapshot, setSnapshot] = useState<TestSnapshot | undefined>(undefined);
     const [workspaceName, setWorkspaceName] = useState<string | undefined>(undefined);
@@ -305,6 +365,10 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const [sort, setSort] = useState<RowSort>("fail-first");
     const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
     const [selection, setSelection] = useState<NavSelection | undefined>(undefined);
+    const [menu, setMenu] = useState<
+      { readonly target: TestboardReferenceTarget; readonly anchor: { readonly x: number; readonly y: number } } | undefined
+    >(undefined);
+    const [notice, setNotice] = useState<{ readonly text: string; readonly tone: "ok" | "error" } | undefined>(undefined);
     const [sourceCache, setSourceCache] = useState<ReadonlyMap<string, string>>(() => new Map());
     // Bumped on every session change, so a slow answer for the previous session
     // cannot land on the new one's board.
@@ -312,6 +376,8 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const listRef = useRef<HTMLDivElement | null>(null);
     const editorRequested = useRef(false);
     const lastSession = useRef<string | undefined>(sessionId);
+    const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const handledFocus = useRef<string | undefined>(undefined);
 
     // The reader's motion preference, read once and then followed: a reader who
     // turns it on mid-run should stop seeing animation without a reload.
@@ -325,6 +391,26 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       return () => query.removeEventListener?.("change", sync);
     }, []);
     const motion = useMemo(() => defaultMotion({ matches: reduced }), [reduced]);
+
+    /**
+     * Show a short status line for an action whose result is otherwise off
+     * screen. The newest notice replaces the previous one, including its timer,
+     * so two quick actions cannot leave two lines fighting for the same slot.
+     */
+    const announce = useCallback((text: string, tone: "ok" | "error"): void => {
+      setNotice({ text, tone });
+      if (noticeTimer.current !== undefined) clearTimeout(noticeTimer.current);
+      noticeTimer.current = setTimeout(() => {
+        noticeTimer.current = undefined;
+        setNotice(undefined);
+      }, 2400);
+    }, []);
+    useEffect(
+      () => () => {
+        if (noticeTimer.current !== undefined) clearTimeout(noticeTimer.current);
+      },
+      [],
+    );
 
     // The clock the header's timer reads. It only runs while a run is going: a
     // settled board has nothing to count, and a tab nobody is watching should
@@ -354,6 +440,9 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       setSelection(undefined);
       setExpanded(new Set());
       setSourceCache(new Map());
+      setMenu(undefined);
+      setNotice(undefined);
+      handledFocus.current = undefined;
       setSessionEpoch(epoch => epoch + 1);
     }, [sessionId]);
 
@@ -487,6 +576,48 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     );
     const rows = useMemo(() => groups.flatMap(group => group.rows), [groups]);
 
+    // A chip click asks the tab to select one row. The request can arrive before
+    // the first state answer (the tab mounts lazily), so it is applied once both
+    // the request and the rows exist. A filter that hides the file is cleared
+    // first: the request is the reason the reader is here, and an empty board
+    // would answer it with nothing.
+    useEffect(() => {
+      if (viewRequest === undefined || viewRequest === null || viewRequest.view !== VIEW_ID) {
+        handledFocus.current = undefined;
+        return;
+      }
+      const key = `${viewRequest.view}:${viewRequest.focus}`;
+      if (handledFocus.current === key) return;
+      const target = parseTestboardFocus(viewRequest.focus);
+      if (target === undefined) {
+        handledFocus.current = key;
+        completeViewRequest?.();
+        return;
+      }
+      if (snapshot === undefined) return;
+      if (!rows.some(row => row.path === target.path)) {
+        if (query !== "") {
+          setQuery("");
+          return;
+        }
+        if (filter !== "all") {
+          setFilter("all");
+          return;
+        }
+        handledFocus.current = key;
+        completeViewRequest?.();
+        return;
+      }
+      handledFocus.current = key;
+      if (target.kind === "file") {
+        setSelection({ kind: "file", path: target.path });
+      } else {
+        setExpanded(current => new Set(current).add(target.path));
+        setSelection({ kind: "case", path: target.path, index: target.index });
+      }
+      completeViewRequest?.();
+    }, [viewRequest, completeViewRequest, snapshot, rows, query, filter]);
+
     // A filter can remove the selected file and a collapse can take its cases
     // off screen; the selection follows rather than pointing at nothing.
     const resolved = normalizeSelection(selection, rows, expanded);
@@ -619,6 +750,121 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
         (error: unknown) => setLoadError(error instanceof Error ? error.message : String(error)),
       );
     }, [runtime, sessionId, applyState]);
+
+    /**
+     * What the composer can take right now, read when a menu opens.
+     *
+     * `undefined` is a real answer: a host without the input plane never hands
+     * the view `inputActions`, and the row then says so instead of offering a
+     * click that cannot land.
+     */
+    const referenceFacts = useCallback((): ReferenceTargetFacts | undefined => {
+      if (sessionId === undefined || sessionId === "" || inputActions === undefined) return undefined;
+      const facade = reference?.(sessionId);
+      return {
+        session: true,
+        insertReference: typeof facade?.insertReference === "function",
+        source: referenceSourceAvailable?.() === true,
+      };
+    }, [inputActions, reference, referenceSourceAvailable, sessionId]);
+
+    /**
+     * Write one row into the composer as a structured reference.
+     *
+     * The span comes from the composer's own capture, the chip from the session
+     * facade, and plain text is the last resort. The facade is resolved per click
+     * rather than per mount because it can outlive its session generation.
+     */
+    const insertReferenceFor = useCallback(
+      (target: TestboardReferenceTarget): void => {
+        if (sessionId === undefined || sessionId === "" || inputActions === undefined) {
+          announce(strings.noticeReferenceFailed, "error");
+          return;
+        }
+        const facade = reference?.(sessionId);
+        const payload = testboardReferencePayload(target);
+        const result = insertTestboardReference(
+          {
+            captureSpan: () => inputActions.captureInsertion?.(),
+            insertReference: (insert: TestboardReferenceInsert, span: TestboardReferenceSpan) =>
+              facade?.insertReference?.(insert, span) ?? false,
+            insertText: (text: string, span: TestboardReferenceSpan) => inputActions.insertText?.(text, span) ?? false,
+            // Read per write: the source can be disposed between the menu that
+            // enabled this row and this click.
+            canInsertReference: referenceSourceAvailable?.() === true,
+          },
+          payload,
+        );
+        if (result === "failed") {
+          announce(strings.noticeReferenceFailed, "error");
+          facade?.notify?.("error", strings.noticeReferenceFailed);
+          return;
+        }
+        facade?.focus?.();
+        announce(result === "reference" ? strings.noticeReferenced : strings.noticeReferencedText, "ok");
+      },
+      [announce, inputActions, reference, referenceSourceAvailable, sessionId, strings],
+    );
+
+    /** Put a row's path on the clipboard; the board has no other copy surface. */
+    const copyRowText = useCallback(
+      (text: string): void => {
+        const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+        if (clipboard?.writeText === undefined) {
+          announce(strings.noticeCopyFailed, "error");
+          return;
+        }
+        clipboard.writeText(text).then(
+          () => announce(strings.noticeCopied, "ok"),
+          () => announce(strings.noticeCopyFailed, "error"),
+        );
+      },
+      [announce, strings],
+    );
+
+    const openRowMenu = useCallback(
+      (target: TestboardReferenceTarget, anchor: { readonly x: number; readonly y: number }): void => {
+        // Right-click selects first, the way a file tree does: the menu acts on
+        // what the reader just pointed at, and the detail pane follows.
+        if (target.kind === "case") setSelection({ kind: "case", path: target.path, index: target.index });
+        else setSelection({ kind: "file", path: target.path });
+        setMenu({ target, anchor });
+      },
+      [],
+    );
+
+    const onFileMenu = useCallback(
+      (path: string, anchor: { readonly x: number; readonly y: number }): void => {
+        openRowMenu({ kind: "file", path }, anchor);
+      },
+      [openRowMenu],
+    );
+
+    const onCaseMenu = useCallback(
+      (path: string, index: number, name: string, anchor: { readonly x: number; readonly y: number }): void => {
+        openRowMenu({ kind: "case", path, index, name }, anchor);
+      },
+      [openRowMenu],
+    );
+
+    /** Run one row of the menu; the menu closes before the action lands. */
+    const onMenuSelect = useCallback(
+      (id: string): void => {
+        const open = menu;
+        setMenu(undefined);
+        if (open === undefined) return;
+        if (id === TESTBOARD_MENU_ACTION.reference) {
+          insertReferenceFor(open.target);
+          return;
+        }
+        if (id === TESTBOARD_MENU_ACTION.runFile) {
+          startRun({ kind: "file", path: open.target.path });
+          return;
+        }
+        if (id === TESTBOARD_MENU_ACTION.copyPath) copyRowText(menuCopyText(open.target));
+      },
+      [copyRowText, insertReferenceFor, menu, startRun],
+    );
 
     const running = run?.phase === "running";
     const canRun = sessionId !== undefined && sessionId !== "" && stateError === undefined && !running;
@@ -850,6 +1096,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
                           strings={{ failed: strings.failed, runFile: strings.runFile }}
                           onSelect={onFileClick}
                           onRun={onRunFile}
+                          onContextMenu={onFileMenu}
                         />
                         {expanded.has(row.path) ? (
                           <CaseList
@@ -857,6 +1104,9 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
                             selectedIndex={resolved?.kind === "case" && resolved.path === row.path ? resolved.index : -1}
                             optionId={index => optionId({ kind: "case", path: row.path, index })}
                             onSelect={index => onCaseClick(row.path, index)}
+                            onContextMenu={(index, anchor) =>
+                              onCaseMenu(row.path, index, row.cases[index]?.name ?? "", anchor)
+                            }
                           />
                         ) : null}
                       </div>
@@ -882,6 +1132,32 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
               strings={strings}
           />
         </div>
+        {menu === undefined ? null : (
+          <ContextMenu
+            entries={buildTestboardMenu({
+              target: menu.target,
+              running,
+              composer: referenceFacts(),
+              strings: {
+                reference: strings.menuReference,
+                runFile: strings.menuRunFile,
+                copyPath: strings.menuCopyPath,
+                referenceNoSession: strings.referenceNoSession,
+                referenceNoComposer: strings.referenceNoComposer,
+                referenceNoSource: strings.referenceNoSource,
+                runInFlight: strings.menuRunInFlight,
+              },
+            })}
+            anchor={menu.anchor}
+            onSelect={onMenuSelect}
+            onClose={() => setMenu(undefined)}
+          />
+        )}
+        {notice === undefined ? null : (
+          <p data-testid="board-notice" data-tst="board-notice" data-tone={notice.tone} role="status">
+            {notice.text}
+          </p>
+        )}
       </div>
     );
   };

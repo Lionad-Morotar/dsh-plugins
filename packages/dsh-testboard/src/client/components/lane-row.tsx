@@ -17,7 +17,7 @@
  * click, which is why it is only reachable by pointer for now; the keyboard's
  * run affordance is the toolbar's "run all".
  */
-import type { ReactElement } from "react";
+import type { MouseEvent, ReactElement } from "react";
 
 import { fileNameOf, fileDirectoryOf, formatDuration } from "../format.ts";
 import type { CaseTick, RowReading } from "../motion.ts";
@@ -60,6 +60,8 @@ export interface LaneRowProps {
   readonly strings: LaneRowStrings;
   readonly onSelect: (path: string) => void;
   readonly onRun: (path: string) => void;
+  /** Right-click on the row: the view anchors its menu at the pointer. */
+  readonly onContextMenu: (path: string, anchor: { readonly x: number; readonly y: number }) => void;
 }
 
 /**
@@ -79,6 +81,7 @@ export function LaneRow({
   strings,
   onSelect,
   onRun,
+  onContextMenu,
 }: LaneRowProps): ReactElement {
   // The package section header already names the package; repeating it in every
   // row is what pushed the path into an ellipsis once the list became a column.
@@ -98,6 +101,12 @@ export function LaneRow({
       aria-selected={selected}
       aria-expanded={expanded}
       onClick={() => onSelect(row.path)}
+      onContextMenu={(event: MouseEvent<HTMLElement>) => {
+        // The row's own menu replaces the browser's; the view anchors it at the
+        // pointer so it opens where the reader clicked.
+        event.preventDefault();
+        onContextMenu(row.path, { x: event.clientX, y: event.clientY });
+      }}
     >
       <span data-tst="lane-name">
         <span data-tst="lane-file">{fileNameOf(row.path)}</span>

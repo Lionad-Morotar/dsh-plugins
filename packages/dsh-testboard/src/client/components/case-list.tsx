@@ -9,7 +9,7 @@
  * The entries are listbox options like the file rows above them, so the arrow
  * keys walk from a file straight into its cases without a second focus target.
  */
-import type { ReactElement } from "react";
+import type { MouseEvent, ReactElement } from "react";
 
 import { formatDuration } from "../format.ts";
 import type { TestCase } from "../model.ts";
@@ -22,6 +22,8 @@ export interface CaseListProps {
   /** Builds the DOM id for one case, so the listbox can point at it. */
   readonly optionId: (index: number) => string;
   readonly onSelect: (index: number) => void;
+  /** Right-click on a case: the view anchors its menu at the pointer. */
+  readonly onContextMenu: (index: number, anchor: { readonly x: number; readonly y: number }) => void;
 }
 
 /**
@@ -29,7 +31,7 @@ export interface CaseListProps {
  * @param props - the file's cases, its selection and the click handler.
  * @returns the list element.
  */
-export function CaseList({ cases, selectedIndex, optionId, onSelect }: CaseListProps): ReactElement {
+export function CaseList({ cases, selectedIndex, optionId, onSelect, onContextMenu }: CaseListProps): ReactElement {
   return (
     <ul data-testid="case-list" data-tst="case-list" role="group">
       {cases.map((entry, index) => (
@@ -44,6 +46,10 @@ export function CaseList({ cases, selectedIndex, optionId, onSelect }: CaseListP
           data-selected={index === selectedIndex ? "true" : "false"}
           aria-selected={index === selectedIndex}
           onClick={() => onSelect(index)}
+          onContextMenu={(event: MouseEvent<HTMLElement>) => {
+            event.preventDefault();
+            onContextMenu(index, { x: event.clientX, y: event.clientY });
+          }}
         >
           <span data-tst="case-dot" data-status={entry.status} />
           <span data-tst="case-name">{entry.name}</span>

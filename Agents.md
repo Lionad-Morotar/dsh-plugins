@@ -46,7 +46,7 @@ Lionad 的 DeepSeek Harness（DSH）插件集合 monorepo，`packages/` 下有 2
 | `dsh-git-explorer` | [README](./packages/dsh-git-explorer/README.md)：argv-only 取数、泳道提交图、两栏视图与跨面板跳转；变更与历史两栏的行光标、变更过滤与历史按提交信息搜索 |
 | `dsh-term-dock` | [README](./packages/dsh-term-dock/README.md)：会话级终端 dock，默认收起，首次 `⌘⇧M` 才挂载并起 shell；终端屏幕声明 `data-page-keys="own"`，页键交给前台程序；xterm 懒 chunk、背压与进程台账 |
 | `dsh-arch` | [README](./packages/dsh-arch/README.md)：架构图 tab、LikeC4 宿主内布局与 `/arch/api` 下发、视口/偏移写回闭环、watch baseline 窗口与节流轮询刷新、箭头与线型、边动效与命中区、节点动作条、关系浮层面板、体积代价首屏（55MB 依赖） |
-| `dsh-testboard` | [README](./packages/dsh-testboard/README.md)：测试看板 tab、跟随会话工作区的 `/testboard/api` 五条路由与 subprocess 跑 vitest、逐用例增量事件与阶段叙事、面积图与竖条矩阵逐格点亮、暗亮双主题与 `--tst-*` 变量、左右分栏的测试源码（CodeMirror 语法高亮）与用例详情面板、可拖拽分隔条、全键盘导航与 PageUp/PageDown own 约定、`data-conversation-composer-overlay` 定高链、lib 三产物与启动包预算、fixture 预览 demo、独立预览页 |
+| `dsh-testboard` | [README](./packages/dsh-testboard/README.md)：测试看板 tab、跟随会话工作区的 `/testboard/api` 五条路由与 subprocess 跑 vitest、逐用例增量事件与阶段叙事、面积图与竖条矩阵逐格点亮、暗亮双主题与 `--tst-*` 变量、左右分栏的测试源码（CodeMirror 语法高亮）与用例详情面板、可拖拽分隔条、全键盘导航与 PageUp/PageDown own 约定、右键引用测试文件/用例与引用 chip 回跳定位、`data-conversation-composer-overlay` 定高链、lib 三产物与启动包预算、fixture 预览 demo、独立预览页 |
 
 ## 项目技能
 
