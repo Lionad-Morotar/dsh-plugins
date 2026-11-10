@@ -263,7 +263,11 @@ export async function collectFileDiff(
 
   if (file.binary) {
     // A binary has no lines to count, so size is the only budget that applies.
-    const bytes = await sizeInRevision(runner, root, head, file.path, signal);
+    // The size has to come from the side the file still exists on: a deletion
+    // leaves nothing at the head, and a size read there is null rather than the
+    // real one.
+    const side = file.status === "deleted" ? mergeBase : head;
+    const bytes = await sizeInRevision(runner, root, side, file.path, signal);
     if (bytes !== null && bytes > MAX_DIFF_BYTES) return fail("too-large", `${file.path} is ${String(bytes)} bytes`);
     return { ok: true, diff: { kind: "binary", path: file.path, bytes } };
   }
@@ -273,6 +277,12 @@ export async function collectFileDiff(
     // several commits back the head may not have the file at all.
     const text = await readFromRevision(runner, root, mergeBase, file.path, signal);
     if (text === null) return fail("unreadable", `${file.path} could not be read from the merge base`);
+    // Both ceilings apply here, the same way they do to a two-sided diff: a
+    // single-line file can be far past a megabyte while sitting under the line
+    // budget, and returning it whole is the case the byte limit exists for.
+    if (Buffer.byteLength(text, "utf8") > MAX_DIFF_BYTES) {
+      return fail("too-large", `${file.path} is ${String(Buffer.byteLength(text, "utf8"))} bytes`);
+    }
     const lines = splitLines(text);
     if (lines.length > MAX_DIFF_LINES) return fail("too-large", `${file.path} has ${String(lines.length)} lines`);
     return { ok: true, diff: { kind: "deleted", path: file.path, lines } };

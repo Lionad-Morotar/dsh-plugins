@@ -9,7 +9,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 
-import { collectFileDiff, MAX_DIFF_LINES, parseHunkHeader, parseHunks, splitLines } from "../src/host/diff.ts";
+import { collectFileDiff, MAX_DIFF_BYTES, MAX_DIFF_LINES, parseHunkHeader, parseHunks, splitLines } from "../src/host/diff.ts";
 import { commitAll, createRepo, createRepoWithCommit, realRunner, type RepoHandle } from "./fixtures/repo.ts";
 
 let repo: RepoHandle | undefined;
@@ -168,6 +168,26 @@ describe("a deleted file's diff", () => {
     if (!result.ok || result.diff.kind !== "deleted") return;
     expect(result.diff.lines).toEqual(["original"]);
   });
+
+  it("refuses a deleted file whose single line blows the byte budget", async () => {
+    // One line, so the line budget cannot see it: 5000 lines is the other
+    // ceiling, and a minified blob or a one-line fixture sits under it while
+    // being far past a megabyte.
+    const huge = "x".repeat(MAX_DIFF_BYTES + 1);
+    repo = await createRepoWithCommit({ "huge.txt": huge });
+    repo.git(["checkout", "-q", "-b", "feature"]);
+    repo.git(["rm", "-q", "huge.txt"]);
+    commitAll(repo, "delete the huge file");
+    const { runner } = realRunner(repo.root);
+
+    const result = await collectFileDiff(runner, repo.root, { base: "main", head: "feature", path: "huge.txt" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("too-large");
+    // The bytes must not come back through the error either.
+    expect(JSON.stringify(result).length).toBeLessThan(MAX_DIFF_BYTES);
+  });
 });
 
 describe("a binary file's diff", () => {
@@ -177,6 +197,27 @@ describe("a binary file's diff", () => {
     const bytes = Buffer.from([0, 1, 2, 3, 0, 255, 254]);
     await repo.writeBytes("blob.bin", bytes);
     commitAll(repo, "add a binary");
+    const { runner } = realRunner(repo.root);
+
+    const result = await collectFileDiff(runner, repo.root, { base: "main", head: "feature", path: "blob.bin" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.diff.kind !== "binary") return;
+    expect(result.diff.bytes).toBe(bytes.length);
+  });
+
+  it("reports a deleted binary's size from the merge base, not from the head", async () => {
+    // The head does not have the file at all, so a size read from it is null.
+    // The old side is the merge base, and that is where the real size lives.
+    const bytes = Buffer.from([0, 1, 2, 3, 0, 255, 254, 128]);
+    repo = await createRepo("pr-explorer-deleted-binary");
+    await repo.writeBytes("blob.bin", bytes);
+    await repo.write("a.txt", "one\n");
+    repo.git(["add", "-A"]);
+    repo.git(["commit", "-qm", "initial"]);
+    repo.git(["checkout", "-q", "-b", "feature"]);
+    repo.git(["rm", "-q", "blob.bin"]);
+    commitAll(repo, "delete the binary");
     const { runner } = realRunner(repo.root);
 
     const result = await collectFileDiff(runner, repo.root, { base: "main", head: "feature", path: "blob.bin" });

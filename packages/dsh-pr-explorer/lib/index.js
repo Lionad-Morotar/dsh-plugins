@@ -433,13 +433,17 @@ async function collectFileDiff(runner, cwd, request, signal) {
   const mergeBase = pinned.reading.mergeBase.hash;
   const head = pinned.reading.head.hash;
   if (file.binary) {
-    const bytes = await sizeInRevision(runner, root, head, file.path, signal);
+    const side = file.status === "deleted" ? mergeBase : head;
+    const bytes = await sizeInRevision(runner, root, side, file.path, signal);
     if (bytes !== null && bytes > MAX_DIFF_BYTES) return fail("too-large", `${file.path} is ${String(bytes)} bytes`);
     return { ok: true, diff: { kind: "binary", path: file.path, bytes } };
   }
   if (file.status === "deleted") {
     const text = await readFromRevision(runner, root, mergeBase, file.path, signal);
     if (text === null) return fail("unreadable", `${file.path} could not be read from the merge base`);
+    if (Buffer.byteLength(text, "utf8") > MAX_DIFF_BYTES) {
+      return fail("too-large", `${file.path} is ${String(Buffer.byteLength(text, "utf8"))} bytes`);
+    }
     const lines = splitLines(text);
     if (lines.length > MAX_DIFF_LINES) return fail("too-large", `${file.path} has ${String(lines.length)} lines`);
     return { ok: true, diff: { kind: "deleted", path: file.path, lines } };
