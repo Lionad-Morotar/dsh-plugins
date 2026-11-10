@@ -107,6 +107,32 @@ describe("pr explorer client entry", () => {
     expect([...(dictionaries.get("pr-explorer")?.keys() ?? [])].sort()).toEqual(["en", "zh"]);
   });
 
+  it("reads the workbench through get, never through an undeclared service property", () => {
+    // The real client context throws when a plugin reads a service property it
+    // did not declare in `inject`. The PR tab keeps the workbench optional, so
+    // the read must go through `get`: the throwing getter below is the host
+    // rule, and this test fails the day the code reads `ctx.workbench` again.
+    const { ctx, slots } = createContext();
+    const seen: string[] = [];
+    Object.defineProperty(ctx, "get", {
+      value: (name: string) => {
+        seen.push(name);
+        return undefined;
+      },
+      configurable: true,
+    });
+    Object.defineProperty(ctx, "workbench", {
+      get() {
+        throw new Error("undeclared service property was read");
+      },
+      configurable: true,
+    });
+
+    expect(() => apply(ctx)).not.toThrow();
+    expect(slots).toHaveLength(1);
+    expect(seen).toContain("workbench");
+  });
+
   it("resolves the tab label per active locale at call time", () => {
     const zh = createContext({ active: "zh" });
     apply(zh.ctx);

@@ -27,12 +27,15 @@ export interface PrExplorerClientContext {
     register(options: Record<string, unknown>, component: unknown): () => void;
   };
   /**
-   * The workbench core, when the host publishes one.
+   * Service lookup, the host's safe read.
    *
-   * Optional on purpose: a host without it still gets the comparison, and the
-   * two jump actions are simply not drawn.
+   * The workbench core is read through here rather than as `ctx.workbench`:
+   * the client context throws on a service property the plugin did not declare
+   * in `inject`, so a host with workbench installed would still sink the whole
+   * tab unless the read goes through `get`. A host without it keeps the
+   * comparison and simply loses the two jump actions.
    */
-  readonly workbench?: WorkbenchFace;
+  readonly get?: (name: string) => unknown;
   readonly locale: {
     register(namespace: string, dictionaries: Record<string, Record<string, string>>): () => void;
     bind(namespace: string): (key: string) => string;
@@ -84,6 +87,10 @@ function activeLocale(ctx: PrExplorerClientContext): string {
  */
 export function apply(ctx: PrExplorerClientContext): () => void {
   ensureStyles();
+  // Read before the view is built so the jump seam is a value captured once per
+  // application, and so a host that throws on undeclared service properties
+  // never sees one.
+  const workbench = ctx.get?.("workbench") as WorkbenchFace | undefined;
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
   registeredDictionaries?.();
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
@@ -136,7 +143,7 @@ export function apply(ctx: PrExplorerClientContext): () => void {
       errorBadRequest: t("pr-explorer.errorBadRequest"),
       errorUnknown: t("pr-explorer.errorUnknown"),
     } satisfies PrExplorerViewStrings,
-    ...(ctx.workbench === undefined ? {} : { workbench: ctx.workbench }),
+    ...(workbench === undefined ? {} : { workbench }),
   });
 
   // `inject` is a deferred registration: the factory runs when the slot itself
