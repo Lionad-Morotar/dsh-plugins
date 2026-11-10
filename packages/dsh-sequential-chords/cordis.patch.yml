@@ -1,0 +1,4 @@
+# 启用 dsh-sequential-chords：插入它的 Loader 行。
+- insert:
+    - id: sequential-chords
+      name: 'dsh-sequential-chords'
