@@ -42,8 +42,8 @@ export type LintResult = { ok: true } | { ok: false; reason: "prefix" | "modifie
 export const WINDOW_MS = 2000;
 
 /**
- * 不产生字符的命令键。Insert、Help 以及同类的导航键、功能键都在这里：
- * 它们单独按下不会往输入框里写字，所以可以不带修饰键当第一段。
+ * 不产生字符、也不改编辑内容的命令键。Enter、Tab、Backspace、Delete、Escape
+ * 不在这里：它们单独按下会换行、跳格、删字或关闭，拿来当第一段会把这些动作吃掉。
  */
 const NAMED_KEYS = new Set([
   "Insert",
@@ -56,17 +56,6 @@ const NAMED_KEYS = new Set([
   "ArrowDown",
   "ArrowLeft",
   "ArrowRight",
-  "Escape",
-  "Tab",
-  "Backspace",
-  "Delete",
-  "Enter",
-  "ContextMenu",
-  "PrintScreen",
-  "ScrollLock",
-  "Pause",
-  "NumLock",
-  "CapsLock",
 ]);
 
 /**
@@ -110,21 +99,30 @@ function chordKey(chord: { code: string; modifiers: readonly Modifier[] }): stri
   return `${chord.code}|${normalizeModifiers(chord.modifiers)}`;
 }
 
+/** 不带修饰键的单个字母，KeyA 到 KeyZ。数字和标点不算，它们不是这个例外。 */
+function isBareLetter(chord: Chord): boolean {
+  return chord.modifiers.length === 0 && /^Key[A-Z]$/u.test(chord.code);
+}
+
 /**
  * 这一段能不能当快捷键。
  *
  * 带 Ctrl、Alt 或 Meta 的总是可以。不带的，只有 Insert、Help 这类命令键可以。
- * 第二段还有一个例外：第一段已经是命令键时，后面可以接一个裸字母，也就是
- * 「Insert 然后 R」。普通组合键的第二段仍然必须带修饰键，否则会把输入吃掉。
+ * 第二段还有一个例外，而且只此一个：第一段是命令键时，后面可以接一个不带任何
+ * 修饰键的字母，也就是「Insert 然后 R」。Shift+R、数字、标点，以及普通组合键
+ * 后面接一个裸命令键，都不在这个例外里。
  * @param chord - 正在录入的这一段。
  * @param first - 已经录下的第一段；缺省表示现在录的就是第一段。
  * @returns 是否接受。
  */
 export function acceptsChord(chord: Chord, first?: Chord): boolean {
-  if (hasTriggerModifier(chord) || isNamedKey(chord.code)) {
+  if (hasTriggerModifier(chord)) {
     return true;
   }
-  return first !== undefined && isNamedKey(first.code);
+  if (isNamedKey(chord.code)) {
+    return chord.modifiers.length === 0 && first === undefined;
+  }
+  return first !== undefined && isNamedKey(first.code) && isBareLetter(chord);
 }
 
 export function lintSequences(sequences: readonly Sequence[]): LintResult {

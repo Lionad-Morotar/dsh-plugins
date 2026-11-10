@@ -266,6 +266,38 @@ describe("lintSequences", () => {
     expect(lintSequences([insertR, insertY])).toEqual({ ok: true });
   });
 
+  it("Insert 后面不接受数字、Shift+字母，普通组合键后面也不接受裸的 Home", () => {
+    const digit: Sequence = {
+      id: "digit",
+      first: chord("Insert", []),
+      second: chord("Digit1", []),
+    };
+    const shifted: Sequence = {
+      id: "shifted",
+      first: chord("Insert", []),
+      second: chord("KeyR", ["shift"]),
+    };
+    const bareHome: Sequence = {
+      id: "bare-home",
+      first: chord("KeyK", ["control"]),
+      second: chord("Home", []),
+    };
+
+    expect(lintSequences([digit])).toEqual({ ok: false, reason: "modifier" });
+    expect(lintSequences([shifted])).toEqual({ ok: false, reason: "modifier" });
+    expect(lintSequences([bareHome])).toEqual({ ok: false, reason: "modifier" });
+  });
+
+  it("Enter 不能单独当第一段", () => {
+    const enter: Sequence = {
+      id: "enter",
+      first: chord("Enter", []),
+      second: chord("KeyR", []),
+    };
+
+    expect(lintSequences([enter])).toEqual({ ok: false, reason: "modifier" });
+  });
+
   it("普通键当第一段、裸字母当第二段，仍然拒绝", () => {
     const bad: Sequence = {
       id: "bad",

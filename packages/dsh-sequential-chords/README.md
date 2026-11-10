@@ -24,10 +24,11 @@
 普通键（字母、数字）必须带 Ctrl、Alt 或 Meta。单独的 Shift 只是大写，不算。
 所以 `Ctrl+K` 然后一个不带修饰键的 `S`，结果是 `miss`，不是 `fire`。
 
-Insert、Help，以及 Home、End、方向键、PageUp、PageDown、F1 到 F24 这类不往输入框
-写字的键，可以不带修饰键当第一段。这种第一段的第二段可以是一个裸字母：
-`Insert` 然后 `R`，以及 `Insert` 然后 `Y`，是两条序列。第一击只进入等待，第二击
-再决定触发哪一条。
+Insert、Help，以及 Home、End、方向键、PageUp、PageDown、F1 到 F24，可以不带修饰键
+当第一段。Enter、Tab、Backspace、Delete、Escape 不行，它们单独按下会换行、跳格、
+删字或关闭。这种第一段的第二段只能是一个不带任何修饰键的字母：`Insert` 然后 `R`，
+以及 `Insert` 然后 `Y`，是两条序列。数字、标点、Shift+字母都不算。第一击只进入等待，
+第二击再决定触发哪一条。
 
 两段完全相同才算重复（`reason: "prefix"`）。只是第一段相同不算。修饰键顺序不影响。
 
@@ -96,7 +97,8 @@ import { createState, lintSequences, step } from "dsh-sequential-chords";
 1. 点「录制第一段」。普通键要带 Ctrl、Alt 或 Cmd，例如 `Ctrl+K`。Insert、Help
    这类不打字的键可以单独按。裸字母和单独的 Shift 不认。
 2. 点「录制第二段」。第一段是普通组合键时，第二段也要带修饰键，例如 `Ctrl+S`。
-   第一段是 Insert 这类键时，第二段可以是一个裸字母，例如 `R`。
+   第一段是 Insert 这类键时，第二段只能是一个不带修饰键的字母，例如 `R`。数字、
+   标点和 Shift+字母不收。
 3. 在文本框里填命中后要插入的文本，例如 `/save `。
 4. 点「添加」。两段都录好、文本非空、且不是一条已经存在的序列（两段都相同）才会
    写入。第一段相同、第二段不同的可以并存，比如 Insert 然后 R，以及 Insert 然后 Y。
