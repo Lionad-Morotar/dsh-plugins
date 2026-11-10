@@ -186,6 +186,52 @@ describe("lib/client.js", () => {
 
     expect(press("KeyK")).toBe(false);
   });
+
+  it("设置页里的按键整条放行，录制按钮收得到", () => {
+    const { win, registered } = mount();
+    // 已经有一条序列，用户要重录它的第一段。
+    seed(win, "/save ");
+
+    // 组件返回一个带回调 ref 的容器描述，真正的 section 由 React 建出来。这里
+    // 按描述造那个 section，再把 ref 指过去，等价于宿主渲染完的那一刻。
+    const Page = registered[0]?.component as () => FakeElement;
+    const element = Page();
+    const section = win.document.createElement(String(element.type));
+    for (const [key, value] of Object.entries(element.props)) {
+      if (key === "ref") continue;
+      section.setAttribute(key, String(value));
+    }
+    win.document.body.append(section);
+    (element.props.ref as (node: HTMLElement | null) => void)(section);
+
+    const page = win.document.querySelector('[data-testid="sequential-chords-page"]');
+    expect(page).not.toBeNull();
+
+    const recordButton = page?.querySelector('[data-testid="record-first"]') as HTMLElement;
+    expect(recordButton).not.toBeNull();
+
+    // 点「录制第一段」，再按 Ctrl+K。捕获监听器不该吃掉这一击。
+    recordButton.click();
+    // click 会重画设置页，原来那个按钮已经被换掉了，必须重新取一次。
+    const liveButton = page?.querySelector('[data-testid="record-first"]') as HTMLElement;
+    expect(liveButton).not.toBeNull();
+    expect(liveButton.getAttribute("data-recording")).toBe("true");
+
+    const event = new win.KeyboardEvent("keydown", {
+      code: "KeyK",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    liveButton.dispatchEvent(event);
+
+    // 录制按钮自己也会 preventDefault，所以 defaultPrevented 分不出是谁干的。
+    // 真正的判据是按钮收到了这一击：草稿被录下，按钮重画成 Ctrl+K。若捕获监听
+    // 器先把它认领掉，stopPropagation 会让按钮的 keydown 根本不触发，按钮就还是
+    // 原来那句「录制第一段」。
+    const after = page?.querySelector('[data-testid="record-first"]');
+    expect(after?.textContent).toBe("Ctrl+K");
+  });
 });
 
 describe("lib/index.js", () => {

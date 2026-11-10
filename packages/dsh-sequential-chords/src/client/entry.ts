@@ -7,6 +7,7 @@
  */
 
 import { insertInto } from "../insert.ts";
+import { shouldPassThrough } from "../passthrough.ts";
 import { createSettingsPage } from "../page.ts";
 import { createKeyHandler } from "../router.ts";
 import { createSequenceStore } from "../settings.ts";
@@ -123,6 +124,10 @@ export function createApp(require: LoaderRequire | null = null): { apply(): () =
 
       const onKeyDown = (event: Event): void => {
         const key = event as KeyboardEvent;
+        // 设置页里的按键归设置页：录制按钮要自己收，判定层不该先把它认领掉。
+        if (shouldPassThrough(key.target as never)) {
+          return;
+        }
         const consume = onKey(
           {
             code: key.code,

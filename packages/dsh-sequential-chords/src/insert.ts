@@ -15,6 +15,10 @@ export interface InsertTargetLike {
   type?: string;
   isContentEditable?: boolean;
   value?: string;
+  /** 选区起点；没有这个字段的元素退回拼到末尾。 */
+  selectionStart?: number | null;
+  /** 选区终点；没有这个字段的元素退回拼到末尾。 */
+  selectionEnd?: number | null;
   dispatchEvent?(event: unknown): boolean;
 }
 
@@ -46,6 +50,52 @@ export function resolveInsertTarget(target: InsertTargetLike | null): InsertTarg
 }
 
 /**
+ * 把一个位置夹进 value 的长度范围。
+ * @param position - 原始位置，可能是 null 或越界值。
+ * @param length - value 的长度。
+ * @returns 夹紧后的位置。
+ */
+function clampPosition(position: number | null | undefined, length: number): number {
+  if (typeof position !== "number" || !Number.isFinite(position)) {
+    return length;
+  }
+  return Math.min(Math.max(Math.trunc(position), 0), length);
+}
+
+/**
+ * 把文本插进 input / textarea 的选区。
+ *
+ * 有选区就替换选区，没有选区就是插在光标处，插完把光标放到插入文本之后。拼到
+ * 末尾只在元素没有 selectionStart / selectionEnd 时才用：那样等于把文本扔到用户
+ * 没看的地方。
+ * @param target - input 或 textarea。
+ * @param text - 要插入的文本。
+ * @returns 插入后光标的位置。
+ */
+function insertAtSelection(target: InsertTargetLike, text: string): number {
+  const value = target.value ?? "";
+  const hasSelection =
+    typeof target.selectionStart === "number" || typeof target.selectionEnd === "number";
+
+  if (!hasSelection) {
+    target.value = `${value}${text}`;
+    return target.value.length;
+  }
+
+  const start = clampPosition(target.selectionStart, value.length);
+  const end = clampPosition(target.selectionEnd, value.length);
+  // 起点在终点之后（某些宿主会这样报）时按一个空选区处理。
+  const from = Math.min(start, end);
+  const to = Math.max(start, end);
+
+  target.value = `${value.slice(0, from)}${text}${value.slice(to)}`;
+  const caret = from + text.length;
+  target.selectionStart = caret;
+  target.selectionEnd = caret;
+  return caret;
+}
+
+/**
  * 把文本插进落点。
  * @param target - 通常是 document.activeElement。
  * @param text - 要插入的文本。
@@ -63,7 +113,7 @@ export function insertInto(
   }
 
   if (kind === "value") {
-    target.value = `${target.value ?? ""}${text}`;
+    insertAtSelection(target, text);
     deps.dispatchInput?.(target);
     return true;
   }
