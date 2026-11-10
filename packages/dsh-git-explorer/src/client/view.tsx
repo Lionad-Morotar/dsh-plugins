@@ -26,7 +26,17 @@ import { WorkingTreePane } from "./working-tree-pane.tsx";
 import { HistoryPane, UNCOMMITTED } from "./history-pane.tsx";
 import { pageQuery } from "./history-query.ts";
 import type { Translate } from "./copy.ts";
-import { createCommitJump, createJump, groupChanges, layoutGraph, parseCommitFocus, type CommitJumpSeam, type GraphRow } from "./model.ts";
+import {
+  createCommitJump,
+  createJump,
+  createReviewCompareJump,
+  groupChanges,
+  layoutGraph,
+  parseCommitFocus,
+  type CommitJumpSeam,
+  type GraphRow,
+  type ReviewCompareSeam,
+} from "./model.ts";
 import {
   LEFT_COLUMN_MAX_WIDTH,
   LEFT_COLUMN_MIN_WIDTH,
@@ -893,20 +903,13 @@ export function createGitExplorerView(wiring: ViewWiring) {
         workbench.openView !== undefined ||
         workbench.views !== undefined;
       if (!canSwitch) return undefined;
-      const seam: CommitJumpSeam = {
+      const seam: ReviewCompareSeam = {
         ...(workbench.views === undefined ? {} : { views: workbench.views }),
         ...(workbench.openView === undefined ? {} : { openView: workbench.openView }),
         ...(workbench.openViewOrSwitch === undefined ? {} : { openViewOrSwitch: workbench.openViewOrSwitch }),
         ...(workbench.viewFocus === undefined ? {} : { viewFocus: workbench.viewFocus }),
       };
-      const jump = createCommitJump({ seam, sessionId: sessionId ?? "" });
-      return (hash: string): void => {
-        const clean = hash.trim().toLowerCase();
-        if (clean === "") return;
-        // `HEAD` is the head end: the reader is asking what this commit adds on
-        // top of the branch tip, which is the range a pull request would show.
-        jump(clean, "HEAD");
-      };
+      return createReviewCompareJump({ seam, sessionId: sessionId ?? "" });
     }, [workbench, sessionId]);
 
     // One reference write: the span comes from the composer's own capture, the

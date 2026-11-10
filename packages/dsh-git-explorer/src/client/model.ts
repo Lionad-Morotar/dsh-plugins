@@ -334,6 +334,60 @@ export function createCommitJump({ seam, sessionId }: CommitJumpWiring): (hash: 
   };
 }
 
+/**
+ * Every seam a review-compare jump may deliver through, newest first.
+ *
+ * Same shape as {@link CommitJumpSeam}: the target view differs, the delivery
+ * rules do not. Kept as its own type so a reader can see the two jumps are
+ * independent features rather than one parameterised function.
+ */
+export interface ReviewCompareSeam {
+  openViewOrSwitch?(id: string, focus?: string): { readonly opened: boolean; readonly focused: boolean };
+  views?: JumpViews;
+  openView?(id: string, focus?: string): boolean | void;
+  viewFocus?: CommitJumpViewFocus;
+}
+
+/** What one review-compare jump closure owns. */
+export interface ReviewCompareWiring {
+  readonly seam: ReviewCompareSeam;
+  readonly sessionId: string;
+}
+
+/**
+ * Build the commit-detail-to-PR-view jump.
+ *
+ * The PR view reads `compare:<base>:<head>`: this commit is the base and `HEAD`
+ * is the head, which is the range a pull request would show. The queue-then-
+ * switch order is the one the command palette and the commit-file jump already
+ * use: the focus waits in `viewFocus` before the switch so a view that mounts on
+ * the switch can take it, and a delivered focus drops its queued copy so it
+ * cannot replay on a later mount.
+ * @param wiring - the workbench seams and the session whose views open.
+ * @returns a `(hash)` function.
+ */
+export function createReviewCompareJump({ seam, sessionId }: ReviewCompareWiring): (hash: string) => void {
+  return hash => {
+    const cleanHash = typeof hash === "string" ? hash.trim().toLowerCase() : "";
+    if (cleanHash === "") return;
+    const focus = `compare:${cleanHash}:HEAD`;
+
+    if (seam.openViewOrSwitch !== undefined) {
+      seam.viewFocus?.request?.("pr-explorer", focus);
+      const result = seam.openViewOrSwitch("pr-explorer", focus);
+      if (result.focused) {
+        seam.viewFocus?.take?.("pr-explorer");
+        return;
+      }
+      if (result.opened) return;
+      seam.viewFocus?.take?.("pr-explorer");
+    }
+    if (seam.views?.open(sessionId, "pr-explorer", focus) === true) return;
+    if (seam.openView?.("pr-explorer", focus) === true) return;
+    seam.viewFocus?.request?.("pr-explorer", focus);
+  };
+}
+
 /** `commit:` followed by one 4-64 digit hex id, either case. */
 const COMMIT_FOCUS_PATTERN = /^commit:([0-9a-f]{4,64})$/iu;
 
