@@ -59,6 +59,16 @@ const STRINGS: ReviewMapViewStrings = {
   errorUnknown: "读取变更时出错",
   empty: "选择会话后加载变更",
   emptyHint: "评审视图会在这里按变更范围铺开。",
+  detailClose: "关闭详情",
+  detailTruncated: "已截断",
+  detailBinary: "二进制文件 {size}",
+  detailUnknownSize: "未知大小",
+  detailEmpty: "该文件没有可显示的差异",
+  detailErrorConflicted: "文件有未解决的冲突",
+  detailErrorTooLarge: "文件过大，已跳过",
+  detailErrorUnreadable: "读取失败",
+  detailErrorBadRequest: "无法读取该文件",
+  detailErrorUnknown: "读取该文件时出错",
 };
 
 /** One changed file with the fields a case does not care about defaulted. */
@@ -105,6 +115,9 @@ function fakeRuntime(answers: readonly (ReviewSnapshotResult | Promise<ReviewSna
       index += 1;
       if (answer === undefined) throw new Error("the fake runtime ran out of answers");
       return answer;
+    },
+    async loadDiff() {
+      throw new Error("this file does not open the detail panel");
     },
   };
   return { runtime, calls };

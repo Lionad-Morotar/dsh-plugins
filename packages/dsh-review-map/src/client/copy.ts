@@ -55,6 +55,18 @@ export const ZH: Record<string, string> = {
   "review-map.empty": "选择会话后加载变更",
   "review-map.emptyHint": "评审视图会在这里按变更范围铺开。",
 
+  // Detail panel
+  "review-map.detailClose": "关闭详情",
+  "review-map.detailTruncated": "已截断",
+  "review-map.detailBinary": "二进制文件 {size}",
+  "review-map.detailUnknownSize": "未知大小",
+  "review-map.detailEmpty": "该文件没有可显示的差异",
+  "review-map.detailErrorConflicted": "文件有未解决的冲突",
+  "review-map.detailErrorTooLarge": "文件过大，已跳过",
+  "review-map.detailErrorUnreadable": "读取失败",
+  "review-map.detailErrorBadRequest": "无法读取该文件",
+  "review-map.detailErrorUnknown": "读取该文件时出错",
+
   // One sentence per error code
   "review-map.errorNotARepo": "这个目录不是 git 仓库",
   "review-map.errorNoBase": "仓库没有可比基线",
@@ -106,6 +118,18 @@ export const EN: Record<string, string> = {
   "review-map.loading": "Loading",
   "review-map.empty": "Select a session to load its changes",
   "review-map.emptyHint": "The review map will lay the change set out here.",
+
+  // Detail panel
+  "review-map.detailClose": "Close the detail",
+  "review-map.detailTruncated": "Truncated",
+  "review-map.detailBinary": "Binary file, {size}",
+  "review-map.detailUnknownSize": "size unknown",
+  "review-map.detailEmpty": "This file has no diff to show",
+  "review-map.detailErrorConflicted": "This file has an unresolved conflict",
+  "review-map.detailErrorTooLarge": "This file is too large and was skipped",
+  "review-map.detailErrorUnreadable": "The read failed",
+  "review-map.detailErrorBadRequest": "This file cannot be read",
+  "review-map.detailErrorUnknown": "Something went wrong reading this file",
 
   // One sentence per error code
   "review-map.errorNotARepo": "This directory is not a git repository",

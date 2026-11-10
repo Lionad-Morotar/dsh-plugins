@@ -47,6 +47,14 @@ const STYLESHEET = `[data-testid="review-map"] {
      the light and dark palettes move them without a second block of rules. */
   --rm-add: var(--dsw-alias-state-success-primary, #1a7f37);
   --rm-del: var(--dsw-alias-state-error-primary, #cf222e);
+  /* The diff's line backgrounds and gutter colours. Declared here so a theme can
+     override them in one place; the values are mixed from the two state colours
+     rather than used at full strength, because a solid green block behind every
+     added line is unreadable in a dark theme. */
+  --rm-add-bg: color-mix(in srgb, var(--rm-add) 14%, transparent);
+  --rm-del-bg: color-mix(in srgb, var(--rm-del) 14%, transparent);
+  --rm-add-fg: var(--rm-add);
+  --rm-del-fg: var(--rm-del);
   --rm-mono: var(--dsh-font-mono, ui-monospace, SFMono-Regular, monospace);
   --rm-code: var(--dsh-code-font-size, 11px);
 }
@@ -160,9 +168,33 @@ const STYLESHEET = `[data-testid="review-map"] {
   color: var(--dsw-alias-label-tertiary, #a39c91);
 }
 
-/* List: one row per path, churn on the right. */
-[data-testid="review-map"] [data-rm="list"] {
+/* Split region: the list, and the panel beside it when one is open. */
+[data-testid="review-map"] [data-rm="split"] {
   flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  /* Closed: one column, the list takes everything. Open: the list keeps a
+     readable minimum and the panel takes the larger share. Grid rather than
+     flex because the two columns must not fight over a percentage. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+[data-testid="review-map"] [data-rm="split"][data-open="true"] {
+  grid-template-columns: minmax(280px, 1fr) minmax(0, 1.4fr);
+  gap: 14px;
+}
+
+/* A narrow panel stacks instead of scrolling sideways: a two-column split at
+   this width would leave the diff narrower than its line numbers. */
+@media (max-width: 720px) {
+  [data-testid="review-map"] [data-rm="split"][data-open="true"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(120px, 0.8fr) minmax(0, 1.2fr);
+  }
+}
+
+[data-testid="review-map"] [data-rm="list"] {
   min-height: 0;
   overflow-y: auto;
   /* No horizontal scroll: a long path is ellipsized, not panned. A review list
@@ -260,6 +292,155 @@ const STYLESHEET = `[data-testid="review-map"] {
 [data-testid="review-map"] [data-rm="churn"][data-note] {
   color: var(--dsw-alias-label-tertiary, #a39c91);
   font-style: italic;
+}
+
+/* Detail panel: header, then a scrolling diff. */
+[data-testid="review-map"] [data-rm="detail"] {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.1));
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.02));
+  overflow: hidden;
+}
+
+[data-testid="review-map"] [data-rm="detail-header"] {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.1));
+  font-family: var(--rm-mono);
+  font-size: var(--rm-code);
+}
+
+[data-testid="review-map"] [data-rm="detail-path"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* The full path is the point of this header, so it wraps rather than being
+     ellipsized: a truncated path in a detail panel is the one place a reader
+     cannot work around. */
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-primary, #14110d);
+}
+
+[data-testid="review-map"] [data-rm="detail-status"] {
+  flex: none;
+  color: var(--dsw-alias-label-secondary, #6b655c);
+}
+
+[data-testid="review-map"] [data-rm="detail-churn"] {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-secondary, #6b655c);
+}
+
+[data-testid="review-map"] [data-rm="detail-close"] {
+  flex: none;
+  font: inherit;
+  line-height: 1;
+  padding: 2px 6px;
+  color: var(--dsw-alias-label-secondary, #6b655c);
+  background: transparent;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.1));
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+[data-testid="review-map"] [data-rm="detail-body"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+[data-testid="review-map"] [data-rm="detail-loading"],
+[data-testid="review-map"] [data-rm="detail-error"],
+[data-testid="review-map"] [data-rm="detail-empty"],
+[data-testid="review-map"] [data-rm="detail-binary"],
+[data-testid="review-map"] [data-rm="detail-truncated"] {
+  margin: 8px 10px;
+  font-size: var(--rm-code);
+  color: var(--dsw-alias-label-secondary, #6b655c);
+}
+
+[data-testid="review-map"] [data-rm="detail-error"] {
+  color: var(--dsw-alias-state-error-primary, #cf222e);
+}
+
+[data-testid="review-map"] [data-rm="detail-truncated"] {
+  color: var(--dsw-alias-state-warning-primary, #bf8700);
+}
+
+/* Diff rows: two number gutters, a sign, then the text. */
+[data-testid="review-map"] [data-rm="diff"] {
+  font-family: var(--rm-mono);
+  font-size: var(--rm-code);
+  /* No horizontal scroll: a long line is clipped with an ellipsis rather than
+     turning the panel into a two-axis scroller. */
+  overflow-x: hidden;
+}
+
+[data-testid="review-map"] [data-rm="diff-hunk"] {
+  padding: 2px 10px;
+  color: var(--dsw-alias-label-tertiary, #a39c91);
+  background: var(--dsw-alias-bg-layer-3, rgba(0, 0, 0, 0.05));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+[data-testid="review-map"] [data-rm="diff-line"] {
+  display: grid;
+  grid-template-columns: 3.2em 3.2em 1.2em minmax(0, 1fr);
+  align-items: baseline;
+  /* Compact: a diff is read by scanning, and 20px is the tightest line that
+     still separates two rows of a mono face at this size. */
+  line-height: 20px;
+  min-height: 20px;
+}
+
+[data-testid="review-map"] [data-rm="diff-old"],
+[data-testid="review-map"] [data-rm="diff-new"] {
+  text-align: right;
+  padding-right: 6px;
+  color: var(--dsw-alias-label-tertiary, #a39c91);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+[data-testid="review-map"] [data-rm="diff-sign"] {
+  text-align: center;
+  color: var(--dsw-alias-label-secondary, #6b655c);
+  user-select: none;
+}
+
+[data-testid="review-map"] [data-rm="diff-text"] {
+  padding-right: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-primary, #14110d);
+}
+
+/* The two state colours are mixed with the surface rather than used at full
+   strength: a solid green block behind every added line is unreadable in a dark
+   theme, and the mix keeps the text's contrast against the panel. */
+[data-testid="review-map"] [data-rm="diff-line"][data-kind="add"] {
+  background: var(--rm-add-bg, color-mix(in srgb, var(--rm-add) 14%, transparent));
+}
+
+[data-testid="review-map"] [data-rm="diff-line"][data-kind="add"] [data-rm="diff-sign"] {
+  color: var(--rm-add-fg, var(--rm-add));
+}
+
+[data-testid="review-map"] [data-rm="diff-line"][data-kind="del"] {
+  background: var(--rm-del-bg, color-mix(in srgb, var(--rm-del) 14%, transparent));
+}
+
+[data-testid="review-map"] [data-rm="diff-line"][data-kind="del"] [data-rm="diff-sign"] {
+  color: var(--rm-del-fg, var(--rm-del));
 }
 
 /* States. */

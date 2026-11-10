@@ -10,7 +10,7 @@
  * No React and no DOM import: this module is the part a future preview, a test
  * and the tab all share.
  */
-import type { ChangedFile, ChangedFileStatus, ReviewSnapshot } from "../shared.ts";
+import type { ChangedFile, ChangedFileStatus, DiffHunk, FileDiff, ReviewSnapshot } from "../shared.ts";
 
 /** The minus sign for a deletion count. U+2212, not a hyphen. */
 const MINUS = "\u2212";
@@ -194,4 +194,124 @@ export function shortRef(ref: string): string {
  */
 export function fill(template: string, values: Readonly<Record<string, string>>): string {
   return template.replace(/\{(\w+)\}/gu, (whole, key: string) => values[key] ?? whole);
+}
+
+/**
+ * One row of the detail panel.
+ *
+ * Two shapes, because a diff is two things on screen: a hunk header that says
+ * where in the file the reader is, and a line. Flattening them into one list
+ * keeps the render a single `map`, and it keeps the hunk header's position
+ * meaningful, which a nested structure would have to re-derive.
+ */
+export type DiffRow =
+  | { readonly kind: "hunk"; readonly header: string }
+  | {
+      readonly kind: "line";
+      readonly key: string;
+      readonly lineKind: "add" | "del" | "context";
+      readonly oldLine: number | null;
+      readonly newLine: number | null;
+      /** The gutter character: `+`, `\u2212` or a space for context. */
+      readonly sign: string;
+      readonly text: string;
+    };
+
+/**
+ * The `@@` header of one hunk, spelled the way git spells it.
+ * @param hunk - one hunk.
+ * @returns the header line, with the function heading when the hunk has one.
+ */
+export function hunkHeader(hunk: DiffHunk): string {
+  const range = `@@ -${String(hunk.oldStart)},${String(hunk.oldLines)} +${String(hunk.newStart)},${String(hunk.newLines)} @@`;
+  return hunk.heading === undefined || hunk.heading === "" ? range : `${range} ${hunk.heading}`;
+}
+
+/**
+ * The sign a line shows in the gutter.
+ * @param kind - the line's kind.
+ * @returns the character, with a space for a context line so the text does not
+ *   shift left against the changed lines.
+ */
+function signOf(kind: "add" | "del" | "context"): string {
+  if (kind === "add") return "+";
+  if (kind === "del") return MINUS;
+  return " ";
+}
+
+/**
+ * One line row.
+ *
+ * The key is the pair of line numbers rather than an index: a diff can repeat a
+ * line's text, and an index would make React reuse a row across a hunk boundary
+ * when the list changes.
+ * @param lineKind - add, del or context.
+ * @param oldLine - the old side's number, or null.
+ * @param newLine - the new side's number, or null.
+ * @param text - the line's text.
+ * @returns the row.
+ */
+function lineRow(
+  lineKind: "add" | "del" | "context",
+  oldLine: number | null,
+  newLine: number | null,
+  text: string,
+): Extract<DiffRow, { kind: "line" }> {
+  return {
+    kind: "line",
+    key: `${String(oldLine ?? "x")}:${String(newLine ?? "x")}`,
+    lineKind,
+    oldLine,
+    newLine,
+    sign: signOf(lineKind),
+    text,
+  };
+}
+
+/**
+ * Flatten one file's detail into the rows the panel renders.
+ *
+ * The line numbers are taken from the wire, never recounted: git already
+ * computed them, and a second count drifts at the first gap between hunks. That
+ * is also why a deleted or untracked file gets its numbers here rather than in
+ * the component: those two shapes carry no numbers at all, so this is the only
+ * place that knows a whole file is numbered from one.
+ *
+ * A binary file produces no rows: the panel shows a size instead, and an empty
+ * table with a header would read as a broken render.
+ * @param diff - one file's detail.
+ * @returns the rows, in reading order.
+ */
+export function diffRows(diff: FileDiff): DiffRow[] {
+  if (diff.kind === "binary") return [];
+  if (diff.kind === "deleted") {
+    return diff.lines.map((text, index) => lineRow("del", index + 1, null, text));
+  }
+  if (diff.kind === "untracked") {
+    return diff.lines.map((text, index) => lineRow("add", null, index + 1, text));
+  }
+  const rows: DiffRow[] = [];
+  for (const hunk of diff.hunks) {
+    rows.push({ kind: "hunk", header: hunkHeader(hunk) });
+    for (const line of hunk.lines) {
+      rows.push(lineRow(line.kind, line.oldLine, line.newLine, line.text));
+    }
+  }
+  return rows;
+}
+
+/**
+ * A byte count as a reader would say it.
+ *
+ * Binary sizes span four orders of magnitude, and a raw byte count is unreadable
+ * at the top of that range: a 2MB icon and a 2048-byte one should not look
+ * alike. One decimal is enough to tell them apart without implying precision
+ * nobody has.
+ * @param bytes - the size in bytes.
+ * @returns the formatted size.
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${String(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

@@ -118,6 +118,16 @@ export function apply(ctx: ReviewMapClientContext): () => void {
       loading: t("review-map.loading"),
       empty: t("review-map.empty"),
       emptyHint: t("review-map.emptyHint"),
+      detailClose: t("review-map.detailClose"),
+      detailTruncated: t("review-map.detailTruncated"),
+      detailBinary: t("review-map.detailBinary"),
+      detailUnknownSize: t("review-map.detailUnknownSize"),
+      detailEmpty: t("review-map.detailEmpty"),
+      detailErrorConflicted: t("review-map.detailErrorConflicted"),
+      detailErrorTooLarge: t("review-map.detailErrorTooLarge"),
+      detailErrorUnreadable: t("review-map.detailErrorUnreadable"),
+      detailErrorBadRequest: t("review-map.detailErrorBadRequest"),
+      detailErrorUnknown: t("review-map.detailErrorUnknown"),
     } satisfies ReviewMapViewStrings,
   });
 

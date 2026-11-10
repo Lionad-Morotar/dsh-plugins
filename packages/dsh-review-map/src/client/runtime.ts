@@ -11,12 +11,14 @@
  * host boot, so an absolute URL composed here would be stale by the time a tab
  * read it.
  */
-import { ROUTE_PREFIX, type ReviewScope, type ReviewSnapshotResult } from "../shared.ts";
+import { ROUTE_PREFIX, type FileDiffResult, type ReviewScope, type ReviewSnapshotResult } from "../shared.ts";
 
 /** What the view asks of the host. */
 export interface ReviewRuntime {
   /** The workspace's change list for one session and one comparison. */
   loadSnapshot(sessionId: string, scope: ReviewScope): Promise<ReviewSnapshotResult>;
+  /** One file's detail for the same comparison. */
+  loadDiff(sessionId: string, scope: ReviewScope, path: string): Promise<FileDiffResult>;
 }
 
 /**
@@ -56,6 +58,16 @@ export function createHttpRuntime(fetchImpl: typeof fetch = fetch): ReviewRuntim
       // maps the code to its own copy, and translating here would put the
       // vocabulary in two places.
       return body as ReviewSnapshotResult;
+    },
+
+    async loadDiff(sessionId, scope, path) {
+      const query = new URLSearchParams({ sessionId, path, scope: scope.kind });
+      if (scope.kind === "branch" && scope.baseRef !== undefined) query.set("base", scope.baseRef);
+      // The path goes through URLSearchParams rather than string concatenation:
+      // a repository-relative path can hold `&`, `#` and non-ASCII names, and a
+      // hand-built query would cut it in half at the first of those.
+      const body = await requestJson(fetchImpl, `${ROUTE_PREFIX}/diff?${query.toString()}`);
+      return body as FileDiffResult;
     },
   };
 }
