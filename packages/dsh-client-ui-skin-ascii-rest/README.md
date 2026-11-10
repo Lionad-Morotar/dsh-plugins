@@ -12,7 +12,8 @@
 - **亮暗跟随**：暗色用场景自己的近黑底色与原调色板；亮色可选两种配色（见 `ascii-rest-scenes` 的 `light.ts`）：墨色把每格颜色的亮度镜像、色相与饱和不动，底色转成中性纸色；双色调按每格自身的亮度在纸与墨之间取值，是一张两色印刷。切换主题时重新 mount，因为渲染器只在 mount 时读一次调色板与底色。
 - **失焦暂停**：窗口不在前台时 `mount` 的句柄暂停绘制，回到前台续播。开关在设置页与调参面板里都是实时的。
 - **开屏**：冷启动时先用当前场景全屏铺满窗口，等应用就绪再渐隐，交接是一次淡出而不是一次跳变。层与底色在 `apply` 里同步建立（宿主的启动页已经画好了，等一个 chunk 就会露出它），canvas 等场景模块到位后再挂。就绪判据是宿主两个结构锚点：`[data-dsh-boot]` 消失且 `[data-shell-bottom]` 出现；最短可见 1200ms，最长等待 5000ms，渐隐 650ms，`prefers-reduced-motion` 时渐隐为 0。开屏存活期间背景层暂停，渐隐结束或失败后恢复。只在宿主启动页在场时播：皮肤在运行中被启用不播。设置页可关。
-- **设置页**：设置 → ASCII 背景。34 个场景的卡片（含调色板色条）、实时预览、亮色配色二选一、摆放与分区控件、开屏开关、暂停/恢复默认。
+- **新对话开屏**：第二个触发点，默认关闭。观察宿主对话内容根节点 `[data-conversation-content]` 的 `data-content-phase` 与 `data-conversation-session`：phase 进入 `hero`，或已在 hero 而会话值变了（连续新建空对话），就再播一次同一开屏。冷启动那一页也是 hero，所以有「武装」：冷启动开屏结束（没有冷启动开屏时则是 `[data-dsh-boot]` 消失）之后才武装，武装时把当时的 hero 记成基线，不播首帧。已有开屏存活时不叠加。
+- **设置页**：设置 → ASCII 背景。34 个场景的卡片（含调色板色条）、实时预览、亮色配色二选一、摆放与分区控件、开屏与「新对话开屏」两个开关、暂停/恢复默认。
 - **调参面板**：lil-gui，按需加载（它占本包一半体积，单独 chunk）。可调摆放、亮色配色、画面亮度、模糊、蒙层、帧率、静止、渐变遮罩、分区透出，以及每个场景自己声明的 frame 选项；场景选项按场景分别保存，切走再切回不丢。
 - **持久化**：`localStorage`，键 `dsh-skin:ascii-rest:settings`。按浏览器窗口存，不进 profile，所以换窗口不会串。
 
@@ -27,6 +28,7 @@
 | `require.async("./client.<name>.js")` | 按需加载 chunk；chunk 自己必须以 `<包名>/client.<name>.js` 注册 |
 | `style[data-plugin-css]` | 自注入的 `<style>` 必须带 `data-plugin` 与 `data-plugin-css`，否则切皮肤时会被 loader 收走或留下 |
 | `[data-dsh-boot]` 消失 + `[data-shell-bottom]` 出现 | 应用挂载完成的两个结构锚点；开屏据此渐隐，任一不满足则靠最长等待兜底 |
+| `[data-conversation-content]` 的 `data-content-phase` / `data-conversation-session` | 新对话页的判据：phase 进入 `hero`，或已在 hero 而会话值变了；节点被宿主重建后观察器仍从文档层面接住 |
 
 ## 摆在宿主 DOM 上的东西
 

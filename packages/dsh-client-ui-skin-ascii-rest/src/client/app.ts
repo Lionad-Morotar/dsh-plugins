@@ -28,6 +28,7 @@ import {
 import type { ClientContext, LocaleService, SlotsService, ThemeService } from "./dsh.ts";
 import type { GuiHandle, GuiOptions } from "./gui.ts";
 import { getLoader } from "./loader.ts";
+import { createNewChatWatcher, type NewChatWatcher } from "./new-chat-splash.ts";
 import { AsciiRestSettingsPage, type PageCopy, type PageReact } from "./page.ts";
 import { loadScene } from "./scenes.ts";
 import { playSplash, type Splash } from "./splash.ts";
@@ -134,6 +135,12 @@ export function apply(ctx: ClientContext): void {
 
   let surface: Surface | null = null;
   let splash: Splash | null = null;
+  let newChat: NewChatWatcher | null = null;
+  // The cold start owns the first hero page, so nothing may play on it. Arming
+  // is what separates "the app just opened" from "the reader opened a new
+  // conversation", and it only ever goes one way.
+  let coldStartDone = false;
+  let armTimer: ReturnType<typeof setInterval> | null = null;
   let gui: GuiHandle | null = null;
   let guiHost: HTMLElement | null = null;
   let releaseTokens: (() => void) | null = null;
@@ -377,6 +384,7 @@ export function apply(ctx: ClientContext): void {
       onPlacement: (change) => store.update((current) => ({ ...current, options: { ...current.options, ...change } })),
       onRegions: (change) => store.update((current) => ({ ...current, regions: { ...current.regions, ...change } })),
       onSplash: (open) => store.update((current) => ({ ...current, splash: open })),
+      onSplashOnNewChat: (open) => store.update((current) => ({ ...current, splashOnNewChat: open })),
       onOpenPanel: () => {
         void openGui();
       },
@@ -411,6 +419,9 @@ export function apply(ctx: ClientContext): void {
       onEnd: () => {
         splash = null;
         surface?.resume();
+        // A cold start's splash is the last thing between the app opening and
+        // the reader navigating; after it, a hero page is the reader's doing.
+        arm();
       },
       onError: (error) => {
         // A splash that cannot draw is not a reason to hold the reader up: the
@@ -418,11 +429,49 @@ export function apply(ctx: ClientContext): void {
         splash = null;
         warn("ascii-rest: the splash did not start", error);
         surface?.resume();
+        arm();
       },
     });
     // The background may already be mounted by the time this runs, in which
     // case nothing else would pause it.
     surface?.pause();
+  };
+
+  /**
+   * Mark the cold start as over, once.
+   *
+   * Everything before this point is the app opening; everything after is the
+   * reader navigating. The watcher reads this on every transition, so it has to
+   * settle before the first real new conversation can be recognised.
+   */
+  const arm = (): void => {
+    coldStartDone = true;
+    if (armTimer !== null) {
+      clearInterval(armTimer);
+      armTimer = null;
+    }
+  };
+
+  /**
+   * Watch for new conversation pages.
+   *
+   * The splash is reused rather than reimplemented: a new conversation deserves
+   * the same scene, the same timing, and the same rule that the background stops
+   * drawing behind it.
+   */
+  const watchNewChat = (): void => {
+    if (newChat !== null) return;
+    newChat = createNewChatWatcher({
+      doc,
+      enabled: () => settings.splashOnNewChat,
+      armed: () => coldStartDone,
+      busy: () => splash !== null,
+      onOpen: () => {
+        const scene = currentScene();
+        if (scene === undefined) return;
+        openSplash(scene);
+      },
+    });
   };
 
   const disposeStyles = insertStyles(doc, SKIN_CSS);
@@ -436,12 +485,34 @@ export function apply(ctx: ClientContext): void {
     if (scene !== undefined && doc.querySelector("[data-dsh-boot]") !== null) openSplash(scene);
   }
 
+  // Arming has to happen even when no cold-start splash plays, or a reader with
+  // the opening switched off would never get the new-conversation one either.
+  // Without a splash to wait on, the boot page leaving is the same signal the
+  // splash itself uses.
+  if (!coldStartDone) {
+    if (doc.querySelector("[data-dsh-boot]") === null) {
+      arm();
+    } else {
+      armTimer = setInterval(() => {
+        if (doc.querySelector("[data-dsh-boot]") === null) arm();
+      }, 50);
+    }
+  }
+
+  watchNewChat();
+
   ctx.effect(() => () => {
     // Bumping the ticket makes any in-flight scene load a no-op on arrival.
     presentation += 1;
     closeGui();
     // Before the surface: the splash's `onEnd` resumes the background, and a
     // splash disposed after its surface would try to resume a dead one.
+    newChat?.dispose();
+    newChat = null;
+    if (armTimer !== null) {
+      clearInterval(armTimer);
+      armTimer = null;
+    }
     splash?.dispose();
     splash = null;
     surface?.dispose();

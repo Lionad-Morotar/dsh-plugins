@@ -69,6 +69,8 @@ export interface PageCopy {
   splashNote: string;
   splashOn: string;
   splashOff: string;
+  splashOnNewChat: string;
+  splashOnNewChatNote: string;
 }
 
 /** The slice of React this page uses; the rest comes from the host. */
@@ -90,6 +92,8 @@ export interface PageProps {
   onRegions(change: Partial<Settings["regions"]>): void;
   /** Whether a cold start opens on the scene before the shell. */
   onSplash(open: boolean): void;
+  /** Whether opening a new conversation plays the same splash. */
+  onSplashOnNewChat(open: boolean): void;
   onOpenPanel(): void;
   onReset(): void;
   copy: PageCopy;
@@ -427,6 +431,17 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
       pick(copy.splash, ["on", "off"], splashLabels, settings.splash ? "on" : "off", (value) =>
         props.onSplash(value === "on"),
       ),
+    ),
+    field(
+      copy.splashOnNewChat,
+      pick(
+        copy.splashOnNewChat,
+        ["on", "off"],
+        splashLabels,
+        settings.splashOnNewChat ? "on" : "off",
+        (value) => props.onSplashOnNewChat(value === "on"),
+      ),
+      copy.splashOnNewChatNote,
     ),
   );
 

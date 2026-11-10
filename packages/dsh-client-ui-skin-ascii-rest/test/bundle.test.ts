@@ -383,6 +383,62 @@ describe("the built client bundle", () => {
     expect(window.document.querySelector("[data-ascii-rest-splash]")).toBeNull();
   });
 
+  it("offers the new-chat splash as a switch of its own, off by default", () => {
+    const dom = makeDom();
+    const exports = materialize(dom);
+    const { ctx, registrations, window } = makeContext(dom);
+
+    (exports.apply as (ctx: unknown) => void)(ctx);
+
+    const page = registrations[0]?.component as () => unknown;
+    const tree = page();
+    const labelOf = (node: TreeNode): string => node.children.filter((child) => typeof child === "string").join("");
+    const chips = collectBy(tree, (node) => node.type === "button" && node.props?.["aria-pressed"] !== undefined);
+
+    const on = chips.find((node) => labelOf(node) === "开启" && node.props?.["aria-pressed"] === false);
+    expect(on, "the new-chat splash is offered and starts off").toBeDefined();
+
+    (on?.props?.onClick as () => void)();
+
+    const stored = JSON.parse(window.localStorage.getItem("dsh-skin:ascii-rest:settings") ?? "{}") as {
+      splashOnNewChat?: boolean;
+    };
+    expect(stored.splashOnNewChat).toBe(true);
+  });
+
+  it("opens on the scene when a new conversation page appears", async () => {
+    const dom = makeDom();
+    const exports = materialize(dom);
+    const { ctx, window } = makeContext(dom);
+
+    // The cold-start splash is switched off so the only splash this test can see
+    // is the one the new conversation page asks for.
+    window.localStorage.setItem(
+      "dsh-skin:ascii-rest:settings",
+      JSON.stringify({ splash: false, splashOnNewChat: true }),
+    );
+
+    (exports.apply as (ctx: unknown) => void)(ctx);
+    expect(window.document.querySelector("[data-ascii-rest-splash]")).toBeNull();
+
+    // The shell renders its conversation root on the hero page, which is what
+    // the reader sees when they open a new conversation.
+    const root = window.document.createElement("div");
+    root.setAttribute("data-conversation-content", "");
+    root.setAttribute("data-content-phase", "active");
+    root.setAttribute("data-conversation-session", "s1");
+    window.document.body.append(root);
+
+    // Arming waits for the boot page to go, so the host's own start is not
+    // mistaken for a new conversation.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    root.setAttribute("data-content-phase", "hero");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(window.document.querySelector("[data-ascii-rest-splash]")).not.toBeNull();
+  });
+
   it("takes the splash away with the rest of the skin", () => {
     const dom = makeDom();
     const exports = materialize(dom);

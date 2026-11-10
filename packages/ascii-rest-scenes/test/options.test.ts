@@ -192,6 +192,25 @@ describe("normalizeSettings", () => {
     expect(normalizeSettings({ splash: 0 }, catalog).splash).toBe(true);
     expect(normalizeSettings({ splash: null }, catalog).splash).toBe(true);
   });
+
+  it("keeps the new-chat splash off for a document that predates it", () => {
+    // The opposite default from the cold-start splash, and deliberately so: a
+    // splash on every new conversation is an interruption, not an opening, so
+    // an upgrade must not turn it on for a reader who never asked.
+    expect(DEFAULT_SETTINGS.splashOnNewChat).toBe(false);
+    expect(normalizeSettings({}, catalog).splashOnNewChat).toBe(false);
+    expect(normalizeSettings({ scene: "kyoto-dusk" }, catalog).splashOnNewChat).toBe(false);
+  });
+
+  it("keeps a new-chat splash the reader turned on", () => {
+    expect(normalizeSettings({ splashOnNewChat: true }, catalog).splashOnNewChat).toBe(true);
+  });
+
+  it("falls back to off for a new-chat splash that is not a boolean", () => {
+    expect(normalizeSettings({ splashOnNewChat: "true" }, catalog).splashOnNewChat).toBe(false);
+    expect(normalizeSettings({ splashOnNewChat: 1 }, catalog).splashOnNewChat).toBe(false);
+    expect(normalizeSettings({ splashOnNewChat: null }, catalog).splashOnNewChat).toBe(false);
+  });
 });
 
 describe("settingsEqual", () => {
@@ -227,5 +246,11 @@ describe("settingsEqual", () => {
     const base = normalizeSettings({}, catalog);
     expect(settingsEqual(base, normalizeSettings({ splash: false }, catalog))).toBe(false);
     expect(settingsEqual(base, normalizeSettings({ splash: true }, catalog))).toBe(true);
+  });
+
+  it("notices the new-chat splash being turned on", () => {
+    const base = normalizeSettings({}, catalog);
+    expect(settingsEqual(base, normalizeSettings({ splashOnNewChat: true }, catalog))).toBe(false);
+    expect(settingsEqual(base, normalizeSettings({ splashOnNewChat: false }, catalog))).toBe(true);
   });
 });

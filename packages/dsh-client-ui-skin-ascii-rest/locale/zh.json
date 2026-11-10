@@ -45,5 +45,7 @@
   "splash": "开屏",
   "splashNote": "冷启动时先用当前场景铺满窗口，等界面就绪再渐隐。皮肤在运行中被启用时不播。",
   "splashOn": "开启",
-  "splashOff": "关闭"
+  "splashOff": "关闭",
+  "splashOnNewChat": "新对话开屏",
+  "splashOnNewChatNote": "每次打开一个新的空对话页时再播一次开屏。默认关闭，因为连续新建对话时它会反复打断。"
 }

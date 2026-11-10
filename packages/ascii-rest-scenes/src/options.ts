@@ -94,6 +94,15 @@ export interface Settings {
    * top level rather than inside `appearance`.
    */
   splash: boolean;
+  /**
+   * Whether opening a new conversation plays the same splash again.
+   *
+   * Off by default, unlike the cold-start splash: an opening happens once and
+   * covers a page nobody is using yet, while a new conversation happens as often
+   * as the reader clicks, and covering their empty page each time is an
+   * interruption rather than a flourish.
+   */
+  splashOnNewChat: boolean;
 }
 
 export const DEFAULT_SCENE_OPTIONS: SceneOptions = {
@@ -130,6 +139,7 @@ export const DEFAULT_SETTINGS: Settings = {
   regions: DEFAULT_REGIONS,
   piece: {},
   splash: true,
+  splashOnNewChat: false,
 };
 
 export const FPS_RANGE = { min: 0, max: 30 } as const;
@@ -249,6 +259,9 @@ export function normalizeSettings(input: unknown, catalog: readonly SceneEntry[]
     // default is to play it: an upgrade should show what a fresh install shows.
     // An explicit false is the reader's decision and survives every save.
     splash: readBoolean(raw.splash, DEFAULT_SETTINGS.splash),
+    // Missing reads as off: this one is an opt-in, so an upgrade must not start
+    // covering every new conversation for a reader who never asked for it.
+    splashOnNewChat: readBoolean(raw.splashOnNewChat, DEFAULT_SETTINGS.splashOnNewChat),
   };
 }
 
@@ -302,6 +315,7 @@ export function settingsEqual(a: Settings, b: Settings): boolean {
     a.appearance.pauseOnBlur === b.appearance.pauseOnBlur &&
     REGION_KEYS.every((key) => a.regions[key] === b.regions[key]) &&
     a.splash === b.splash &&
+    a.splashOnNewChat === b.splashOnNewChat &&
     JSON.stringify(a.piece) === JSON.stringify(b.piece)
   );
 }
