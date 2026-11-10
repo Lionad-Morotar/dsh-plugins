@@ -878,6 +878,37 @@ export function createGitExplorerView(wiring: ViewWiring) {
       if (sessionId !== undefined && selected !== undefined) commitJump(selected, path, line);
     };
 
+    /**
+     * Open the PR view on `this commit...HEAD`.
+     *
+     * The request goes into the core's queue before the switch, because the PR
+     * view may not be mounted yet. A switch that delivered the focus directly
+     * takes the request back out; the tab fallback leaves it for the target to
+     * take. Undefined when the core cannot switch views at all, and the button
+     * is then not drawn.
+     */
+    const onCompareToHead = useMemo((): ((hash: string) => void) | undefined => {
+      const canSwitch =
+        workbench.openViewOrSwitch !== undefined ||
+        workbench.openView !== undefined ||
+        workbench.views !== undefined;
+      if (!canSwitch) return undefined;
+      const seam: CommitJumpSeam = {
+        ...(workbench.views === undefined ? {} : { views: workbench.views }),
+        ...(workbench.openView === undefined ? {} : { openView: workbench.openView }),
+        ...(workbench.openViewOrSwitch === undefined ? {} : { openViewOrSwitch: workbench.openViewOrSwitch }),
+        ...(workbench.viewFocus === undefined ? {} : { viewFocus: workbench.viewFocus }),
+      };
+      const jump = createCommitJump({ seam, sessionId: sessionId ?? "" });
+      return (hash: string): void => {
+        const clean = hash.trim().toLowerCase();
+        if (clean === "") return;
+        // `HEAD` is the head end: the reader is asking what this commit adds on
+        // top of the branch tip, which is the range a pull request would show.
+        jump(clean, "HEAD");
+      };
+    }, [workbench, sessionId]);
+
     // One reference write: the span comes from the composer's own capture, the
     // chip from the session facade, and plain text is the last resort. The
     // facade is resolved per click rather than per mount because it throws once
@@ -1111,6 +1142,7 @@ export function createGitExplorerView(wiring: ViewWiring) {
                   t={t}
                   onSelect={setSelected}
                   onOpenFile={onOpenCommitFile}
+                  {...(onCompareToHead === undefined ? {} : { onCompareToHead })}
                   refs={selectedRefs}
                   {...(props.inputActions === undefined ? {} : { inputActions: props.inputActions })}
                   {...(phase === undefined ? {} : { phase })}
