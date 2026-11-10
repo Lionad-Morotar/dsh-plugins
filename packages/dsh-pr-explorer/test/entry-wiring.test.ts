@@ -16,7 +16,7 @@
 import { describe, expect, it } from "vitest";
 
 import { EN, ZH } from "../src/client/copy.ts";
-import clientPlugin, { apply } from "../src/client/entry.ts";
+import clientPlugin, { apply, inject } from "../src/client/entry.ts";
 import { LOCALE_NAMESPACE, PACKAGE_NAME, ROUTE_PREFIX, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "../src/shared.ts";
 
 interface SlotRegistration {
@@ -88,9 +88,12 @@ describe("pr explorer contract", () => {
 });
 
 describe("pr explorer client entry", () => {
-  it("waits for exactly the slots and locale services", () => {
+  it("waits for exactly the services the view reads", () => {
     expect(clientPlugin.name).toBe("dsh-pr-explorer");
-    expect(clientPlugin.inject).toEqual(["slots", "locale"]);
+    // workbench is declared by every workbench feature: the service is provided
+    // by another client plugin, so only an injected plugin is guaranteed to see
+    // it after the shell finishes its plugin pass.
+    expect(clientPlugin.inject).toEqual(["slots", "locale", "workbench"]);
   });
 
   it("registers the conversation view tab between Git and the architecture map", () => {
@@ -107,30 +110,20 @@ describe("pr explorer client entry", () => {
     expect([...(dictionaries.get("pr-explorer")?.keys() ?? [])].sort()).toEqual(["en", "zh"]);
   });
 
-  it("reads the workbench through get, never through an undeclared service property", () => {
-    // The real client context throws when a plugin reads a service property it
-    // did not declare in `inject`. The PR tab keeps the workbench optional, so
-    // the read must go through `get`: the throwing getter below is the host
-    // rule, and this test fails the day the code reads `ctx.workbench` again.
-    const { ctx, slots } = createContext();
-    const seen: string[] = [];
-    Object.defineProperty(ctx, "get", {
-      value: (name: string) => {
-        seen.push(name);
-        return undefined;
-      },
-      configurable: true,
-    });
-    Object.defineProperty(ctx, "workbench", {
-      get() {
-        throw new Error("undeclared service property was read");
-      },
-      configurable: true,
-    });
+  it("declares the workbench service and keeps it optional at read time", () => {
+    // The workbench is provided by another client plugin, so the shell only
+    // injects it into plugins that declare it. Declaring it here is what lets a
+    // lazily applied provider win the race; null keeps working for hosts that
+    // publish nothing, with the jump actions simply absent.
+    expect(inject).toContain("workbench");
 
+    const { ctx, slots } = createContext();
     expect(() => apply(ctx)).not.toThrow();
     expect(slots).toHaveLength(1);
-    expect(seen).toContain("workbench");
+
+    const withNull = createContext();
+    expect(() => apply({ ...withNull.ctx, workbench: null })).not.toThrow();
+    expect(withNull.slots).toHaveLength(1);
   });
 
   it("resolves the tab label per active locale at call time", () => {

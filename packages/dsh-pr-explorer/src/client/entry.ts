@@ -27,15 +27,16 @@ export interface PrExplorerClientContext {
     register(options: Record<string, unknown>, component: unknown): () => void;
   };
   /**
-   * Service lookup, the host's safe read.
+   * The workbench core, when the host publishes one.
    *
-   * The workbench core is read through here rather than as `ctx.workbench`:
-   * the client context throws on a service property the plugin did not declare
-   * in `inject`, so a host with workbench installed would still sink the whole
-   * tab unless the read goes through `get`. A host without it keeps the
-   * comparison and simply loses the two jump actions.
+   * Declared in `inject`, like the other workbench features do, because the
+   * service is provided by another client plugin: reading it before that plugin
+   * applies yields undefined, and a view that captured undefined once would
+   * never draw its jumps. Declaring it makes the client shell wait instead.
+   * Still optional at read time: a host that publishes null (or a degenerate
+   * core) keeps the comparison and loses only the two jump actions.
    */
-  readonly get?: (name: string) => unknown;
+  readonly workbench?: WorkbenchFace | null;
   readonly locale: {
     register(namespace: string, dictionaries: Record<string, Record<string, string>>): () => void;
     bind(namespace: string): (key: string) => string;
@@ -45,7 +46,7 @@ export interface PrExplorerClientContext {
 }
 
 /** Services this plugin waits for before applying. */
-export const inject = ["slots", "locale"];
+export const inject = ["slots", "locale", "workbench"];
 
 /**
  * Disposer of the dictionary currently in the host's locale table.
@@ -90,7 +91,7 @@ export function apply(ctx: PrExplorerClientContext): () => void {
   // Read before the view is built so the jump seam is a value captured once per
   // application, and so a host that throws on undeclared service properties
   // never sees one.
-  const workbench = ctx.get?.("workbench") as WorkbenchFace | undefined;
+  const workbench = ctx.workbench ?? undefined;
   const t = ctx.locale.bind(LOCALE_NAMESPACE);
   registeredDictionaries?.();
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
