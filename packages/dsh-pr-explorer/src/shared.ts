@@ -57,13 +57,14 @@ export interface LoaderRequire {
  *
  * Wire values, not prose: the client maps each to its own copy, so a new code
  * without a matching translation is a blank panel rather than a wrong sentence.
- * `no-session` is deliberately absent: this slice has no route, and the code
- * that needs it arrives with the layer that resolves a session to a workspace.
+ * `no-session` belongs to the route layer rather than the data layer: a git read
+ * never sees a session, so only the handler that resolves one can answer it.
  */
 export type PrErrorCode =
   | "not-a-repo"
   | "invalid-ref"
   | "no-merge-base"
+  | "no-session"
   | "bad-request"
   | "unreadable"
   | "too-large";
@@ -247,4 +248,28 @@ export type CompareFilesResult =
 /** One file's detail answer. */
 export type PrFileDiffResult =
   | { readonly ok: true; readonly diff: PrFileDiff }
+  | { readonly ok: false; readonly error: PrError };
+
+/**
+ * One x...y comparison as the panel renders it: the pinned range, the commits in
+ * it, and the files it touches.
+ *
+ * The three parts are one object rather than three responses because they are
+ * one answer to one question. A client that fetched them separately could show a
+ * commit list from one range beside a file list from another, and the panel has
+ * no way to tell that happened.
+ *
+ * `reading` is the pin those two lists were read against, not a fourth read: the
+ * assembly pins the range once and hands the same reading to both, so the commit
+ * list and the file list cannot disagree about which merge base they used.
+ */
+export interface CompareSnapshot {
+  readonly reading: CompareReading;
+  readonly commits: CommitList;
+  readonly files: CompareFiles;
+}
+
+/** The comparison's answer. */
+export type CompareSnapshotResult =
+  | { readonly ok: true; readonly compare: CompareSnapshot }
   | { readonly ok: false; readonly error: PrError };
