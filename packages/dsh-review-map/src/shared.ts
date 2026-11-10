@@ -153,6 +153,7 @@ export interface ReviewSnapshot {
 export type ReviewErrorCode =
   | "not-a-repo"
   | "no-base"
+  | "no-session"
   | "conflicted"
   | "unreadable"
   | "too-large"
