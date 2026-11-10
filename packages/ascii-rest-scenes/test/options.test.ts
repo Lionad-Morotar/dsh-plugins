@@ -9,6 +9,7 @@ import {
   RESOLUTION_RANGE,
   normalizeRegions,
   normalizeSceneOptions,
+  NEW_CHAT_SPLASH_RANGE,
   normalizeSettings,
   settingsEqual,
 } from "../src/options.ts";
@@ -211,6 +212,34 @@ describe("normalizeSettings", () => {
     expect(normalizeSettings({ splashOnNewChat: 1 }, catalog).splashOnNewChat).toBe(false);
     expect(normalizeSettings({ splashOnNewChat: null }, catalog).splashOnNewChat).toBe(false);
   });
+
+  it("holds the new-chat splash for half the cold-start minimum by default", () => {
+    // A new conversation is opened as often as the reader clicks, so the same
+    // 1200ms that reads as a deliberate opening on a cold start reads as a
+    // hold-up on the fifth one. Half of it is the default, not the floor.
+    expect(DEFAULT_SETTINGS.newChatSplashMs).toBe(600);
+    expect(normalizeSettings({}, catalog).newChatSplashMs).toBe(600);
+    expect(normalizeSettings({ scene: "kyoto-dusk" }, catalog).newChatSplashMs).toBe(600);
+  });
+
+  it("keeps a new-chat splash duration the reader chose", () => {
+    expect(normalizeSettings({ newChatSplashMs: 250 }, catalog).newChatSplashMs).toBe(250);
+    expect(normalizeSettings({ newChatSplashMs: 2500 }, catalog).newChatSplashMs).toBe(2500);
+  });
+
+  it("clamps a new-chat splash duration to the range the slider offers", () => {
+    // The slider and the read path share one range, so a hand-edited document
+    // cannot ask for a splash the control could never have produced.
+    expect(NEW_CHAT_SPLASH_RANGE).toEqual({ min: 200, max: 3000, step: 100 });
+    expect(normalizeSettings({ newChatSplashMs: 50 }, catalog).newChatSplashMs).toBe(200);
+    expect(normalizeSettings({ newChatSplashMs: 99_999 }, catalog).newChatSplashMs).toBe(3000);
+  });
+
+  it("falls back to the default for a new-chat splash duration that is not a number", () => {
+    expect(normalizeSettings({ newChatSplashMs: "900" }, catalog).newChatSplashMs).toBe(600);
+    expect(normalizeSettings({ newChatSplashMs: null }, catalog).newChatSplashMs).toBe(600);
+    expect(normalizeSettings({ newChatSplashMs: Number.NaN }, catalog).newChatSplashMs).toBe(600);
+  });
 });
 
 describe("settingsEqual", () => {
@@ -252,5 +281,13 @@ describe("settingsEqual", () => {
     const base = normalizeSettings({}, catalog);
     expect(settingsEqual(base, normalizeSettings({ splashOnNewChat: true }, catalog))).toBe(false);
     expect(settingsEqual(base, normalizeSettings({ splashOnNewChat: false }, catalog))).toBe(true);
+  });
+
+  it("notices a changed new-chat splash duration", () => {
+    // The store drops a write it judges equal, so a duration left out of this
+    // comparison is a slider that moves and never saves.
+    const base = normalizeSettings({}, catalog);
+    expect(settingsEqual(base, normalizeSettings({ newChatSplashMs: 1200 }, catalog))).toBe(false);
+    expect(settingsEqual(base, normalizeSettings({ newChatSplashMs: 600 }, catalog))).toBe(true);
   });
 });

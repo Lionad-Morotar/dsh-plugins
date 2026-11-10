@@ -47,5 +47,7 @@
   "splashOn": "On",
   "splashOff": "Off",
   "splashOnNewChat": "Opening scene on new conversations",
-  "splashOnNewChatNote": "Play the opening scene again each time a new empty conversation opens. Off by default, because it interrupts when you open several in a row."
+  "splashOnNewChatNote": "Play the opening scene again each time a new empty conversation opens. Off by default, because it interrupts when you open several in a row.",
+  "splashOnNewChatDuration": "New chat splash duration",
+  "splashDurationUnit": "s"
 }

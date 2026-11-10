@@ -103,6 +103,15 @@ export interface Settings {
    * interruption rather than a flourish.
    */
   splashOnNewChat: boolean;
+  /**
+   * How long a new conversation's splash stays up at its shortest.
+   *
+   * Half the cold-start minimum by default, because the two moments ask for
+   * different patience: a cold start happens once and the reader is waiting for
+   * the app anyway, while a new conversation happens as often as they click and
+   * every extra millisecond is a page they asked for and cannot use yet.
+   */
+  newChatSplashMs: number;
 }
 
 export const DEFAULT_SCENE_OPTIONS: SceneOptions = {
@@ -140,9 +149,21 @@ export const DEFAULT_SETTINGS: Settings = {
   piece: {},
   splash: true,
   splashOnNewChat: false,
+  newChatSplashMs: 600,
 };
 
 export const FPS_RANGE = { min: 0, max: 30 } as const;
+
+/**
+ * The range the new-chat splash duration slider offers, in milliseconds.
+ *
+ * One declaration serves both the control and the read path, so a stored value
+ * can never be one the slider could not have produced. The floor is short
+ * enough to read as a flash of the picture rather than a hold; the ceiling is
+ * generous enough for a reader who wants the scene to linger, and still short
+ * enough that no setting here turns a new conversation into a wait.
+ */
+export const NEW_CHAT_SPLASH_RANGE = { min: 200, max: 3000, step: 100 } as const;
 
 /**
  * The render-density range, in device pixels per CSS pixel.
@@ -262,6 +283,15 @@ export function normalizeSettings(input: unknown, catalog: readonly SceneEntry[]
     // Missing reads as off: this one is an opt-in, so an upgrade must not start
     // covering every new conversation for a reader who never asked for it.
     splashOnNewChat: readBoolean(raw.splashOnNewChat, DEFAULT_SETTINGS.splashOnNewChat),
+    // Missing reads as the default rather than as "no splash": the duration is
+    // the hold on a splash the reader already opted into, so an upgrade must
+    // not turn a splash they turned on into a zero-length one.
+    newChatSplashMs: readNumber(
+      raw.newChatSplashMs,
+      DEFAULT_SETTINGS.newChatSplashMs,
+      NEW_CHAT_SPLASH_RANGE.min,
+      NEW_CHAT_SPLASH_RANGE.max,
+    ),
   };
 }
 
@@ -316,6 +346,7 @@ export function settingsEqual(a: Settings, b: Settings): boolean {
     REGION_KEYS.every((key) => a.regions[key] === b.regions[key]) &&
     a.splash === b.splash &&
     a.splashOnNewChat === b.splashOnNewChat &&
+    a.newChatSplashMs === b.newChatSplashMs &&
     JSON.stringify(a.piece) === JSON.stringify(b.piece)
   );
 }
