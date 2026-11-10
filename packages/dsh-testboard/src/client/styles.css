@@ -590,10 +590,77 @@ body.tst-pane-resizing {
 
 [data-tst="case-error"] {grid-column: 2 / -1;color: var(--tst-fail)}
 
-[data-tst="empty"],
-[data-tst="status"] {
+[data-tst="empty"] {
   color: var(--tst-ink-dim);
   font-size: var(--tst-fs-small);
+}
+
+/* The waiting/error board, drawn the way dsh-arch draws its empty C4 state: one
+   centred muted note occupying the panel rather than a block parked in the
+   top-left corner. The block fills the remaining height because the panel is a
+   flex column whose only child it is; without the flex basis it would keep its
+   content height and leave the note at the top. */
+[data-tst="status-block"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+  overflow: auto;
+}
+
+[data-tst="status-block"] [data-tst="status"] {
+  margin: 0;
+  max-width: 56ch;
+  color: var(--tst-ink-dim);
+  font-size: var(--tst-fs);
+}
+
+[data-tst="status-block"] [data-tst="status-hint"] {
+  margin: 6px 0 0;
+  max-width: 56ch;
+  color: var(--tst-ink-faint);
+  font-size: var(--tst-fs-small);
+}
+
+/* The one action the empty board offers stays visually separate from the muted
+   note: it is the reason the state is not a dead end. */
+[data-tst="status-block"] [data-testid="run-all"] {
+  margin-top: 16px;
+}
+
+/* The run control is the board's one primary action in the empty state and in
+   the toolbar. It gets the same quiet bordered treatment as the segmented
+   control instead of the platform's default button, which lands as a white box
+   inside the dark palette. */
+[data-tst="run-control"] {
+  flex: none;
+  appearance: none;
+  border: 1px solid var(--tst-rule);
+  border-radius: 5px;
+  padding: 3px 12px;
+  background: color-mix(in srgb, var(--tst-ink) 6%, transparent);
+  color: var(--tst-ink);
+  font: inherit;
+  font-size: var(--tst-fs-small);
+  cursor: pointer;
+}
+
+[data-tst="run-control"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--tst-ink) 12%, transparent);
+}
+
+[data-tst="run-control"]:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+[data-tst="run-control"]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--tst-ink) 30%, transparent);
+  outline-offset: 1px;
 }
 
 

@@ -103,7 +103,7 @@ cd packages/dsh-testboard
 node scripts/preview.mjs --out ../../temp/testboard-preview
 ```
 
-产出 `index.html` 与 `assets.js`，React 已内联，页面不引用外链，`file://` 直接打开或起静态服务器都能看。`?theme=dark|light` 选主题（缺省暗色）。
+产出 `index.html` 与 `assets.js`，React 已内联，页面不引用外链，`file://` 直接打开或起静态服务器都能看。`?theme=dark|light` 选主题（缺省暗色），`?state=empty` 渲染首次打开时的等待态；空态与 dsh-arch 的空界面同一套版式：内容区居中、文字弱化，只留一个动作入口。
 
 预览页用 fixture runtime，与线上走同一个 `TestboardRuntime` 接口，所以渲染的是真实 tab 的代码路径。它自动循环演示一遍完整叙事：`running`（竖条逐格点亮、计数增长、图表生长）→ `fixing`（标题 `正在修复 N 个失败`，图表右下浮层卡 `Fixing <file>` / `<model> · Ns` / `+2 −2`）→ `rerunning`（失败用例先扫灰再重亮，元信息 `重跑 · Xs`）→ `finished`（`测试完成`，全绿）→ 循环。
 

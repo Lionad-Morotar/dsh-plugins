@@ -898,7 +898,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
             <button
               type="button"
               data-testid="run-all"
-              data-tst="run-all"
+              data-tst="run-control"
               disabled={!canRun}
               onClick={onRunAll}
             >

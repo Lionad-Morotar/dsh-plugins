@@ -17,6 +17,7 @@ import { createRoot } from "react-dom/client";
 import snapshotData from "./data/snapshot.json" with { type: "json" };
 import sourcesData from "./data/sources.json" with { type: "json" };
 import { createFixtureRuntime } from "./fixture-runtime.ts";
+import type { TestboardRuntime } from "./runtime.ts";
 import { ensureStyles } from "./styles.ts";
 import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
 import type { EditorChunkModule } from "./code-contract.ts";
@@ -90,6 +91,31 @@ const STRINGS: TestboardViewStrings = {
 };
 
 /**
+ * Whether the page should show the waiting state instead of the demo loop.
+ *
+ * The empty board is a real state a reader meets on a fresh workspace, and it is
+ * the one state the fixture runtime cannot reach on its own (its whole job is to
+ * keep a run moving). `?state=empty` is for looking at and screenshotting it.
+ * @param search - the page's query string.
+ * @returns whether the empty state was asked for.
+ */
+function requestedEmpty(search: string): boolean {
+  return new URLSearchParams(search).get("state") === "empty";
+}
+
+/**
+ * A runtime whose workspace has never run anything.
+ *
+ * Only the first answer is overridden: every other method still belongs to the
+ * fixture, so the board takes exactly the same data path it takes on the host.
+ * @param base - the fixture runtime.
+ * @returns the waiting-state runtime.
+ */
+function waitingRuntime(base: TestboardRuntime): TestboardRuntime {
+  return { ...base, loadState: async () => ({}) };
+}
+
+/**
  * Read the requested theme from the query string.
  *
  * Dark is the default because it is the board's primary look; `?theme=light` is
@@ -141,11 +167,12 @@ function wireThemeToggle(): void {
  * @param snapshot - the committed snapshot to render.
  * @param sources - every test file's text, for the code pane.
  */
-function mount(host: HTMLElement, snapshot: TestSnapshot, sources: SourceBundle): void {
+function mount(host: HTMLElement, snapshot: TestSnapshot, sources: SourceBundle, empty: boolean): void {
   ensureStyles();
+  const fixture = createFixtureRuntime({ snapshot, sources });
   const View = createTestboardView({
     strings: STRINGS,
-    runtime: createFixtureRuntime({ snapshot, sources }),
+    runtime: empty ? waitingRuntime(fixture) : fixture,
     // The preview bundle has no ModuleLoader, so the editor chunk is a plain
     // dynamic import here; the page is a development surface, not the host.
     loadEditor: async () => (await import("./editor-chunk.ts")) as unknown as EditorChunkModule,
@@ -172,7 +199,12 @@ const host = document.getElementById("root");
 if (host === null) throw new Error("preview: #root is missing");
 
 applyTheme(requestedTheme(window.location.search));
-mount(host, snapshotData as unknown as TestSnapshot, sourcesData as unknown as SourceBundle);
+mount(
+  host,
+  snapshotData as unknown as TestSnapshot,
+  sourcesData as unknown as SourceBundle,
+  requestedEmpty(window.location.search),
+);
 wireThemeToggle();
 
 // The page carries its own type scale; the host normally publishes these on the
