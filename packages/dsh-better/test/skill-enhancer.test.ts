@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import {
   anchorParamPanel,
   appendParam,
+  catalogHighlight,
   catalogSelection,
   clampPanelLeft,
   hintLinesFor,
@@ -1097,6 +1098,19 @@ describe("renderCatalogPanel", () => {
   it("still renders its title without an insertion path", () => {
     const { panel } = build({ actions: false });
     expect(findByClass(panel, "dsh-better-skill-catalog-title")?.textContent).toBe("/flow-workflow run");
+  });
+});
+
+describe("catalogHighlight", () => {
+  it("paints the first row before any arrow, and does not step", () => {
+    expect(catalogHighlight(undefined, 5)).toBe(0);
+    expect(catalogHighlight(0, 5)).toBe(0);
+    expect(catalogHighlight(2, 5)).toBe(2);
+  });
+
+  it("clamps an index the list no longer has", () => {
+    expect(catalogHighlight(9, 3)).toBe(2);
+    expect(catalogHighlight(0, 0)).toBeUndefined();
   });
 });
 

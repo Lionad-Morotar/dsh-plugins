@@ -73,16 +73,11 @@ describe("matchCatalogDraft", () => {
     expect(matchCatalogDraft("/flow-workflow run dev extra", anySkill, RUN_ASSIST)).toBeUndefined();
   });
 
-  it("opens on a bare slot word before the space is typed", () => {
-    // The list is what the user asked for by finishing the word. Waiting for the
-    // space leaves the panel shut on `/flow-workflow run`.
-    expect(matchCatalogDraft("/flow-workflow run", anySkill, RUN_ASSIST)).toEqual({
-      name: "flow-workflow",
-      slot: "run",
-      query: "",
-      start: 18,
-    });
-    expect(matchCatalogDraft("/flow-workflow --dynamic run", anySkill, RUN_ASSIST)?.query).toBe("");
+  it("stays shut until a space follows the slot word", () => {
+    // `run` by itself is still the word being typed. The space is what asks for
+    // the list.
+    expect(matchCatalogDraft("/flow-workflow run", anySkill, RUN_ASSIST)).toBeUndefined();
+    expect(matchCatalogDraft("/flow-workflow --dynamic run", anySkill, RUN_ASSIST)).toBeUndefined();
   });
 
   it("closes when the trailing token is a flag", () => {
@@ -271,7 +266,8 @@ describe("catalogKeyAction", () => {
   });
 
   it("leaves every other key alone", () => {
-    expect(catalogKeyAction("Tab", ENTRIES, "dev", false)).toBe("pass");
+    expect(catalogKeyAction("Tab", ENTRIES, "dev", false)).toBe("insert");
+    expect(catalogKeyAction("Tab", ENTRIES, "zzz", false)).toBe("pass");
     expect(catalogKeyAction("a", ENTRIES, "dev", false)).toBe("pass");
     expect(catalogKeyAction("Escape", ENTRIES, "dev", false)).toBe("pass");
   });

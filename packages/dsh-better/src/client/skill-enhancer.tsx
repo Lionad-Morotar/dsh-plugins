@@ -506,6 +506,19 @@ export function catalogSelection(
 }
 
 /**
+ * The row to paint and to insert, without moving it.
+ *
+ * `catalogSelection` steps. Using it to paint (always with "down") marks the row
+ * after the one the arrows stored, so ArrowUp and ArrowDown both walk forward.
+ * An index that has not been set yet is the first row.
+ */
+export function catalogHighlight(current: number | undefined, count: number): number | undefined {
+  if (count <= 0) return undefined;
+  if (current === undefined || current < 0) return 0;
+  return Math.min(current, count - 1);
+}
+
+/**
  * Append one string to a node, marking the parts the query matched.
  *
  * Built from text nodes rather than `innerHTML` because the text is catalogue
@@ -1076,7 +1089,7 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
         slot: catalogMatch.slot,
         match: catalogMatch,
         entries,
-        selected: catalogSelection(catalogIndex, entries.length, "down") ?? 0,
+        selected: catalogHighlight(catalogIndex, entries.length) ?? 0,
         getActions: () => actionsRef.current,
         getDraft: () => draftRef.current,
         getOccurrences: () => occurrencesRef.current,
@@ -1101,7 +1114,9 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
           setCatalogDismissed(draftRef.current);
           return;
         }
-        if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "Enter") return;
+        if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "Enter" && event.key !== "Tab") return;
+        // Shift+Tab still moves focus backward. Tab without shift takes the row.
+        if (event.key === "Tab" && event.shiftKey) return;
         // A composing Enter is the input method confirming a candidate, not the
         // user choosing a row. A key the panel has no row for is the host's: an
         // unmatched name is an ordinary message, and claiming Enter would lose it.
@@ -1111,7 +1126,7 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
         event.stopPropagation();
         if (action === "insert") {
           const entries = filterCatalog(catalogEntries, catalogMatch?.query ?? "");
-          const index = catalogSelection(catalogIndex, entries.length, "down");
+          const index = catalogHighlight(catalogIndex, entries.length);
           const entry = index === undefined ? undefined : entries[index];
           if (entry === undefined || catalogMatch === undefined) return;
           const actions = actionsRef.current;
@@ -1122,7 +1137,11 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
           actions.insertText(catalogCompletionText(entry.slug), span);
           return;
         }
-        setCatalogIndex(current => catalogSelection(current, filterCatalog(catalogEntries, catalogMatch?.query ?? "").length, event.key === "up" ? "up" : "down"));
+        const count = filterCatalog(catalogEntries, catalogMatch?.query ?? "").length;
+        const direction = event.key === "ArrowUp" ? "up" : "down";
+        // Step from the painted row. The stored index starts unset, and stepping
+        // from unset would treat the first ArrowUp as a move onto row 0.
+        setCatalogIndex(current => catalogSelection(catalogHighlight(current, count), count, direction));
       };
       doc.addEventListener("keydown", onKey, true);
       return () => doc.removeEventListener("keydown", onKey, true);

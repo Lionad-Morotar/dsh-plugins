@@ -235,7 +235,7 @@ metadata:
 
 `workflows` 源读三处清单，同名 slug 先出现的赢：会话工作区的 `.claude/workflows/index.md`、`.agents/workflows/index.md`，再加 `~/.data/flow-workflow/index.md`。行要以列表符号开头，slug 是行首的 kebab token，冒号后是一句话目标。读不到的文件跳过。没有这条声明就不读盘。
 
-打开条件看的是 token 而不是前缀：草稿以该技能开头，slot 词本身是一个完整 token，而且它就是值前面那一个 token。`/flow-workflow run` 后面还没打字时列出全部；`run dev` 按 slug 或目标筛选。slug 前缀命中排在 slug 包含之前，目标里的命中排最后，同一档保持清单原顺序。命中片段高亮，原文大小写保留。值写完再跟别的 token 就关闭。`--dynamic run ` 仍然打开，因为 `run` 依然是完整的 slot 词。末尾正在输 `--` 时让给参数面板。
+打开条件看的是 token 而不是前缀：草稿以该技能开头，slot 词本身是一个完整 token，而且它就是值前面那一个 token。`/flow-workflow run` 后面还没有空格时不打开；空格打出去才列出全部，`run dev` 按 slug 或目标筛选。slug 前缀命中排在 slug 包含之前，目标里的命中排最后，同一档保持清单原顺序。命中片段高亮，原文大小写保留。值写完再跟别的 token 就关闭。`--dynamic run ` 仍然打开，因为 `run` 依然是完整的 slot 词。末尾正在输 `--` 时让给参数面板。
 
 点击或回车把正在输入的值替换成 slug 加一个尾空格，不写目标文本。目录面板打开时接管上下键与回车，不接管 Tab；输入法正在组字时回车仍归输入法。Escape 关闭，草稿再变就重开。
 

@@ -112,32 +112,15 @@ export function matchCatalogDraft(
   if (rest.length === 0) return undefined;
 
   const endsWithSpace = WHITESPACE.test(draft.charAt(draft.length - 1));
-  const last = rest[rest.length - 1];
-  const prev = rest.length >= 2 ? rest[rest.length - 2] : undefined;
-  if (last === undefined) return undefined;
-  const declaredSlot = (token: { text: string } | undefined): AssistSpec | undefined =>
-    token === undefined ? undefined : assists.find(assist => assist.slot === token.text);
+  // The value is whatever the caret is in. The slot word on its own
+  // (`/flow-workflow run`, no space yet) is still being typed, so the panel
+  // stays shut until the space that starts a value.
+  const slotToken = endsWithSpace ? rest[rest.length - 1] : rest[rest.length - 2];
+  const valueToken = endsWithSpace ? undefined : rest[rest.length - 1];
+  if (slotToken === undefined) return undefined;
 
-  // The value is whatever the caret is in. A draft that ends on the slot word
-  // itself (`/flow-workflow run`, no space yet) has not started a value: waiting
-  // for the space would leave the panel shut on the gesture that asks for the
-  // whole list. A non-flag token before that word is a value already written, so
-  // `dev run` stays shut.
-  let slotToken: { text: string; start: number } | undefined;
-  let valueToken: { text: string; start: number } | undefined;
-  if (endsWithSpace) {
-    slotToken = last;
-  } else if (declaredSlot(prev) !== undefined) {
-    slotToken = prev;
-    valueToken = last;
-  } else if (declaredSlot(last) !== undefined && (prev === undefined || prev.text.startsWith("--"))) {
-    slotToken = last;
-  } else {
-    return undefined;
-  }
-
-  const declared = declaredSlot(slotToken);
-  if (declared === undefined || slotToken === undefined) return undefined;
+  const declared = assists.find(assist => assist.slot === slotToken.text);
+  if (declared === undefined) return undefined;
 
   if (valueToken === undefined) {
     return { name: skill.name, slot: declared.slot, query: "", start: draft.length };
@@ -235,10 +218,12 @@ export function catalogKeyAction(
   query: string,
   composing: boolean,
 ): "insert" | "move" | "pass" {
-  if (key !== "Enter" && key !== "ArrowUp" && key !== "ArrowDown") return "pass";
+  if (key !== "Enter" && key !== "Tab" && key !== "ArrowUp" && key !== "ArrowDown") return "pass";
   if (composing) return "pass";
   if (filterCatalog(entries, query).length === 0) return "pass";
-  return key === "Enter" ? "insert" : "move";
+  // Tab takes the highlighted row, the same as Enter. A name that matched
+  // nothing is not a row, so Tab goes back to moving focus.
+  return key === "Enter" || key === "Tab" ? "insert" : "move";
 }
 /**
  * The text a chosen workflow inserts.
