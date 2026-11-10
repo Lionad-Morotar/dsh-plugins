@@ -253,6 +253,52 @@ describe("the PR view", () => {
     });
   }
 
+  describe("focus delivery through the shell request", () => {
+    it("adopts the pair a host request carries and acknowledges it", async () => {
+      const { runtime, compareCalls } = fakeRuntime({});
+      const View = createPrExplorerView({ strings: STRINGS, runtime });
+      let completed = 0;
+      await act(async () => {
+        root.render(
+          createElement(View, {
+            sessionId: "session-1",
+            viewRequest: { view: "pr-explorer", focus: "compare:main:feature" },
+            completeViewRequest: () => {
+              completed += 1;
+            },
+          }),
+        );
+      });
+      await settle();
+
+      expect(compareCalls.at(-1)).toMatchObject({ sessionId: "session-1", base: "main", head: "feature" });
+      expect(completed).toBe(1);
+    });
+
+    it("acknowledges but does not act on another view's request", async () => {
+      const { runtime, compareCalls } = fakeRuntime({});
+      const View = createPrExplorerView({ strings: STRINGS, runtime });
+      let completed = 0;
+      await act(async () => {
+        root.render(
+          createElement(View, {
+            sessionId: "session-1",
+            viewRequest: { view: "git-explorer", focus: "commit:abcd1234" },
+            completeViewRequest: () => {
+              completed += 1;
+            },
+          }),
+        );
+      });
+      await settle();
+
+      // The initial load still resolves the default pair; the foreign focus is
+      // never applied as a range.
+      expect(compareCalls.some(call => call.base.includes("abcd1234"))).toBe(false);
+      expect(completed).toBe(0);
+    });
+  });
+
   /** One element by its `data-rm` marker. */
   function part(name: string): HTMLElement | null {
     return host.querySelector<HTMLElement>(`[data-rm="${name}"]`);

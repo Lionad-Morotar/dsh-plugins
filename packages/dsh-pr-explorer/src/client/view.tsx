@@ -65,9 +65,27 @@ import type {
   RefListing,
 } from "../shared.ts";
 
+/** The request the conversation shell carries when it switches to this tab. */
+export interface PrViewRequestLike {
+  readonly view: string;
+  readonly focus: string;
+}
+
 /** Owner props the host passes to a `conversation.view` entry. */
 export interface ConversationViewProps {
   readonly sessionId?: string;
+  /**
+   * What to open, when the switch was made by a caller holding the host's own
+   * `openView(id, focus)` capability.
+   *
+   * The core has two delivery paths and they do not overlap: a caller with the
+   * host capability lands here as owner props, a caller without it leaves the
+   * focus in `viewFocus`. A view that read only one of them would ignore every
+   * jump made from the other side.
+   */
+  readonly viewRequest?: PrViewRequestLike | null;
+  /** Ack the shell once the request was consumed or refused. */
+  readonly completeViewRequest?: () => void;
 }
 
 /** Strings the view renders, bound through the locale seat by the entry. */
@@ -481,7 +499,7 @@ export function createPrExplorerView({
   runtime = createHttpRuntime(),
   workbench,
 }: PrExplorerViewOptions): (props: ConversationViewProps) => ReactElement {
-  return function PrExplorerView({ sessionId }: ConversationViewProps): ReactElement {
+  return function PrExplorerView({ sessionId, viewRequest, completeViewRequest }: ConversationViewProps): ReactElement {
     const [phase, setPhase] = useState<Phase>({ kind: "idle" });
     const [base, setBase] = useState<string | undefined>(undefined);
     const [head, setHead] = useState<string | undefined>(undefined);
@@ -503,6 +521,9 @@ export function createPrExplorerView({
     // effect: two effects would let the first load run against the old pair.
     const lastSession = useRef<string | undefined>(sessionId);
     const detailBody = useRef<HTMLDivElement | null>(null);
+    // The last shell request this mount consumed, so a parent re-render with the
+    // same request does not reload the same range again.
+    const handledRequest = useRef<string | undefined>(undefined);
     // One jump per target view, built from the seam this mount was given. A host
     // without the core leaves both undefined, and the actions are not drawn.
     const jumpToFiles = useMemo(
@@ -608,9 +629,42 @@ export function createPrExplorerView({
       load(sessionId, base === undefined || head === undefined ? undefined : { base, head });
     }, [sessionId, reloadToken, load]);
 
-    // A caller that cannot hand the host's focus to this view leaves one in the
-    // core's queue instead: take whatever is waiting at mount and keep listening
-    // while it stays up, so a lazily mounted tab never loses the target. A
+    /**
+     * Show one comparison the reader was sent to.
+     *
+     * The selection and the range snapshot belong to the range that was on
+     * screen, so they are cleared in the same write that moves the pair; the
+     * reload token is what actually re-reads, because base/head are also written
+     * by a load.
+     * @param pair - the two refs.
+     */
+    const applyFocus = useCallback((pair: { readonly base: string; readonly head: string }): void => {
+      detailRequest.current += 1;
+      setSelectedCommit(undefined);
+      setSelectedFile(undefined);
+      setDetail({ kind: "none" });
+      setBase(pair.base);
+      setHead(pair.head);
+      setReloadToken(token => token + 1);
+    }, []);
+
+    // Delivery path one: a caller holding the host's own `openView(id, focus)`
+    // capability lands the request on the view's owner props. The same request
+    // arrives again on parent re-renders, so the key is remembered.
+    useEffect(() => {
+      const request = viewRequest;
+      if (request === null || request === undefined || request.view !== VIEW_ID) return;
+      const key = `${request.view}:${request.focus}`;
+      if (handledRequest.current === key) return;
+      handledRequest.current = key;
+      const pair = parseCompareFocus(request.focus);
+      if (pair !== undefined) applyFocus(pair);
+      completeViewRequest?.();
+    }, [viewRequest, completeViewRequest, applyFocus]);
+
+    // Delivery path two: a caller the host gave no capability leaves the focus
+    // in the core's queue. Take whatever is waiting at mount and keep listening
+    // while the view stays up, so a lazily mounted tab never loses the target. A
     // payload this view cannot read is ignored rather than partially applied.
     useEffect(() => {
       const queue = workbench?.viewFocus;
@@ -620,17 +674,11 @@ export function createPrExplorerView({
         if (focus === undefined) return;
         const pair = parseCompareFocus(focus);
         if (pair === undefined) return;
-        detailRequest.current += 1;
-        setSelectedCommit(undefined);
-        setSelectedFile(undefined);
-        setDetail({ kind: "none" });
-        setBase(pair.base);
-        setHead(pair.head);
-        setReloadToken(token => token + 1);
+        applyFocus(pair);
       };
       consume();
       return queue.subscribe?.(consume);
-    }, [workbench]);
+    }, [workbench, applyFocus]);
 
     // A new file starts at its first line. Doing it in an effect rather than in
     // the click handler keeps it tied to the render that changed the content.
