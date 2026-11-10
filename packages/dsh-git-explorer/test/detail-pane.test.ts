@@ -102,3 +102,62 @@ describe("DetailPane file rows", () => {
     expect(onOpenFile).toHaveBeenCalledWith("src/new-name.ts");
   });
 });
+
+describe("DetailPane compare-to-HEAD", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  /**
+   * Mount the pane with a fixed commit.
+   * @param onCompareToHead - the seam, or undefined for a host without one.
+   */
+  async function mountWith(onCompareToHead: ((hash: string) => void) | undefined): Promise<void> {
+    await act(async () => {
+      root.render(
+        createElement(DetailPane, {
+          sessionId: "s1",
+          hash: "17b6a55",
+          remote: remote(),
+          t: (key: string) => key,
+          onSelect: () => undefined,
+          ...(onCompareToHead === undefined ? {} : { onCompareToHead }),
+        }),
+      );
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+  }
+
+  it("renders the action and hands over the full hash", async () => {
+    const onCompareToHead = vi.fn();
+    await mountWith(onCompareToHead);
+
+    const button = host.querySelector<HTMLButtonElement>('[data-testid="gx-compare-head"]');
+    expect(button).not.toBeNull();
+
+    await act(async () => button?.click());
+
+    // The whole hash, not the short one the header shows: the PR view resolves
+    // refs by hash and a seven-character prefix is a different, ambiguous input.
+    expect(onCompareToHead).toHaveBeenCalledWith("17b6a55");
+  });
+
+  it("renders nothing when the host has no workbench to switch to", async () => {
+    await mountWith(undefined);
+
+    // A button that cannot switch a view is a dead end, so it is not drawn.
+    expect(host.querySelector('[data-testid="gx-compare-head"]')).toBeNull();
+  });
+});

@@ -115,6 +115,34 @@ const MAX_STREAM_BYTES = 4 * 1024 * 1024;
 /** How long a killed child may take to die before the host stops waiting. */
 const GRACE_MS = 500;
 
+/** A shared empty buffer, so a clean read does not allocate one per poll. */
+const EMPTY_BUFFER = Buffer.alloc(0);
+
+/**
+ * How many bytes at the end of a buffer belong to an incomplete UTF-8 character.
+ *
+ * A UTF-8 character is one to four bytes, and its length is encoded in the lead
+ * byte: `0xxxxxxx` is one, `110xxxxx` starts a two-byte sequence, and so on. If
+ * the buffer ends inside a sequence, those bytes have to wait for the rest.
+ *
+ * @param buffer - the bytes read so far.
+ * @returns the count of trailing bytes that do not yet form a character, or 0.
+ */
+function incompleteTailBytes(buffer: Buffer): number {
+  // Four is the longest sequence, so no tail can be longer than three bytes.
+  const limit = Math.min(4, buffer.length);
+  for (let back = 1; back <= limit; back += 1) {
+    const byte = buffer[buffer.length - back];
+    if (byte === undefined) return 0;
+    // A continuation byte: keep walking back to the lead byte.
+    if ((byte & 0b1100_0000) === 0b1000_0000) continue;
+    const needed = byte >= 0b1111_0000 ? 4 : byte >= 0b1110_0000 ? 3 : byte >= 0b1100_0000 ? 2 : 1;
+    return needed > back ? back : 0;
+  }
+  // Nothing but continuation bytes in the whole buffer: it is a fragment.
+  return buffer.length;
+}
+
 /**
  * How often the engine re-reads the child's collected stdout while it runs.
  *
@@ -179,19 +207,46 @@ export function createRunEngine(options: RunEngineOptions): RunEngine {
    * only parses the new tail. Re-parsing the whole buffer every poll would make
    * the cost grow with the suite instead of with the new lines.
    *
-   * The cursor advances by the string's own length, not by its UTF-8 byte count:
-   * `readFrom` is defined over the collected text, and mixing the two units
-   * would skip or repeat characters as soon as a case title held a non-ASCII
-   * character.
+   * The cursor is a byte offset, because that is what `readFrom` takes. Advancing
+   * it by the decoded string's length would agree only while the output is ASCII:
+   * a Chinese case title or an emoji in a failure message makes the two units
+   * diverge, and every later poll then re-reads a slice it already parsed.
+   *
+   * A read can also end mid-character, since the host slices the collected bytes
+   * rather than the decoded text. The incomplete tail is held back and prepended
+   * to the next read; decoding it now would produce a replacement character and
+   * make the line unparseable.
    *
    * @param reader - the collected stdout, when the host provided one.
-   * @param cursor - how many characters have already been consumed.
-   * @returns the new text and the offset to use next time.
+   * @param cursor - the byte offset already consumed.
+   * @param carry - bytes left over from a read that ended mid-character.
+   * @returns the decoded text and the state to use next time.
    */
-  function readNew(reader: CollectedReader | undefined, cursor: number): { text: string; next: number } {
-    if (reader === undefined) return { text: "", next: cursor };
+  function readNew(
+    reader: CollectedReader | undefined,
+    cursor: number,
+    carry: Buffer,
+  ): { text: string; next: number; carry: Buffer } {
+    if (reader === undefined) return { text: "", next: cursor, carry };
     const read = reader.readFrom(cursor);
-    return { text: read.text, next: cursor + read.text.length };
+    if (read.text === "") return { text: "", next: cursor, carry };
+
+    // The reader hands back decoded text, so its byte length is the length of
+    // the bytes it consumed. A tail that decoded to a replacement character is
+    // not recoverable from the string, which is why the carry is tracked in
+    // bytes on our side rather than re-derived here.
+    const fresh = Buffer.from(read.text, "utf8");
+    const chunk = carry.length === 0 ? fresh : Buffer.concat([carry, fresh]);
+    const incomplete = incompleteTailBytes(chunk);
+    const complete = incomplete === 0 ? chunk : chunk.subarray(0, chunk.length - incomplete);
+
+    return {
+      text: complete.toString("utf8"),
+      // The cursor moves by what the reader consumed, not by what we managed to
+      // decode: the bytes held back have already been read.
+      next: cursor + fresh.length,
+      carry: incomplete === 0 ? EMPTY_BUFFER : Buffer.from(chunk.subarray(chunk.length - incomplete)),
+    };
   }
 
   /**
@@ -430,12 +485,14 @@ export function createRunEngine(options: RunEngineOptions): RunEngine {
       // is cleared in the `finally` below, and one last read after `done` picks
       // up whatever landed between the final poll and the exit.
       let cursor = 0;
+      let carry: Buffer = EMPTY_BUFFER;
       const stdoutReader = handle.collected.stdout;
       const drain = (): void => {
-        const { text, next } = readNew(stdoutReader, cursor);
-        cursor = next;
-        if (text === "") return;
-        absorb(text);
+        const read = readNew(stdoutReader, cursor, carry);
+        cursor = read.next;
+        carry = read.carry;
+        if (read.text === "") return;
+        absorb(read.text);
         entry.run = progressOf(base, live, Math.max(0, now() - startedAtMs));
       };
       const poll = setInterval(drain, STREAM_POLL_MS);

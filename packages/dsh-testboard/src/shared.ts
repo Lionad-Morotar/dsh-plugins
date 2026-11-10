@@ -23,31 +23,31 @@ export const VIEW_ORDER = 130;
 export const LOCALE_NAMESPACE = "testboard";
 
 /**
- * Lazy client chunk carrying the board's data snapshot.
- *
- * Declared here so the loader, the build script and the chunk's own registration
- * share one spelling: the loader fetches this file name, the build emits it, and
- * a mismatch is a tab that never loads its data.
- */
-export const SNAPSHOT_CHUNK = "client.snapshot.js";
-
-/**
- * Lazy client chunk carrying every test file's source text.
- *
- * Separate from the snapshot chunk on purpose: the row list renders from the
- * snapshot alone, so the code pane's megabytes are only paid for by a reader who
- * opens a file, and a failed fetch of one chunk leaves the other usable.
- */
-export const SOURCES_CHUNK = "client.sources.js";
-
-/**
  * Lazy client chunk carrying CodeMirror and the highlighted code view.
  *
- * The editor is hundreds of kilobytes of this package's browser half and only
- * matters once a reader selects a file, so it is fetched on first selection and
- * never folded into the startup bundle.
+ * The only chunk this package still ships. The board reads its data from the
+ * host's routes now, so the snapshot and source bundles are no longer fetched
+ * into the browser at all; the editor stays lazy because it is hundreds of
+ * kilobytes and only matters once a reader selects a file.
+ *
+ * Declared here so the loader and the build script share one spelling: the
+ * loader fetches this file name, the build emits it, and a mismatch is a tab
+ * whose code pane never loads.
  */
 export const EDITOR_CHUNK = "client.editor.js";
+
+/**
+ * The `require` the ModuleLoader factory hands to a client bundle.
+ *
+ * Lives here rather than beside a loader because the editor loader is the only
+ * consumer left, and a type shared by the entry and the loader does not belong
+ * in either of them.
+ */
+export interface LoaderRequire {
+  (specifier: string): unknown;
+  /** Fetch a package-local chunk; the specifier must be `./<file>`. */
+  async(specifier: string): Promise<unknown>;
+}
 
 /**
  * Prefix the host half registers and the client half fetches under.

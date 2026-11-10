@@ -20,7 +20,7 @@
 import type { ReactElement } from "react";
 
 import { fileNameOf, fileDirectoryOf, formatDuration } from "../format.ts";
-import type { CaseTick } from "../motion.ts";
+import type { CaseTick, RowReading } from "../motion.ts";
 import type { TestFileRow } from "../model.ts";
 import { TickMatrix } from "./tick-matrix.tsx";
 
@@ -49,6 +49,14 @@ export interface LaneRowProps {
   readonly ticks: readonly CaseTick[];
   /** Whether the reader asked for reduced motion. */
   readonly reduced: boolean;
+  /**
+   * What the right-hand column says.
+   *
+   * Resolved by the view rather than here: whether a row shows the snapshot's
+   * figures, this run's own, or nothing yet depends on the run's scope and
+   * phase, and a row that decided for itself would disagree with its neighbours.
+   */
+  readonly reading: RowReading;
   readonly strings: LaneRowStrings;
   readonly onSelect: (path: string) => void;
   readonly onRun: (path: string) => void;
@@ -67,6 +75,7 @@ export function LaneRow({
   running,
   ticks,
   reduced,
+  reading,
   strings,
   onSelect,
   onRun,
@@ -83,7 +92,7 @@ export function LaneRow({
       data-testid="file-row"
       data-tst="lane"
       data-path={row.path}
-      data-has-failed={row.hasFailed ? "true" : "false"}
+      data-has-failed={reading.kind === "failed" ? "true" : "false"}
       data-expanded={expanded ? "true" : "false"}
       data-selected={selected ? "true" : "false"}
       aria-selected={selected}
@@ -97,14 +106,14 @@ export function LaneRow({
 
       <TickMatrix ticks={ticks} reduced={reduced} />
 
-      <span data-tst="lane-reading">
-        {row.hasFailed ? (
+      <span data-tst="lane-reading" data-reading={reading.kind}>
+        {reading.kind === "failed" ? (
           <span data-tst="lane-failed">
-            {row.failed} {strings.failed}
+            {reading.failed} {strings.failed}
           </span>
-        ) : (
-          <span data-tst="lane-duration">{formatDuration(row.durationMs)}</span>
-        )}
+        ) : reading.kind === "duration" ? (
+          <span data-tst="lane-duration">{formatDuration(reading.durationMs)}</span>
+        ) : null}
       </span>
 
       <button
@@ -123,7 +132,13 @@ export function LaneRow({
           onRun(row.path);
         }}
       >
-        {strings.runFile}
+        {/* A glyph rather than the word: the row is a reading, and a labelled
+            button on every line turned the list into a toolbar. The accessible
+            name still comes from `aria-label`, so nothing is lost to a screen
+            reader. */}
+        <span aria-hidden="true" data-tst="run-file-glyph">
+          ▶
+        </span>
       </button>
     </div>
   );

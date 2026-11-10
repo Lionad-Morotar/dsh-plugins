@@ -24,6 +24,7 @@ import {
   failureMarkers,
   isReducedMotion,
   phaseLabel,
+  rowReading,
   runMeta,
   seriesPoints,
   tickDelayMs,
@@ -217,18 +218,20 @@ describe("seriesPoints", () => {
     expect(points[2]?.x).toBe(100);
   });
 
-  it("puts the busiest second at the top of the box", () => {
+  it("plots each second's own completions, not the running total", () => {
     const points = seriesPoints(
       [
         { tMs: 0, finished: 10, passed: 10, failed: 0 },
         { tMs: 1000, finished: 50, passed: 50, failed: 0 },
+        { tMs: 2000, finished: 55, passed: 55, failed: 0 },
       ],
       { width: 100, height: 50 },
     );
 
-    // The chart draws completions per second, so the higher cumulative total is
-    // higher on the canvas.
+    // 10, then 40, then 5: the middle second is the busiest, so it sits highest
+    // and the last one drops back down. A cumulative plot could only ever rise.
     expect(points[1]?.y).toBeLessThan(points[0]?.y ?? 0);
+    expect(points[2]?.y).toBeGreaterThan(points[1]?.y ?? 0);
   });
 
   it("is empty for an empty series, which is what an unstarted run reports", () => {
@@ -439,5 +442,147 @@ describe("MotionInput", () => {
     const input: MotionInput = { run: run(), nowMs: 5_000, reduced: false };
 
     expect(input.run?.runNumber).toBe(1);
+  });
+});
+
+/**
+ * What one row's right-hand reading should say.
+ *
+ * The board renders rows from the snapshot, and the snapshot carries the last
+ * run's numbers. During a run those numbers are stale: a file the current run
+ * has not reached yet would still show the previous run's duration and its red
+ * "1 failed", which reads as a result this run has already produced. The row
+ * reading is what decides between "show the snapshot", "show this run's own
+ * numbers" and "show nothing yet".
+ */
+describe("rowReading", () => {
+  /** One file's cases as the current run reported them. */
+  const reported = (statuses: readonly ("passed" | "failed")[]) =>
+    statuses.map((status, index) => ({
+      path: "test/a.test.ts",
+      name: `case ${String(index)}`,
+      status,
+      durationMs: 10,
+      atMs: index * 100,
+    }));
+
+  it("shows the snapshot's duration when nothing is running", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 0,
+      snapshotCaseCount: 3,
+      runCases: [],
+      running: false,
+      inScope: true,
+    });
+
+    expect(reading).toEqual({ kind: "duration", durationMs: 16_000 });
+  });
+
+  it("shows the snapshot's failure count when nothing is running", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 1,
+      snapshotCaseCount: 3,
+      runCases: [],
+      running: false,
+      inScope: true,
+    });
+
+    expect(reading).toEqual({ kind: "failed", failed: 1 });
+  });
+
+  it("shows nothing for a row the current run has not reached", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 1,
+      snapshotCaseCount: 3,
+      runCases: [],
+      running: true,
+      inScope: true,
+    });
+
+    // The stale 16s and the stale "1 failed" are exactly what must not appear.
+    expect(reading).toEqual({ kind: "pending" });
+  });
+
+  it("keeps showing nothing while the file is still being reported", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 1,
+      snapshotCaseCount: 3,
+      runCases: reported(["passed", "passed"]),
+      running: true,
+      inScope: true,
+    });
+
+    expect(reading).toEqual({ kind: "pending" });
+  });
+
+  it("shows this run's own duration once the file's cases are all in", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 1,
+      snapshotCaseCount: 3,
+      runCases: reported(["passed", "passed", "passed"]),
+      running: true,
+      inScope: true,
+    });
+
+    // 3 cases at 10ms each, and no failure this time.
+    expect(reading).toEqual({ kind: "duration", durationMs: 30 });
+  });
+
+  it("shows this run's own failure count once the file's cases are all in", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 0,
+      snapshotCaseCount: 3,
+      runCases: reported(["passed", "failed", "passed"]),
+      running: true,
+      inScope: true,
+    });
+
+    expect(reading).toEqual({ kind: "failed", failed: 1 });
+  });
+
+  it("leaves a row outside a scoped run alone", () => {
+    const reading = rowReading({
+      snapshotDurationMs: 16_000,
+      snapshotFailed: 1,
+      snapshotCaseCount: 3,
+      runCases: [],
+      running: true,
+      inScope: false,
+    });
+
+    // A scoped rerun does not touch this file, so its last reading stands.
+    expect(reading).toEqual({ kind: "failed", failed: 1 });
+  });
+});
+
+describe("phaseLabel: finished counts", () => {
+  it("reports the merged snapshot's failures, not the last run's scope", () => {
+    // A rerun of three cases settles green, but the board still holds other
+    // files. The header is about the board, not about the run that just ended.
+    const label = phaseLabel(run({ phase: "finished", status: "passed", counts: { passed: 3, failed: 0, skipped: 0, total: 3 } }), STRINGS, undefined, {
+      failed: 2,
+    });
+
+    expect(label.text).toBe(`2 ${STRINGS.failing}`);
+    expect(label.tone).toBe("failed");
+  });
+
+  it("says finished when the merged snapshot has no failures left", () => {
+    const label = phaseLabel(run({ phase: "finished", status: "passed", counts: { passed: 3, failed: 0, skipped: 0, total: 3 } }), STRINGS, undefined, {
+      failed: 0,
+    });
+
+    expect(label.text).toBe(STRINGS.finished);
+    expect(label.tone).toBe("passed");
+  });
+
+  it("falls back to the run's own count when no snapshot figure is given", () => {
+    expect(phaseLabel(run(), STRINGS).text).toBe(`3 ${STRINGS.failing}`);
   });
 });

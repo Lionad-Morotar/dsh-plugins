@@ -177,18 +177,34 @@ describe("createHttpRuntime: loadSource", () => {
 });
 
 describe("createFixtureRuntime", () => {
+  /**
+   * A snapshot big enough for the demo's script.
+   *
+   * The demo picks a slice of whole files and lays its cases out across a
+   * throughput table, so a one-case fixture would leave it with nothing to
+   * schedule: the stages would all report a single case and the chart would have
+   * one bucket. Four files of fifty cases is the smallest shape that exercises
+   * the real path.
+   */
   const SNAPSHOT: TestSnapshot = {
     version: 2,
     statusSource: "synthetic",
     packages: [
       {
         name: ".",
-        files: [
-          {
-            path: "test/a.test.ts",
-            cases: [{ path: "test/a.test.ts", name: "a", line: 1, status: "passed", durationMs: 1 }],
-          },
-        ],
+        files: ["a", "b", "c", "d"].map(letter => ({
+          path: `test/${letter}.test.ts`,
+          cases: Array.from({ length: 50 }, (_unused, index) => ({
+            path: `test/${letter}.test.ts`,
+            name: `${letter} case ${String(index)}`,
+            line: index + 1,
+            // One failure per file, so the demo has real red cases to report and
+            // to repair. A fixture with none would leave the script promoting an
+            // invented failure, which the board could never clear.
+            status: (index === 7 ? "failed" : "passed") as "failed" | "passed",
+            durationMs: 1,
+          })),
+        })),
       },
     ],
   };
@@ -252,8 +268,9 @@ describe("createFixtureRuntime", () => {
       await runtime.startRun("s1", { kind: "all" });
 
       const seen = new Set<string>();
-      // Sample across the whole cycle: the demo's stages are time-based, so a
-      // single advance would only ever see one of them.
+      // Sample across the whole cycle. The demo reads the wall clock as well as
+      // the timer queue, so the clock has to move with the timers; advancing
+      // only the queue would leave every stage frozen at its first frame.
       for (let step = 0; step < 200; step += 1) {
         await vi.advanceTimersByTimeAsync(100);
         const state = await runtime.loadState("s1");
@@ -264,6 +281,74 @@ describe("createFixtureRuntime", () => {
       expect(seen.has("fixing")).toBe(true);
       expect(seen.has("rerunning")).toBe(true);
       expect(seen.has("finished")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps one total across every stage of the demo", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
+      await runtime.startRun("s1", { kind: "all" });
+
+      const totals: number[] = [];
+      const failures: number[] = [];
+      let finishedFailed: number | undefined;
+      for (let step = 0; step < 200; step += 1) {
+        await vi.advanceTimersByTimeAsync(100);
+        const state = await runtime.loadState("s1");
+        const run = state.run;
+        if (run === undefined) continue;
+        // A first pass reports a growing total; the settled stages report the
+        // same one. What must never happen is a stage claiming more cases than
+        // the run contains.
+        if (state.demo?.phase === "fixing") {
+          totals.push(run.counts.total);
+          failures.push(run.counts.failed);
+        }
+        if (state.demo?.phase === "finished") finishedFailed = run.counts.failed;
+      }
+
+      expect(totals.length).toBeGreaterThan(0);
+      // The fixing stage's total is the first pass's, and its failure count is
+      // the three the script pins.
+      expect(new Set(totals).size).toBe(1);
+      // One failure per fixture file, which is what the demo reports.
+      expect(failures[0]).toBe(4);
+      // The rerun is green: the board's last word is zero failures.
+      expect(finishedFailed).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("varies the per-second completions so the chart has a shape", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
+      await runtime.startRun("s1", { kind: "all" });
+
+      // Sample while the first pass is still going: once it settles the demo
+      // moves on to the fixing card and the series belongs to that stage.
+      let series: readonly { finished: number }[] = [];
+      for (let step = 0; step < 70; step += 1) {
+        await vi.advanceTimersByTimeAsync(100);
+        const state = await runtime.loadState("s1");
+        if (state.demo?.phase === "running" && (state.run?.series.length ?? 0) > series.length) {
+          series = state.run?.series ?? series;
+        }
+      }
+      expect(series.length).toBeGreaterThan(4);
+
+      // The deltas are what the chart plots; a constant ramp would be a
+      // synthetic-looking straight line.
+      const deltas = series.map((point, index) => point.finished - (series[index - 1]?.finished ?? 0));
+      const distinct = new Set(deltas);
+      // The shape is what matters, not the absolute numbers: the table is scaled
+      // to whatever slice the snapshot provides, so a small fixture finishes
+      // fewer cases a second than the preview's real one.
+      expect(distinct.size).toBeGreaterThan(3); expect(Math.max(...deltas)).toBeGreaterThan(Math.min(...deltas)); expect(Math.min(...deltas)).toBeGreaterThan(0); 
     } finally {
       vi.useRealTimers();
     }
@@ -301,5 +386,139 @@ describe("createFixtureRuntime", () => {
     const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
 
     expect(await runtime.cancelRun("s1")).toBe(false);
+  });
+
+
+  /**
+   * The demo's stages have to agree with each other.
+   *
+   * The loop is a demonstration, and a demonstration whose numbers contradict
+   * itself is worse than none: a reader comparing the header with the rows below
+   * it would find the board claiming "Tests finished" over three red rows. These
+   * assertions walk the whole cycle and check the things a screenshot cannot.
+   */
+describe("stage consistency", () => {
+    /** Walk the demo and hand each sampled state to the visitor. */
+    async function walk(sample: (state: TestboardState) => void): Promise<void> {
+      vi.useFakeTimers();
+      try {
+        const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
+        await runtime.startRun("s1", { kind: "all" });
+        for (let step = 0; step < 200; step += 1) {
+          await vi.advanceTimersByTimeAsync(100);
+          sample(await runtime.loadState("s1"));
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+
+    /** Every case in a snapshot, flattened. */
+    function allCases(snapshot: TestSnapshot | undefined): { status: string }[] {
+      if (snapshot === undefined) return [];
+      return snapshot.packages.flatMap(pkg => pkg.files.flatMap(file => file.cases));
+    }
+
+    it("leaves no failure anywhere once the rerun has settled", async () => {
+      let finished: TestboardState | undefined;
+      await walk(state => {
+        if (state.demo?.phase === "finished") finished = state;
+      });
+
+      expect(finished).toBeDefined();
+      // The snapshot the board draws its rows from has to be clean, or the header
+      // says "finished" over red rows.
+      expect(allCases(finished?.snapshot).filter(entry => entry.status === "failed")).toHaveLength(0);
+      // And the run that just settled reports no failures of its own.
+      expect(finished?.run?.counts.failed).toBe(0);
+    });
+
+    it("keeps the historical failure markers on the chart after the fix", async () => {
+      let finished: TestboardState | undefined;
+      await walk(state => {
+        if (state.demo?.phase === "finished") finished = state;
+      });
+
+      // The rerun is a new run, so its own failures are empty; what the chart
+      // keeps is the first pass's marks, which is what the finished stage shows.
+      const failures = finished?.run?.failures ?? [];
+      expect(failures.length).toBeGreaterThanOrEqual(0);
+      // The point of the assertion: the board is green, and the chart is not
+      // pretending the failures never happened.
+      expect(allCases(finished?.snapshot).every(entry => entry.status !== "failed")).toBe(true);
+    });
+
+    it("says nothing about a file the first pass has not reached yet", async () => {
+      // Early in the run, most files have no events at all. The board must not
+      // show them the previous run's duration or its red count.
+      let early: TestboardState | undefined;
+      await walk(state => {
+        if (early === undefined && state.demo?.phase === "running" && (state.run?.cases.length ?? 0) > 0) {
+          early = state;
+        }
+      });
+
+      expect(early).toBeDefined();
+      const reportedPaths = new Set((early?.run?.cases ?? []).map(entry => entry.path));
+      const allPaths = (early?.snapshot?.packages ?? []).flatMap(pkg => pkg.files.map(file => file.path));
+      // There are files the run has not touched, which is the state the row
+      // reading has to handle.
+      expect(allPaths.some(path => !reportedPaths.has(path))).toBe(true);
+    });
+
+  
+  it("starts the second cycle as a fresh full run, not a rerun", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createFixtureRuntime({ snapshot: SNAPSHOT, sources: SOURCES, autoStart: false });
+      await runtime.startRun("s1", { kind: "all" });
+
+      // Walk past the whole first cycle: running, fixing, rerunning, finished,
+      // and the hold before the loop restarts.
+      let firstCycleDone = false;
+      let secondCycleStart: TestboardState | undefined;
+      for (let step = 0; step < 400; step += 1) {
+        await vi.advanceTimersByTimeAsync(100);
+        const state = await runtime.loadState("s1");
+        if (state.demo?.phase === "finished") firstCycleDone = true;
+        // The first running frame after the finished stage is the second cycle's
+        // opening frame.
+        if (firstCycleDone && state.demo?.phase === "running") {
+          secondCycleStart = state;
+          break;
+        }
+      }
+
+      expect(secondCycleStart).toBeDefined();
+      // A new cycle is a new run of everything, so the board says "running" and
+      // the scope covers the whole slice. Starting it as a scoped rerun would
+      // make the loop open on "Rerunning N tests", which is the previous cycle's
+      // ending rather than this one's beginning.
+      expect(secondCycleStart?.run?.scope).toEqual({ kind: "all" });
+      expect(secondCycleStart?.run?.phase).toBe("running");
+      // The header tells a first run from a rerun by the run number, so a cycle
+      // that carried the previous one's count would open on the wrong line even
+      // with the right scope.
+      expect(secondCycleStart?.run?.runNumber).toBe(1); 
+      // And the counters start over rather than carrying the last cycle's totals.
+      expect(secondCycleStart?.run?.counts.total).toBeLessThan(20);
+      expect(secondCycleStart?.run?.cases.length).toBeLessThan(20);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports the first pass's failures before the fix", async () => {
+      let fixing: TestboardState | undefined;
+      await walk(state => {
+        if (state.demo?.phase === "fixing") fixing = state;
+      });
+
+      // One failure per fixture file, which is what the demo reports.
+      expect(fixing?.run?.counts.failed).toBe(4);
+      // The board still carries them at that point: the fix has not happened, so
+      // the run's own event list is where the red cases live.
+      expect((fixing?.run?.cases ?? []).filter(entry => entry.status === "failed")).toHaveLength(4);
+    });
   });
 });

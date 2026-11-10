@@ -1,0 +1,11 @@
+# PR explorer Loader row. The host half is empty on purpose: the tab lives
+# entirely in the client bundle, but the Loader mounts both halves by package
+# name, so this row keeps the pair resolvable.
+#
+# The client half will wait on the workbench service once it grows a dock panel
+# (the x...y comparison beside the file tree); this slice registers only the
+# conversation tab, so `dsh.client.inject` is empty and the row mounts on any
+# host that provides slots and locale.
+- insert:
+    - id: pr-explorer
+      name: 'dsh-pr-explorer'

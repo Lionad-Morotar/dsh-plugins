@@ -7,6 +7,7 @@ import {
   computeWindow,
   createCommitJump,
   createJump,
+  createReviewCompareJump,
   formatCommitDetail,
   graphLaneCount,
   groupChanges,
@@ -180,6 +181,113 @@ describe("createCommitJump", () => {
       jump("", "a.ts");
       jump("abcd", "");
     }).not.toThrow();
+  });
+});
+
+describe("createReviewCompareJump", () => {
+  it("requests the PR view with compare:hash:HEAD and takes a delivered focus back", () => {
+    const requests: string[] = [];
+    const takes: string[] = [];
+    const jump = createReviewCompareJump({
+      seam: {
+        openViewOrSwitch: (id, focus) => {
+          requests.push(`switch:${id}:${focus ?? ""}`);
+          return { opened: true, focused: true };
+        },
+        viewFocus: {
+          request: (view, focus) => requests.push(`request:${view}:${focus}`),
+          take: view => {
+            takes.push(view);
+            return undefined;
+          },
+        },
+      },
+      sessionId: "s1",
+    });
+
+    jump("CE39FC40496405DDE7D61D9617C5190362505F70");
+
+    // Queue first, then switch: the target may not be mounted yet.
+    expect(requests).toEqual([
+      "request:pr-explorer:compare:ce39fc40496405dde7d61d9617c5190362505f70:HEAD",
+      "switch:pr-explorer:compare:ce39fc40496405dde7d61d9617c5190362505f70:HEAD",
+    ]);
+    // A delivered focus drops its queued copy so it cannot replay.
+    expect(takes).toEqual(["pr-explorer"]);
+  });
+
+  it("keeps the queued focus when the switch lands without focus delivery", () => {
+    const requests: string[] = [];
+    const takes: string[] = [];
+    const jump = createReviewCompareJump({
+      seam: {
+        openViewOrSwitch: () => ({ opened: true, focused: false }),
+        viewFocus: {
+          request: (view, focus) => requests.push(`${view}:${focus}`),
+          take: view => {
+            takes.push(view);
+            return undefined;
+          },
+        },
+      },
+      sessionId: "s1",
+    });
+
+    jump("379bff4");
+
+    expect(requests).toEqual(["pr-explorer:compare:379bff4:HEAD"]);
+    expect(takes).toEqual([]);
+  });
+
+  it("falls back to the legacy seams and finally the queue", () => {
+    const opened: string[] = [];
+    const queued: string[] = [];
+    const jump = createReviewCompareJump({
+      seam: {
+        views: {
+          open: (_sessionId, id, focus) => {
+            opened.push(`views:${id}:${focus ?? ""}`);
+            return false;
+          },
+        },
+        openView: (id, focus) => {
+          opened.push(`openView:${id}:${focus ?? ""}`);
+          return false;
+        },
+        viewFocus: { request: (view, focus) => queued.push(`${view}:${focus}`) },
+      },
+      sessionId: "s1",
+    });
+
+    jump("abcd1234");
+
+    expect(opened).toEqual(["views:pr-explorer:compare:abcd1234:HEAD", "openView:pr-explorer:compare:abcd1234:HEAD"]);
+    expect(queued).toEqual(["pr-explorer:compare:abcd1234:HEAD"]);
+  });
+
+  it("delivers through the legacy views seam without queuing", () => {
+    const queued: string[] = [];
+    const jump = createReviewCompareJump({
+      seam: {
+        views: { open: () => true },
+        viewFocus: { request: (_view, focus) => queued.push(focus) },
+      },
+      sessionId: "s1",
+    });
+
+    jump("abcd1234");
+    expect(queued).toEqual([]);
+  });
+
+  it("ignores an empty hash without touching the seams", () => {
+    const jump = createReviewCompareJump({
+      seam: {
+        openViewOrSwitch: () => ({ opened: true, focused: true }),
+        viewFocus: { request: () => { throw new Error("must not queue"); } },
+      },
+      sessionId: "s1",
+    });
+    expect(() => jump("   ")).not.toThrow();
   });
 });
 

@@ -1,16 +1,25 @@
 /**
  * The snapshot generator's contract.
  *
- * The board's data is a committed artifact, so the properties that matter are
- * the ones a diff would otherwise hide: the same corpus must always serialize
- * to the same bytes (no clock, no absolute paths, no random statuses), the
- * synthetic statuses must stay inside the band that makes the red state
- * visible without turning the board into a wall of failures, and the title
- * extractor must survive the call shapes the repo actually uses.
+ * `scripts/snapshot.mjs` produces the two committed artifacts the preview's
+ * fixture and the tests read, and `--check` fails the build when they drift. The
+ * properties that matter are the ones a diff would otherwise hide: the same
+ * corpus must always serialize to the same bytes (no clock, no absolute paths,
+ * no random statuses), the synthetic statuses must stay inside the band that
+ * makes the red state visible without turning the board into a wall of
+ * failures, and the title extractor must survive the call shapes the repo
+ * actually uses.
+ *
+ * These cases lived in `snapshot.test.ts` and `sources.test.ts` until those
+ * files were removed along with the two data chunks. The chunk cases went with
+ * them; the generator cases are what this file keeps.
  */
 import { describe, expect, it } from "vitest";
 
+import snapshotData from "../src/client/data/snapshot.json" with { type: "json" };
+import sourcesData from "../src/client/data/sources.json" with { type: "json" };
 import type { TestSnapshot } from "../src/client/model.ts";
+import type { SourceBundle } from "../src/client/source.ts";
 
 /**
  * The generator is a plain ESM script with no declaration file, so it is loaded
@@ -20,14 +29,23 @@ import type { TestSnapshot } from "../src/client/model.ts";
  */
 interface SnapshotModule {
   readonly extractCaseTitles: (source: string) => string[];
+  readonly extractCases: (source: string) => { readonly name: string; readonly offset: number }[];
+  readonly lineOfOffset: (source: string, offset: number) => number;
   readonly buildSnapshot: () => TestSnapshot;
+  readonly buildArtifacts: () => { readonly snapshot: TestSnapshot; readonly sources: SourceBundle };
   readonly serialize: (snapshot: TestSnapshot) => string;
+  readonly serializeSources: (sources: SourceBundle) => string;
 }
 
-const { extractCaseTitles, buildSnapshot, serialize } = (await import(
-  // A variable specifier stops TypeScript resolving the untyped script.
-  "../scripts/snapshot.mjs" as string
-)) as SnapshotModule;
+const { extractCaseTitles, extractCases, lineOfOffset, buildSnapshot, buildArtifacts, serialize, serializeSources } =
+  (await import(
+    // A variable specifier stops TypeScript resolving the untyped script.
+    "../scripts/snapshot.mjs" as string
+  )) as SnapshotModule;
+
+/** The committed artifacts, for the assertions that are about the real corpus. */
+const SNAPSHOT = snapshotData as unknown as TestSnapshot;
+const SOURCES = sourcesData as unknown as SourceBundle;
 
 describe("extractCaseTitles", () => {
   it("reads the plain it and test forms", () => {
@@ -81,22 +99,6 @@ describe("extractCaseTitles", () => {
   });
 });
 
-describe("snapshot chunk", () => {
-  it("exports the snapshot under a named key, not as the module itself", async () => {
-    // The ModuleLoader factory returns `module.exports.default ?? module.exports`.
-    // A default export in the chunk would therefore unwrap to the bare snapshot
-    // and the loader's `chunk.snapshot` check would reject data it is holding.
-    const chunk = await import("../src/client/snapshot-chunk.ts");
-    expect(Object.keys(chunk)).toEqual(["snapshot"]);
-    expect(chunk.snapshot.statusSource).toBe("synthetic");
-  });
-
-  it("carries the same corpus the generator produces", async () => {
-    const chunk = await import("../src/client/snapshot-chunk.ts");
-    expect(chunk.snapshot.packages.flatMap(pkg => pkg.files.flatMap(file => file.cases)).length).toBeGreaterThan(1000);
-  });
-});
-
 describe("buildSnapshot", () => {
   const snapshot = buildSnapshot();
   const cases = snapshot.packages.flatMap(pkg => pkg.files.flatMap(file => file.cases));
@@ -144,5 +146,61 @@ describe("buildSnapshot", () => {
 
   it("gives every case a positive integer duration", () => {
     expect(cases.every(entry => Number.isInteger(entry.durationMs) && entry.durationMs > 0)).toBe(true);
+  });
+});
+
+describe("lineOfOffset", () => {
+  it("counts the newlines before the offset, 1-based", () => {
+    const source = "one\ntwo\nthree";
+    expect(lineOfOffset(source, 0)).toBe(1);
+    expect(lineOfOffset(source, 3)).toBe(1);
+    expect(lineOfOffset(source, 4)).toBe(2);
+    expect(lineOfOffset(source, 8)).toBe(3);
+  });
+
+  it("reports line 1 for an offset in an empty file", () => {
+    expect(lineOfOffset("", 0)).toBe(1);
+  });
+});
+
+describe("extractCases", () => {
+  it("reports the offset of the title, not of the call", () => {
+    const source = `\n\nit("the case", () => {});\n`;
+    const [first] = extractCases(source);
+    expect(first?.name).toBe("the case");
+    // The offset points at the opening quote, which is what the line number is
+    // derived from.
+    expect(source[first?.offset ?? 0]).toBe('"');
+    expect(lineOfOffset(source, first?.offset ?? 0)).toBe(3);
+  });
+});
+
+describe("buildArtifacts", () => {
+  const artifacts = buildArtifacts();
+
+  it("derives both artifacts from one walk, so their file sets agree", () => {
+    const snapshotPaths = artifacts.snapshot.packages.flatMap(pkg => pkg.files.map(file => file.path)).sort();
+    expect(Object.keys(artifacts.sources.files).sort()).toEqual(snapshotPaths);
+  });
+
+  it("keeps the bundle's keys in the walk's order, which is sorted", () => {
+    const keys = Object.keys(artifacts.sources.files);
+    expect(keys).toEqual([...keys].sort());
+  });
+
+  it("serializes the bundle deterministically", () => {
+    expect(serializeSources(buildArtifacts().sources)).toBe(serializeSources(artifacts.sources));
+  });
+
+  it("carries no clock and no absolute path in its own keys", () => {
+    // The values are other packages' test source, which may legitimately quote
+    // any string at all (an arch fixture holds a `/Users/...` path). What must
+    // stay clean is the generator's own contribution: the keys and the header.
+    const keys = Object.keys(artifacts.sources.files);
+    expect(keys.every(key => key.startsWith("packages/") && !key.startsWith("/"))).toBe(true);
+    const header = serializeSources(artifacts.sources).slice(0, 200);
+    expect(header).not.toMatch(/\/Users\//u);
+    expect(header).not.toMatch(/\b20\d\d-\d\d-\d\dT/u);
+    expect(header).not.toMatch(/generatedAt/u);
   });
 });

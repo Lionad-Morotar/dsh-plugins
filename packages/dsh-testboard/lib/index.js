@@ -1,7 +1,7 @@
 // src/index.ts
-import { access, readFile as readFile2, stat } from "node:fs/promises";
-import { readFileSync } from "node:fs";
-import { basename, join as join2 } from "node:path";
+import { access, readFile as readFile2, realpath as realpath2, stat } from "node:fs/promises";
+import { readFileSync, realpathSync } from "node:fs";
+import { basename, join as join2, sep } from "node:path";
 
 // src/host/run-engine.ts
 import { readFile, rm } from "node:fs/promises";
@@ -154,6 +154,18 @@ function parseVerboseOutput(text) {
 // src/host/run-engine.ts
 var MAX_STREAM_BYTES = 4 * 1024 * 1024;
 var GRACE_MS = 500;
+var EMPTY_BUFFER = Buffer.alloc(0);
+function incompleteTailBytes(buffer) {
+  const limit = Math.min(4, buffer.length);
+  for (let back = 1; back <= limit; back += 1) {
+    const byte = buffer[buffer.length - back];
+    if (byte === void 0) return 0;
+    if ((byte & 192) === 128) continue;
+    const needed = byte >= 240 ? 4 : byte >= 224 ? 3 : byte >= 192 ? 2 : 1;
+    return needed > back ? back : 0;
+  }
+  return buffer.length;
+}
 var STREAM_POLL_MS = 200;
 var SERIES_BUCKET_MS = 1e3;
 function createRunEngine(options) {
@@ -170,10 +182,21 @@ function createRunEngine(options) {
     if (reader === void 0) return "";
     return reader.readFrom(0).text;
   }
-  function readNew(reader, cursor) {
-    if (reader === void 0) return { text: "", next: cursor };
+  function readNew(reader, cursor, carry) {
+    if (reader === void 0) return { text: "", next: cursor, carry };
     const read = reader.readFrom(cursor);
-    return { text: read.text, next: cursor + read.text.length };
+    if (read.text === "") return { text: "", next: cursor, carry };
+    const fresh = Buffer.from(read.text, "utf8");
+    const chunk = carry.length === 0 ? fresh : Buffer.concat([carry, fresh]);
+    const incomplete = incompleteTailBytes(chunk);
+    const complete = incomplete === 0 ? chunk : chunk.subarray(0, chunk.length - incomplete);
+    return {
+      text: complete.toString("utf8"),
+      // The cursor moves by what the reader consumed, not by what we managed to
+      // decode: the bytes held back have already been read.
+      next: cursor + fresh.length,
+      carry: incomplete === 0 ? EMPTY_BUFFER : Buffer.from(chunk.subarray(chunk.length - incomplete))
+    };
   }
   function countsOf(cases) {
     let passed = 0;
@@ -327,12 +350,14 @@ function createRunEngine(options) {
         signal: controller.signal
       });
       let cursor = 0;
+      let carry = EMPTY_BUFFER;
       const stdoutReader = handle.collected.stdout;
       const drain = () => {
-        const { text, next } = readNew(stdoutReader, cursor);
-        cursor = next;
-        if (text === "") return;
-        absorb(text);
+        const read = readNew(stdoutReader, cursor, carry);
+        cursor = read.next;
+        carry = read.carry;
+        if (read.text === "") return;
+        absorb(read.text);
         entry.run = progressOf(base, live, Math.max(0, now() - startedAtMs));
       };
       const poll = setInterval(drain, STREAM_POLL_MS);
@@ -596,18 +621,27 @@ async function isDirectory(path) {
     return false;
   }
 }
+function withinWorkspace(root, target) {
+  return target === root || target.startsWith(root.endsWith(sep) ? root : root + sep);
+}
 function readWorkspaceFileSync(workspace, path) {
   try {
-    return readFileSync(join2(workspace, path), "utf8");
+    const root = realpathSync(workspace);
+    const target = realpathSync(join2(root, path));
+    if (!withinWorkspace(root, target)) return void 0;
+    return readFileSync(target, "utf8");
   } catch {
     return void 0;
   }
 }
 async function readWorkspaceFile(workspace, path) {
   try {
-    const info = await stat(join2(workspace, path));
+    const root = await realpath2(workspace);
+    const target = await realpath2(join2(root, path));
+    if (!withinWorkspace(root, target)) return void 0;
+    const info = await stat(target);
     if (!info.isFile()) return void 0;
-    return await readFile2(join2(workspace, path), "utf8");
+    return await readFile2(target, "utf8");
   } catch {
     return void 0;
   }
@@ -666,5 +700,7 @@ export {
   apply,
   index_default as default,
   inject,
-  name
+  name,
+  readWorkspaceFile,
+  readWorkspaceFileSync
 };

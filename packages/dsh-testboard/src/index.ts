@@ -14,9 +14,9 @@
  *   forever on a host that never provides it. It is polled through `ctx.get`
  *   instead, bounded, and a host without one simply gets no routes.
  */
-import { access, readFile, stat } from "node:fs/promises";
-import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { access, readFile, realpath, stat } from "node:fs/promises";
+import { readFileSync, realpathSync } from "node:fs";
+import { basename, join, sep } from "node:path";
 
 import type { Context } from "@deepseek-ai/cordis";
 
@@ -123,6 +123,26 @@ async function isDirectory(path: string): Promise<boolean> {
 }
 
 /**
+ * Whether a resolved path still sits inside the workspace.
+ *
+ * The route's own check rejects `..` in the request, which stops a caller from
+ * walking out with a path. It does not stop a symlink inside the workspace from
+ * pointing out, and a workspace is exactly the kind of tree that holds symlinks:
+ * a linked package, a vendored checkout, a fixture that links to `/etc`. So the
+ * reader resolves the target and asks where it actually landed.
+ *
+ * The comparison is on whole segments, not on a string prefix: `/ws-other` starts
+ * with `/ws` and is a different directory.
+ *
+ * @param root - the workspace's own realpath.
+ * @param target - the file's realpath.
+ * @returns whether the target is the workspace or something inside it.
+ */
+function withinWorkspace(root: string, target: string): boolean {
+  return target === root || target.startsWith(root.endsWith(sep) ? root : root + sep);
+}
+
+/**
  * Read one file out of a workspace, synchronously.
  *
  * The line lookup runs inside the reporter parse, which is synchronous by
@@ -131,11 +151,15 @@ async function isDirectory(path: string): Promise<boolean> {
  *
  * @param workspace - canonical workspace path.
  * @param path - workspace-relative path.
- * @returns the text, or undefined when it is not a readable file.
+ * @returns the text, or undefined when it is not a readable file inside the
+ *   workspace.
  */
-function readWorkspaceFileSync(workspace: string, path: string): string | undefined {
+export function readWorkspaceFileSync(workspace: string, path: string): string | undefined {
   try {
-    return readFileSync(join(workspace, path), "utf8");
+    const root = realpathSync(workspace);
+    const target = realpathSync(join(root, path));
+    if (!withinWorkspace(root, target)) return undefined;
+    return readFileSync(target, "utf8");
   } catch {
     return undefined;
   }
@@ -144,18 +168,24 @@ function readWorkspaceFileSync(workspace: string, path: string): string | undefi
 /**
  * Read one file out of a workspace.
  *
- * The path has already been normalized and confined by the route, so this only
- * has to refuse a directory and an unreadable file.
+ * The route has already normalized the path and rejected `..`, so this is the
+ * second half of the boundary: resolve the target and confirm it is still inside
+ * the workspace. A symlink that points out is refused here, which is the case a
+ * string check cannot see.
  *
  * @param workspace - canonical workspace path.
  * @param path - workspace-relative path.
- * @returns the text, or undefined when it is not a readable file.
+ * @returns the text, or undefined when it is not a readable file inside the
+ *   workspace.
  */
-async function readWorkspaceFile(workspace: string, path: string): Promise<string | undefined> {
+export async function readWorkspaceFile(workspace: string, path: string): Promise<string | undefined> {
   try {
-    const info = await stat(join(workspace, path));
+    const root = await realpath(workspace);
+    const target = await realpath(join(root, path));
+    if (!withinWorkspace(root, target)) return undefined;
+    const info = await stat(target);
     if (!info.isFile()) return undefined;
-    return await readFile(join(workspace, path), "utf8");
+    return await readFile(target, "utf8");
   } catch {
     return undefined;
   }
