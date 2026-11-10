@@ -160,11 +160,11 @@ export const SKILL_ENHANCER_SHEET = `
   color: var(--dsw-alias-label-caption);
   font-size: 11px;
 }
-/* The workflow catalogue panel. It shares the flag list's surface, width and
-   max height because the two never appear together: the flag list wins a
-   trailing double dash, so a different fill or size would read as a glitch at
-   the handover. Only the row's own contents differ, since a row here carries a
-   goal beside the slug. */
+/* The workflow catalogue panel. Its fill is the slash menu's, not the solid
+   layer the hover panel uses: this list opens beside the skill alias menu, and
+   a different card behind it reads as a second surface. The fill is translucent,
+   so it also takes that menu's blur; without the blur the page shows through as
+   noise instead of the menu's tint. */
 .dsh-better-skill-catalog {
   position: fixed;
   z-index: 60;
@@ -176,7 +176,9 @@ export const SKILL_ENHANCER_SHEET = `
   padding: 6px;
   border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
   border-radius: var(--dsw-radius-md, 12px);
-  background: var(--dsw-alias-bg-layer-2, #ffffff);
+  background: var(--dsw-specific-menu, #303136a3);
+  backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
+  -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
   box-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0, 0, 0, 0.16));
   color: var(--dsw-alias-label-primary);
   font-size: 12px;

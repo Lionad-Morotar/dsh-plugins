@@ -43,6 +43,15 @@ describe("skill enhancer sheet", () => {
     expect(panel).not.toContain("shadow-elevated");
   });
 
+  it("paints the workflow list with the slash menu's fill", () => {
+    // The skill alias menu is `--dsw-specific-menu` plus the menu blur. A solid
+    // layer next to it is a different card.
+    const catalog = block(".dsh-better-skill-catalog");
+    expect(catalog).toContain("background: var(--dsw-specific-menu");
+    expect(catalog).toContain("backdrop-filter: var(--dsw-menu-backdrop-filter");
+    expect(catalog).not.toContain("bg-layer-2");
+  });
+
   it("paints the parameter panel like the hover panel it replaces", () => {
     // The two panels never show at once, so a different fill or shadow would read
     // as a glitch when one hands over to the other.
@@ -80,6 +89,8 @@ describe("skill enhancer sheet", () => {
       "--dsw-alias-state-business-primary",
       "--dsw-elevation-prominent",
       "--dsw-font-mono",
+      "--dsw-menu-backdrop-filter",
+      "--dsw-specific-menu",
       "--dsw-radius-md",
       "--dsw-radius-sm",
     ]);
