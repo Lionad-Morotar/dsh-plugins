@@ -14,9 +14,20 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { skillProfileOf, type SkillProfileWire } from "../skill-profile.ts";
+import { collectWorkflowCatalog, type WorkflowEntry } from "../workflow-catalog.ts";
 
 /** The prefix this module registers; the client composes `?name=` onto it. */
 export const SKILL_PROFILE_ROUTE_PREFIX = "/better/api/skill-profile";
+
+/**
+ * Candidate lists keyed by the `source` a declaration named.
+ *
+ * A source is present only when it was declared and produced entries, so the
+ * client can tell "declared but nothing found" from "never asked for".
+ */
+export interface SkillCatalogs {
+  readonly workflows?: readonly WorkflowEntry[];
+}
 
 /** Structural slice of the webServer service. */
 export interface WebServerFace {
@@ -47,6 +58,21 @@ export interface SkillProfileRouteDeps {
   ) => Promise<{ name: string; path?: string; argumentHint?: string; metadata?: unknown } | undefined>;
   /** Session id → that session's cwd. */
   readonly resolveCwd: (sessionId: string) => Promise<string | undefined>;
+  /**
+   * The user's home directory, used to compose the global catalogue path.
+   *
+   * Injected rather than read from `node:os` here so the handler has no opinion
+   * about the real filesystem layout, and so a test cannot reach the developer's
+   * own catalogue by accident.
+   */
+  readonly homeDir: () => string;
+  /**
+   * Read one catalogue file.
+   *
+   * Resolves undefined for a missing file rather than throwing: two of the three
+   * layers are normally absent, and a missing layer is not a failure.
+   */
+  readonly readCatalogText: (path: string) => Promise<string | undefined>;
 }
 
 /** Write one JSON response with the headers every branch shares. */
@@ -104,11 +130,39 @@ export function createSkillProfileHandler(
         return;
       }
       const profile: SkillProfileWire = skillProfileOf(skill);
-      sendJson(res, 200, profile);
+      sendJson(res, 200, { ...profile, catalogs: await fillCatalogs(deps, profile, cwd) });
     } catch {
       sendJson(res, 500, { error: "internal" });
     }
   };
+}
+
+/**
+ * Fill the candidate lists the profile's declarations asked for.
+ *
+ * Nothing is read unless a declaration named a source this module can fill: the
+ * panel is opened on a keystroke, and reading three files for a skill that wants
+ * no catalogue would put that cost on every hover.
+ *
+ * @param deps - the reader and the home directory.
+ * @param profile - the profile whose `assists` name the sources.
+ * @param cwd - the session workspace, or undefined when it has none.
+ * @returns one entry per declared source that produced something; `{}` when
+ *   nothing was declared or nothing was found.
+ */
+async function fillCatalogs(
+  deps: SkillProfileRouteDeps,
+  profile: SkillProfileWire,
+  cwd: string | undefined,
+): Promise<SkillCatalogs> {
+  const sources = new Set((profile.assists ?? []).map(assist => assist.source));
+  if (!sources.has("workflows")) return {};
+  const workflows = await collectWorkflowCatalog({
+    cwd,
+    homeDir: deps.homeDir(),
+    read: deps.readCatalogText,
+  });
+  return workflows.length === 0 ? {} : { workflows };
 }
 
 /**

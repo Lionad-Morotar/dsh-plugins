@@ -70,6 +70,11 @@ function deps(overrides: Partial<SkillProfileRouteDeps> = {}): SkillProfileRoute
         ? { name, path: "/skills/flow-workflow/SKILL.md", argumentHint: "[--dynamic]", metadata: { owner: "lionad" } }
         : undefined,
     resolveCwd: async () => "/workspace",
+    // Stubbed so no case in this file can reach the real home directory: the
+    // catalogue paths are composed from `homeDir`, and a test that read the
+    // developer's own index.md would pass or fail by machine.
+    homeDir: () => "/home/tester",
+    readCatalogText: async () => undefined,
     ...overrides,
   };
 }
@@ -143,6 +148,8 @@ describe("createSkillProfileHandler", () => {
       argumentHint: "[--dynamic]",
       metadata: { owner: "lionad" },
       params: [{ flag: "--dynamic", detail: "" }],
+      assists: [],
+      catalogs: {},
     });
   });
 
@@ -210,6 +217,165 @@ describe("createSkillProfileHandler", () => {
     });
 
     expect(loadSkill).toHaveBeenCalledWith("flow-workflow", undefined);
+  });
+});
+
+describe("catalogs", () => {
+  /** A skill that declares the workflows source on its `run` slot. */
+  const DECLARING = {
+    name: "flow-workflow",
+    path: "/skills/flow-workflow/SKILL.md",
+    assists: [{ slot: "run", kind: "catalog", source: "workflows" }],
+  };
+
+  /** A file reader that answers from a path-keyed table and records what it was asked for. */
+  function reader(files: Record<string, string>): { read: (path: string) => Promise<string | undefined>; asked: string[] } {
+    const asked: string[] = [];
+    return {
+      asked,
+      read: async path => {
+        asked.push(path);
+        return files[path];
+      },
+    };
+  }
+
+  it("fills the workflows catalogue from the three layers in order", async () => {
+    const { read, asked } = reader({
+      "/workspace/.claude/workflows/index.md": "- dev（261005）：项目内 dev",
+      "/workspace/.agents/workflows/index.md": "- review（261006）：项目内 review",
+      "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局 dev\n- impeccable（261022）：全局 impeccable",
+    });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`, {
+      deps: deps({ loadSkill: async () => DECLARING, readCatalogText: read }),
+    });
+
+    expect(recorded.status).toBe(200);
+    expect(asked).toEqual([
+      "/workspace/.claude/workflows/index.md",
+      "/workspace/.agents/workflows/index.md",
+      "/home/tester/.data/flow-workflow/index.md",
+    ]);
+    // The project layer wins the repeated slug, and the global one keeps its own
+    // order behind it.
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({
+      workflows: [
+        { slug: "dev", summary: "项目内 dev" },
+        { slug: "review", summary: "项目内 review" },
+        { slug: "impeccable", summary: "全局 impeccable" },
+      ],
+    });
+  });
+
+  it("skips a layer whose file is missing", async () => {
+    const { read } = reader({ "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局" });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`, {
+      deps: deps({ loadSkill: async () => DECLARING, readCatalogText: read }),
+    });
+
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({
+      workflows: [{ slug: "dev", summary: "全局" }],
+    });
+  });
+
+  it("does not read the disk when no declaration names the workflows source", async () => {
+    const { read, asked } = reader({
+      "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局",
+    });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`, {
+      deps: deps({ readCatalogText: read }),
+    });
+
+    expect(asked).toEqual([]);
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({});
+  });
+
+  it("does not read the disk when the declaration names another source", async () => {
+    const { read, asked } = reader({});
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`, {
+      deps: deps({
+        loadSkill: async () => ({ name: "flow-workflow", assists: [{ slot: "run", kind: "catalog", source: "skills" }] }),
+        readCatalogText: read,
+      }),
+    });
+
+    expect(asked).toEqual([]);
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({});
+  });
+
+  it("omits workflows when every layer is empty", async () => {
+    const { read } = reader({
+      "/workspace/.claude/workflows/index.md": "# 工作流清单\n\n没有条目\n",
+      "/home/tester/.data/flow-workflow/index.md": "",
+    });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`, {
+      deps: deps({ loadSkill: async () => DECLARING, readCatalogText: read }),
+    });
+
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({});
+  });
+
+  it("reads only the global layer when the session has no cwd", async () => {
+    const { read, asked } = reader({ "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局" });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?name=flow-workflow`, {
+      deps: deps({ loadSkill: async () => DECLARING, readCatalogText: read, resolveCwd: async () => undefined }),
+    });
+
+    expect(asked).toEqual(["/home/tester/.data/flow-workflow/index.md"]);
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({
+      workflows: [{ slug: "dev", summary: "全局" }],
+    });
+  });
+
+  it("serves the catalogue on the path branch too", async () => {
+    const { read } = reader({ "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局" });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow&path=%2Fhome%2Fme%2FSKILL.md`, {
+      deps: deps({
+        readSkillAt: async (name, path) => ({ ...DECLARING, name, path }),
+        loadSkill: async () => undefined,
+        readCatalogText: read,
+      }),
+    });
+
+    expect(recorded.status).toBe(200);
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({
+      workflows: [{ slug: "dev", summary: "全局" }],
+    });
+  });
+
+  it("still answers 404 when the path branch cannot confirm the skill", async () => {
+    const { read } = reader({ "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局" });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow&path=%2Fhome%2Fme%2FSKILL.md`, {
+      deps: deps({
+        readSkillAt: async () => undefined,
+        loadSkill: async () => undefined,
+        readCatalogText: read,
+      }),
+    });
+
+    expect(recorded.status).toBe(404);
+  });
+
+  it("answers 200 with an empty catalogue when the file reads throw", async () => {
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`, {
+      deps: deps({
+        loadSkill: async () => DECLARING,
+        readCatalogText: async () => {
+          throw new Error("EACCES at /secret/path");
+        },
+      }),
+    });
+
+    expect(recorded.status).toBe(200);
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({});
   });
 });
 

@@ -22,6 +22,7 @@
  * the rest of the plugin down with it.
  */
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 
 import { sessionCompactionProjection } from "./compaction.ts";
 import { createSetEffortTool, type EffortLlmFace } from "./host/reasoning-effort.ts";
@@ -354,6 +355,23 @@ async function readSkillProfileAt(
 }
 
 /**
+ * Read one workflow catalogue file.
+ *
+ * A missing file is the normal case for two of the three layers, so it resolves
+ * undefined instead of throwing: the route treats an absent layer and an
+ * unreadable one the same way, and only the merged result is ever reported.
+ * @param path - absolute path of one `index.md`.
+ * @returns the file's text, or undefined when it cannot be read.
+ */
+async function readCatalogText(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Mount the skill-profile route once the host has a web server.
  *
  * A one-shot `ctx.get("webServer")` during `apply` misses the desktop
@@ -381,6 +399,8 @@ function registerSkillProfile(ctx: HostContextLike): void {
           loadSkill: (name, cwd) => loadSkillProfile(ctx, name, cwd),
           readSkillAt: (name, path) => readSkillProfileAt(name, path),
           resolveCwd: sessionId => resolveSessionCwd(ctx, sessionId),
+          homeDir: () => homedir(),
+          readCatalogText,
         }),
       "dsh-better: skill profile route",
     );

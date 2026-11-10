@@ -85,3 +85,62 @@ export function mergeWorkflowCatalogs(layers: readonly (readonly WorkflowEntry[]
   }
   return merged;
 }
+
+/** Join one path segment onto a directory without doubling the separator. */
+function joinPath(directory: string, ...segments: readonly string[]): string {
+  const base = directory.endsWith("/") ? directory.slice(0, -1) : directory;
+  return [base, ...segments].join("/");
+}
+
+/**
+ * The catalogue files to read, in precedence order.
+ *
+ * A project that pins a workflow means its own copy, so the two project layers
+ * come before the global data area. Without a cwd there is no project, and the
+ * global layer is the whole catalogue.
+ *
+ * @param cwd - the session workspace, or undefined when the host has none.
+ * @param homeDir - the user's home, injected rather than read from `os` so the
+ *   caller owns the only place that touches the real filesystem layout.
+ * @returns absolute paths, project layers first.
+ */
+export function catalogPaths(cwd: string | undefined, homeDir: string): string[] {
+  const global = joinPath(homeDir, ".data", "flow-workflow", "index.md");
+  if (cwd === undefined || cwd === "") return [global];
+  return [
+    joinPath(cwd, ".claude", "workflows", "index.md"),
+    joinPath(cwd, ".agents", "workflows", "index.md"),
+    global,
+  ];
+}
+
+/**
+ * Read every catalogue layer and merge them.
+ *
+ * A layer that cannot be read is skipped rather than fatal: the three files are
+ * owned by different things (a project, an agent config, the global data area),
+ * and any one of them being absent is the normal case, not an error. The reader
+ * is injected so this stays testable without touching the real home directory.
+ *
+ * @param input - the workspace, the home directory, and how to read one file.
+ * @returns the merged entries, or an empty list when no layer yields one.
+ */
+export async function collectWorkflowCatalog(input: {
+  readonly cwd: string | undefined;
+  readonly homeDir: string;
+  readonly read: (path: string) => Promise<string | undefined>;
+}): Promise<WorkflowEntry[]> {
+  const layers: WorkflowEntry[][] = [];
+  for (const path of catalogPaths(input.cwd, input.homeDir)) {
+    let text: string | undefined;
+    try {
+      text = await input.read(path);
+    } catch {
+      // An unreadable layer is the same as an absent one here.
+      continue;
+    }
+    if (text === undefined) continue;
+    layers.push(parseWorkflowCatalog(text));
+  }
+  return mergeWorkflowCatalogs(layers);
+}

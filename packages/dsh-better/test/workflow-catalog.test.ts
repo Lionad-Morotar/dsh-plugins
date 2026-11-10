@@ -8,7 +8,12 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { mergeWorkflowCatalogs, parseWorkflowCatalog } from "../src/workflow-catalog.ts";
+import {
+  catalogPaths,
+  collectWorkflowCatalog,
+  mergeWorkflowCatalogs,
+  parseWorkflowCatalog,
+} from "../src/workflow-catalog.ts";
 
 describe("parseWorkflowCatalog", () => {
   it("reads a plain line", () => {
@@ -140,5 +145,88 @@ describe("mergeWorkflowCatalogs", () => {
   it("returns nothing when every layer is empty", () => {
     expect(mergeWorkflowCatalogs([])).toEqual([]);
     expect(mergeWorkflowCatalogs([[], []])).toEqual([]);
+  });
+});
+
+describe("catalogPaths", () => {
+  it("lists the project layers before the global one", () => {
+    expect(catalogPaths("/workspace", "/home/tester")).toEqual([
+      "/workspace/.claude/workflows/index.md",
+      "/workspace/.agents/workflows/index.md",
+      "/home/tester/.data/flow-workflow/index.md",
+    ]);
+  });
+
+  it("lists only the global layer without a cwd", () => {
+    expect(catalogPaths(undefined, "/home/tester")).toEqual(["/home/tester/.data/flow-workflow/index.md"]);
+  });
+
+  it("treats a blank cwd as absent", () => {
+    expect(catalogPaths("", "/home/tester")).toEqual(["/home/tester/.data/flow-workflow/index.md"]);
+  });
+
+  it("does not double the separator when the cwd ends with one", () => {
+    expect(catalogPaths("/workspace/", "/home/tester")[0]).toBe("/workspace/.claude/workflows/index.md");
+  });
+});
+
+describe("collectWorkflowCatalog", () => {
+  /** A reader that answers from a path-keyed table and records the asks. */
+  function reader(files: Record<string, string>): { read: (path: string) => Promise<string | undefined>; asked: string[] } {
+    const asked: string[] = [];
+    return {
+      asked,
+      read: async path => {
+        asked.push(path);
+        return files[path];
+      },
+    };
+  }
+
+  it("merges the three layers, project first", async () => {
+    const { read } = reader({
+      "/workspace/.claude/workflows/index.md": "- dev（261005）：项目内",
+      "/workspace/.agents/workflows/index.md": "- review（261006）：agents 层",
+      "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局\n- impeccable（261022）：全局",
+    });
+
+    expect(await collectWorkflowCatalog({ cwd: "/workspace", homeDir: "/home/tester", read })).toEqual([
+      { slug: "dev", summary: "项目内" },
+      { slug: "review", summary: "agents 层" },
+      { slug: "impeccable", summary: "全局" },
+    ]);
+  });
+
+  it("skips a layer whose file is missing", async () => {
+    const { read } = reader({ "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局" });
+
+    expect(await collectWorkflowCatalog({ cwd: "/workspace", homeDir: "/home/tester", read })).toEqual([
+      { slug: "dev", summary: "全局" },
+    ]);
+  });
+
+  it("skips a layer whose read throws instead of failing the whole catalogue", async () => {
+    const read = async (path: string): Promise<string | undefined> => {
+      if (path.includes(".claude")) throw new Error("EACCES");
+      return "- dev（261005）：全局";
+    };
+
+    expect(await collectWorkflowCatalog({ cwd: "/workspace", homeDir: "/home/tester", read })).toEqual([
+      { slug: "dev", summary: "全局" },
+    ]);
+  });
+
+  it("returns nothing when no layer yields an entry", async () => {
+    const { read } = reader({ "/home/tester/.data/flow-workflow/index.md": "# 空清单\n" });
+
+    expect(await collectWorkflowCatalog({ cwd: "/workspace", homeDir: "/home/tester", read })).toEqual([]);
+  });
+
+  it("reads only the global layer without a cwd", async () => {
+    const { read, asked } = reader({ "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局" });
+
+    await collectWorkflowCatalog({ cwd: undefined, homeDir: "/home/tester", read });
+
+    expect(asked).toEqual(["/home/tester/.data/flow-workflow/index.md"]);
   });
 });
