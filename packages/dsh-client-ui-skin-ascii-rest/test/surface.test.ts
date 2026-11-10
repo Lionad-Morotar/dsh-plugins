@@ -12,9 +12,27 @@
  * inline style instead, through a small fake element tree.
  */
 import { JSDOM } from "jsdom";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { presentScene, type Presentation } from "../src/client/surface.ts";
+
+/**
+ * A stand-in mount handle, so the focus switch can be observed.
+ *
+ * The real renderer cannot produce a handle here: jsdom has no canvas context
+ * and no global `HTMLCanvasElement`, so `mount` throws and `presentScene` tears
+ * the layer down having kept nothing. A stub is the only way to see which of
+ * `pause`/`resume` the surface calls, and those calls are the whole subject of
+ * the focus tests below.
+ */
+const handle = {
+  pause: vi.fn(),
+  resume: vi.fn(),
+};
+
+vi.mock("../src/mount.ts", () => ({
+  mount: vi.fn(() => Object.assign(vi.fn(), { pause: handle.pause, resume: handle.resume, now: () => 0 })),
+}));
 
 let dom: JSDOM;
 let doc: Document;
@@ -64,7 +82,16 @@ function scrimOf(surface: { element: HTMLElement }): HTMLElement {
   return kids[kids.length - 1] as HTMLElement;
 }
 
+/** Dispatch one of the two window events the focus switch listens for. */
+function fire(type: "focus" | "blur"): void {
+  dom.window.dispatchEvent(new dom.window.Event(type));
+}
+
 beforeEach(() => {
+  // One handle is shared by every surface these tests build, so its counts have
+  // to start from zero or they accumulate across cases.
+  handle.pause.mockClear();
+  handle.resume.mockClear();
   dom = new JSDOM("<!doctype html><html><body></body></html>", {
     url: "http://127.0.0.1/",
     pretendToBeVisual: true,
@@ -194,5 +221,71 @@ describe("restyle", () => {
     surface.dispose();
     // Disposal unbinds whatever is still bound.
     expect(bound.get("blur")).toBe(0);
+  });
+
+  it("pauses and resumes the frame loop, and survives a remount while paused", () => {
+    // jsdom has no canvas context, so the renderer hands back its detached
+    // handle: the calls are what this asserts, not the pixels. A pause that a
+    // remount silently dropped would show the splash's own scene playing behind
+    // a splash that is meant to be the only thing moving.
+    const surface = presentScene(presentation({ fps: 15 }), doc);
+
+    expect(() => {
+      surface.pause();
+      surface.pause();
+      surface.resume();
+      surface.resume();
+    }).not.toThrow();
+
+    // A density change re-mounts the renderer, which is the path that used to
+    // start a fresh loop with no memory of the pause.
+    surface.pause();
+    surface.restyle({
+      opacity: 1,
+      blur: 0,
+      veil: 0.1,
+      scrim: 0,
+      scrimAngle: 180,
+      still: false,
+      fps: 15,
+      resolution: 2,
+      pauseOnBlur: true,
+    });
+    expect(() => surface.resume()).not.toThrow();
+
+    surface.dispose();
+    // Disposal after a pause is the teardown path the splash takes.
+    expect(() => {
+      surface.pause();
+      surface.resume();
+    }).not.toThrow();
+  });
+
+  it("does not restart the frame loop on focus while the surface is held paused", () => {
+    // Regression: the splash holds the background paused with `surface.pause()`,
+    // but the focus listener only spoke to the mount handle. Losing and
+    // regaining focus during the splash therefore resumed the loop underneath an
+    // opaque layer, which is frames nobody can see. Focus is one reason to play,
+    // not the only one, so it may not overrule a pause taken elsewhere.
+    const surface = presentScene(presentation({ fps: 15 }), doc);
+
+    surface.pause();
+    expect(handle.pause).toHaveBeenCalledTimes(1);
+
+    fire("focus");
+    expect(handle.resume, "a paused surface stays paused through a focus").not.toHaveBeenCalled();
+
+    // Blur keeps pausing the handle directly: that path was never the bug, and
+    // it must not start routing through the surface's own state.
+    fire("blur");
+    expect(handle.pause).toHaveBeenCalledTimes(2);
+
+    // Once the surface is genuinely resumed, focus plays again.
+    surface.resume();
+    handle.resume.mockClear();
+    fire("focus");
+    expect(handle.resume).toHaveBeenCalledTimes(1);
+
+    surface.dispose();
   });
 });

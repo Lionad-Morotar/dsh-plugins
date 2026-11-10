@@ -79,6 +79,8 @@ function build() {
       },
       regions: { sidebar: 1, main: 1, rightbar: 1, bottom: 1 },
       piece: {},
+      splash: true,
+      splashOnNewChat: false,
     },
     module,
     callbacks: {

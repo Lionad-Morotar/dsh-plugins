@@ -41,5 +41,11 @@
   "scrimStrength": "Strength",
   "scrimAngle": "Direction",
   "pauseOnBlur": "Pause when unfocused",
-  "pauseOnBlurNote": "Stop drawing while the window is in the background, and resume on return."
+  "pauseOnBlurNote": "Stop drawing while the window is in the background, and resume on return.",
+  "splash": "Opening scene",
+  "splashNote": "On a cold start the current scene fills the window, then fades once the interface is ready. Switching the skin on mid-session does not play it.",
+  "splashOn": "On",
+  "splashOff": "Off",
+  "splashOnNewChat": "Opening scene on new conversations",
+  "splashOnNewChatNote": "Play the opening scene again each time a new empty conversation opens. Off by default, because it interrupts when you open several in a row."
 }

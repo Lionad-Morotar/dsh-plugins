@@ -89,6 +89,15 @@ export interface Surface {
   relayout(geometry?: Geometry): void;
   /** Re-read the scheme and repaint. Cheap when the scheme did not change. */
   rescheme(): void;
+  /**
+   * Stop the frame loop without tearing anything down.
+   *
+   * The splash covers the page while it is up, so the background underneath is
+   * drawing frames nobody can see. Idempotent: two pauses are one pause.
+   */
+  pause(): void;
+  /** Start the frame loop again. Idempotent, and safe before the first frame. */
+  resume(): void;
   /** Repaint the wash and the filter stack without touching the frame loop. */
   restyle(
     next: Pick<
@@ -114,6 +123,9 @@ export function presentScene(presentation: Presentation, doc: Document = documen
   let stop: MountHandle | null = null;
   let disposed = false;
   let currentFps = presentation.still ? 0 : presentation.fps;
+  // Remembered rather than read off the handle: a re-mount builds a new handle
+  // that starts playing, so the state has to outlive the handle it was set on.
+  let paused = false;
 
   const layer = doc.createElement("div");
   layer.setAttribute(LAYER_ATTRIBUTE, "");
@@ -211,6 +223,10 @@ export function presentScene(presentation: Presentation, doc: Document = documen
         // still switch in its own settings, so the toggle is the reader's say.
         motion: true,
       });
+      // A fresh handle always starts playing, so a pause taken before the
+      // re-mount has to be re-applied or the loop quietly resumes behind
+      // whatever asked it to stop.
+      if (paused) stop.pause();
     } catch (error) {
       teardown();
       presentation.onError?.(error);
@@ -240,8 +256,14 @@ export function presentScene(presentation: Presentation, doc: Document = documen
   // "visible" to the document, so it kept painting at full rate behind whatever
   // the reader switched to. Pausing here costs one boolean and saves the frames.
   const onBlur = (): void => stop?.pause();
-  const onFocus = (): void => stop?.resume();
-
+  // Focus is one reason to play, not the only one. A surface held paused by
+  // something else (the splash covers the page while it is up) must stay paused:
+  // resuming from here would restart a loop nobody can see, which is the exact
+  // cost the pause was taken to avoid.
+  const onFocus = (): void => {
+    if (paused) return;
+    stop?.resume();
+  };
   /**
    * Bind or unbind the focus listeners.
    *
@@ -286,6 +308,16 @@ export function presentScene(presentation: Presentation, doc: Document = documen
       paintChrome();
       startFrames();
       relayout();
+    },
+    pause: (): void => {
+      if (disposed) return;
+      paused = true;
+      stop?.pause();
+    },
+    resume: (): void => {
+      if (disposed) return;
+      paused = false;
+      stop?.resume();
     },
     restyle: (next): void => {
       if (disposed) return;
