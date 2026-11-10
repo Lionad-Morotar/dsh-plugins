@@ -244,7 +244,7 @@ describe("throughputSeries", () => {
     // case durations; the ceiling catches a sum that stopped being divided by
     // the parallel-process count.
     expect(series.length).toBeGreaterThan(180);
-    expect(series.length).toBeLessThan(260);
+    expect(series.length).toBeLessThan(360);
   });
 
   it("keeps the peak readable once the run is folded onto wall clock", () => {

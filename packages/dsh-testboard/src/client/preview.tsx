@@ -75,6 +75,18 @@ const STRINGS: TestboardViewStrings = {
   chartTitle: "每秒完成用例数",
   fixing: "正在修复",
   fixingModel: "模型",
+  menuReference: "引用",
+  menuRunFile: "运行此文件",
+  menuCopyPath: "复制路径",
+  referenceNoSession: "当前没有可写入的会话",
+  referenceNoComposer: "当前输入框不支持引用",
+  referenceNoSource: "引用通道尚未就绪",
+  menuRunInFlight: "正在运行",
+  noticeReferenced: "已插入引用",
+  noticeReferencedText: "已插入引用文本",
+  noticeReferenceFailed: "引用插入失败",
+  noticeCopied: "已复制路径",
+  noticeCopyFailed: "复制失败",
 };
 
 /**
@@ -137,10 +149,23 @@ function mount(host: HTMLElement, snapshot: TestSnapshot, sources: SourceBundle)
     // The preview bundle has no ModuleLoader, so the editor chunk is a plain
     // dynamic import here; the page is a development surface, not the host.
     loadEditor: async () => (await import("./editor-chunk.ts")) as unknown as EditorChunkModule,
+    // The preview has no composer, so the reference channel is a stub that
+    // accepts the write: the menu opens, the row runs, and the notice proves
+    // the click reached the writer. Real hosts get the facade instead.
+    reference: () => ({ insertReference: () => true, focus: () => undefined }),
+    referenceSourceAvailable: () => true,
   });
   // A session id, because the board treats a missing one as "unknown workspace"
   // and would render its empty state instead of the board.
-  createRoot(host).render(<View sessionId="preview" />);
+  createRoot(host).render(
+    <View
+      sessionId="preview"
+      inputActions={{
+        captureInsertion: () => ({ start: 0, end: 0, draftRev: 1 }),
+        insertText: () => true,
+      }}
+    />,
+  );
 }
 
 const host = document.getElementById("root");

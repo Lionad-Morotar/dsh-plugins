@@ -15,6 +15,16 @@ import { EN, ZH } from "./copy.ts";
 import { bootEditor, loadEditorChunk } from "./editor-loader.ts";
 import { createHttpRuntime } from "./runtime.ts";
 import { ensureStyles } from "./styles.ts";
+import {
+  registerTestboardReferenceSource,
+  testboardReferenceSeam,
+  type ReferenceContextLike,
+  type ReferenceWiring,
+  type ReferenceWiringResolver,
+  type TestboardReferenceInsert,
+  type TestboardReferenceSourceHandle,
+  type TestboardReferenceSpan,
+} from "./reference.ts";
 import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
 
 /** The `require` the ModuleLoader factory hands over. */
@@ -37,6 +47,9 @@ export function boot(require: LoaderRequire): void {
 
 /** The slice of the client context this entry uses. */
 export interface TestboardClientContext {
+  /** The host services, read through the non-throwing resolver. */
+  get?(name: string): unknown;
+  inject?<T>(names: string[], apply: (scope: T) => void): unknown;
   readonly slots: {
     inject(slot: string, factory: () => () => void): unknown;
     register(options: Record<string, unknown>, component: unknown): () => void;
@@ -73,6 +86,15 @@ let registeredDictionaries: (() => void) | undefined;
 let registeredSlot: (() => void) | undefined;
 
 /**
+ * Handle of the reference source currently registered on the host.
+ *
+ * Module scope for the same reason as the slot: the desktop applies the plugin
+ * twice, and the trigger service refuses a duplicate `trigger`/`name` pair, so
+ * the second apply has to drop the first registration before making its own.
+ */
+let registeredReferenceSource: TestboardReferenceSourceHandle | undefined;
+
+/**
  * The host's active locale id.
  *
  * The slot label is re-resolved by the shell on every locale revision, so the
@@ -83,6 +105,59 @@ let registeredSlot: (() => void) | undefined;
 function activeLocale(ctx: TestboardClientContext): string {
   const snapshot = ctx.locale.getSnapshot?.();
   return typeof snapshot?.active === "string" ? snapshot.active : "zh";
+}
+
+/** The slice of the session input facade the reference writer calls. */
+interface SessionInputFace {
+  insertReference?(insert: TestboardReferenceInsert, span: TestboardReferenceSpan): boolean;
+  focus?(): void;
+  notify?(level: "info" | "error", text: string): void;
+}
+
+/**
+ * Build the per-session reference writer.
+ *
+ * Every service is read on each call. The facade is per session generation and
+ * throws once that generation is released, so caching one would hand a stale
+ * composer to the next click; and this resolver is built during `apply`, which
+ * can run before `sessions` and `conversation` are up.
+ * @param ctx - client context, read through the non-throwing resolver.
+ * @returns a resolver that answers undefined when the input plane is absent.
+ */
+export function createReferenceResolver(ctx: TestboardClientContext): ReferenceWiringResolver {
+  return (sessionId: string): ReferenceWiring | undefined => {
+    const sessions = ctx.get?.("sessions") as { scope?(id: string): unknown } | undefined;
+    const conversation = ctx.get?.("conversation") as
+      | { input?: { for(actx: unknown): SessionInputFace } }
+      | undefined;
+    if (sessions?.scope === undefined || conversation?.input?.for === undefined) return undefined;
+    let facade: SessionInputFace;
+    try {
+      const actx = sessions.scope(sessionId);
+      if (actx === undefined) return undefined;
+      facade = conversation.input.for(actx);
+    } catch {
+      // The controller refuses a Context whose generation was released: the
+      // session was switched away from between the render and this click.
+      return undefined;
+    }
+    if (facade === undefined || facade === null) return undefined;
+    // Only the methods the facade really has are wrapped. A host can hand back a
+    // facade without `insertReference`; a wrapper that always provides it would
+    // pass the caller's capability check and then throw on the write.
+    const insertReference = facade.insertReference;
+    const focus = facade.focus;
+    const notify = facade.notify;
+    return {
+      ...(typeof insertReference === "function"
+        ? { insertReference: (insert, span) => insertReference.call(facade, insert, span) }
+        : {}),
+      ...(typeof focus === "function" ? { focus: () => focus.call(facade) } : {}),
+      ...(typeof notify === "function"
+        ? { notify: (level: "info" | "error", text: string) => notify.call(facade, level, text) }
+        : {}),
+    };
+  };
 }
 
 /**
@@ -96,6 +171,16 @@ export function apply(ctx: TestboardClientContext): () => void {
   registeredDictionaries?.();
   const offLocale = ctx.locale.register(LOCALE_NAMESPACE, { zh: ZH, en: EN });
   registeredDictionaries = offLocale;
+
+  // The chip's send-time identity and its click target. Registered before the
+  // view so a draft that already holds a chip can be sent the moment the tab
+  // paints. The seam resolves per click: the workbench service may mount after
+  // this registration, and a snapshot taken here would leave the chip inert.
+  registeredReferenceSource?.dispose();
+  const referenceSource = registerTestboardReferenceSource(ctx as ReferenceContextLike, () =>
+    testboardReferenceSeam(ctx.get?.("workbench")),
+  );
+  registeredReferenceSource = referenceSource;
 
   const View = createTestboardView({
     strings: {
@@ -143,11 +228,27 @@ export function apply(ctx: TestboardClientContext): () => void {
       chartTitle: t("testboard.chartTitle"),
       fixing: t("testboard.fixing"),
       fixingModel: t("testboard.fixingModel"),
+      menuReference: t("testboard.menuReference"),
+      menuRunFile: t("testboard.menuRunFile"),
+      menuCopyPath: t("testboard.menuCopyPath"),
+      referenceNoSession: t("testboard.referenceNoSession"),
+      referenceNoComposer: t("testboard.referenceNoComposer"),
+      referenceNoSource: t("testboard.referenceNoSource"),
+      menuRunInFlight: t("testboard.menuRunInFlight"),
+      noticeReferenced: t("testboard.noticeReferenced"),
+      noticeReferencedText: t("testboard.noticeReferencedText"),
+      noticeReferenceFailed: t("testboard.noticeReferenceFailed"),
+      noticeCopied: t("testboard.noticeCopied"),
+      noticeCopyFailed: t("testboard.noticeCopyFailed"),
     } satisfies TestboardViewStrings,
     // The board reads the host's live state; the committed snapshot is the
     // preview's fixture and the tests' corpus, not something the tab fetches.
     runtime: createHttpRuntime(),
     loadEditor: () => loadEditorChunk(),
+    reference: createReferenceResolver(ctx),
+    // A getter, not a snapshot: the inject path may register the source after
+    // this view is built.
+    referenceSourceAvailable: () => referenceSource.available,
   });
 
   // `inject` is a deferred registration: the factory runs when the slot itself
@@ -191,6 +292,10 @@ export function apply(ctx: TestboardClientContext): () => void {
     if (registeredDictionaries === offLocale) {
       offLocale();
       registeredDictionaries = undefined;
+    }
+    if (registeredReferenceSource === referenceSource) {
+      referenceSource.dispose();
+      registeredReferenceSource = undefined;
     }
   };
 }
