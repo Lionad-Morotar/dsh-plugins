@@ -67,6 +67,8 @@ const STRINGS: PrExplorerViewStrings = {
   commitDate: "日期",
   commitSubject: "标题",
   commitRefs: "引用",
+  openInFiles: "在文件面板打开",
+  openInGit: "在 Git 面板打开",
   errorNotARepo: "这个目录不是 git 仓库",
   errorInvalidRef: "该 ref 不存在",
   errorNoMergeBase: "两个 ref 没有共同祖先",

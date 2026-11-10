@@ -18,6 +18,7 @@ import { LOCALE_NAMESPACE, PACKAGE_NAME, VIEW_ID, VIEW_ORDER, VIEW_SLOT } from "
 import { EN, ZH } from "./copy.ts";
 import { ensureStyles } from "./styles.ts";
 import { createPrExplorerView, type PrExplorerViewStrings } from "./view.tsx";
+import type { WorkbenchFace } from "./interop.ts";
 
 /** The slice of the client context this entry uses. */
 export interface PrExplorerClientContext {
@@ -25,6 +26,13 @@ export interface PrExplorerClientContext {
     inject(slot: string, factory: () => () => void): unknown;
     register(options: Record<string, unknown>, component: unknown): () => void;
   };
+  /**
+   * The workbench core, when the host publishes one.
+   *
+   * Optional on purpose: a host without it still gets the comparison, and the
+   * two jump actions are simply not drawn.
+   */
+  readonly workbench?: WorkbenchFace;
   readonly locale: {
     register(namespace: string, dictionaries: Record<string, Record<string, string>>): () => void;
     bind(namespace: string): (key: string) => string;
@@ -117,6 +125,8 @@ export function apply(ctx: PrExplorerClientContext): () => void {
       commitDate: t("pr-explorer.commitDate"),
       commitSubject: t("pr-explorer.commitSubject"),
       commitRefs: t("pr-explorer.commitRefs"),
+      openInFiles: t("pr-explorer.openInFiles"),
+      openInGit: t("pr-explorer.openInGit"),
       errorNotARepo: t("pr-explorer.errorNotARepo"),
       errorInvalidRef: t("pr-explorer.errorInvalidRef"),
       errorNoMergeBase: t("pr-explorer.errorNoMergeBase"),
@@ -126,6 +136,7 @@ export function apply(ctx: PrExplorerClientContext): () => void {
       errorBadRequest: t("pr-explorer.errorBadRequest"),
       errorUnknown: t("pr-explorer.errorUnknown"),
     } satisfies PrExplorerViewStrings,
+    ...(ctx.workbench === undefined ? {} : { workbench: ctx.workbench }),
   });
 
   // `inject` is a deferred registration: the factory runs when the slot itself

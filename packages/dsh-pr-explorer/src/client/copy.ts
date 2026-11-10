@@ -62,6 +62,8 @@ export const ZH: Record<string, string> = {
   "pr-explorer.commitDate": "日期",
   "pr-explorer.commitSubject": "标题",
   "pr-explorer.commitRefs": "引用",
+  "pr-explorer.openInFiles": "在文件面板打开",
+  "pr-explorer.openInGit": "在 Git 面板打开",
 
   // One sentence per error code
   "pr-explorer.errorNotARepo": "这个目录不是 git 仓库",
@@ -123,6 +125,8 @@ export const EN: Record<string, string> = {
   "pr-explorer.commitDate": "Date",
   "pr-explorer.commitSubject": "Subject",
   "pr-explorer.commitRefs": "Refs",
+  "pr-explorer.openInFiles": "Open in the file panel",
+  "pr-explorer.openInGit": "Open in the Git panel",
 
   // One sentence per error code
   "pr-explorer.errorNotARepo": "This directory is not a git repository",

@@ -29,7 +29,7 @@
   "dsh": {
     "client": {
       "platform": "web",
-      "inject": []
+      "inject": ["dsh-workbench-core"]
     },
     "bundle": {
       "patch": "./cordis.patch.yml"

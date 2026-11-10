@@ -28,9 +28,16 @@
  * keys on to give the conversation view a definite height and to float the
  * composer over it. Without it the panel collapses to its content height.
  */
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 
 import { createHttpRuntime, type PrRuntime } from "./runtime.ts";
+import {
+  createViewJump,
+  formatCommitFocus,
+  formatPathFocus,
+  parseCompareFocus,
+  type WorkbenchFace,
+} from "./interop.ts";
 import {
   churnOf,
   churnText,
@@ -47,6 +54,7 @@ import {
   statusMark,
   summaryReading,
 } from "./model.ts";
+import { VIEW_ID } from "../shared.ts";
 import type {
   CommitEntry,
   CompareSnapshot,
@@ -98,6 +106,8 @@ export interface PrExplorerViewStrings {
   readonly commitDate: string;
   readonly commitSubject: string;
   readonly commitRefs: string;
+  readonly openInFiles: string;
+  readonly openInGit: string;
   readonly errorNotARepo: string;
   readonly errorInvalidRef: string;
   readonly errorNoMergeBase: string;
@@ -113,6 +123,13 @@ export interface PrExplorerViewOptions {
   readonly strings: PrExplorerViewStrings;
   /** The host seam; absent means the real HTTP runtime. */
   readonly runtime?: PrRuntime;
+  /**
+   * The workbench service, when the host publishes one.
+   *
+   * Absent means the two jump actions are not drawn: a button that cannot switch
+   * a view is a dead end, and the comparison itself does not need the core.
+   */
+  readonly workbench?: WorkbenchFace;
 }
 
 /** Which list the left pane is showing. */
@@ -245,6 +262,8 @@ interface FileRowProps {
   readonly selected: boolean;
   readonly onSelect: (path: string) => void;
   readonly onKey: (event: KeyboardEvent<HTMLElement>, path: string) => void;
+  /** Absent when the host publishes no workbench to switch to. */
+  readonly onOpenInFiles?: (path: string) => void;
 }
 
 /**
@@ -252,7 +271,7 @@ interface FileRowProps {
  * @param props - the file, its strings, its selection and the handlers.
  * @returns the row.
  */
-function FileRow({ file, strings, selected, onSelect, onKey }: FileRowProps): ReactElement {
+function FileRow({ file, strings, selected, onSelect, onKey, onOpenInFiles }: FileRowProps): ReactElement {
   const parts = splitPath(file.path);
   const churn = churnOf(file);
   const note = noteText(churn.note, strings);
@@ -287,6 +306,22 @@ function FileRow({ file, strings, selected, onSelect, onKey }: FileRowProps): Re
       <span data-rm="churn" data-note={churn.note ?? undefined}>
         {note ?? churnText(churn)}
       </span>
+      {onOpenInFiles === undefined ? null : (
+        <button
+          type="button"
+          data-rm="open-in-files"
+          aria-label={strings.openInFiles}
+          title={strings.openInFiles}
+          onClick={event => {
+            // The row click selects; this click is a different action and must
+            // not also change the selection under the reader.
+            event.stopPropagation();
+            onOpenInFiles(file.path);
+          }}
+        >
+          ↗
+        </button>
+      )}
     </div>
   );
 }
@@ -300,10 +335,15 @@ function DetailPane({
   phase,
   strings,
   bodyRef,
+  onOpenInFiles,
+  onOpenInGit,
 }: {
   readonly phase: DetailPhase;
   readonly strings: PrExplorerViewStrings;
   readonly bodyRef: { current: HTMLDivElement | null };
+  /** Absent when the host publishes no workbench to switch to. */
+  readonly onOpenInFiles?: (path: string) => void;
+  readonly onOpenInGit?: (hash: string) => void;
 }): ReactElement {
   return (
     <div data-rm="detail">
@@ -311,8 +351,12 @@ function DetailPane({
         {phase.kind === "none" ? <p data-rm="detail-empty">{strings.detailEmpty}</p> : null}
         {phase.kind === "loading" ? <p data-rm="detail-loading">{strings.loading}</p> : null}
         {phase.kind === "error" ? <p data-rm="detail-error">{errorText(phase.code, strings)}</p> : null}
-        {phase.kind === "commit" ? <CommitDetail commit={phase.commit} strings={strings} /> : null}
-        {phase.kind === "file" ? <FileDetail diff={phase.diff} strings={strings} /> : null}
+        {phase.kind === "commit" ? (
+          <CommitDetail commit={phase.commit} strings={strings} onOpenInGit={onOpenInGit} />
+        ) : null}
+        {phase.kind === "file" ? (
+          <FileDetail diff={phase.diff} strings={strings} onOpenInFiles={onOpenInFiles} />
+        ) : null}
       </div>
     </div>
   );
@@ -326,12 +370,21 @@ function DetailPane({
 function CommitDetail({
   commit,
   strings,
+  onOpenInGit,
 }: {
   readonly commit: CommitEntry;
   readonly strings: PrExplorerViewStrings;
+  readonly onOpenInGit?: (hash: string) => void;
 }): ReactElement {
   return (
     <div data-testid="commit-detail">
+      {onOpenInGit === undefined ? null : (
+        <div data-rm="commit-detail-actions">
+          <button type="button" data-rm="open-in-git" onClick={() => onOpenInGit(commit.hash)}>
+            {strings.openInGit}
+          </button>
+        </div>
+      )}
       <div data-rm="commit-detail-row">
         <span data-rm="commit-detail-label">{strings.commitHash}</span>
         <span data-rm="commit-detail-value">{commit.hash}</span>
@@ -363,13 +416,26 @@ function CommitDetail({
  * @param props - the diff and the bound copy.
  * @returns the detail.
  */
-function FileDetail({ diff, strings }: { readonly diff: PrFileDiff; readonly strings: PrExplorerViewStrings }): ReactElement {
+function FileDetail({
+  diff,
+  strings,
+  onOpenInFiles,
+}: {
+  readonly diff: PrFileDiff;
+  readonly strings: PrExplorerViewStrings;
+  readonly onOpenInFiles?: (path: string) => void;
+}): ReactElement {
   const title = diffTitle(diff);
   if (diff.kind === "binary") {
     const size = diff.bytes === null ? strings.detailUnknownSize : formatBytes(diff.bytes);
     return (
       <div data-rm="detail-file">
         <div data-rm="detail-file-name">{title}</div>
+        {onOpenInFiles === undefined ? null : (
+          <button type="button" data-rm="open-in-files" onClick={() => onOpenInFiles(title)}>
+            {strings.openInFiles}
+          </button>
+        )}
         <p data-rm="detail-binary">{fill(strings.detailBinary, { size })}</p>
       </div>
     );
@@ -378,6 +444,11 @@ function FileDetail({ diff, strings }: { readonly diff: PrFileDiff; readonly str
   return (
     <div data-rm="detail-file">
       <div data-rm="detail-file-name">{title}</div>
+      {onOpenInFiles === undefined ? null : (
+        <button type="button" data-rm="open-in-files" onClick={() => onOpenInFiles(title)}>
+          {strings.openInFiles}
+        </button>
+      )}
       {diff.kind === "text" && diff.truncated ? <p data-rm="detail-truncated">{strings.detailTruncated}</p> : null}
       <div data-rm="diff">
         {rows.map(row =>
@@ -408,6 +479,7 @@ function FileDetail({ diff, strings }: { readonly diff: PrFileDiff; readonly str
 export function createPrExplorerView({
   strings,
   runtime = createHttpRuntime(),
+  workbench,
 }: PrExplorerViewOptions): (props: ConversationViewProps) => ReactElement {
   return function PrExplorerView({ sessionId }: ConversationViewProps): ReactElement {
     const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -431,6 +503,13 @@ export function createPrExplorerView({
     // effect: two effects would let the first load run against the old pair.
     const lastSession = useRef<string | undefined>(sessionId);
     const detailBody = useRef<HTMLDivElement | null>(null);
+    // One jump per target view, built from the seam this mount was given. A host
+    // without the core leaves both undefined, and the actions are not drawn.
+    const jumpToFiles = useMemo(
+      () => (workbench === undefined ? undefined : createViewJump({ seam: workbench, sessionId: sessionId ?? "" })),
+      [workbench, sessionId],
+    );
+    const jumpToGit = jumpToFiles;
 
     /**
      * Load one comparison and, on the first load, the ref listing.
@@ -528,6 +607,30 @@ export function createPrExplorerView({
       // session resolves the default pair instead.
       load(sessionId, base === undefined || head === undefined ? undefined : { base, head });
     }, [sessionId, reloadToken, load]);
+
+    // A caller that cannot hand the host's focus to this view leaves one in the
+    // core's queue instead: take whatever is waiting at mount and keep listening
+    // while it stays up, so a lazily mounted tab never loses the target. A
+    // payload this view cannot read is ignored rather than partially applied.
+    useEffect(() => {
+      const queue = workbench?.viewFocus;
+      if (queue === undefined) return undefined;
+      const consume = (): void => {
+        const focus = queue.take(VIEW_ID);
+        if (focus === undefined) return;
+        const pair = parseCompareFocus(focus);
+        if (pair === undefined) return;
+        detailRequest.current += 1;
+        setSelectedCommit(undefined);
+        setSelectedFile(undefined);
+        setDetail({ kind: "none" });
+        setBase(pair.base);
+        setHead(pair.head);
+        setReloadToken(token => token + 1);
+      };
+      consume();
+      return queue.subscribe?.(consume);
+    }, [workbench]);
 
     // A new file starts at its first line. Doing it in an effect rather than in
     // the click handler keeps it tied to the render that changed the content.
@@ -654,6 +757,22 @@ export function createPrExplorerView({
       }
     };
 
+    /**
+     * Open one path in the file workbench.
+     * @param path - the repository-relative path.
+     */
+    const openInFiles = (path: string): void => {
+      jumpToFiles?.("fs-explorer", formatPathFocus(path));
+    };
+
+    /**
+     * Open one commit in the Git workbench.
+     * @param hash - the commit hash.
+     */
+    const openInGit = (hash: string): void => {
+      jumpToGit?.("git-explorer", formatCommitFocus(hash));
+    };
+
     const switchTab = (next: Tab): void => {
       if (next === tab) return;
       setTab(next);
@@ -774,10 +893,17 @@ export function createPrExplorerView({
                         selected={file.path === activeFile}
                         onSelect={path => select("files", path)}
                         onKey={onKey}
+                        {...(jumpToFiles === undefined ? {} : { onOpenInFiles: openInFiles })}
                       />
                     ))}
               </div>
-              <DetailPane phase={detail} strings={strings} bodyRef={detailBody} />
+              <DetailPane
+                phase={detail}
+                strings={strings}
+                bodyRef={detailBody}
+                {...(jumpToFiles === undefined ? {} : { onOpenInFiles: openInFiles })}
+                {...(jumpToGit === undefined ? {} : { onOpenInGit: openInGit })}
+              />
             </div>
           </>
         ) : null}

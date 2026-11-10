@@ -57,6 +57,13 @@ export interface DetailPaneProps {
   readonly onSelect: (hash: string) => void;
   /** Open one changed file of this commit in the file workbench. */
   readonly onOpenFile?: (path: string, line?: number) => void;
+  /**
+   * Compare this commit against HEAD in the PR view.
+   *
+   * Absent on a host with no workbench to switch to, and the button is then not
+   * drawn: a control that cannot do anything is worse than no control.
+   */
+  readonly onCompareToHead?: (hash: string) => void;
   /** Ref names pointing at the selected commit, for the reference payload. */
   readonly refs?: readonly string[];
   /**
@@ -225,6 +232,7 @@ export function DetailPane({
   t,
   onSelect,
   onOpenFile,
+  onCompareToHead,
   refs,
   inputActions,
   phase,
@@ -425,6 +433,17 @@ export function DetailPane({
         <span>{t("detail.title")}</span>
         {hash === undefined ? null : <span className="gx-hash">{head.shortHash}</span>}
         <span className="gx-spacer" style={{ flex: 1 }} />
+        {onCompareToHead === undefined || hash === undefined ? null : (
+          <button
+            type="button"
+            className="gx-refbtn"
+            data-testid="gx-compare-head"
+            title={t("compare.hint")}
+            onClick={() => onCompareToHead(hash)}
+          >
+            {t("compare.action")}
+          </button>
+        )}
         <button
           type="button"
           className="gx-refbtn"
