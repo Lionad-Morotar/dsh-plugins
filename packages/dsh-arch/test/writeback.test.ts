@@ -17,7 +17,14 @@ import { mountArchChrome, type MountArchView } from "../src/client/chrome.tsx";
 import { mountArchDiagram } from "../src/client/entry.ts";
 import { createDiagram } from "../src/client/chunk/diagram.ts";
 import type { DiagramHandle, DiagramView } from "../src/client/chunk/diagram.ts";
-import type { WireStatePutResponse, WireViewsResponse } from "../src/shared.ts";
+import {
+  mergeArchWorkspaceState,
+  readArchWorkspaceState,
+  type ArchStateChanges,
+  type ArchWorkspaceState,
+  type WireStatePutResponse,
+  type WireViewsResponse,
+} from "../src/shared.ts";
 
 interface DumpView {
   id: string;
@@ -64,6 +71,10 @@ function viewsResponse(): WireViewsResponse {
     hasErrors: false,
     errors: [],
   };
+}
+
+function twoViewsResponse(): WireViewsResponse {
+  return { ...viewsResponse(), views: [view("index"), view("skin")] };
 }
 
 /**
@@ -280,5 +291,91 @@ describe("write-back loop", () => {
     );
     expect(secondHost.querySelector('g[data-id="user"]')?.getAttribute("transform")).toBe("translate(100 1160)");
     secondDispose();
+  });
+
+  it("merges two panels' write-backs instead of rolling the other's framing back", async () => {
+    // The host double keeps one record and merges each POST by its touched
+    // slices, exactly like arch-store.saveWorkspace does.
+    const hostState: { stored: ArchWorkspaceState | null } = { stored: null };
+    const fetchImpl = ((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.includes("/views")) return Promise.resolve(jsonResponse(twoViewsResponse()));
+      if (method === "POST" && url.includes("/state")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown> & { changes?: ArchStateChanges };
+        const incoming = readArchWorkspaceState(body);
+        if (incoming !== null) {
+          hostState.stored =
+            hostState.stored === null || body.changes === undefined
+              ? incoming
+              : mergeArchWorkspaceState(hostState.stored, incoming, body.changes);
+        }
+        return Promise.resolve(jsonResponse({ ok: true, degraded: false } satisfies WireStatePutResponse));
+      }
+      if (url.includes("/state")) {
+        return Promise.resolve(jsonResponse({ state: hostState.stored, degraded: false }));
+      }
+      return Promise.resolve(jsonResponse({}, false, 404));
+    }) as typeof fetch;
+
+    // Panel A and panel B mount on the same workspace; B's snapshot predates
+    // A's zoom, which is what used to make B's later write-back erase it.
+    const aMount = capturingMount();
+    const aHost = mountHost();
+    const disposeA = panel(aHost, fetchImpl, aMount.mountView);
+    await until(() => aHost.querySelectorAll("[data-arch-body] g[data-id]").length === 10);
+
+    const bMount = capturingMount();
+    const bHost = mountHost();
+    const disposeB = panel(bHost, fetchImpl, bMount.mountView);
+    await until(() => bHost.querySelectorAll("[data-arch-body] g[data-id]").length === 10);
+
+    aMount.handle()?.zoomBy(1.5, { x: 0, y: 0 });
+    await until(() => hostState.stored?.viewports.index?.scale === 1.125);
+
+    // B switches views (a reader choice) and zooms its own view.
+    bHost.querySelector<HTMLButtonElement>('button[data-view-id="skin"]')?.click();
+    await until(() => bHost.querySelectorAll("[data-arch-body] g[data-id]").length === 16);
+    bMount.handle()?.zoomBy(0.5, { x: 0, y: 0 });
+    await until(() => hostState.stored?.viewports.skin?.scale === 0.375);
+
+    expect(hostState.stored?.viewports.index?.scale).toBe(1.125);
+    expect(hostState.stored?.viewports.skin?.scale).toBe(0.375);
+    // The last reader to switch views owns the restored tab, not the panel
+    // that merely re-mounted.
+    expect(hostState.stored?.viewId).toBe("skin");
+    disposeA();
+    disposeB();
+  });
+
+  it("merges a degraded local save into what the session already stored", async () => {
+    localStorage.setItem(
+      "dsh-arch:state:s1",
+      JSON.stringify({
+        viewId: "index",
+        viewports: { skin: { scale: 0.5, tx: 1, ty: 2 } },
+        viewHash: "hash-1",
+        offsets: {},
+        updatedAt: "2026-11-01T00:00:00.000Z",
+      }),
+    );
+    const { fetch } = recorder({
+      "/arch/api/views": () => jsonResponse(twoViewsResponse()),
+      "GET /arch/api/state": () => jsonResponse({ state: null, degraded: true }),
+    });
+    const mounted = capturingMount();
+    const host = mountHost();
+    const dispose = panel(host, fetch, mounted.mountView);
+    await until(() => host.querySelectorAll("[data-arch-body] g[data-id]").length === 10);
+
+    mounted.handle()?.zoomBy(1.5, { x: 0, y: 0 });
+    await sleep(60);
+    const saved = JSON.parse(localStorage.getItem("dsh-arch:state:s1") ?? "{}") as {
+      viewports: Record<string, { scale: number }>;
+    };
+    // The other panel's skin framing survives, this panel's edit lands.
+    expect(saved.viewports.skin?.scale).toBe(0.5);
+    expect(saved.viewports.index?.scale).toBe(1.125);
+    dispose();
   });
 });

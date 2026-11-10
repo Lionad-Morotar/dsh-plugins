@@ -193,3 +193,50 @@ describe("createViewState", () => {
     expect(state.serialize("h").offsets).toEqual({});
   });
 });
+
+describe("createViewState change tracking", () => {
+  it("publishes only the slices the reader touched", () => {
+    const state = createViewState();
+    state.setView("index");
+    expect(state.changes()).toEqual({ viewports: [], offsetViews: [], selection: false });
+
+    state.setViewport({ scale: 0.5, tx: 1, ty: 2 });
+    state.queueOffset("skin", "node", { dx: 1, dy: 2, baseX: 3, baseY: 4 });
+    expect(state.changes()).toEqual({ viewports: ["index"], offsetViews: ["skin"], selection: false });
+
+    state.flush();
+    expect(state.changes()).toEqual({ viewports: [], offsetViews: [], selection: false });
+  });
+
+  it("does not treat a seeded mount viewport as an edit", () => {
+    const state = createViewState();
+    state.setView("index");
+    state.seedViewport("index", { scale: 0.75, tx: 0, ty: 0 });
+    expect(state.changes().viewports).toEqual([]);
+    expect(state.viewportFor("index")).toEqual({ scale: 0.75, tx: 0, ty: 0 });
+  });
+
+  it("tracks a reader selection separately from the mounted view", () => {
+    const state = createViewState();
+    state.setView("index");
+    state.noteSelection();
+    expect(state.changes().selection).toBe(true);
+    state.flush();
+    expect(state.changes().selection).toBe(false);
+  });
+
+  it("drops pending marks on restore", () => {
+    const state = createViewState();
+    state.setView("index");
+    state.setViewport({ scale: 0.5, tx: 1, ty: 2 });
+    state.noteSelection();
+    state.restore({
+      viewId: "index",
+      viewports: { index: { scale: 0.75, tx: 0, ty: 0 } },
+      viewHash: "h",
+      offsets: {},
+      updatedAt: "2026-11-09T00:00:00.000Z",
+    });
+    expect(state.changes()).toEqual({ viewports: [], offsetViews: [], selection: false });
+  });
+});

@@ -188,6 +188,38 @@ describe("mountArchChrome", () => {
     dispose();
   });
 
+  it("keeps each view's zoom level through tab switches", async () => {
+    const { fetch } = fakeFetch({
+      "/arch/api/views": () => jsonResponse(viewsResponse()),
+      "/arch/api/state": () => jsonResponse({ state: null, degraded: false }),
+    });
+    const mounted = capturingMount();
+    const { host } = mountHost();
+    const dispose = mountArchChrome(host, {
+      sessionId: "s1",
+      fetchImpl: fetch,
+      load: loadRealChunk,
+      mountView: mounted.mountView,
+    });
+    await until(() => host.querySelectorAll("[data-arch-body] g[data-id]").length === 10);
+
+    mounted.handle()?.zoomBy(1.5, { x: 120, y: 90 });
+    const indexFramed = viewportTransform(host);
+    host.querySelector<HTMLButtonElement>('button[data-view-id="skin"]')?.click();
+    await until(() => host.querySelectorAll("[data-arch-body] g[data-id]").length === 16);
+    mounted.handle()?.zoomBy(0.5, { x: 60, y: 40 });
+    const skinFramed = viewportTransform(host);
+
+    host.querySelector<HTMLButtonElement>('button[data-view-id="index"]')?.click();
+    await until(() => host.querySelectorAll("[data-arch-body] g[data-id]").length === 10);
+    expect(viewportTransform(host)).toBe(indexFramed);
+
+    host.querySelector<HTMLButtonElement>('button[data-view-id="skin"]')?.click();
+    await until(() => host.querySelectorAll("[data-arch-body] g[data-id]").length === 16);
+    expect(viewportTransform(host)).toBe(skinFramed);
+    dispose();
+  });
+
   it("walks the view tabs with arrow keys while the diagram holds focus, and ignores them elsewhere", async () => {
     const { fetch } = fakeFetch({
       "/arch/api/views": () => jsonResponse(viewsResponse()),

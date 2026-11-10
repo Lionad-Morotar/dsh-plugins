@@ -14,9 +14,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
+  EMPTY_ARCH_STATE_CHANGES,
   ROUTE_PREFIX,
   readArchViewport,
   readArchWorkspaceState,
+  type ArchStateChanges,
   type ArchWorkspaceState,
   type WireStateGetResponse,
   type WireStatePutResponse,
@@ -44,8 +46,14 @@ export interface ArchRouteDeps {
    * `undefined` when persistence is degraded (client keeps state locally).
    */
   loadState(workspace: string): Promise<ArchWorkspaceState | null | undefined>;
-  /** Persist one state; false means degraded (client keeps it locally). */
-  saveState(workspace: string, state: ArchWorkspaceState): Promise<boolean>;
+  /**
+   * Persist one state; false means degraded (client keeps it locally).
+   *
+   * `changes` names the slices the writer touched and must be merged into what
+   * is stored; undefined means the writer posted the whole state (an older
+   * client without change tracking) and it may replace the record.
+   */
+  saveState(workspace: string, state: ArchWorkspaceState, changes: ArchStateChanges | undefined): Promise<boolean>;
 }
 
 /** Cap for one request body; states are small by construction. */
@@ -77,6 +85,26 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   }
   if (chunks.length === 0) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+}
+
+/**
+ * Read the touched-slice list of one write-back body.
+ *
+ * A malformed list degrades to "nothing touched" instead of rejecting the
+ * request: an empty merge is a harmless no-op, while a 400 would make the
+ * writer retry forever.
+ */
+function coerceChanges(input: unknown): ArchStateChanges | undefined {
+  if (input === undefined) return undefined;
+  if (typeof input !== "object" || input === null) return EMPTY_ARCH_STATE_CHANGES;
+  const candidate = input as Record<string, unknown>;
+  const ids = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item !== "") : [];
+  return {
+    viewports: ids(candidate.viewports),
+    offsetViews: ids(candidate.offsetViews),
+    selection: candidate.selection === true,
+  };
 }
 
 /**
@@ -189,7 +217,8 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, deps: ArchRou
       sendJson(res, 400, { error: "malformed arch state" });
       return;
     }
-    const ok = await deps.saveState(workspace, state);
+    const changes = coerceChanges((body as Record<string, unknown>).changes);
+    const ok = await deps.saveState(workspace, state, changes);
     const response: WireStatePutResponse = { ok, degraded: !ok };
     sendJson(res, 200, response);
     return;

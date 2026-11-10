@@ -117,6 +117,14 @@ describe("mountArchDiagram", () => {
     expect(state.viewId).toBe("skin");
   });
 
+  it("does not report the seeded mount viewport as a reader edit", async () => {
+    const state = createViewState();
+    await mountArchDiagram(mountHost(), indexView(), state, loadRealChunk);
+    // The mount recorded the default for this panel's own memory, but nothing
+    // the reader changed is waiting to be published.
+    expect(state.changes()).toEqual({ viewports: [], offsetViews: [], selection: false });
+  });
+
   it("falls back to the readable default for a view that was never framed", async () => {
     const state = createViewState();
 

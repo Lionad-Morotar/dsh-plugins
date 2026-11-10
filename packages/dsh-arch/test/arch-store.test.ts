@@ -148,6 +148,49 @@ describe("openArchStore", () => {
     expect(() => valueSchema.parse({ viewId: "index", viewports: {}, offsets: null, viewHash: "", updatedAt: "" })).toThrow();
   });
 
+  it("merges touched slices into a stored record instead of replacing it", async () => {
+    const store = await openArchStore(memoryStorageDomain());
+    await store?.saveWorkspace("/w/merge", state);
+    const incoming: ArchWorkspaceState = {
+      viewId: "skin",
+      viewports: { skin: { scale: 0.5, tx: 5, ty: 6 } },
+      viewHash: "h2",
+      offsets: { skin: { title: { dx: 7, dy: 0, baseX: 30, baseY: 40 } } },
+      updatedAt: "2026-11-10T00:00:00.000Z",
+    };
+    await store?.saveWorkspace("/w/merge", incoming, {
+      viewports: ["skin"],
+      offsetViews: ["skin"],
+      selection: true,
+    });
+    const merged = await store?.loadWorkspace("/w/merge");
+    // The incoming snapshot only carried its own touched view; the stored
+    // index framing and corrections must survive untouched.
+    expect(merged?.viewports.index).toEqual(state.viewports.index);
+    expect(merged?.viewports.skin).toEqual(incoming.viewports.skin);
+    expect(merged?.offsets.index).toEqual(state.offsets.index);
+    expect(merged?.offsets.skin).toEqual(incoming.offsets.skin);
+    expect(merged?.viewId).toBe("skin");
+    await store?.close();
+  });
+
+  it("replaces the record when the writer posts a full state", async () => {
+    const store = await openArchStore(memoryStorageDomain());
+    await store?.saveWorkspace("/w/full", state);
+    const incoming: ArchWorkspaceState = {
+      viewId: "index",
+      viewports: { index: { scale: 0.2, tx: 0, ty: 0 } },
+      viewHash: "h2",
+      offsets: {},
+      updatedAt: "2026-11-10T00:00:00.000Z",
+    };
+    await store?.saveWorkspace("/w/full", incoming);
+    const loaded = await store?.loadWorkspace("/w/full");
+    expect(loaded?.viewports).toEqual(incoming.viewports);
+    expect(loaded?.offsets).toEqual({});
+    await store?.close();
+  });
+
   it("returns null for an unknown workspace instead of throwing", async () => {
     const store = await openArchStore(memoryStorageDomain());
     expect(await store?.loadWorkspace("/w/never-seen")).toBeNull();

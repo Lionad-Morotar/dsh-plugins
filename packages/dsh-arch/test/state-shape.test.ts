@@ -6,7 +6,12 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { readArchViewport, readArchWorkspaceState } from "../src/shared.ts";
+import {
+  mergeArchWorkspaceState,
+  readArchViewport,
+  readArchWorkspaceState,
+  type ArchWorkspaceState,
+} from "../src/shared.ts";
 
 describe("readArchViewport", () => {
   it("reads a finite scale/tx/ty triple", () => {
@@ -106,5 +111,66 @@ describe("readArchWorkspaceState", () => {
     });
     expect(state?.viewHash).toBe("");
     expect(typeof state?.updatedAt).toBe("string");
+  });
+});
+
+describe("mergeArchWorkspaceState", () => {
+  const stored: ArchWorkspaceState = {
+    viewId: "index",
+    viewports: {
+      index: { scale: 0.6, tx: 1, ty: 2 },
+      skin: { scale: 0.4, tx: 3, ty: 4 },
+    },
+    viewHash: "h1",
+    offsets: {
+      index: { user: { dx: 1, dy: 0, baseX: 10, baseY: 20 } },
+      skin: { title: { dx: 2, dy: 0, baseX: 30, baseY: 40 } },
+    },
+    updatedAt: "2026-11-09T00:00:00.000Z",
+  };
+  const incoming: ArchWorkspaceState = {
+    viewId: "skin",
+    viewports: {
+      index: { scale: 0.9, tx: 9, ty: 8 },
+      skin: { scale: 0.5, tx: 5, ty: 6 },
+    },
+    viewHash: "h2",
+    offsets: {
+      index: { user: { dx: 99, dy: 0, baseX: 10, baseY: 20 } },
+      skin: { title: { dx: 7, dy: 0, baseX: 30, baseY: 40 } },
+    },
+    updatedAt: "2026-11-10T00:00:00.000Z",
+  };
+
+  it("replaces only the slices the writer touched and keeps the rest stored", () => {
+    const merged = mergeArchWorkspaceState(stored, incoming, {
+      viewports: ["skin"],
+      offsetViews: ["skin"],
+      selection: false,
+    });
+    // The stale copy of `index` in the incoming snapshot must not roll back
+    // what the stored record already holds.
+    expect(merged.viewports.index).toEqual(stored.viewports.index);
+    expect(merged.viewports.skin).toEqual(incoming.viewports.skin);
+    expect(merged.offsets.index).toEqual(stored.offsets.index);
+    expect(merged.offsets.skin).toEqual(incoming.offsets.skin);
+    expect(merged.viewId).toBe(stored.viewId);
+    expect(merged.viewHash).toBe(incoming.viewHash);
+    expect(merged.updatedAt).toBe(incoming.updatedAt);
+  });
+
+  it("follows the reader's selection when the writer changed it", () => {
+    const merged = mergeArchWorkspaceState(stored, incoming, { viewports: [], offsetViews: [], selection: true });
+    expect(merged.viewId).toBe("skin");
+  });
+
+  it("ignores touched ids the incoming state does not carry", () => {
+    const merged = mergeArchWorkspaceState(stored, incoming, {
+      viewports: ["ghost"],
+      offsetViews: ["ghost"],
+      selection: false,
+    });
+    expect(merged.viewports).toEqual(stored.viewports);
+    expect(merged.offsets).toEqual(stored.offsets);
   });
 });

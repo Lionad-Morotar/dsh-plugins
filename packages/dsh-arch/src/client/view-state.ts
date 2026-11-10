@@ -16,7 +16,7 @@
  * recorded against; past half a node of drift the correction belongs to a
  * different layout generation and is dropped on the floor.
  */
-import type { ArchNodeOffset, ArchViewport, ArchWorkspaceState } from "../shared.ts";
+import type { ArchNodeOffset, ArchStateChanges, ArchViewport, ArchWorkspaceState } from "../shared.ts";
 
 /** Readable default zoom for a dock-height panel; see the file header. */
 export const DEFAULT_VIEW_SCALE = 0.75;
@@ -109,13 +109,26 @@ export interface ViewStateHandle {
   /** Viewport saved for one view, selected or not; null when it has none. */
   viewportFor(viewId: string): ArchViewport | null;
   /**
-   * Store one view's viewport by id.
+   * Store one view's viewport by id, as a reader edit.
    *
    * The renderer reports viewport changes against the view it was mounted for,
    * not against whatever tab is selected by the time the callback runs, so the
    * tab-switch path writes through the id it mounted.
    */
   setViewportFor(viewId: string, viewport: ArchViewport): void;
+  /**
+   * Store a viewport without marking it touched.
+   *
+   * Mounting writes the viewport it is about to render so this panel's own
+   * memory matches the screen, but that value is a default or a restored one,
+   * not a reader edit. Publishing it would roll back another panel's live zoom
+   * on the same view.
+   */
+  seedViewport(viewId: string, viewport: ArchViewport): void;
+  /** Mark the selected view as a reader choice, which is published. */
+  noteSelection(): void;
+  /** Slices changed since the last successful write-back. */
+  changes(): ArchStateChanges;
   /** Committed plus queued offsets for one view, queued wins. */
   offsetsFor(viewId: string): Readonly<Record<string, ArchNodeOffset>>;
   queueOffset(viewId: string, nodeId: string, offset: ArchNodeOffset): void;
@@ -135,6 +148,9 @@ export function createViewState(): ViewStateHandle {
   let committed: Record<string, Record<string, ArchNodeOffset>> = {};
   const queued = new Map<string, ArchNodeOffset>();
   let queuedView: string | null = null;
+  const touchedViewports = new Set<string>();
+  const touchedOffsetViews = new Set<string>();
+  let selectionTouched = false;
 
   const mergeQueued = (): Record<string, Record<string, ArchNodeOffset>> => {
     if (queued.size === 0 || queuedView === null) return committed;
@@ -158,13 +174,27 @@ export function createViewState(): ViewStateHandle {
     },
     setViewport(next: ArchViewport): void {
       if (viewId === null) return;
-      viewports[viewId] = next;
+      handle.setViewportFor(viewId, next);
     },
     viewportFor(id: string): ArchViewport | null {
       return viewports[id] ?? null;
     },
     setViewportFor(id: string, next: ArchViewport): void {
       viewports[id] = next;
+      touchedViewports.add(id);
+    },
+    seedViewport(id: string, next: ArchViewport): void {
+      viewports[id] = next;
+    },
+    noteSelection(): void {
+      selectionTouched = true;
+    },
+    changes(): ArchStateChanges {
+      return {
+        viewports: [...touchedViewports],
+        offsetViews: [...touchedOffsetViews],
+        selection: selectionTouched,
+      };
     },
     offsetsFor(id: string): Readonly<Record<string, ArchNodeOffset>> {
       const source = id === queuedView ? mergeQueued()[id] : committed[id];
@@ -180,10 +210,14 @@ export function createViewState(): ViewStateHandle {
       }
       queuedView = forView;
       queued.set(nodeId, offset);
+      touchedOffsetViews.add(forView);
     },
     flush(): void {
       queued.clear();
       queuedView = null;
+      touchedViewports.clear();
+      touchedOffsetViews.clear();
+      selectionTouched = false;
     },
     serialize(hash: string): ArchWorkspaceState {
       const offsets = mergeQueued();
@@ -202,6 +236,9 @@ export function createViewState(): ViewStateHandle {
       for (const [id, offsets] of Object.entries(state.offsets)) committed[id] = { ...offsets };
       queued.clear();
       queuedView = null;
+      touchedViewports.clear();
+      touchedOffsetViews.clear();
+      selectionTouched = false;
     },
   };
   return handle;

@@ -8,7 +8,12 @@
  */
 import { z } from "zod";
 
-import { readArchWorkspaceState, type ArchWorkspaceState } from "../shared.ts";
+import {
+  mergeArchWorkspaceState,
+  readArchWorkspaceState,
+  type ArchStateChanges,
+  type ArchWorkspaceState,
+} from "../shared.ts";
 
 /** Domain name; snake_case because the host's UNIT_NAME_RE rejects dashes. */
 export const ARCH_DOMAIN_NAME = "dsh_arch";
@@ -122,7 +127,15 @@ export interface StorageDomainFace {
 
 export interface ArchStore {
   loadWorkspace(key: string): Promise<ArchWorkspaceState | null>;
-  saveWorkspace(key: string, state: ArchWorkspaceState): Promise<void>;
+  /**
+   * Persist one workspace state.
+   *
+   * With `changes` the touched slices are merged into the stored record, so
+   * two panels writing at once (the tab and the dock panel, or two sessions on
+   * one workspace) do not roll each other's framing back. Without it the state
+   * replaces the record, which is what an older client expects.
+   */
+  saveWorkspace(key: string, state: ArchWorkspaceState, changes?: ArchStateChanges): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -144,11 +157,17 @@ export async function openArchStore(storageDomain?: StorageDomainFace): Promise<
       // legacy record read before any write has migrated it.
       return stored === undefined || stored === null ? null : readArchWorkspaceState(stored);
     },
-    async saveWorkspace(key, state) {
+    async saveWorkspace(key, state, changes) {
+      let next = state;
+      if (changes !== undefined) {
+        const stored = table.get(key);
+        const existing = stored === undefined || stored === null ? null : readArchWorkspaceState(stored);
+        if (existing !== null) next = mergeArchWorkspaceState(existing, state, changes);
+      }
       // Validate with the strict write schema before persisting: the table
       // does not validate on put, and a record the read schema rejects gets
       // quarantined (moved aside, treated as absent) on the next boot.
-      await table.put(key, writableStateSchema.parse(state));
+      await table.put(key, writableStateSchema.parse(next));
     },
     async close() {
       await domain.close();

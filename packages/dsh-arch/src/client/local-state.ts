@@ -8,7 +8,12 @@
  * must degrade to "nothing saved", never to a thrown error taking the panel
  * down with it.
  */
-import { readArchWorkspaceState, type ArchWorkspaceState } from "../shared.ts";
+import {
+  mergeArchWorkspaceState,
+  readArchWorkspaceState,
+  type ArchStateChanges,
+  type ArchWorkspaceState,
+} from "../shared.ts";
 
 const keyOf = (sessionId: string): string => `dsh-arch:state:${sessionId}`;
 
@@ -29,10 +34,20 @@ export function loadLocalState(sessionId: string): ArchWorkspaceState | null {
   }
 }
 
-/** Persist the state locally; an unusable storage drops the save silently. */
-export function saveLocalState(sessionId: string, state: ArchWorkspaceState): void {
+/**
+ * Persist the state locally; an unusable storage drops the save silently.
+ *
+ * The degraded path runs the same slice merge as the host store: two panels on
+ * one session (the tab and the dock panel) both write this key, and a whole
+ * state write would let the last one roll the other's framing back.
+ */
+export function saveLocalState(sessionId: string, state: ArchWorkspaceState, changes?: ArchStateChanges): void {
   try {
-    localStorage.setItem(keyOf(sessionId), JSON.stringify(state));
+    const raw = localStorage.getItem(keyOf(sessionId));
+    const existing = raw === null ? null : readArchWorkspaceState(JSON.parse(raw));
+    const next =
+      existing === null || changes === undefined ? state : mergeArchWorkspaceState(existing, state, changes);
+    localStorage.setItem(keyOf(sessionId), JSON.stringify(next));
   } catch {
     // Quota or sandbox: the host store remains the source of truth when it
     // exists, and a lost local save only costs the degraded-mode restore.

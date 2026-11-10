@@ -64,6 +64,30 @@ function readArchWorkspaceState(raw) {
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : (/* @__PURE__ */ new Date()).toISOString()
   };
 }
+var EMPTY_ARCH_STATE_CHANGES = {
+  viewports: [],
+  offsetViews: [],
+  selection: false
+};
+function mergeArchWorkspaceState(stored, incoming, changes) {
+  const viewports = { ...stored.viewports };
+  for (const id of changes.viewports) {
+    const viewport = incoming.viewports[id];
+    if (viewport !== void 0) viewports[id] = viewport;
+  }
+  const offsets = { ...stored.offsets };
+  for (const id of changes.offsetViews) {
+    const records = incoming.offsets[id];
+    if (records !== void 0) offsets[id] = { ...records };
+  }
+  return {
+    viewId: changes.selection ? incoming.viewId : stored.viewId,
+    viewports,
+    viewHash: incoming.viewHash,
+    offsets,
+    updatedAt: incoming.updatedAt
+  };
+}
 
 // src/host/arch-store.ts
 var ARCH_DOMAIN_NAME = "dsh_arch";
@@ -117,8 +141,14 @@ async function openArchStore(storageDomain) {
       const stored = table.get(key);
       return stored === void 0 || stored === null ? null : readArchWorkspaceState(stored);
     },
-    async saveWorkspace(key, state) {
-      await table.put(key, writableStateSchema.parse(state));
+    async saveWorkspace(key, state, changes) {
+      let next = state;
+      if (changes !== void 0) {
+        const stored = table.get(key);
+        const existing = stored === void 0 || stored === null ? null : readArchWorkspaceState(stored);
+        if (existing !== null) next = mergeArchWorkspaceState(existing, state, changes);
+      }
+      await table.put(key, writableStateSchema.parse(next));
     },
     async close() {
       await domain.close();
@@ -396,6 +426,17 @@ async function readJsonBody(req) {
   if (chunks.length === 0) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
+function coerceChanges(input) {
+  if (input === void 0) return void 0;
+  if (typeof input !== "object" || input === null) return EMPTY_ARCH_STATE_CHANGES;
+  const candidate = input;
+  const ids = (value) => Array.isArray(value) ? value.filter((item) => typeof item === "string" && item !== "") : [];
+  return {
+    viewports: ids(candidate.viewports),
+    offsetViews: ids(candidate.offsetViews),
+    selection: candidate.selection === true
+  };
+}
 function coerceState(input) {
   if (typeof input !== "object" || input === null) return void 0;
   const candidate = input;
@@ -483,7 +524,8 @@ async function dispatch(req, res, deps) {
       sendJson(res, 400, { error: "malformed arch state" });
       return;
     }
-    const ok = await deps.saveState(workspace, state);
+    const changes = coerceChanges(body.changes);
+    const ok = await deps.saveState(workspace, state, changes);
     const response = { ok, degraded: !ok };
     sendJson(res, 200, response);
     return;
@@ -597,10 +639,10 @@ function mountRoutes(host, webServer) {
     const store = await storePromise;
     return store === null ? void 0 : await store.loadWorkspace(workspace);
   }
-  async function saveState(workspace, state) {
+  async function saveState(workspace, state, changes) {
     const store = await storePromise;
     if (store === null) return false;
-    await store.saveWorkspace(workspace, state);
+    await store.saveWorkspace(workspace, state, changes);
     return true;
   }
   const unregister = registerArchRoutes(webServer, {

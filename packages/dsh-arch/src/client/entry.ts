@@ -394,9 +394,10 @@ export async function mountArchDiagram(
   });
 
   // The initial viewport reaches the state without a renderer notification
-  // (there is no change to report), so persist it here; a later pan reports
-  // through the bound callback above.
-  state.setViewportFor(view.id, diagram.viewport());
+  // (there is no change to report), so record it here as a seed: it is what
+  // this panel renders, not a reader edit, and publishing it would overwrite a
+  // live zoom another panel made on the same view.
+  state.seedViewport(view.id, diagram.viewport());
   return diagram;
 }
 

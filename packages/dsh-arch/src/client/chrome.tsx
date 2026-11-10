@@ -447,8 +447,12 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
     dirty = false;
     const session = options.sessionId;
     const state = viewState.serialize(currentHash);
+    // Publish only what this panel changed: the rest of `state` is this
+    // panel's snapshot, and posting it whole would roll back the framing and
+    // node corrections of another panel on the same workspace.
+    const changes = viewState.changes();
     if (degradedMode) {
-      saveLocalState(session, state);
+      saveLocalState(session, state, changes);
       viewState.flush();
       return;
     }
@@ -456,7 +460,7 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
       const response = await fetchImpl(`${ROUTE_PREFIX}/state`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId: session, ...state }),
+        body: JSON.stringify({ sessionId: session, ...state, changes }),
       });
       if (!response.ok) throw new Error(`state ${String(response.status)}`);
       const payload = (await response.json()) as WireStatePutResponse;
@@ -625,6 +629,9 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
   const select = (id: string): void => {
     const target = views?.find(candidate => candidate.id === id);
     if (target === undefined) return;
+    // A view switch is a reader choice worth persisting; the mount that
+    // follows records the view in memory, and the write-back publishes it.
+    if (viewState.viewId !== id) viewState.noteSelection();
     if (diagramHost?.isConnected !== true) {
       // A failed mount swapped the body for the error note; a tab pick after
       // that must rebuild the body instead of mounting into a detached one.

@@ -10,7 +10,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { describe, expect, it } from "vitest";
 
 import { registerArchRoutes, type ArchRouteDeps, type WebServerFace } from "../src/host/routes.ts";
-import { ROUTE_PREFIX, type ArchWorkspaceState } from "../src/shared.ts";
+import { ROUTE_PREFIX, type ArchStateChanges, type ArchWorkspaceState } from "../src/shared.ts";
 
 type RouteHandler = Parameters<WebServerFace["register"]>[0]["handler"];
 
@@ -153,6 +153,86 @@ describe("registerArchRoutes", () => {
     expect(saved[0]?.viewId).toBe("skin");
     expect(saved[0]?.viewports).toEqual({ skin: { scale: 0.6, tx: -40, ty: 12 } });
     expect(saved[0]?.offsets.skin?.title).toEqual({ dx: 4, dy: 0, baseX: 0, baseY: 8 });
+  });
+
+  it("forwards the touched slices to the store", async () => {
+    const captured: Array<{ changes: ArchStateChanges | undefined }> = [];
+    const { webServer, handler: changeHandler } = fakeWebServer();
+    registerArchRoutes(webServer, {
+      ...deps,
+      loadState: async () => null,
+      saveState: async (_workspace, _state, changes) => {
+        captured.push({ changes });
+        return true;
+      },
+    });
+    const put = await request(
+      changeHandler(),
+      "POST",
+      "/arch/api/state",
+      JSON.stringify({
+        sessionId: "known",
+        viewId: "skin",
+        viewports: { skin: { scale: 0.5, tx: 5, ty: 6 } },
+        offsets: {},
+        changes: { viewports: ["skin"], offsetViews: ["skin"], selection: true },
+      }),
+    );
+    expect(put.status).toBe(200);
+    expect(captured[0]?.changes).toEqual({ viewports: ["skin"], offsetViews: ["skin"], selection: true });
+  });
+
+  it("treats a body without changes as a full-state write", async () => {
+    const captured: Array<{ changes: ArchStateChanges | undefined }> = [];
+    const { webServer, handler: fullHandler } = fakeWebServer();
+    registerArchRoutes(webServer, {
+      ...deps,
+      loadState: async () => null,
+      saveState: async (_workspace, _state, changes) => {
+        captured.push({ changes });
+        return true;
+      },
+    });
+    const put = await request(
+      fullHandler(),
+      "POST",
+      "/arch/api/state",
+      JSON.stringify({
+        sessionId: "known",
+        viewId: "index",
+        viewports: { index: { scale: 0.8, tx: 0, ty: 0 } },
+        offsets: {},
+      }),
+    );
+    expect(put.status).toBe(200);
+    expect(captured[0]?.changes).toBeUndefined();
+  });
+
+  it("drops a malformed change list instead of failing the save", async () => {
+    const captured: Array<{ changes: ArchStateChanges | undefined }> = [];
+    const { webServer, handler: badHandler } = fakeWebServer();
+    registerArchRoutes(webServer, {
+      ...deps,
+      loadState: async () => null,
+      saveState: async (_workspace, _state, changes) => {
+        captured.push({ changes });
+        return true;
+      },
+    });
+    const put = await request(
+      badHandler(),
+      "POST",
+      "/arch/api/state",
+      JSON.stringify({
+        sessionId: "known",
+        viewId: "index",
+        viewports: { index: { scale: 0.8, tx: 0, ty: 0 } },
+        offsets: {},
+        changes: { viewports: "nope", offsetViews: [1, "index"], selection: "yes" },
+      }),
+    );
+    expect(put.status).toBe(200);
+    expect(captured[0]?.changes).toEqual({ viewports: [], offsetViews: ["index"], selection: false });
   });
 
   it("rejects an array viewport container with 400", async () => {

@@ -217,6 +217,68 @@ export function readArchWorkspaceState(raw: unknown): ArchWorkspaceState | null 
 }
 
 /**
+ * Which slices of one panel's state the reader changed since the last
+ * successful write-back.
+ *
+ * A panel serializes the whole state it knows, but concurrent panels (another
+ * session on the same workspace, or the dock panel beside the tab) each hold a
+ * snapshot taken at their own mount. Writing that whole state back made the
+ * last writer win and silently rolled the other panel's framing back, so only
+ * the touched slices are published and the host merges them into what is
+ * already stored.
+ */
+export interface ArchStateChanges {
+  /** View ids whose viewport this panel moved. */
+  readonly viewports: readonly string[];
+  /** View ids whose node corrections this panel moved. */
+  readonly offsetViews: readonly string[];
+  /** Whether the reader picked another view; a mount-time default is not a pick. */
+  readonly selection: boolean;
+}
+
+export const EMPTY_ARCH_STATE_CHANGES: ArchStateChanges = {
+  viewports: [],
+  offsetViews: [],
+  selection: false,
+};
+
+/**
+ * Merge the slices one panel touched into the state already stored.
+ *
+ * Only touched viewports and touched offset groups are replaced; every other
+ * entry survives from `stored`. The selection follows the reader: when another
+ * panel switched views it wins, when this one did not its stored selection
+ * stays (so re-mounting a panel does not move the reader to another tab).
+ *
+ * @param stored - the normalized state currently persisted.
+ * @param incoming - the writer's full view of the state (only touched slices count).
+ * @param changes - the slices the writer actually changed.
+ */
+export function mergeArchWorkspaceState(
+  stored: ArchWorkspaceState,
+  incoming: ArchWorkspaceState,
+  changes: ArchStateChanges,
+): ArchWorkspaceState {
+  const viewports = { ...stored.viewports };
+  for (const id of changes.viewports) {
+    const viewport = incoming.viewports[id];
+    if (viewport !== undefined) viewports[id] = viewport;
+  }
+  const offsets = { ...stored.offsets };
+  for (const id of changes.offsetViews) {
+    const records = incoming.offsets[id];
+    if (records !== undefined) offsets[id] = { ...records };
+  }
+  return {
+    viewId: changes.selection ? incoming.viewId : stored.viewId,
+    viewports,
+    viewHash: incoming.viewHash,
+    offsets,
+    updatedAt: incoming.updatedAt,
+  };
+}
+
+/**
  * State read: `state` is null when nothing is saved and `degraded` is true when
  * host persistence is unavailable — two different "nothing to restore" the
  * client half must not conflate (degraded means: keep saving to localStorage).

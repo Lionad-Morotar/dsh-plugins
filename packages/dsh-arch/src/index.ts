@@ -40,6 +40,7 @@ import {
 } from "./host/workspace.ts";
 import {
   PACKAGE_NAME,
+  type ArchStateChanges,
   type ArchWorkspaceState,
   type WireModelResponse,
   type WireViewsResponse,
@@ -208,10 +209,14 @@ function mountRoutes(host: HostContext, webServer: WebServerFace): void {
     return store === null ? undefined : await store.loadWorkspace(workspace);
   }
 
-  async function saveState(workspace: string, state: ArchWorkspaceState): Promise<boolean> {
+  async function saveState(
+    workspace: string,
+    state: ArchWorkspaceState,
+    changes: ArchStateChanges | undefined,
+  ): Promise<boolean> {
     const store = await storePromise;
     if (store === null) return false;
-    await store.saveWorkspace(workspace, state);
+    await store.saveWorkspace(workspace, state, changes);
     return true;
   }
 
