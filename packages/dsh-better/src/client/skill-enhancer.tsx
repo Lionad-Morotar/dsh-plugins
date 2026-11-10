@@ -31,6 +31,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 import { matchLeadingSkillToken, shouldShowHint } from "./skill-hint.ts";
 import {
   catalogCompletionText,
+  catalogKeyAction,
   filterCatalog,
   highlightRanges,
   matchCatalogDraft,
@@ -1101,11 +1102,13 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
         }
         if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "Enter") return;
         // A composing Enter is the input method confirming a candidate, not the
-        // user choosing a row.
-        if (event.isComposing) return;
+        // user choosing a row. A key the panel has no row for is the host's: an
+        // unmatched name is an ordinary message, and claiming Enter would lose it.
+        const action = catalogKeyAction(event.key, catalogEntries, catalogMatch?.query ?? "", event.isComposing);
+        if (action === "pass") return;
         event.preventDefault();
         event.stopPropagation();
-        if (event.key === "Enter") {
+        if (action === "insert") {
           const entries = filterCatalog(catalogEntries, catalogMatch?.query ?? "");
           const index = catalogSelection(catalogIndex, entries.length, "down");
           const entry = index === undefined ? undefined : entries[index];

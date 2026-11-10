@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   catalogCompletionText,
+  catalogKeyAction,
   filterCatalog,
   highlightRanges,
   matchCatalogDraft,
@@ -230,5 +231,46 @@ describe("catalogCompletionText", () => {
 
   it("does not double a space the slug already ends with", () => {
     expect(catalogCompletionText("dev ")).toBe("dev ");
+  });
+});
+
+describe("catalogKeyAction", () => {
+  /** A catalogue with one entry that matches `dev`. */
+  const ENTRIES: readonly WorkflowEntry[] = [{ slug: "dev", summary: "把单个任务描述按拆解交付" }];
+
+  it("claims Enter when a row matches", () => {
+    expect(catalogKeyAction("Enter", ENTRIES, "dev", false)).toBe("insert");
+  });
+
+  it("claims the arrows when a row matches", () => {
+    expect(catalogKeyAction("ArrowDown", ENTRIES, "dev", false)).toBe("move");
+    expect(catalogKeyAction("ArrowUp", ENTRIES, "dev", false)).toBe("move");
+  });
+
+  it("leaves Enter to the host when nothing matches", () => {
+    // A name that is not in the catalogue must still submit: a panel with no row
+    // to choose has nothing to claim the key for, and swallowing it loses the
+    // user's message.
+    expect(catalogKeyAction("Enter", ENTRIES, "zzz", false)).toBe("pass");
+  });
+
+  it("leaves the arrows to the host when nothing matches", () => {
+    expect(catalogKeyAction("ArrowDown", ENTRIES, "zzz", false)).toBe("pass");
+    expect(catalogKeyAction("ArrowUp", ENTRIES, "zzz", false)).toBe("pass");
+  });
+
+  it("leaves Enter to the input method while composing", () => {
+    // A composing Enter confirms the candidate the IME is showing.
+    expect(catalogKeyAction("Enter", ENTRIES, "dev", true)).toBe("pass");
+  });
+
+  it("leaves every other key alone", () => {
+    expect(catalogKeyAction("Tab", ENTRIES, "dev", false)).toBe("pass");
+    expect(catalogKeyAction("a", ENTRIES, "dev", false)).toBe("pass");
+    expect(catalogKeyAction("Escape", ENTRIES, "dev", false)).toBe("pass");
+  });
+
+  it("leaves Enter to the host for an empty catalogue", () => {
+    expect(catalogKeyAction("Enter", [], "", false)).toBe("pass");
   });
 });

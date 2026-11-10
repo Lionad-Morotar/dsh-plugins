@@ -195,6 +195,35 @@ export function highlightRanges(text: string, query: string): HighlightRange[] {
 }
 
 /**
+ * What the catalogue panel does with a key.
+ *
+ * `pass` means the host keeps the key. A panel with no matching row has nothing
+ * to choose, so it must not claim Enter: a name that is not in the catalogue is
+ * an ordinary message, and swallowing the key would lose it. The same holds for
+ * the arrows, which the composer uses to move its caret.
+ *
+ * A composing Enter belongs to the input method, which is using it to confirm the
+ * candidate it is showing.
+ *
+ * @param key - the key that was pressed.
+ * @param entries - the catalogue, unfiltered.
+ * @param query - the value being typed.
+ * @param composing - whether an input method is composing.
+ * @returns `insert` for Enter with a row to take, `move` for an arrow with a row
+ *   to move to, `pass` for everything the host should keep.
+ */
+export function catalogKeyAction(
+  key: string,
+  entries: readonly WorkflowEntry[],
+  query: string,
+  composing: boolean,
+): "insert" | "move" | "pass" {
+  if (key !== "Enter" && key !== "ArrowUp" && key !== "ArrowDown") return "pass";
+  if (composing) return "pass";
+  if (filterCatalog(entries, query).length === 0) return "pass";
+  return key === "Enter" ? "insert" : "move";
+}
+/**
  * The text a chosen workflow inserts.
  *
  * The trailing space is what makes the next token start fresh: a slug inserted
