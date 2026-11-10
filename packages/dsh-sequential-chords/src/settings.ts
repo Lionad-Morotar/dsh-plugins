@@ -2,11 +2,11 @@
  * 设置页背后的 store：录入两段按键、校验、增删，并写回存储。
  *
  * 组件只读这里的状态并调这里的方法，所以这一层能脱离渲染器单测。录入的口径
- * 与判定层一致：两段都必须带一个非 shift 的修饰键，裸键与只有 shift 的键都
- * 拒绝，因为那样的第二段会把普通输入吃掉。
+ * 与判定层一致：普通键必须带 Ctrl、Alt 或 Meta；Insert、Help 这类命令键可以
+ * 单独当第一段，后面再接一个裸字母。
  */
 
-import { lintSequences, type Chord, type Modifier } from "./engine.ts";
+import { acceptsChord, lintSequences, type Chord, type Modifier } from "./engine.ts";
 import {
   readSequences,
   writeSequences,
@@ -43,11 +43,6 @@ const MODIFIER_LABEL: Record<Modifier, string> = {
   shift: "Shift",
   meta: "Meta",
 };
-
-/** 一段按键要能当快捷键用，必须带一个非 shift 的修饰键。 */
-function hasTriggerModifier(chord: Chord): boolean {
-  return chord.modifiers.some((modifier) => modifier !== "shift");
-}
 
 /**
  * KeyboardEvent.code 到给人看的键名。`KeyK` 读作 K，`Digit1` 读作 1，其余
@@ -98,7 +93,7 @@ export function createSequenceStore(storage: StorageLike): SequenceStore {
     getDraft: () => draft,
 
     captureFirst(chord) {
-      if (!hasTriggerModifier(chord)) {
+      if (!acceptsChord(chord)) {
         return false;
       }
       draft = { ...draft, first: normalize(chord) };
@@ -106,7 +101,7 @@ export function createSequenceStore(storage: StorageLike): SequenceStore {
     },
 
     captureSecond(chord) {
-      if (!hasTriggerModifier(chord)) {
+      if (draft.first === undefined || !acceptsChord(chord, draft.first)) {
         return false;
       }
       draft = { ...draft, second: normalize(chord) };
@@ -133,7 +128,7 @@ export function createSequenceStore(storage: StorageLike): SequenceStore {
         insert,
       };
 
-      // 与已有序列一起过 lint：第一段重复或修饰键不合规都不写入。
+      // 与已有序列一起过 lint：两段都相同，或这一段不合规，都不写入。
       if (!lintSequences([...sequences, candidate]).ok) {
         return false;
       }

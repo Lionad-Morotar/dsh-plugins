@@ -19,14 +19,17 @@
 `repeat`（长按自动重复）不是新的按键，不触发也不刷新截止时刻。`composing`（输入法
 组合中）属于输入而非命令，有等待就清掉。
 
-## 第二段不带修饰键不会触发
+## 哪些键能当一段
 
-`lintSequences` 要求两段都带一个非 shift 的修饰键。第二击只有 `code` 相同、修饰键
-为空或只有 shift，判定结果是 `miss`，不是 `fire`。单独的 shift 只是大写字母，把它
-当触发条件会把普通输入吃掉。
+普通键（字母、数字）必须带 Ctrl、Alt 或 Meta。单独的 Shift 只是大写，不算。
+所以 `Ctrl+K` 然后一个不带修饰键的 `S`，结果是 `miss`，不是 `fire`。
 
-同一个 lint 还会拒绝第一段归一化后相同的两条序列（`reason: "prefix"`）：那种情况下
-第一击无法决定该等哪条第二段，判定层面就不可达。修饰键顺序不影响归一化结果。
+Insert、Help，以及 Home、End、方向键、PageUp、PageDown、F1 到 F24 这类不往输入框
+写字的键，可以不带修饰键当第一段。这种第一段的第二段可以是一个裸字母：
+`Insert` 然后 `R`，以及 `Insert` 然后 `Y`，是两条序列。第一击只进入等待，第二击
+再决定触发哪一条。
+
+两段完全相同才算重复（`reason: "prefix"`）。只是第一段相同不算。修饰键顺序不影响。
 
 ## 这个切片不覆盖原生桥
 
@@ -90,12 +93,13 @@ import { createState, lintSequences, step } from "dsh-sequential-chords";
 打开 设置 → 两段快捷键（`settings.section` 里 id 为 `sequential-chords`、order 70
 的那一节）。
 
-1. 点「录制第一段」，按下组合键，例如 `Ctrl+K`。只收带 Ctrl、Alt 或 Cmd 的单键，
-   裸键与单独的 Shift 都不认，因为那样的第二段会把普通输入吃掉。
-2. 点「录制第二段」，按下第二段，例如 `Ctrl+S`。同样要求带一个非 shift 的修饰键。
+1. 点「录制第一段」。普通键要带 Ctrl、Alt 或 Cmd，例如 `Ctrl+K`。Insert、Help
+   这类不打字的键可以单独按。裸字母和单独的 Shift 不认。
+2. 点「录制第二段」。第一段是普通组合键时，第二段也要带修饰键，例如 `Ctrl+S`。
+   第一段是 Insert 这类键时，第二段可以是一个裸字母，例如 `R`。
 3. 在文本框里填命中后要插入的文本，例如 `/save `。
-4. 点「添加」。两段都录好、文本非空、且与已有序列不冲突（第一段不能重复）才会
-   写入，否则按钮点了也不会留下任何东西。
+4. 点「添加」。两段都录好、文本非空、且不是一条已经存在的序列（两段都相同）才会
+   写入。第一段相同、第二段不同的可以并存，比如 Insert 然后 R，以及 Insert 然后 Y。
 
 列表里每条显示两段按键与要插入的文本，右侧「删除」按 id 移除。改动立刻写进
 `localStorage` 的 `dsh-sequential-chords.v1`，形状是 `{ version: 1, sequences }`，
@@ -105,7 +109,7 @@ import { createState, lintSequences, step } from "dsh-sequential-chords";
 
 插入的就是那条序列的 `insert` 原文，落在 `document.activeElement` 上：
 
-- `input` / `textarea`：追加到 `value` 末尾，再派一个 `input` 事件，让宿主的受控
+- `input` / `textarea`：插在光标处，有选区就替换选区，再派一个 `input` 事件，让宿主的受控
   组件看到这次改动。
 - `contenteditable`：走 `document.execCommand("insertText", false, text)`。富文本
   编辑器（Lexical 一类）只认这个原语，手写节点遍历做不到。

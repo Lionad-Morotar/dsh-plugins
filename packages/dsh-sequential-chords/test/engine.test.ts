@@ -185,6 +185,32 @@ describe("step", () => {
     expect(result.effect).toBe("miss");
   });
 
+  it("Insert 然后 R 与 Insert 然后 Y 各自触发", () => {
+    const insertR: Sequence = {
+      id: "insert-r",
+      first: chord("Insert", []),
+      second: chord("KeyR", []),
+    };
+    const insertY: Sequence = {
+      id: "insert-y",
+      first: chord("Insert", []),
+      second: chord("KeyY", []),
+    };
+    const sequences = [insertR, insertY];
+
+    const waiting = step(createState(), key("Insert"), sequences, 0);
+    expect(waiting.effect).toBe("await");
+
+    const firedR = step(waiting.state, key("KeyR"), sequences, 200);
+    expect(firedR.effect).toBe("fire");
+    expect(firedR.id).toBe("insert-r");
+
+    const again = step(createState(), key("Insert"), sequences, 0);
+    const firedY = step(again.state, key("KeyY"), sequences, 200);
+    expect(firedY.effect).toBe("fire");
+    expect(firedY.id).toBe("insert-y");
+  });
+
   it("一次 step 只完成一段，触发后状态清空", () => {
     const first = step(createState(), key("KeyK", ["control"]), [saveAll], 0);
     const fire = step(first.state, key("KeyS", ["control"]), [saveAll], 100);
@@ -200,29 +226,54 @@ describe("lintSequences", () => {
     expect(lintSequences([saveAll, closeAll])).toEqual({ ok: true });
   });
 
-  it("两条序列第一段归一化后相同报 prefix", () => {
-    const dup: Sequence = {
-      id: "dup",
+  it("第一段相同、第二段不同的两条序列可以共存", () => {
+    const other: Sequence = {
+      id: "other",
       first: chord("KeyK", ["control"]),
       second: chord("KeyJ", ["control"]),
     };
 
-    expect(lintSequences([saveAll, dup])).toEqual({ ok: false, reason: "prefix" });
+    expect(lintSequences([saveAll, other])).toEqual({ ok: true });
   });
 
-  it("第一段修饰键顺序不同也算相同前缀", () => {
-    const a: Sequence = {
-      id: "a",
+  it("两段都相同才报 prefix，修饰键顺序不同也算同一条", () => {
+    const again: Sequence = {
+      id: "again",
+      first: chord("KeyK", ["shift", "control"]),
+      second: chord("KeyS", ["control"]),
+    };
+    const first: Sequence = {
+      id: "first",
       first: chord("KeyK", ["control", "shift"]),
       second: chord("KeyS", ["control"]),
     };
-    const b: Sequence = {
-      id: "b",
-      first: chord("KeyK", ["shift", "control"]),
-      second: chord("KeyJ", ["control"]),
+
+    expect(lintSequences([first, again])).toEqual({ ok: false, reason: "prefix" });
+  });
+
+  it("Insert 后面可以接不同的裸字母", () => {
+    const insertR: Sequence = {
+      id: "insert-r",
+      first: chord("Insert", []),
+      second: chord("KeyR", []),
+    };
+    const insertY: Sequence = {
+      id: "insert-y",
+      first: chord("Insert", []),
+      second: chord("KeyY", []),
     };
 
-    expect(lintSequences([a, b])).toEqual({ ok: false, reason: "prefix" });
+    expect(lintSequences([insertR, insertY])).toEqual({ ok: true });
+  });
+
+  it("普通键当第一段、裸字母当第二段，仍然拒绝", () => {
+    const bad: Sequence = {
+      id: "bad",
+      first: chord("KeyK", ["control"]),
+      second: chord("KeyR", []),
+    };
+
+    expect(lintSequences([bad])).toEqual({ ok: false, reason: "modifier" });
   });
 
   it("第一段没有修饰键报 modifier", () => {

@@ -79,7 +79,7 @@ export function parseStoredDocument(raw: string | null): StoredSequence[] {
   }
 
   const sequences = document.sequences as StoredSequence[];
-  // 判定层的 lint 复用一遍：第一段重复、缺非 shift 修饰键都在这里被挡掉。
+  // 判定层的 lint 复用一遍：两段完全相同、或某一段不合规，整份文档都不采用。
   if (!lintSequences(sequences).ok) {
     return [];
   }

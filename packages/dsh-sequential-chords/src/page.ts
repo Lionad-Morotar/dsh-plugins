@@ -76,7 +76,7 @@ export function createSettingsPage(deps: PageDeps): () => unknown {
     host.replaceChildren(...build());
   };
 
-  /** 录一段按键：只收带非 shift 修饰键的单键。 */
+  /** 录一段按键。合不合格由 store 决定，这里只负责把这一击交过去。 */
   const capture = (slot: "first" | "second", event: Event): void => {
     const key = event as KeyboardEvent;
     // 单按修饰键不算一段，等真正的那个键。
@@ -163,7 +163,7 @@ export function createSettingsPage(deps: PageDeps): () => unknown {
     return [
       el("h2", { textContent: "两段快捷键" }, []),
       el("p", { className: "dsh-sequential-chords-hint" }, [
-        "两段是两次独立按键：先按第一段，松开，再按第二段。两段都必须带 Ctrl、Alt 或 Cmd，单独的 Shift 不算。",
+        "两段是两次独立按键：先按第一段，松开，再按第二段。普通键要带 Ctrl、Alt 或 Cmd；Insert、Help 这类不打字的键可以单独当第一段，后面接一个字母。",
       ]),
       sequences.length === 0
         ? el("p", { "data-testid": "sequence-empty" }, ["还没有配置任何序列。"])

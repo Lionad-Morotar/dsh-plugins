@@ -90,8 +90,8 @@ describe("非法文档", () => {
     expect(parseStoredDocument(JSON.stringify(broken))).toEqual([]);
   });
 
-  it("第一段相同的文档读出来是空数组", () => {
-    const dup = { ...closeAll, first: saveAll.first };
+  it("两段都相同的文档读出来是空数组", () => {
+    const dup = { ...saveAll, id: "dup" };
 
     expect(parseStoredDocument(JSON.stringify({ version: 1, sequences: [saveAll, dup] }))).toEqual(
       [],

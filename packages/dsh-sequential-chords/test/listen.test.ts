@@ -181,12 +181,8 @@ describe("parseDocument", () => {
     expect(sequences.map((sequence) => sequence.id)).toEqual(["save-all", "close-all"]);
   });
 
-  it("第一段相同的文档得到空数组", () => {
-    const dup = {
-      id: "dup",
-      first: chord("KeyK", ["control"]),
-      second: chord("KeyJ", ["control"]),
-    };
+  it("两段都相同的文档得到空数组", () => {
+    const dup = { ...saveAll, id: "dup" };
 
     expect(parseDocument(JSON.stringify({ version: 1, sequences: [saveAll, dup] }))).toEqual([]);
   });

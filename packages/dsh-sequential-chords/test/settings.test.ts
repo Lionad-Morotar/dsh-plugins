@@ -73,7 +73,7 @@ describe("录入两段按键", () => {
     expect(store.list()).toHaveLength(0);
   });
 
-  it("第一段重复时不写入", () => {
+  it("第一段相同、第二段不同时可以再写一条", () => {
     const store = createSequenceStore(memoryStorage());
     store.captureFirst(key("KeyK", ["control"]));
     store.captureSecond(key("KeyS", ["control"]));
@@ -84,8 +84,38 @@ describe("录入两段按键", () => {
     store.captureSecond(key("KeyJ", ["control"]));
     store.setInsert("/other ");
 
+    expect(store.add()).toBe(true);
+    expect(store.list()).toHaveLength(2);
+  });
+
+  it("两段都相同才拒绝", () => {
+    const store = createSequenceStore(memoryStorage());
+    store.captureFirst(key("KeyK", ["control"]));
+    store.captureSecond(key("KeyS", ["control"]));
+    store.setInsert("/save ");
+    expect(store.add()).toBe(true);
+
+    store.captureFirst(key("KeyK", ["control"]));
+    store.captureSecond(key("KeyS", ["control"]));
+    store.setInsert("/again ");
+
     expect(store.add()).toBe(false);
     expect(store.list()).toHaveLength(1);
+  });
+
+  it("Insert 可以单独当第一段，后面接裸字母", () => {
+    const store = createSequenceStore(memoryStorage());
+
+    expect(store.captureFirst(key("Insert"))).toBe(true);
+    expect(store.captureSecond(key("KeyR"))).toBe(true);
+    store.setInsert("review ");
+    expect(store.add()).toBe(true);
+
+    expect(store.captureFirst(key("Insert"))).toBe(true);
+    expect(store.captureSecond(key("KeyY"))).toBe(true);
+    store.setInsert("yes ");
+    expect(store.add()).toBe(true);
+    expect(store.list().map((sequence) => sequence.insert)).toEqual(["review ", "yes "]);
   });
 
   it("添加之后草稿清空", () => {
