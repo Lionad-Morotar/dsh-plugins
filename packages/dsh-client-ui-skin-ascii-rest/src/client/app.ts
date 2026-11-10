@@ -31,7 +31,7 @@ import { getLoader } from "./loader.ts";
 import { createNewChatWatcher, type NewChatWatcher } from "./new-chat-splash.ts";
 import { AsciiRestSettingsPage, type PageCopy, type PageReact } from "./page.ts";
 import { loadScene } from "./scenes.ts";
-import { playSplash, type Splash } from "./splash.ts";
+import { playSplash, type Splash, type SplashTiming } from "./splash.ts";
 import { createSettingsStore, type SettingsStore } from "./store.ts";
 import { SKIN_CSS } from "./styles.ts";
 import { currentScheme, presentScene, type Surface } from "./surface.ts";
@@ -385,6 +385,7 @@ export function apply(ctx: ClientContext): void {
       onRegions: (change) => store.update((current) => ({ ...current, regions: { ...current.regions, ...change } })),
       onSplash: (open) => store.update((current) => ({ ...current, splash: open })),
       onSplashOnNewChat: (open) => store.update((current) => ({ ...current, splashOnNewChat: open })),
+      onNewChatSplashMs: (ms) => store.update((current) => ({ ...current, newChatSplashMs: ms })),
       onOpenPanel: () => {
         void openGui();
       },
@@ -403,7 +404,7 @@ export function apply(ctx: ClientContext): void {
    * workspace the reader is already using would be a flash of picture over live
    * work rather than a splash.
    */
-  const openSplash = (scene: SceneEntry): void => {
+  const openSplash = (scene: SceneEntry, timing?: Partial<SplashTiming>): void => {
     if (splash !== null) return;
     splash = playSplash({
       doc,
@@ -416,6 +417,9 @@ export function apply(ctx: ClientContext): void {
       still: settings.appearance.still,
       fps: settings.appearance.fps,
       resolution: settings.appearance.resolution,
+      // A caller that names a timing gets it merged over the defaults; the cold
+      // start names none and keeps the engine's own.
+      timing,
       onEnd: () => {
         splash = null;
         surface?.resume();
@@ -469,7 +473,10 @@ export function apply(ctx: ClientContext): void {
       onOpen: () => {
         const scene = currentScene();
         if (scene === undefined) return;
-        openSplash(scene);
+        // The reader's own duration, not the cold start's: this splash fires as
+        // often as they click, and the opening they see once a day is too long
+        // to sit through repeatedly.
+        openSplash(scene, { minVisibleMs: settings.newChatSplashMs });
       },
     });
   };

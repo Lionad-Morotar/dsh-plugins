@@ -286,6 +286,25 @@ describe("playSplash", () => {
     expect(layer()).toBeNull();
   });
 
+  it("honours a shorter minimum when the caller asks for one", () => {
+    // A new conversation reuses this engine with the reader's own duration, so
+    // the minimum has to be the caller's, not the cold start's.
+    doc.body.innerHTML = '<div data-shell-bottom></div>';
+    const onEnd = vi.fn();
+    playSplash(splashOptions({ timing: { minVisibleMs: 600 }, onEnd }));
+
+    vi.advanceTimersByTime(600 - DEFAULT_SPLASH_TIMING.pollMs);
+    expect(layer()?.style.opacity).toBe("1");
+
+    vi.advanceTimersByTime(DEFAULT_SPLASH_TIMING.pollMs);
+    expect(layer()?.style.opacity).toBe("0");
+    expect(onEnd).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(DEFAULT_SPLASH_TIMING.fadeMs);
+    expect(layer()).toBeNull();
+    expect(onEnd).toHaveBeenCalledTimes(1);
+  });
+
   it("reports a scene that will not mount and leaves nothing behind", () => {
     const onError = vi.fn();
     const onEnd = vi.fn();

@@ -81,6 +81,7 @@ function build() {
       piece: {},
       splash: true,
       splashOnNewChat: false,
+      newChatSplashMs: 600,
     },
     module,
     callbacks: {

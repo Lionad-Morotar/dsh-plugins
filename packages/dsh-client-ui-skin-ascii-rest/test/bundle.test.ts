@@ -439,6 +439,38 @@ describe("the built client bundle", () => {
     expect(window.document.querySelector("[data-ascii-rest-splash]")).not.toBeNull();
   });
 
+  it("offers a slider for how long the new-chat splash holds", () => {
+    // The splash on a new conversation is the one the reader sees repeatedly, so
+    // its duration is theirs to set: the control has to exist, span the range
+    // the read path clamps to, and persist what it is dragged to.
+    const dom = makeDom();
+    const exports = materialize(dom);
+    const { ctx, registrations, window } = makeContext(dom);
+
+    (exports.apply as (ctx: unknown) => void)(ctx);
+
+    const page = registrations[0]?.component as () => unknown;
+    const tree = page();
+    const sliders = collectBy(
+      tree,
+      (node) => node.type === "input" && node.props?.["type"] === "range" && node.props?.["aria-label"] === "新对话开屏时长",
+    );
+
+    expect(sliders, "the new-chat splash duration is offered").toHaveLength(1);
+    const slider = sliders[0];
+    expect(slider?.props?.["min"]).toBe(200);
+    expect(slider?.props?.["max"]).toBe(3000);
+    expect(slider?.props?.["step"]).toBe(100);
+    expect(slider?.props?.["value"], "half the cold-start minimum").toBe(600);
+
+    (slider?.props?.onChange as (event: { target: { value: string } }) => void)({ target: { value: "900" } });
+
+    const stored = JSON.parse(window.localStorage.getItem("dsh-skin:ascii-rest:settings") ?? "{}") as {
+      newChatSplashMs?: number;
+    };
+    expect(stored.newChatSplashMs).toBe(900);
+  });
+
   it("takes the splash away with the rest of the skin", () => {
     const dom = makeDom();
     const exports = materialize(dom);

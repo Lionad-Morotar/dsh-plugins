@@ -53,6 +53,7 @@ export {
   DEFAULT_SCENE_OPTIONS,
   DEFAULT_SETTINGS,
   FPS_RANGE,
+  NEW_CHAT_SPLASH_RANGE,
   normalizeAppearance,
   normalizeRegions,
   normalizeSceneOptions,

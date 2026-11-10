@@ -14,7 +14,7 @@
 import type { ReactNode } from "react";
 
 import type { Anchor, FitMode, LightMode, RegionKey, SceneEntry, SceneModule, Settings } from "ascii-rest-scenes";
-import { ANCHORS, FIT_MODES, LIGHT_MODES, REGION_KEYS, fitCover, sceneColors } from "ascii-rest-scenes";
+import { ANCHORS, FIT_MODES, LIGHT_MODES, NEW_CHAT_SPLASH_RANGE, REGION_KEYS, fitCover, sceneColors } from "ascii-rest-scenes";
 
 import { mount } from "../mount.ts";
 
@@ -71,6 +71,9 @@ export interface PageCopy {
   splashOff: string;
   splashOnNewChat: string;
   splashOnNewChatNote: string;
+  splashOnNewChatDuration: string;
+  /** The unit the duration hint is written in, so the number reads natively. */
+  splashDurationUnit: string;
 }
 
 /** The slice of React this page uses; the rest comes from the host. */
@@ -94,6 +97,8 @@ export interface PageProps {
   onSplash(open: boolean): void;
   /** Whether opening a new conversation plays the same splash. */
   onSplashOnNewChat(open: boolean): void;
+  /** How long a new conversation's splash holds at its shortest. */
+  onNewChatSplashMs(ms: number): void;
   onOpenPanel(): void;
   onReset(): void;
   copy: PageCopy;
@@ -442,6 +447,19 @@ export function AsciiRestSettingsPage(props: PageProps): ReactNode {
         (value) => props.onSplashOnNewChat(value === "on"),
       ),
       copy.splashOnNewChatNote,
+    ),
+    field(
+      copy.splashOnNewChatDuration,
+      range(
+        copy.splashOnNewChatDuration,
+        settings.newChatSplashMs,
+        NEW_CHAT_SPLASH_RANGE,
+        (ms) => props.onNewChatSplashMs(ms),
+      ),
+      // Seconds rather than milliseconds: the slider steps in 100ms but nobody
+      // thinks about a splash in hundreds, so the hint is the only place the
+      // number is said the way a reader would say it.
+      `${(settings.newChatSplashMs / 1000).toFixed(2).replace(/\.?0+$/, "")} ${copy.splashDurationUnit}`,
     ),
   );
 
