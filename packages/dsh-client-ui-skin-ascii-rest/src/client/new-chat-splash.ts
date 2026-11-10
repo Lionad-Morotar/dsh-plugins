@@ -83,6 +83,12 @@ function isNewChat(previous: Snapshot, next: Snapshot): boolean {
   if (next.phase !== HERO_PHASE) return false;
   if (previous.phase === null) return false;
   if (previous.phase !== HERO_PHASE) return true;
+  // A hero that gains its first session id is the host finishing the page the
+  // reader is already on, not a navigation: at startup the id lands a moment
+  // after the hero renders, and treating it as a new conversation splashes on
+  // every page load whenever the cold-start splash is off. Only two known
+  // sessions trading places is the reader creating one.
+  if (previous.session === null || next.session === null) return false;
   return previous.session !== next.session;
 }
 

@@ -100,6 +100,24 @@ describe("createNewChatWatcher", () => {
     handle.dispose();
   });
 
+  it("does not open when the hero page gains its first session id", async () => {
+    // The host assigns the blank page its session id a moment after the hero
+    // renders. That is the app opening a session, not the reader creating one:
+    // the page was already there and nothing was replaced. Treating it as a new
+    // conversation splashes once at every page load when the cold-start splash
+    // is switched off.
+    const root = contentRoot("hero", "s1");
+    root.removeAttribute("data-conversation-session");
+    doc.body.append(root);
+    const { handle, onOpen } = watcher();
+
+    root.setAttribute("data-conversation-session", "s1");
+    await settle();
+
+    expect(onOpen).not.toHaveBeenCalled();
+    handle.dispose();
+  });
+
   it("does nothing while the setting is off", async () => {
     const root = contentRoot("active", "s1");
     doc.body.append(root);
