@@ -22,6 +22,7 @@
  * the rest of the plugin down with it.
  */
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 
 import { sessionCompactionProjection } from "./compaction.ts";
 import { createSetEffortTool, type EffortLlmFace } from "./host/reasoning-effort.ts";
@@ -138,9 +139,24 @@ export function apply(ctx: HostContextLike): void {
   registerReasoningEffortTool(ctx);
 }
 
+/**
+ * What one skill's profile is built from, before `skillProfileOf` shapes it.
+ *
+ * `assists` is carried here rather than re-derived downstream: the frontmatter
+ * scan already normalized it, and parsing it a second time would be a second
+ * opinion about the same declaration.
+ */
+interface SkillProfileInputs {
+  name: string;
+  description?: string;
+  path?: string;
+  argumentHint?: string;
+  metadata?: unknown;
+  assists?: SkillFrontmatter["assists"];
+}
+
 /** Structural slice of the `skills` service this half calls. */
-interface SkillsFace {
-  get(
+interface SkillsFace {  get(
     name: string,
     options?: { readonly cwd?: string },
   ): Promise<{
@@ -279,7 +295,7 @@ async function loadSkillProfile(
   ctx: HostContextLike,
   name: string,
   cwd: string | undefined,
-): Promise<{ name: string; description?: string; path?: string; argumentHint?: string; metadata?: unknown } | undefined> {
+): Promise<SkillProfileInputs | undefined> {
   const skills = readService(ctx, "skills") as SkillsFace | undefined;
   if (skills === undefined) return undefined;
 
@@ -303,13 +319,14 @@ async function loadSkillProfile(
     }
   }
 
-  const profile: { name: string; description?: string; path?: string; argumentHint?: string; metadata?: unknown } = { name: summary.name };
+  const profile: SkillProfileInputs = { name: summary.name };
   if (typeof summary.description === "string" && summary.description !== "") {
     profile.description = summary.description;
   }
   if (path !== undefined) profile.path = path;
   if (frontmatter.argumentHint !== undefined) profile.argumentHint = frontmatter.argumentHint;
   if (frontmatter.metadata !== undefined) profile.metadata = frontmatter.metadata;
+  if (frontmatter.assists !== undefined) profile.assists = frontmatter.assists;
   return profile;
 }
 
@@ -332,7 +349,7 @@ async function loadSkillProfile(
 async function readSkillProfileAt(
   name: string,
   path: string,
-): Promise<{ name: string; description?: string; path?: string; argumentHint?: string; metadata?: unknown } | undefined> {
+): Promise<SkillProfileInputs | undefined> {
   if (typeof path !== "string" || path === "") return undefined;
   let source: string;
   try {
@@ -344,13 +361,31 @@ async function readSkillProfileAt(
   // The path arrives from the browser; a mismatched pair would label one skill's
   // parameters with another skill's name, so the file has to confirm it.
   if (frontmatter.name !== undefined && frontmatter.name !== name) return undefined;
-  const profile: { name: string; description?: string; path?: string; argumentHint?: string; metadata?: unknown } = {
+  const profile: SkillProfileInputs = {
     name,
     path,
   };
   if (frontmatter.argumentHint !== undefined) profile.argumentHint = frontmatter.argumentHint;
   if (frontmatter.metadata !== undefined) profile.metadata = frontmatter.metadata;
+  if (frontmatter.assists !== undefined) profile.assists = frontmatter.assists;
   return profile;
+}
+
+/**
+ * Read one workflow catalogue file.
+ *
+ * A missing file is the normal case for two of the three layers, so it resolves
+ * undefined instead of throwing: the route treats an absent layer and an
+ * unreadable one the same way, and only the merged result is ever reported.
+ * @param path - absolute path of one `index.md`.
+ * @returns the file's text, or undefined when it cannot be read.
+ */
+async function readCatalogText(path: string): Promise<string | undefined> {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -381,6 +416,8 @@ function registerSkillProfile(ctx: HostContextLike): void {
           loadSkill: (name, cwd) => loadSkillProfile(ctx, name, cwd),
           readSkillAt: (name, path) => readSkillProfileAt(name, path),
           resolveCwd: sessionId => resolveSessionCwd(ctx, sessionId),
+          homeDir: () => homedir(),
+          readCatalogText,
         }),
       "dsh-better: skill profile route",
     );
