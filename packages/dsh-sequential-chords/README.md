@@ -49,8 +49,39 @@ import { createState, lintSequences, step } from "dsh-sequential-chords";
 
 `state` 是不透明值，原样传回 `step` 即可，不要读内部字段。
 
+## 监听决策
+
+`src/listen.ts` 在判定之上再回答一个问题：如果调用方真的挂了 keydown，这一击
+要不要 `preventDefault`。它同样不碰 DOM，也不挂监听器。
+
+- `STORAGE_KEY`：`"dsh-sequential-chords.v1"`
+- `regionOf(target)`：`target.closest(".xterm")` 非空则 `"terminal"`，否则 `"page"`；`target` 为 `null` 时 `"page"`
+- `parseDocument(raw)`：解析 `{ version: 1, sequences }`，任何不合法输入返回空数组且不抛错
+- `handle(state, input, sequences, nowMs)`：`{ state, effect, consume, id? }`，`input` 是 `KeyEvent` 再加 `region`
+
+### 哪些效果会吃掉按键
+
+`consume` 的口径只有一条：`effect` 不是 `ignore` 就吃掉。
+
+- `await` 吃：第一击已被认领，放行会让浏览器执行一个用户没打算做的动作
+- `fire` 吃：这一击就是命令本身
+- `miss` 吃：第二击落在已认领的序列里但组合不对，放行等于中途把半条命令漏给页面
+- `ignore` 不吃：没有等待时的未命中，以及 `repeat`
+
+`repeat` 单独放行，因为长按自动重复不是一次新的按键，它既不该触发也不该把
+已有等待清掉。
+
+### 终端为什么放行
+
+落在 `.xterm` 里的按键归终端，`handle` 一律返回 `ignore` 且 `consume: false`。
+终端自己要用这些组合，页面上的两段式快捷键在那里抢键会把 shell 的输入吃掉。
+
+放行的同时等待会被清掉：否则在终端里敲完回到页面，一个孤立的第二击就会触发
+一条用户早已放弃的序列。终端里的按键也从不进入等待，所以终端里按第一段之后
+回到页面按第一段，仍然是一次正常的 `await`。
+
 ## 开发
 
 ```sh
-./node_modules/.bin/vitest run --config packages/dsh-sequential-chords/vitest.config.ts packages/dsh-sequential-chords/test/engine.test.ts
+./node_modules/.bin/vitest run --config packages/dsh-sequential-chords/vitest.config.ts packages/dsh-sequential-chords/test/engine.test.ts packages/dsh-sequential-chords/test/listen.test.ts
 ```
