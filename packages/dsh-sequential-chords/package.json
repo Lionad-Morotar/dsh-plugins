@@ -24,16 +24,32 @@
     "chord"
   ],
   "exports": {
-    ".": "./src/engine.ts"
+    ".": "./src/engine.ts",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
   },
   "files": [
-    "src"
+    "lib",
+    "src",
+    "cordis.patch.yml",
+    "README.md"
   ],
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": []
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "scripts": {
+    "build": "node scripts/build.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "vitest": "^3.2.0"
   }
 }

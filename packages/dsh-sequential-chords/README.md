@@ -80,8 +80,51 @@ import { createState, lintSequences, step } from "dsh-sequential-chords";
 一条用户早已放弃的序列。终端里的按键也从不进入等待，所以终端里按第一段之后
 回到页面按第一段，仍然是一次正常的 `await`。
 
+## 安装与使用
+
+本包是一个客户端插件：捕获阶段听 `keydown`，命中后把该序列的 `insert` 文本插进
+当前输入框。它不调用宿主命令，插入的就是一段文本。
+
+### 怎么在设置里加一条
+
+打开 设置 → 两段快捷键（`settings.section` 里 id 为 `sequential-chords`、order 70
+的那一节）。
+
+1. 点「录制第一段」，按下组合键，例如 `Ctrl+K`。只收带 Ctrl、Alt 或 Cmd 的单键，
+   裸键与单独的 Shift 都不认，因为那样的第二段会把普通输入吃掉。
+2. 点「录制第二段」，按下第二段，例如 `Ctrl+S`。同样要求带一个非 shift 的修饰键。
+3. 在文本框里填命中后要插入的文本，例如 `/save `。
+4. 点「添加」。两段都录好、文本非空、且与已有序列不冲突（第一段不能重复）才会
+   写入，否则按钮点了也不会留下任何东西。
+
+列表里每条显示两段按键与要插入的文本，右侧「删除」按 id 移除。改动立刻写进
+`localStorage` 的 `dsh-sequential-chords.v1`，形状是 `{ version: 1, sequences }`，
+每条比判定层的 `Sequence` 多一个 `insert`。
+
+### 命中后插入什么
+
+插入的就是那条序列的 `insert` 原文，落在 `document.activeElement` 上：
+
+- `input` / `textarea`：追加到 `value` 末尾，再派一个 `input` 事件，让宿主的受控
+  组件看到这次改动。
+- `contenteditable`：走 `document.execCommand("insertText", false, text)`。富文本
+  编辑器（Lexical 一类）只认这个原语，手写节点遍历做不到。
+- 两者都不是：什么都不插，但按键仍然被吃掉。
+
+### 桌面端原生桥仍会先执行已接受的单键命令
+
+macOS 与 Windows 桌面端的原生桥会先处理它已经接受的单键命令。那些按键在到达
+页面之前就被原生侧消费掉了，本包的捕获监听器拿不到它们，所以这类组合无法用来
+做两段式快捷键的第一段或第二段。要绕开得在原生桥那一层处理，不在本包范围内。
+
 ## 开发
 
 ```sh
-./node_modules/.bin/vitest run --config packages/dsh-sequential-chords/vitest.config.ts packages/dsh-sequential-chords/test/engine.test.ts packages/dsh-sequential-chords/test/listen.test.ts
+./node_modules/.bin/vitest run --config packages/dsh-sequential-chords/vitest.config.ts
+./node_modules/.bin/tsc -p packages/dsh-sequential-chords/tsconfig.json --noEmit
+node packages/dsh-sequential-chords/scripts/build.mjs
 ```
+
+`lib/` 是提交入库的构建产物：`lib/index.js` 是宿主半（ESM，`apply` 为空），
+`lib/client.js` 是浏览器半（CJS 包在 `window.__ModuleLoader__.load` 里，id 等于
+包名）。安装态不跑构建，所以改完 `src/` 要重跑上面的 build。
