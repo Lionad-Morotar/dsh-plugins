@@ -160,6 +160,79 @@ export const SKILL_ENHANCER_SHEET = `
   color: var(--dsw-alias-label-caption);
   font-size: 11px;
 }
+/* The workflow catalogue panel. It shares the flag list's surface, width and
+   max height because the two never appear together: the flag list wins a
+   trailing double dash, so a different fill or size would read as a glitch at
+   the handover. Only the row's own contents differ, since a row here carries a
+   goal beside the slug. */
+.dsh-better-skill-catalog {
+  position: fixed;
+  z-index: 60;
+  min-width: 240px;
+  max-width: min(640px, calc(100vw - 24px));
+  max-height: min(420px, 60vh);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 6px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
+  border-radius: var(--dsw-radius-md, 12px);
+  background: var(--dsw-alias-bg-layer-2, #ffffff);
+  box-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0, 0, 0, 0.16));
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.dsh-better-skill-catalog-title {
+  padding: 2px 6px 4px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+}
+.dsh-better-skill-catalog-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dsh-better-skill-catalog-row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+/* The keyboard moves the highlight, so it has to be visible without the pointer:
+   the same fill as hover, because a row that is current and a row under the
+   pointer mean the same thing here. */
+.dsh-better-skill-catalog-selected {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.dsh-better-skill-catalog-row:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+.dsh-better-skill-catalog-slug {
+  flex: none;
+  color: var(--dsw-alias-state-business-primary);
+  font-family: var(--dsw-font-mono, ui-monospace, monospace);
+}
+.dsh-better-skill-catalog-summary {
+  overflow: hidden;
+  color: var(--dsw-alias-label-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The matched run inside a slug or a goal. A mark carries a browser default
+   background, which is unreadable on the panel's own fill, so both are stated. */
+.dsh-better-skill-catalog-mark {
+  border-radius: 2px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: inherit;
+  font-weight: 600;
+}
 `;
 
 /**
