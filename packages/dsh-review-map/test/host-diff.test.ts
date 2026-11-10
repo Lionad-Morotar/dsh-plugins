@@ -9,6 +9,7 @@
  * there".
  */
 import { describe, expect, it, afterEach } from "vitest";
+import { join } from "node:path";
 
 import { collectFileDiff, MAX_DIFF_LINES, parseHunkHeader, parseHunks, splitLines } from "../src/host/diff.ts";
 import { createRepo, createRepoWithCommit, realRunner, type RepoHandle } from "./fixtures/repo.ts";
@@ -360,5 +361,149 @@ describe("hunk parsing over a real diff", () => {
       expect(hunk.lines.filter(line => line.kind !== "add")).toHaveLength(hunk.oldLines);
       expect(hunk.lines.filter(line => line.kind !== "del")).toHaveLength(hunk.newLines);
     }
+  });
+});
+
+/**
+ * A symlink is the one way a repository-relative path can leave the repository.
+ *
+ * The route layer rejects `..` in the request, and the data layer joins the path
+ * to the repository top level, so the path text never escapes. A symlink does:
+ * an untracked `notes -> /somewhere/else` is a legitimate repository entry whose
+ * content lives outside the tree, and reading it would render a file the reader
+ * never asked for and the review never covered.
+ *
+ * The decision these cases pin: a link that resolves inside the repository is
+ * readable (it is still this repository's content), and a link that resolves
+ * outside it, or nowhere, is `unreadable`. The assertion on the serialized result
+ * is the important one: it is not enough that the call fails, the outside bytes
+ * must not appear anywhere in what the caller gets back.
+ */
+describe("an untracked symlink", () => {
+  /** A string that must never reach a caller reading the repository. */
+  const SENTINEL = "SENTINEL-OUTSIDE-THE-REPOSITORY";
+
+  /** A directory outside the repository, removed with the fixture. */
+  const outsideDirs: string[] = [];
+
+  afterEach(async () => {
+    const { rm } = await import("node:fs/promises");
+    for (const dir of outsideDirs.splice(0)) await rm(dir, { recursive: true, force: true });
+  });
+
+  /**
+   * Create a temporary directory outside the repository.
+   * @returns its canonical path.
+   */
+  async function outsideDir(): Promise<string> {
+    const { mkdtemp, realpath } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await realpath(await mkdtemp(join(tmpdir(), "review-map-outside-")));
+    outsideDirs.push(dir);
+    return dir;
+  }
+
+  it("refuses a link that resolves outside the repository and leaks nothing", async () => {
+    repo = await createRepoWithCommit({ "a.txt": "one\n" });
+    const outside = await outsideDir();
+    const { writeFile, symlink } = await import("node:fs/promises");
+    await writeFile(join(outside, "secret.txt"), `${SENTINEL}\n`, "utf8");
+    await symlink(join(outside, "secret.txt"), join(repo.root, "notes"));
+    const { runner } = realRunner(repo.root);
+
+    const result = await collectFileDiff({ runner, cwd: repo.root }, { scope: { kind: "worktree" }, path: "notes" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("unreadable");
+    // The failure alone is not the guarantee: the outside bytes must not appear
+    // in the message, the error, or anything else the caller can serialize.
+    expect(JSON.stringify(result)).not.toContain(SENTINEL);
+  });
+
+  it("refuses a link to a directory outside the repository", async () => {
+    repo = await createRepoWithCommit({ "a.txt": "one\n" });
+    const outside = await outsideDir();
+    const { writeFile, symlink } = await import("node:fs/promises");
+    await writeFile(join(outside, "secret.txt"), `${SENTINEL}\n`, "utf8");
+    await symlink(outside, join(repo.root, "notes"));
+    const { runner } = realRunner(repo.root);
+
+    const result = await collectFileDiff({ runner, cwd: repo.root }, { scope: { kind: "worktree" }, path: "notes" });
+
+    // A link to a directory is not a file to read, and it must not become a way
+    // to walk one either.
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("unreadable");
+    expect(JSON.stringify(result)).not.toContain(SENTINEL);
+  });
+
+  it("reads a link that resolves inside the repository", async () => {
+    repo = await createRepoWithCommit({ "real.txt": "inside\ncontent\n" });
+    const { symlink } = await import("node:fs/promises");
+    await symlink(join(repo.root, "real.txt"), join(repo.root, "alias"));
+    const { runner } = realRunner(repo.root);
+
+    const result = await collectFileDiff({ runner, cwd: repo.root }, { scope: { kind: "worktree" }, path: "alias" });
+
+    // Inside is inside: a link to a tracked file is this repository's content,
+    // and refusing it would break a layout people actually use.
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.diff.kind !== "untracked") return;
+    expect(result.diff.lines).toEqual(["inside", "content"]);
+  });
+
+  it("refuses a dangling link without throwing", async () => {
+    repo = await createRepoWithCommit({ "a.txt": "one\n" });
+    const { symlink } = await import("node:fs/promises");
+    await symlink(join(repo.root, "does-not-exist"), join(repo.root, "notes"));
+    const { runner } = realRunner(repo.root);
+
+    const result = await collectFileDiff({ runner, cwd: repo.root }, { scope: { kind: "worktree" }, path: "notes" });
+
+    // A link whose target is gone resolves to nothing, which is the same answer
+    // as pointing outside: there is no content to show.
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("unreadable");
+  });
+
+  it("refuses a link chain that ends outside the repository", async () => {
+    repo = await createRepoWithCommit({ "a.txt": "one\n" });
+    const outside = await outsideDir();
+    const { writeFile, symlink } = await import("node:fs/promises");
+    await writeFile(join(outside, "secret.txt"), `${SENTINEL}\n`, "utf8");
+    // Two hops: `notes` points at `hop`, which points outside. `realpath`
+    // resolves the whole chain, so the check has to be on the final target.
+    await symlink(join(outside, "secret.txt"), join(repo.root, "hop"));
+    await symlink(join(repo.root, "hop"), join(repo.root, "notes"));
+    const { runner } = realRunner(repo.root);
+
+    const result = await collectFileDiff({ runner, cwd: repo.root }, { scope: { kind: "worktree" }, path: "notes" });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("unreadable");
+    expect(JSON.stringify(result)).not.toContain(SENTINEL);
+  });
+
+  it("refuses a binary link that resolves outside the repository", async () => {
+    repo = await createRepoWithCommit({ "a.txt": "one\n" });
+    const outside = await outsideDir();
+    const { writeFile, symlink } = await import("node:fs/promises");
+    // A NUL in the first block is what makes git call a file binary, so this
+    // reaches the size path rather than the text path.
+    await writeFile(join(outside, "blob.bin"), Buffer.from([0, 1, 2, 0, 255]));
+    await symlink(join(outside, "blob.bin"), join(repo.root, "blob.bin"));
+    const { runner } = realRunner(repo.root);
+
+    const result = await collectFileDiff({ runner, cwd: repo.root }, { scope: { kind: "worktree" }, path: "blob.bin" });
+
+    // The size of a file outside the repository is still a fact about a file
+    // outside the repository, so the metadata path is guarded too.
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("unreadable");
   });
 });

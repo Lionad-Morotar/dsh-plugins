@@ -1,5 +1,5 @@
 // src/index.ts
-import { realpath } from "node:fs/promises";
+import { realpath as realpath2 } from "node:fs/promises";
 
 // src/host/git.ts
 import { readFile } from "node:fs/promises";
@@ -91,8 +91,8 @@ function createGitRunner(options) {
 }
 
 // src/host/diff.ts
-import { readFile as readFile2, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile as readFile2, realpath, stat } from "node:fs/promises";
+import { join, sep } from "node:path";
 
 // src/host/contract.ts
 var READ_ONLY_SUBCOMMANDS = /* @__PURE__ */ new Set([
@@ -487,16 +487,30 @@ async function readFromRevision(runner, cwd, rev, path, signal) {
   if (isRefused(result) || result.exitCode !== 0) return null;
   return result.stdout;
 }
-async function readFromWorktree(root, path) {
+async function resolveInsideRepo(root, path) {
   try {
-    return await readFile2(join(root, path), "utf8");
+    const [realRoot, realTarget] = await Promise.all([realpath(root), realpath(join(root, path))]);
+    if (realTarget === realRoot) return null;
+    const prefix = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
+    return realTarget.startsWith(prefix) ? realTarget : null;
+  } catch {
+    return null;
+  }
+}
+async function readFromWorktree(root, path) {
+  const target = await resolveInsideRepo(root, path);
+  if (target === null) return null;
+  try {
+    return await readFile2(target, "utf8");
   } catch {
     return null;
   }
 }
 async function sizeOnDisk(root, path) {
+  const target = await resolveInsideRepo(root, path);
+  if (target === null) return null;
   try {
-    const info = await stat(join(root, path));
+    const info = await stat(target);
     return info.isFile() ? info.size : null;
   } catch {
     return null;
@@ -669,7 +683,7 @@ function readService(ctx, serviceName) {
 }
 async function canonicalPath(dir) {
   try {
-    return await realpath(dir);
+    return await realpath2(dir);
   } catch {
     return dir;
   }

@@ -21,8 +21,8 @@
  * executes the configuration of the repository it is reviewing is a remote code
  * execution path rather than a diff.
  */
-import { readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, realpath, stat } from "node:fs/promises";
+import { join, sep } from "node:path";
 
 import { fail, isRefused, repoRoot, resolveScope, runReadOnly } from "./contract.ts";
 import type { GitRunner } from "./git.ts";
@@ -179,6 +179,39 @@ async function readFromRevision(
 }
 
 /**
+ * Resolve a repository-relative path to a real path inside the repository.
+ *
+ * The route layer rejects `..` in the request and this module joins the path to
+ * the repository top level, so the path text never escapes. A symlink does: an
+ * untracked `notes -> /somewhere/else` is a legitimate repository entry whose
+ * content lives outside the tree. `realpath` is the only thing that answers
+ * where a path actually lands, so it runs before any content or metadata is
+ * touched.
+ *
+ * The comparison is on whole path segments, not on a string prefix: `/repo-other`
+ * starts with `/repo` and is a different directory. A link that resolves inside
+ * the repository is allowed, because it is still this repository's content; a
+ * link that resolves outside it, or nowhere, is not.
+ *
+ * @param root - the repository top level.
+ * @param path - the repository-relative path.
+ * @returns the resolved absolute path, or null when it is outside the repository
+ *   or cannot be resolved.
+ */
+async function resolveInsideRepo(root: string, path: string): Promise<string | null> {
+  try {
+    const [realRoot, realTarget] = await Promise.all([realpath(root), realpath(join(root, path))]);
+    if (realTarget === realRoot) return null;
+    const prefix = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
+    return realTarget.startsWith(prefix) ? realTarget : null;
+  } catch {
+    // A dangling link, a permission failure and a missing file all mean the same
+    // thing here: there is no content inside the repository to show.
+    return null;
+  }
+}
+
+/**
  * Read a path off the working tree.
  *
  * The path is joined to the repository top level rather than to the caller's
@@ -186,25 +219,33 @@ async function readFromRevision(
  * paths are always repository-relative.
  * @param root - the repository top level.
  * @param path - the repository-relative path.
- * @returns the text, or null when it cannot be read.
+ * @returns the text, or null when it cannot be read or resolves outside the
+ *   repository.
  */
 async function readFromWorktree(root: string, path: string): Promise<string | null> {
+  const target = await resolveInsideRepo(root, path);
+  if (target === null) return null;
   try {
-    return await readFile(join(root, path), "utf8");
+    return await readFile(target, "utf8");
   } catch {
     return null;
   }
 }
 
 /**
- * The byte size of a path on disk, when it exists.
+ * The byte size of a path on disk, when it exists inside the repository.
+ *
+ * The size of a file outside the repository is still a fact about a file outside
+ * the repository, so this goes through the same resolution as the text read.
  * @param root - the repository top level.
  * @param path - the repository-relative path.
- * @returns the size, or null.
+ * @returns the size, or null when it is not a file inside the repository.
  */
 async function sizeOnDisk(root: string, path: string): Promise<number | null> {
+  const target = await resolveInsideRepo(root, path);
+  if (target === null) return null;
   try {
-    const info = await stat(join(root, path));
+    const info = await stat(target);
     return info.isFile() ? info.size : null;
   } catch {
     return null;
