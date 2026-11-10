@@ -23,8 +23,9 @@
     "shortcuts",
     "chord"
   ],
+  "main": "lib/index.js",
   "exports": {
-    ".": "./src/engine.ts",
+    ".": "./lib/index.js",
     "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
