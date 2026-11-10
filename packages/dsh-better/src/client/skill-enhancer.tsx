@@ -806,11 +806,12 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
       // The flag list owns a trailing `--`; two panels would fight for the caret.
       && !paramOpen;
 
-    // The ghost's text follows whichever skill the draft addresses, whether it was
-    // reached by typing or by hovering. The candidate list is a third way in: it
-    // is already open on a skill the catalogue knows, so its profile is the one
-    // the rows are filtered from.
-    const profileName = hintName ?? hovered ?? (paramOpen ? paramMatch.name : catalogMatch?.name);
+    // The profile has to load off the leading skill token, not off a panel that
+    // is already open. The catalogue match reads `assists` out of that profile,
+    // so waiting until the match exists never fetches it: `/flow-workflow run`
+    // would sit there with an empty declaration. The ghost is the only thing that
+    // still requires the hint; the data does not.
+    const profileName = match?.name ?? hovered;
     useEffect(() => {
       if (sessionId === undefined || profileName === undefined) {
         setProfile(undefined);

@@ -112,15 +112,32 @@ export function matchCatalogDraft(
   if (rest.length === 0) return undefined;
 
   const endsWithSpace = WHITESPACE.test(draft.charAt(draft.length - 1));
-  // The value is whatever the caret is in. With the draft ending on whitespace
-  // the value is still empty and the slot word is the last token typed;
-  // otherwise the slot word is the token just before the value.
-  const slotToken = endsWithSpace ? rest[rest.length - 1] : rest[rest.length - 2];
-  const valueToken = endsWithSpace ? undefined : rest[rest.length - 1];
-  if (slotToken === undefined) return undefined;
+  const last = rest[rest.length - 1];
+  const prev = rest.length >= 2 ? rest[rest.length - 2] : undefined;
+  if (last === undefined) return undefined;
+  const declaredSlot = (token: { text: string } | undefined): AssistSpec | undefined =>
+    token === undefined ? undefined : assists.find(assist => assist.slot === token.text);
 
-  const declared = assists.find(assist => assist.slot === slotToken.text);
-  if (declared === undefined) return undefined;
+  // The value is whatever the caret is in. A draft that ends on the slot word
+  // itself (`/flow-workflow run`, no space yet) has not started a value: waiting
+  // for the space would leave the panel shut on the gesture that asks for the
+  // whole list. A non-flag token before that word is a value already written, so
+  // `dev run` stays shut.
+  let slotToken: { text: string; start: number } | undefined;
+  let valueToken: { text: string; start: number } | undefined;
+  if (endsWithSpace) {
+    slotToken = last;
+  } else if (declaredSlot(prev) !== undefined) {
+    slotToken = prev;
+    valueToken = last;
+  } else if (declaredSlot(last) !== undefined && (prev === undefined || prev.text.startsWith("--"))) {
+    slotToken = last;
+  } else {
+    return undefined;
+  }
+
+  const declared = declaredSlot(slotToken);
+  if (declared === undefined || slotToken === undefined) return undefined;
 
   if (valueToken === undefined) {
     return { name: skill.name, slot: declared.slot, query: "", start: draft.length };

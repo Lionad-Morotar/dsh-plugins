@@ -73,10 +73,16 @@ describe("matchCatalogDraft", () => {
     expect(matchCatalogDraft("/flow-workflow run dev extra", anySkill, RUN_ASSIST)).toBeUndefined();
   });
 
-  it("closes on a bare slot word with no space after it", () => {
-    // The slot word is not its own value: the panel opens on the space that
-    // starts one.
-    expect(matchCatalogDraft("/flow-workflow run", anySkill, RUN_ASSIST)).toBeUndefined();
+  it("opens on a bare slot word before the space is typed", () => {
+    // The list is what the user asked for by finishing the word. Waiting for the
+    // space leaves the panel shut on `/flow-workflow run`.
+    expect(matchCatalogDraft("/flow-workflow run", anySkill, RUN_ASSIST)).toEqual({
+      name: "flow-workflow",
+      slot: "run",
+      query: "",
+      start: 18,
+    });
+    expect(matchCatalogDraft("/flow-workflow --dynamic run", anySkill, RUN_ASSIST)?.query).toBe("");
   });
 
   it("closes when the trailing token is a flag", () => {
