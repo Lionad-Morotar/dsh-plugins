@@ -12,6 +12,9 @@
  * text never reaches the browser.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -70,6 +73,11 @@ function deps(overrides: Partial<SkillProfileRouteDeps> = {}): SkillProfileRoute
         ? { name, path: "/skills/flow-workflow/SKILL.md", argumentHint: "[--dynamic]", metadata: { owner: "lionad" } }
         : undefined,
     resolveCwd: async () => "/workspace",
+    // Stubbed so no case in this file can reach the real home directory: the
+    // catalogue paths are composed from `homeDir`, and a test that read the
+    // developer's own index.md would pass or fail by machine.
+    homeDir: () => "/home/tester",
+    readCatalogText: async () => undefined,
     ...overrides,
   };
 }
@@ -143,6 +151,8 @@ describe("createSkillProfileHandler", () => {
       argumentHint: "[--dynamic]",
       metadata: { owner: "lionad" },
       params: [{ flag: "--dynamic", detail: "" }],
+      assists: [],
+      catalogs: {},
     });
   });
 
@@ -213,6 +223,165 @@ describe("createSkillProfileHandler", () => {
   });
 });
 
+describe("catalogs", () => {
+  /** A skill that declares the workflows source on its `run` slot. */
+  const DECLARING = {
+    name: "flow-workflow",
+    path: "/skills/flow-workflow/SKILL.md",
+    assists: [{ slot: "run", kind: "catalog", source: "workflows" }],
+  };
+
+  /** A file reader that answers from a path-keyed table and records what it was asked for. */
+  function reader(files: Record<string, string>): { read: (path: string) => Promise<string | undefined>; asked: string[] } {
+    const asked: string[] = [];
+    return {
+      asked,
+      read: async path => {
+        asked.push(path);
+        return files[path];
+      },
+    };
+  }
+
+  it("fills the workflows catalogue from the three layers in order", async () => {
+    const { read, asked } = reader({
+      "/workspace/.claude/workflows/index.md": "- dev（261005）：项目内 dev",
+      "/workspace/.agents/workflows/index.md": "- review（261006）：项目内 review",
+      "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局 dev\n- impeccable（261022）：全局 impeccable",
+    });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`, {
+      deps: deps({ loadSkill: async () => DECLARING, readCatalogText: read }),
+    });
+
+    expect(recorded.status).toBe(200);
+    expect(asked).toEqual([
+      "/workspace/.claude/workflows/index.md",
+      "/workspace/.agents/workflows/index.md",
+      "/home/tester/.data/flow-workflow/index.md",
+    ]);
+    // The project layer wins the repeated slug, and the global one keeps its own
+    // order behind it.
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({
+      workflows: [
+        { slug: "dev", summary: "项目内 dev" },
+        { slug: "review", summary: "项目内 review" },
+        { slug: "impeccable", summary: "全局 impeccable" },
+      ],
+    });
+  });
+
+  it("skips a layer whose file is missing", async () => {
+    const { read } = reader({ "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局" });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`, {
+      deps: deps({ loadSkill: async () => DECLARING, readCatalogText: read }),
+    });
+
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({
+      workflows: [{ slug: "dev", summary: "全局" }],
+    });
+  });
+
+  it("does not read the disk when no declaration names the workflows source", async () => {
+    const { read, asked } = reader({
+      "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局",
+    });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`, {
+      deps: deps({ readCatalogText: read }),
+    });
+
+    expect(asked).toEqual([]);
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({});
+  });
+
+  it("does not read the disk when the declaration names another source", async () => {
+    const { read, asked } = reader({});
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`, {
+      deps: deps({
+        loadSkill: async () => ({ name: "flow-workflow", assists: [{ slot: "run", kind: "catalog", source: "skills" }] }),
+        readCatalogText: read,
+      }),
+    });
+
+    expect(asked).toEqual([]);
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({});
+  });
+
+  it("omits workflows when every layer is empty", async () => {
+    const { read } = reader({
+      "/workspace/.claude/workflows/index.md": "# 工作流清单\n\n没有条目\n",
+      "/home/tester/.data/flow-workflow/index.md": "",
+    });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`, {
+      deps: deps({ loadSkill: async () => DECLARING, readCatalogText: read }),
+    });
+
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({});
+  });
+
+  it("reads only the global layer when the session has no cwd", async () => {
+    const { read, asked } = reader({ "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局" });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?name=flow-workflow`, {
+      deps: deps({ loadSkill: async () => DECLARING, readCatalogText: read, resolveCwd: async () => undefined }),
+    });
+
+    expect(asked).toEqual(["/home/tester/.data/flow-workflow/index.md"]);
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({
+      workflows: [{ slug: "dev", summary: "全局" }],
+    });
+  });
+
+  it("serves the catalogue on the path branch too", async () => {
+    const { read } = reader({ "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局" });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow&path=%2Fhome%2Fme%2FSKILL.md`, {
+      deps: deps({
+        readSkillAt: async (name, path) => ({ ...DECLARING, name, path }),
+        loadSkill: async () => undefined,
+        readCatalogText: read,
+      }),
+    });
+
+    expect(recorded.status).toBe(200);
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({
+      workflows: [{ slug: "dev", summary: "全局" }],
+    });
+  });
+
+  it("still answers 404 when the path branch cannot confirm the skill", async () => {
+    const { read } = reader({ "/home/tester/.data/flow-workflow/index.md": "- dev（261005）：全局" });
+
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow&path=%2Fhome%2Fme%2FSKILL.md`, {
+      deps: deps({
+        readSkillAt: async () => undefined,
+        loadSkill: async () => undefined,
+        readCatalogText: read,
+      }),
+    });
+
+    expect(recorded.status).toBe(404);
+  });
+
+  it("answers 200 with an empty catalogue when the file reads throw", async () => {
+    const recorded = await call(`${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`, {
+      deps: deps({
+        loadSkill: async () => DECLARING,
+        readCatalogText: async () => {
+          throw new Error("EACCES at /secret/path");
+        },
+      }),
+    });
+
+    expect(recorded.status).toBe(200);
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({});
+  });
+});
+
 describe("registerSkillProfileRoutes", () => {
   it("registers one prefix route and returns its disposer", () => {
     const unregister = vi.fn();
@@ -229,5 +398,151 @@ describe("registerSkillProfileRoutes", () => {
 
     dispose();
     expect(unregister).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The declaration has to survive the host half's own wiring.
+ *
+ * These cases drive `apply` with a fake context and take the handler the route
+ * actually registers, rather than calling the handler with stub deps. The stub
+ * path cannot see this defect: `loadSkillProfile` and `readSkillProfileAt` are
+ * private to `src/index.ts`, and the bug was that they read `frontmatter.assists`
+ * and then dropped it on the way out, so `skillProfileOf` never saw a declaration
+ * and the catalogue was never read.
+ *
+ * Everything the route reads lives under a temporary root, including the global
+ * catalogue: `homedir()` follows `$HOME`, so pointing that at the fixture keeps
+ * the case deterministic and off the developer's own files.
+ */
+describe("host wiring", () => {
+  /** A SKILL.md declaring one catalogue panel on its `run` word. */
+  const DECLARING_SKILL = [
+    "---",
+    "name: flow-workflow",
+    "metadata:",
+    "  version: 0.0.1",
+    "  assist:",
+    "    - slot: run",
+    "      kind: catalog",
+    "      source: workflows",
+    "---",
+    "",
+    "# Body",
+  ].join("\n");
+
+  /** The project catalogue the route should find under the session's cwd. */
+  const PROJECT_CATALOG = "- dev（261005）：把单个任务描述按拆解交付";
+
+  /** A fixture root: a skill file, a project catalogue, and a global catalogue. */
+  async function fixture(): Promise<{ root: string; skillPath: string; cwd: string }> {
+    const root = await mkdtemp(join(tmpdir(), "dsh-better-assist-"));
+    const skillPath = join(root, "SKILL.md");
+    await writeFile(skillPath, DECLARING_SKILL, "utf8");
+    const cwd = join(root, "project");
+    await mkdir(join(cwd, ".claude", "workflows"), { recursive: true });
+    await writeFile(join(cwd, ".claude", "workflows", "index.md"), PROJECT_CATALOG, "utf8");
+    await mkdir(join(root, ".data", "flow-workflow"), { recursive: true });
+    await writeFile(join(root, ".data", "flow-workflow", "index.md"), "- global-only（261006）：全局条目", "utf8");
+    return { root, skillPath, cwd };
+  }
+
+  /**
+   * Drive `apply` and return the handler the route registered.
+   *
+   * `whenWebServer` mounts synchronously when the service is already present, so a
+   * context whose `get` answers a web server needs no timer.
+   */
+  async function registeredHandler(options: {
+    readonly skillPath: string;
+    readonly cwd: string;
+  }): Promise<(req: IncomingMessage, res: ServerResponse) => void | Promise<void>> {
+    const { apply } = await import("../src/index.ts");
+    let handler: ((req: IncomingMessage, res: ServerResponse) => void | Promise<void>) | undefined;
+    const webServer: WebServerFace = {
+      register(route) {
+        handler = route.handler;
+        return () => undefined;
+      },
+    };
+    const ctx = {
+      effect: (callback: () => () => void) => callback(),
+      get: (name: string) => {
+        if (name === "webServer") return webServer;
+        if (name === "skills") {
+          return {
+            list: async () => [{ name: "flow-workflow", path: options.skillPath }],
+            get: async () => undefined,
+          };
+        }
+        if (name === "sessions") return { get: () => ({ header: { cwd: options.cwd } }) };
+        if (name === "sessionPersistence") return { stat: async () => undefined };
+        return undefined;
+      },
+    };
+    apply(ctx as never);
+    if (handler === undefined) throw new Error("the route was not registered");
+    return handler;
+  }
+
+  /** Run one request with `$HOME` pointed at the fixture root. */
+  async function callWithHome(
+    root: string,
+    handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>,
+    url: string,
+  ): Promise<Recorded> {
+    const previous = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const { res, read } = stubResponse();
+      await handler(stubRequest(url), res);
+      return read();
+    } finally {
+      if (previous === undefined) delete process.env.HOME;
+      else process.env.HOME = previous;
+    }
+  }
+
+  it("keeps the declared assist through the registry branch", async () => {
+    const { root, skillPath, cwd } = await fixture();
+    const handler = await registeredHandler({ skillPath, cwd });
+
+    const recorded = await callWithHome(root, handler, `${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`);
+
+    expect(recorded.status).toBe(200);
+    expect((recorded.body as { assists: unknown }).assists).toEqual([
+      { slot: "run", kind: "catalog", source: "workflows" },
+    ]);
+  });
+
+  it("fills the catalogue the declaration asked for", async () => {
+    const { root, skillPath, cwd } = await fixture();
+    const handler = await registeredHandler({ skillPath, cwd });
+
+    const recorded = await callWithHome(root, handler, `${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow`);
+
+    // The project layer wins its own slug and the global layer follows it.
+    expect((recorded.body as { catalogs: unknown }).catalogs).toEqual({
+      workflows: [
+        { slug: "dev", summary: "把单个任务描述按拆解交付" },
+        { slug: "global-only", summary: "全局条目" },
+      ],
+    });
+  });
+
+  it("keeps the declared assist through the client-supplied path branch", async () => {
+    const { root, skillPath, cwd } = await fixture();
+    const handler = await registeredHandler({ skillPath, cwd });
+
+    const recorded = await callWithHome(
+      root,
+      handler,
+      `${SKILL_PROFILE_ROUTE_PREFIX}?sessionId=s1&name=flow-workflow&path=${encodeURIComponent(skillPath)}`,
+    );
+
+    expect(recorded.status).toBe(200);
+    expect((recorded.body as { assists: unknown }).assists).toEqual([
+      { slot: "run", kind: "catalog", source: "workflows" },
+    ]);
   });
 });

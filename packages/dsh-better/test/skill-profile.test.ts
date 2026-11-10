@@ -325,6 +325,91 @@ describe("readFrontmatterFields", () => {
     const source = ["---", "name: demo", "---", "", "metadata:", "  fake: value"].join("\n");
     expect(readFrontmatterFields(source)).toEqual({ name: "demo" });
   });
+
+  it("reads the assist list without flattening it into metadata", () => {
+    const source = [
+      "---",
+      "name: flow-workflow",
+      "metadata:",
+      "  version: 0.0.1-alpha.16",
+      "  assist:",
+      "    - slot: run",
+      "      kind: catalog",
+      "      source: workflows",
+      "      title: 工作流目录",
+      "---",
+    ].join("\n");
+
+    expect(readFrontmatterFields(source)).toEqual({
+      name: "flow-workflow",
+      metadata: { version: "0.0.1-alpha.16" },
+      assists: [{ slot: "run", kind: "catalog", source: "workflows", title: "工作流目录" }],
+    });
+  });
+
+  it("keeps the assist list out of the flattened metadata map", () => {
+    const source = [
+      "---",
+      "metadata:",
+      "  version: 1",
+      "  assist:",
+      "    - slot: run",
+      "      kind: catalog",
+      "      source: workflows",
+      "---",
+    ].join("\n");
+
+    const fields = readFrontmatterFields(source);
+    expect(fields.metadata).toEqual({ version: "1" });
+    expect(fields.metadata !== undefined && "assist" in fields.metadata).toBe(false);
+  });
+
+  it("ends the assist list at the next metadata key", () => {
+    const source = [
+      "---",
+      "metadata:",
+      "  assist:",
+      "    - slot: run",
+      "      kind: catalog",
+      "      source: workflows",
+      "  version: 2",
+      "---",
+    ].join("\n");
+
+    expect(readFrontmatterFields(source)).toEqual({
+      metadata: { version: "2" },
+      assists: [{ slot: "run", kind: "catalog", source: "workflows" }],
+    });
+  });
+
+  it("drops an assist entry that names a kind or source this package cannot fill", () => {
+    const source = [
+      "---",
+      "metadata:",
+      "  assist:",
+      "    - slot: run",
+      "      kind: picker",
+      "      source: workflows",
+      "    - slot: review",
+      "      kind: catalog",
+      "      source: workflows",
+      "---",
+    ].join("\n");
+
+    expect(readFrontmatterFields(source).assists).toEqual([{ slot: "review", kind: "catalog", source: "workflows" }]);
+  });
+
+  it("omits assists entirely when the skill declares none", () => {
+    const source = ["---", "name: demo", "metadata:", "  version: 1", "---"].join("\n");
+
+    expect("assists" in readFrontmatterFields(source)).toBe(false);
+  });
+
+  it("omits assists when every declared entry is dropped", () => {
+    const source = ["---", "metadata:", "  assist:", "    - kind: catalog", "      source: workflows", "---"].join("\n");
+
+    expect("assists" in readFrontmatterFields(source)).toBe(false);
+  });
 });
 
 describe("readFrontmatterArgumentHint", () => {
@@ -352,11 +437,12 @@ describe("readFrontmatterArgumentHint", () => {
 });
 
 describe("skillProfileOf", () => {
-  it("composes the wire shape with metadata defaulting to empty", () => {
+  it("composes the wire shape with metadata and assists defaulting to empty", () => {
     expect(skillProfileOf({ name: "flow-workflow" })).toEqual({
       name: "flow-workflow",
       metadata: {},
       params: [],
+      assists: [],
     });
   });
 
@@ -377,6 +463,22 @@ describe("skillProfileOf", () => {
         { flag: "--dynamic", detail: "" },
         { flag: "--budget", detail: "<1B|200M>" },
       ],
+      assists: [],
     });
+  });
+
+  it("carries the declared assists through to the wire", () => {
+    const profile = skillProfileOf({
+      name: "flow-workflow",
+      assists: [{ slot: "run", kind: "catalog", source: "workflows" }],
+    });
+
+    expect(profile.assists).toEqual([{ slot: "run", kind: "catalog", source: "workflows" }]);
+  });
+
+  it("drops an assist the wire could not fill", () => {
+    const profile = skillProfileOf({ name: "demo", assists: [{ slot: "run", kind: "catalog", source: "skills" }] });
+
+    expect(profile.assists).toEqual([]);
   });
 });

@@ -22,6 +22,8 @@
  * @module dsh-better/skill-profile
  */
 
+import { normalizeAssists, type AssistSpec } from "./assist-spec.ts";
+
 /** One insertable parameter: the text to put in the composer, and its value shape. */
 export interface SkillParam {
   /** Text inserted into the input, e.g. `--scope`. Never wrapped in brackets. */
@@ -42,6 +44,15 @@ export interface SkillProfileWire {
   /** Frontmatter `metadata:` block, flattened to one line per key. */
   readonly metadata: Readonly<Record<string, string>>;
   readonly params: readonly SkillParam[];
+  /**
+   * Panels the skill declared; the route always sends this, as `[]` when the
+   * skill declared none.
+   *
+   * Optional on the type rather than required because hand-built stubs (the
+   * client's own tests) legitimately omit it, and forcing every literal to spell
+   * out an empty list would make this field the loudest thing in the shape.
+   */
+  readonly assists?: readonly AssistSpec[];
 }
 
 /** A token of the hint: a word, or one bracket boundary. */
@@ -393,6 +404,8 @@ export interface SkillFrontmatter {
   readonly name?: string;
   readonly argumentHint?: string;
   readonly metadata?: Record<string, string>;
+  /** Declared panels, already normalized; absent when the skill declares none. */
+  readonly assists?: AssistSpec[];
 }
 
 /**
@@ -416,8 +429,32 @@ export function readFrontmatterFields(source: string): SkillFrontmatter {
   let argumentHint: string | undefined;
   const metadata: Record<string, string> = {};
   let metadataIndent = -1;
+  // The `assist:` list is collected as raw rows and normalized at the end, so a
+  // dropped entry cannot leave a half-built spec behind.
+  const assistRows: Record<string, unknown>[] = [];
+  let assistIndent = -1;
+  let assistRow: Record<string, unknown> | undefined;
 
   for (const line of lines) {
+    if (assistIndent >= 0) {
+      if (line.trim() === "") continue;
+      const indent = line.length - line.trimStart().length;
+      if (indent > assistIndent) {
+        const item = /^\s*-[ \t]+([A-Za-z0-9_.-]+):[ \t]*(.*)$/u.exec(line);
+        if (item !== null) {
+          assistRow = { [item[1] ?? ""]: stripQuotes(item[2] ?? "") };
+          assistRows.push(assistRow);
+          continue;
+        }
+        const field = /^\s+([A-Za-z0-9_.-]+):[ \t]*(.*)$/u.exec(line);
+        if (field !== null && assistRow !== undefined) {
+          assistRow[field[1] ?? ""] = stripQuotes(field[2] ?? "");
+        }
+        continue;
+      }
+      assistIndent = -1;
+      assistRow = undefined;
+    }
     if (metadataIndent >= 0) {
       // The block ends at the first line that is not indented deeper than the
       // `metadata:` key itself; a blank line inside it is skipped rather than
@@ -429,6 +466,13 @@ export function readFrontmatterFields(source: string): SkillFrontmatter {
         if (entry !== null) {
           const key = entry[1] ?? "";
           const value = stripQuotes(entry[2] ?? "");
+          // `assist` is a list of panels, not a line of text: it must not reach
+          // the flattened map, which the panel renders as one row per key.
+          if (key === "assist" && value === "") {
+            assistIndent = indent;
+            assistRow = undefined;
+            continue;
+          }
           if (key !== "" && value !== "") metadata[key] = value;
         }
         continue;
@@ -453,10 +497,17 @@ export function readFrontmatterFields(source: string): SkillFrontmatter {
     }
   }
 
-  const frontmatter: { name?: string; argumentHint?: string; metadata?: Record<string, string> } = {};
+  const frontmatter: {
+    name?: string;
+    argumentHint?: string;
+    metadata?: Record<string, string>;
+    assists?: AssistSpec[];
+  } = {};
   if (name !== undefined) frontmatter.name = name;
   if (argumentHint !== undefined) frontmatter.argumentHint = argumentHint;
   if (Object.keys(metadata).length > 0) frontmatter.metadata = metadata;
+  const assists = normalizeAssists(assistRows);
+  if (assists.length > 0) frontmatter.assists = assists;
   return frontmatter;
 }
 
@@ -473,6 +524,7 @@ export function skillProfileOf(input: {
   path?: string;
   argumentHint?: string;
   metadata?: unknown;
+  assists?: unknown;
 }): SkillProfileWire {
   const profile: {
     name: string;
@@ -481,10 +533,12 @@ export function skillProfileOf(input: {
     argumentHint?: string;
     metadata: Record<string, string>;
     params: SkillParam[];
+    assists: AssistSpec[];
   } = {
     name: input.name,
     metadata: normalizeMetadata(input.metadata),
     params: parseArgumentHint(input.argumentHint),
+    assists: normalizeAssists(input.assists),
   };
   if (input.description !== undefined && input.description !== "") {
     profile.description = input.description;
