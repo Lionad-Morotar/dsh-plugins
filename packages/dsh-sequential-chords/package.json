@@ -1,0 +1,39 @@
+{
+  "name": "dsh-sequential-chords",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness sequential chords: the two-press decision as pure functions, no DOM and no host",
+  "license": "MIT",
+  "author": "Lionad <1806234223@qq.com>",
+  "homepage": "https://github.com/Lionad-Morotar/dsh-plugins/tree/main/packages/dsh-sequential-chords#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lionad-Morotar/dsh-plugins",
+    "directory": "packages/dsh-sequential-chords"
+  },
+  "bugs": {
+    "url": "https://github.com/Lionad-Morotar/dsh-plugins/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "keyboard",
+    "shortcuts",
+    "chord"
+  ],
+  "exports": {
+    ".": "./src/engine.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.0"
+  }
+}
