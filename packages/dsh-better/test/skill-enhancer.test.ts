@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import {
   anchorParamPanel,
   appendParam,
+  catalogSelection,
   clampPanelLeft,
   hintLinesFor,
   occurrencesOf,
@@ -26,12 +27,15 @@ import {
   panelWidthFor,
   panelVisibleFor,
   paramInsertionText,
+  renderCatalogPanel,
   renderGhost,
   renderPanel,
   renderParamPanel,
 } from "../src/client/skill-enhancer.tsx";
+import type { CatalogDraftMatch } from "../src/client/catalog-panel.ts";
 import type { ParamDraftMatch } from "../src/client/skill-param.ts";
 import type { SkillParam, SkillProfileWire } from "../src/skill-profile.ts";
+import type { WorkflowEntry } from "../src/workflow-catalog.ts";
 
 describe("paramInsertionText", () => {
   it("separates the flag from a token that ends without whitespace", () => {
@@ -187,6 +191,13 @@ function stubDocument(view: { readonly innerWidth?: number; readonly innerHeight
   };
   const doc = {
     createElement: (tag: string) => make(tag),
+    // A text node carries no handlers, so the stub only has to hold its text and
+    // the class the assertions read; the highlight cases count children by it.
+    createTextNode: (text: string) => {
+      const node = make("#text");
+      node.textContent = text;
+      return node;
+    },
     getElementById: () => null,
     querySelector: () => null,
     querySelectorAll: () => [],
@@ -217,12 +228,30 @@ function asStub(node: HTMLElement): StubNode {
 
 /** Every class name in a node tree, depth first. */
 function classesOf(node: StubNode): string[] {
-  return [node.className, ...node.children.flatMap(child => classesOf(child))].filter(name => name !== "");
+  // `className` is a space-separated list, not one name: a node carrying both a
+  // base class and a state class has to answer to both.
+  return [...namesOf(node), ...node.children.flatMap(child => classesOf(child))];
+}
+
+/** The class names on one node. */
+function namesOf(node: StubNode): string[] {
+  return node.className.split(/\s+/u).filter(name => name !== "");
+}
+
+/**
+ * The text of a node and everything under it.
+ *
+ * The stub keeps `textContent` as a plain field, so a node assembled from several
+ * text children reads as empty. The real property aggregates, and the highlight
+ * cases are exactly the ones that assemble one.
+ */
+function textOf(node: StubNode): string {
+  return node.textContent + node.children.map(child => textOf(child)).join("");
 }
 
 /** The first node with a class, depth first. */
 function findByClass(node: StubNode, className: string): StubNode | undefined {
-  if (node.className === className) return node;
+  if (namesOf(node).includes(className)) return node;
   for (const child of node.children) {
     const found = findByClass(child, className);
     if (found !== undefined) return found;
@@ -896,5 +925,205 @@ describe("anchorParamPanel", () => {
     anchorParamPanel(doc, node as unknown as HTMLElement, LOW);
 
     expect(node.style.width).toBe("276px");
+  });
+});
+
+/**
+ * The catalogue panel's rendering and its insertion path.
+ *
+ * Two things here fail silently in a real composer and are worth the cases:
+ *
+ *   - the row's replacement span, because it is computed from the captured
+ *     revision and the draft's chips, and a span in the wrong coordinate system
+ *     replaces text the user did not point at;
+ *   - the highlight, because it is built with DOM nodes rather than `innerHTML`,
+ *     and a regression there is either a mark over the wrong characters or a
+ *     slug rendered as literal markup.
+ */
+describe("renderCatalogPanel", () => {
+  /** The catalogue the panel lists, in merged order. */
+  const ENTRIES: readonly WorkflowEntry[] = [
+    { slug: "dev", summary: "把单个任务描述按拆解交付" },
+    { slug: "devmap", summary: "自动推进蓝图" },
+  ];
+
+  /** The match `matchCatalogDraft` produces for `/flow-workflow run de`. */
+  const MATCH: CatalogDraftMatch = { name: "flow-workflow", slot: "run", query: "de", start: 19 };
+
+  /** One recorded insertion, as the stub action surface saw it. */
+  interface Recorded {
+    readonly text: string;
+    readonly span: { readonly start: number; readonly end: number; readonly draftRev: number };
+  }
+
+  /** Build the panel over a stub document, recording insertions. */
+  function build(options: {
+    readonly entries?: readonly WorkflowEntry[];
+    readonly draft?: string;
+    readonly match?: CatalogDraftMatch;
+    readonly occurrences?: readonly { readonly offset: number; readonly length: number }[];
+    readonly actions?: boolean;
+    readonly selected?: number;
+  } = {}): { panel: StubNode; inserted: Recorded[]; prevented: unknown[] } {
+    const { doc } = stubDocument();
+    const inserted: Recorded[] = [];
+    const prevented: unknown[] = [];
+    const actions = options.actions === false
+      ? undefined
+      : {
+        captureInsertion: () => ({ start: 19, end: 21, draftRev: 9 }),
+        insertText: (text: string, span: Recorded["span"]) => {
+          inserted.push({ text, span });
+          return true;
+        },
+      };
+    const panel = asStub(renderCatalogPanel(doc, {
+      name: options.match?.name ?? "flow-workflow",
+      slot: options.match?.slot ?? "run",
+      match: options.match ?? MATCH,
+      entries: options.entries ?? ENTRIES,
+      selected: options.selected ?? 0,
+      getActions: () => actions,
+      getDraft: () => options.draft ?? "/flow-workflow run de",
+      getOccurrences: () => options.occurrences ?? [],
+    }));
+    // Count a row that cancels pointerdown: that is the row that keeps the
+    // composer focused, and it is the only thing the handler is for.
+    for (const row of panel.children) {
+      const handler = row.handlers.pointerdown?.[0];
+      if (handler === undefined) continue;
+      row.handlers.pointerdown = [(event) => {
+        prevented.push(event);
+        handler(event);
+      }];
+    }
+    return { panel, inserted, prevented };
+  }
+
+  it("carries the panel class the stylesheet scopes", () => {
+    const { panel } = build();
+    expect(panel.className).toBe("dsh-better-skill-catalog");
+  });
+
+  it("titles itself with the skill and the slot word", () => {
+    const { panel } = build();
+    expect(findByClass(panel, "dsh-better-skill-catalog-title")?.textContent).toBe("/flow-workflow run");
+  });
+
+  it("renders one row per entry, in order", () => {
+    const { panel } = build();
+    const rows = classesOf(panel).filter(name => name === "dsh-better-skill-catalog-row");
+    expect(rows).toHaveLength(ENTRIES.length);
+    const first = findByClass(panel, "dsh-better-skill-catalog-row");
+    expect(first === undefined ? undefined : textOf(first.children[0]!)).toBe("dev");
+  });
+
+  it("shows the summary beside the slug", () => {
+    const { panel } = build();
+    const summaries = classesOf(panel).filter(name => name === "dsh-better-skill-catalog-summary");
+    expect(summaries).toHaveLength(ENTRIES.length);
+  });
+
+  it("marks the selected row and only that row", () => {
+    const { panel } = build({ selected: 1 });
+    const selected = classesOf(panel).filter(name => name === "dsh-better-skill-catalog-selected");
+    expect(selected).toHaveLength(1);
+  });
+
+  it("marks the matched characters of the slug", () => {
+    const { panel } = build();
+    const marks = classesOf(panel).filter(name => name === "dsh-better-skill-catalog-mark");
+    // `de` is in both slugs, once each.
+    expect(marks).toHaveLength(2);
+    const firstMark = findByClass(panel, "dsh-better-skill-catalog-mark");
+    expect(firstMark?.textContent).toBe("de");
+  });
+
+  it("builds the highlight from text nodes rather than markup", () => {
+    // A slug is user-adjacent data; rendering it through innerHTML would let a
+    // catalogue entry inject structure into the composer's own overlay.
+    const { panel } = build({ entries: [{ slug: "a<b>c", summary: "x" }], match: { ...MATCH, query: "b" } });
+
+    const row = findByClass(panel, "dsh-better-skill-catalog-row");
+    const slug = row?.children[0];
+    expect(slug === undefined ? undefined : textOf(slug)).toBe("a<b>c");
+    expect(slug?.children.map(child => textOf(child))).toEqual(["a<", "b", ">c"]);
+  });
+
+  it("replaces the typed value instead of appending to the draft", () => {
+    const { panel, inserted } = build();
+    findByClass(panel, "dsh-better-skill-catalog-row")?.handlers.click?.[0]?.({ preventDefault() {} });
+
+    expect(inserted).toEqual([{ text: "dev ", span: { start: 19, end: 21, draftRev: 9 } }]);
+  });
+
+  it("inserts the row that was clicked, not the selected one", () => {
+    const { panel, inserted } = build({ selected: 0 });
+    const rows = panel.children.filter(child => namesOf(child).includes("dsh-better-skill-catalog-row"));
+    rows[1]?.handlers.click?.[0]?.({ preventDefault() {} });
+
+    expect(inserted[0]?.text).toBe("devmap ");
+  });
+
+  it("keeps the composer focused by cancelling pointerdown on a row", () => {
+    const { panel, prevented } = build();
+    findByClass(panel, "dsh-better-skill-catalog-row")?.handlers.pointerdown?.[0]?.({ preventDefault() {} });
+
+    expect(prevented).toHaveLength(1);
+  });
+
+  it("translates the span through the attachment chips", () => {
+    // The chip is six characters in the draft and one in the editor, so the
+    // replacement lands five characters earlier than the draft offset says.
+    const { panel, inserted } = build({
+      draft: "@a.md /flow-workflow run de",
+      match: { name: "flow-workflow", slot: "run", query: "de", start: 25 },
+      occurrences: [{ offset: 0, length: 5 }],
+    });
+    findByClass(panel, "dsh-better-skill-catalog-row")?.handlers.click?.[0]?.({ preventDefault() {} });
+
+    // The chip collapses five characters, so the draft offset 25 becomes 21 in
+    // the editor's coordinates. A span left in draft coordinates would replace
+    // text five characters to the right of the value the user pointed at.
+    expect(inserted[0]?.span).toEqual({ start: 21, end: 23, draftRev: 9 }); 
+  });
+
+  it("renders no rows when there is no insertion path", () => {
+    // A row that cannot insert teaches a gesture that does nothing.
+    const { panel } = build({ actions: false });
+    expect(classesOf(panel).filter(name => name === "dsh-better-skill-catalog-row")).toHaveLength(0);
+  });
+
+  it("still renders its title without an insertion path", () => {
+    const { panel } = build({ actions: false });
+    expect(findByClass(panel, "dsh-better-skill-catalog-title")?.textContent).toBe("/flow-workflow run");
+  });
+});
+
+describe("catalogSelection", () => {
+  it("starts on the first row", () => {
+    expect(catalogSelection(undefined, 5, "down")).toBe(0);
+  });
+
+  it("moves down and stops at the last row", () => {
+    expect(catalogSelection(0, 3, "down")).toBe(1);
+    expect(catalogSelection(2, 3, "down")).toBe(2);
+  });
+
+  it("moves up and stops at the first row", () => {
+    expect(catalogSelection(2, 3, "up")).toBe(1);
+    expect(catalogSelection(0, 3, "up")).toBe(0);
+  });
+
+  it("clamps a selection that outlived a shorter list", () => {
+    // The user typed, the list shrank, and the index now points past the end: the
+    // highlight comes back to the last row rather than sticking off the list.
+    expect(catalogSelection(9, 3, "down")).toBe(2);
+    expect(catalogSelection(9, 3, "up")).toBe(1);
+  });
+
+  it("reports nothing to select for an empty list", () => {
+    expect(catalogSelection(0, 0, "down")).toBeUndefined();
+    expect(catalogSelection(undefined, 0, "up")).toBeUndefined();
   });
 });

@@ -30,6 +30,13 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 
 import { matchLeadingSkillToken, shouldShowHint } from "./skill-hint.ts";
 import {
+  catalogCompletionText,
+  filterCatalog,
+  highlightRanges,
+  matchCatalogDraft,
+  type CatalogDraftMatch,
+} from "./catalog-panel.ts";
+import {
   filterParams,
   matchParamDraft,
   paramCompletionSpan,
@@ -39,6 +46,8 @@ import {
 } from "./skill-param.ts";
 import { composerBusy } from "./composer-phase.ts";
 import type { SkillParam, SkillProfileWire } from "../skill-profile.ts";
+import type { CatalogProfile } from "./catalog-panel.ts";
+import type { WorkflowEntry } from "../workflow-catalog.ts";
 
 /** One session's published composer state, narrowed to what this module reads. */
 export interface SkillInputStateLike {
@@ -449,6 +458,148 @@ export interface ParamPanelInput {
   readonly getOccurrences: () => readonly OccurrenceLike[];
 }
 
+/** What the catalogue panel renders for one typed value. */
+export interface CatalogPanelInput {
+  /** Skill name, without the leading slash. */
+  readonly name: string;
+  /** The slot word that opened the panel, e.g. `run`. */
+  readonly slot: string;
+  /** The value being typed, in draft coordinates. */
+  readonly match: CatalogDraftMatch;
+  /** The already-filtered entries, best match first. */
+  readonly entries: readonly WorkflowEntry[];
+  /** Index of the highlighted row; the keyboard moves it, the pointer may not. */
+  readonly selected: number;
+  /** Read at click time, so the panel never holds a stale action surface. */
+  readonly getActions: () => InputActionsLike | undefined;
+  /** Read at click time, for the same reason. */
+  readonly getDraft: () => string;
+  /** Read at click time: the chips the span has to be translated through. */
+  readonly getOccurrences: () => readonly OccurrenceLike[];
+}
+
+/**
+ * Move the highlighted row.
+ *
+ * The index is clamped rather than wrapped: a list that jumps from the last row
+ * to the first on one more ArrowDown makes the row under the user's eye move
+ * without them asking, and the list is short enough that stopping is not a
+ * hardship.
+ * @param current - the highlighted index, or undefined before the first paint.
+ * @param count - how many rows there are.
+ * @param direction - the arrow that was pressed.
+ * @returns the index to highlight, or undefined when there is nothing to highlight.
+ */
+export function catalogSelection(
+  current: number | undefined,
+  count: number,
+  direction: "up" | "down",
+): number | undefined {
+  if (count <= 0) return undefined;
+  if (current === undefined) return 0;
+  // A selection can outlive the list it was made against: the user typed, the
+  // list shrank, and the old index now points past the end.
+  const clamped = Math.min(current, count - 1);
+  if (direction === "up") return Math.max(0, clamped - 1);
+  return Math.min(count - 1, clamped + 1);
+}
+
+/**
+ * Append one string to a node, marking the parts the query matched.
+ *
+ * Built from text nodes rather than `innerHTML` because the text is catalogue
+ * data: a slug containing markup would otherwise be parsed as structure inside
+ * the composer's own overlay. The mark element is the only node this creates.
+ */
+function appendHighlighted(doc: Document, parent: HTMLElement, text: string, query: string): void {
+  const ranges = highlightRanges(text, query);
+  if (ranges.length === 0) {
+    parent.append(doc.createTextNode(text));
+    return;
+  }
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range.start > cursor) parent.append(doc.createTextNode(text.slice(cursor, range.start)));
+    const mark = doc.createElement("mark");
+    mark.className = "dsh-better-skill-catalog-mark";
+    mark.textContent = text.slice(range.start, range.end);
+    parent.append(mark);
+    cursor = range.end;
+  }
+  if (cursor < text.length) parent.append(doc.createTextNode(text.slice(cursor)));
+}
+
+/**
+ * Build the catalogue panel's content.
+ *
+ * A click replaces the value being typed rather than appending after it, which is
+ * the difference between a completion and a second value: `de` plus `dev` would
+ * otherwise leave `de dev` in the draft. The replacement range is computed from
+ * the captured revision and the draft's chips, and a range that cannot be mapped
+ * honestly is dropped, because a click at a guessed offset corrupts the draft and
+ * is not undoable as one step.
+ *
+ * Placement is not decided here for the same reason as the parameter panel: a
+ * node that has not been appended reports a height of zero, so `anchorParamPanel`
+ * does that half once the node is in the document.
+ */
+export function renderCatalogPanel(doc: Document, input: CatalogPanelInput): HTMLElement {
+  const panel = doc.createElement("div");
+  panel.className = "dsh-better-skill-catalog";
+
+  const title = doc.createElement("div");
+  title.className = "dsh-better-skill-catalog-title";
+  title.textContent = `/${input.name} ${input.slot}`;
+  panel.append(title);
+
+  // No action surface means no insertion path, and a row that cannot insert
+  // teaches a gesture that does nothing.
+  if (input.getActions()?.insertText !== undefined) {
+    input.entries.forEach((entry, index) => {
+      panel.append(catalogRow(doc, input, entry, index === input.selected));
+    });
+  }
+
+  panel.style.width = `${paramPanelWidth(doc)}px`;
+  return panel;
+}
+
+/** One catalogue row: the slug, its goal, and the replacement it performs. */
+function catalogRow(
+  doc: Document,
+  input: CatalogPanelInput,
+  entry: WorkflowEntry,
+  selected: boolean,
+): HTMLElement {
+  const row = doc.createElement("button");
+  row.type = "button";
+  row.className = selected
+    ? "dsh-better-skill-catalog-row dsh-better-skill-catalog-selected"
+    : "dsh-better-skill-catalog-row";
+  // The composer must keep focus; see the module note.
+  row.addEventListener("pointerdown", event => event.preventDefault());
+
+  const slug = doc.createElement("span");
+  slug.className = "dsh-better-skill-catalog-slug";
+  appendHighlighted(doc, slug, entry.slug, input.match.query);
+  row.append(slug);
+
+  const summary = doc.createElement("span");
+  summary.className = "dsh-better-skill-catalog-summary";
+  appendHighlighted(doc, summary, entry.summary, input.match.query);
+  row.append(summary);
+
+  row.addEventListener("click", () => {
+    const actions = input.getActions();
+    const captured = actions?.captureInsertion?.();
+    if (actions?.insertText === undefined || captured === undefined) return;
+    const span = paramCompletionSpan(input.getDraft(), input.getOccurrences(), input.match, captured.draftRev);
+    if (span === undefined) return;
+    actions.insertText(catalogCompletionText(entry.slug), span);
+  });
+  return row;
+}
+
 /**
  * Build the parameter candidate panel's content.
  *
@@ -590,7 +741,9 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
     const phase = phaseFromSlot ?? stateFromStore.phase;
 
     const [names, setNames] = useState<ReadonlySet<string>>(() => new Set<string>());
-    const [profile, setProfile] = useState<SkillProfileWire | undefined>(undefined);
+    // Typed as the client view rather than the wire: the catalogue lists are the
+    // one field the host may send that the wire type does not name.
+    const [profile, setProfile] = useState<CatalogProfile | undefined>(undefined);
     const [hovered, setHovered] = useState<string | undefined>(undefined);
     const [box, setBox] = useState<TokenBox | undefined>(undefined);
     const [usage, setUsage] = useState<{ session: number; workspace?: number } | undefined>(undefined);
@@ -599,6 +752,11 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
     // changes the string, so the dismissal cannot outlive the text it applied to.
     const [paramDismissed, setParamDismissed] = useState<string | undefined>(undefined);
     const [paramBox, setParamBox] = useState<TokenBox | undefined>(undefined);
+    // The same dismissal rule as the flag list, kept separate because the two
+    // panels close independently: dismissing one must not reopen the other.
+    const [catalogDismissed, setCatalogDismissed] = useState<string | undefined>(undefined);
+    const [catalogBox, setCatalogBox] = useState<TokenBox | undefined>(undefined);
+    const [catalogIndex, setCatalogIndex] = useState<number | undefined>(undefined);
 
     // The catalogue is fetched once per session and kept: it changes only when the
     // workspace does, and a refetch per keystroke would hammer the host.
@@ -634,11 +792,24 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
     const paramMatch = matchParamDraft(draft, name => names.has(name));
     const paramOpen = paramMatch !== undefined && !composerBusy(phase) && paramDismissed !== draft;
 
+    // The catalogue panel is the same gesture with a declared slot instead of a
+    // flag: the skill said one of its words is filled from a list, and the host
+    // filled it. It needs the profile to know the declaration, so it cannot open
+    // until the profile for this skill has arrived.
+    const catalogMatch = matchCatalogDraft(draft, name => names.has(name), profile?.assists ?? []);
+    const catalogEntries = profile?.catalogs?.workflows ?? [];
+    const catalogOpen = catalogMatch !== undefined
+      && catalogEntries.length > 0
+      && !composerBusy(phase)
+      && catalogDismissed !== draft
+      // The flag list owns a trailing `--`; two panels would fight for the caret.
+      && !paramOpen;
+
     // The ghost's text follows whichever skill the draft addresses, whether it was
     // reached by typing or by hovering. The candidate list is a third way in: it
     // is already open on a skill the catalogue knows, so its profile is the one
     // the rows are filtered from.
-    const profileName = hintName ?? hovered ?? (paramOpen ? paramMatch.name : undefined);
+    const profileName = hintName ?? hovered ?? (paramOpen ? paramMatch.name : catalogMatch?.name);
     useEffect(() => {
       if (sessionId === undefined || profileName === undefined) {
         setProfile(undefined);
@@ -756,6 +927,8 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
     // The candidate panel's own node, so an outside pointerdown can tell a click
     // on a row from a click anywhere else.
     const paramNodeRef = useRef<HTMLElement | undefined>(undefined);
+    // The catalogue panel's node, for the same reason.
+    const catalogNodeRef = useRef<HTMLElement | undefined>(undefined);
 
     // The ghost. Mounted into `body` rather than rendered in the slot cell: the
     // composer clips its own children, and an absolutely positioned ghost inside
@@ -865,6 +1038,106 @@ export function createSkillEnhancer(deps: SkillEnhancerDeps): (props: SkillEnhan
       doc.addEventListener("pointerdown", onDown, true);
       return () => doc.removeEventListener("pointerdown", onDown, true);
     }, [doc, paramOpen]);
+
+    // Re-anchor the catalogue panel on the caret, for the same reasons as the flag
+    // list: every keystroke can move it and a resize can reflow the composer.
+    useEffect(() => {
+      if (doc === undefined || !catalogOpen) {
+        setCatalogBox(undefined);
+        return;
+      }
+      const measure = (): void => setCatalogBox(paramAnchorBox(doc));
+      measure();
+      const view = doc.defaultView;
+      view?.addEventListener("resize", measure);
+      return () => view?.removeEventListener("resize", measure);
+    }, [doc, catalogOpen, draft]);
+
+    // The highlighted row follows the list. A new query makes a new list, so the
+    // highlight goes back to the first row rather than pointing at whatever used
+    // to be at that index.
+    useEffect(() => {
+      setCatalogIndex(undefined);
+    }, [catalogMatch?.query]);
+
+    // The catalogue panel. Rebuilt whenever the value or the candidate set
+    // changes; the row handlers read the draft and chips through refs, so a
+    // rebuild is never required for correctness.
+    useEffect(() => {
+      if (doc === undefined || !catalogOpen || catalogMatch === undefined) return undefined;
+      const entries = filterCatalog(catalogEntries, catalogMatch.query);
+      // An empty list is not worth a panel: it would cover the composer to say
+      // "nothing matches" when the user can already see that nothing matched.
+      if (entries.length === 0) return undefined;
+      const node = renderCatalogPanel(doc, {
+        name: catalogMatch.name,
+        slot: catalogMatch.slot,
+        match: catalogMatch,
+        entries,
+        selected: catalogSelection(catalogIndex, entries.length, "down") ?? 0,
+        getActions: () => actionsRef.current,
+        getDraft: () => draftRef.current,
+        getOccurrences: () => occurrencesRef.current,
+      });
+      catalogNodeRef.current = node;
+      doc.body.append(node);
+      anchorParamPanel(doc, node, catalogBox);
+      return () => {
+        catalogNodeRef.current = undefined;
+        node.remove();
+      };
+    }, [doc, catalogOpen, catalogMatch, catalogEntries, catalogIndex, catalogBox]);
+
+    // The keyboard belongs to the catalogue panel only while it is open. The
+    // arrows and Enter are cancelled so the composer does not also move its caret
+    // or submit the draft underneath the list.
+    useEffect(() => {
+      if (doc === undefined || !catalogOpen) return;
+      const onKey = (event: KeyboardEvent): void => {
+        // Escape closes it; the draft is recorded so the next keystroke reopens.
+        if (event.key === "Escape") {
+          setCatalogDismissed(draftRef.current);
+          return;
+        }
+        if (event.key !== "ArrowUp" && event.key !== "ArrowDown" && event.key !== "Enter") return;
+        // A composing Enter is the input method confirming a candidate, not the
+        // user choosing a row.
+        if (event.isComposing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.key === "Enter") {
+          const entries = filterCatalog(catalogEntries, catalogMatch?.query ?? "");
+          const index = catalogSelection(catalogIndex, entries.length, "down");
+          const entry = index === undefined ? undefined : entries[index];
+          if (entry === undefined || catalogMatch === undefined) return;
+          const actions = actionsRef.current;
+          const captured = actions?.captureInsertion?.();
+          if (actions?.insertText === undefined || captured === undefined) return;
+          const span = paramCompletionSpan(draftRef.current, occurrencesRef.current, catalogMatch, captured.draftRev);
+          if (span === undefined) return;
+          actions.insertText(catalogCompletionText(entry.slug), span);
+          return;
+        }
+        setCatalogIndex(current => catalogSelection(current, filterCatalog(catalogEntries, catalogMatch?.query ?? "").length, event.key === "up" ? "up" : "down"));
+      };
+      doc.addEventListener("keydown", onKey, true);
+      return () => doc.removeEventListener("keydown", onKey, true);
+    }, [doc, catalogOpen, catalogMatch, catalogEntries, catalogIndex]);
+
+    // A pointerdown outside the list closes it, on the same capture-phase rule as
+    // the flag list: a row cancels the event's default action, so a bubble-phase
+    // listener would miss a click that lands on one.
+    useEffect(() => {
+      if (doc === undefined || !catalogOpen) return;
+      const onDown = (event: Event): void => {
+        const node = catalogNodeRef.current;
+        const target = event.target;
+        if (node !== undefined && target instanceof Node && node.contains(target)) return;
+        setCatalogDismissed(draftRef.current);
+      };
+      doc.addEventListener("pointerdown", onDown, true);
+      return () => doc.removeEventListener("pointerdown", onDown, true);
+    }, [doc, catalogOpen]);
 
     return null;
   };
