@@ -82,7 +82,7 @@ import { createReferenceResolver, installReferenceLinks, type ReferenceProbeAnsw
 import { composeInsertion } from "./paths.ts";
 import { rankRows } from "./ranking.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
-import { catalogRows, shortcutRows, withConfirmLabel, type PanelRow } from "./rows.ts";
+import { catalogRows, shortcutRows, withConfirmLabel, withShortcutHints, type PanelRow } from "./rows.ts";
 import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from "./sources.ts";
 import { statusStamp } from "./status.ts";
 import { createPanelStore } from "./store.ts";
@@ -722,7 +722,9 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
           result.rows.flatMap(row => (row.action.kind === "execute-command" ? [row.action.name] : [])),
         );
       }
-      const composed = latest.model.mode === "command" ? composeCommandRows(result.rows) : result.rows;
+      const composed = latest.model.mode === "command"
+        ? composeCommandRows(result.rows)
+        : withShortcutHints(result.rows, services.shortcuts()?.catalog.getSnapshot() ?? []);
       rawRows = composed;
       cache.set(keyOf(latest), composed);
       store.set({

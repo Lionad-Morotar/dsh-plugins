@@ -26,6 +26,7 @@ import type {
 import type { PathEntry } from "../shared.ts";
 import type { PanelMode, SessionScope } from "./panel-state.ts";
 import { displayPath, tildeForm, toAbsolutePath } from "./paths.ts";
+import { usableShortcut } from "./shortcut-key.ts";
 import { sessionTier, workspaceTier, type StatusTier } from "./status.ts";
 
 /** What picking a row does; the runtime maps each variant onto host services. */
@@ -76,6 +77,12 @@ export interface PanelRow {
   readonly alias?: string;
   readonly detail?: string;
   readonly hint?: string;
+  /**
+   * The host shortcut this row stands for, when one exists. The row does not
+   * carry the keycap itself: the binding is the reader's to rebind, so the
+   * keycap is injected at composition time from the live catalogue.
+   */
+  readonly shortcutId?: string;
   /**
    * Activity-ladder rung for the title colour, mirrored from the sidebar so
    * one session never reads at two levels between the two surfaces.
@@ -262,6 +269,34 @@ export function catalogRows(
 }
 
 /**
+ * Put the live keycap on the rows that declare a host shortcut.
+ *
+ * Rows built from host data (workspaces, sessions) never see the shortcuts
+ * catalogue, so their keycaps are filled in here rather than at construction:
+ * the same row then reads correctly after a rebind without the builder knowing
+ * a catalogue exists. A row that already speaks its own trailing text keeps it,
+ * and a shortcut that cannot be pressed contributes nothing.
+ *
+ * @param rows - rows as the mode's builder produced them.
+ * @param entries - the shortcuts catalogue snapshot.
+ * @returns the same array when no row needed a hint, else a new one.
+ */
+export function withShortcutHints(
+  rows: readonly PanelRow[],
+  entries: readonly ShortcutCatalogEntry[],
+): PanelRow[] {
+  let changed = false;
+  const hinted = rows.map(row => {
+    if (row.shortcutId === undefined || row.hint !== undefined) return row;
+    const usable = usableShortcut(entries, row.shortcutId);
+    if (usable === undefined) return row;
+    changed = true;
+    return { ...row, hint: usable.keys.join(" ") };
+  });
+  return changed ? hinted : (rows as PanelRow[]);
+}
+
+/**
  * The armed quit row speaks the confirmation instead of its label.
  *
  * This is a display projection, applied after ranking and never on the stored
@@ -444,6 +479,7 @@ export function workspaceRows(
   rows.push({
     key: "scope:new-session",
     label: copy.newSession,
+    shortcutId: "session.new",
     action: { kind: "create-session", scope: "workspace" },
   });
   rows.push({
@@ -505,6 +541,7 @@ export function sessionRows(
     rows.push({
       key: "scope:new-session",
       label: copy.newSession,
+      shortcutId: "session.new",
       action: { kind: "create-session", scope: "workspace", workspaceId: scope.workspaceId },
     });
     rows.push({

@@ -120,6 +120,13 @@ describe("app.quit", () => {
   });
 });
 
+describe("catalogue shortcut declarations", () => {
+  it("binds the new-session row to the host's own new-session command", () => {
+    const entry = CATALOG.find(item => item.id === "session.newInWorkspace");
+    expect(entry?.shortcutId).toBe("session.new");
+  });
+});
+
 describe("catalogue copy", () => {
   const copy = copyFor("zh");
 

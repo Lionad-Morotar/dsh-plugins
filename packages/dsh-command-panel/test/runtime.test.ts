@@ -220,6 +220,14 @@ function harness(options: HarnessOptions = {}): Harness {
           keys: ["⇧", "⌘", "P"],
         },
         { id: "command-panel.switch", binding: null, keys: [] },
+        {
+          id: "session.new",
+          label: "新建会话",
+          binding: { code: "KeyN", modifiers: ["primary"] as const },
+          keys: ["⌘", "N"],
+          issue: null,
+          conflicts: [],
+        },
       ]),
       config: snapshotOf<ShortcutConfigSnapshot>({ revision: 4, status: "ready", usingDefaults: true }),
       register: (command: ShortcutCommand) => {
@@ -434,6 +442,32 @@ describe("panel lifecycle", () => {
     const labels = h.store.getSnapshot().rows.map(row => row.label);
     expect(labels).not.toContain("导航：打开设置");
     expect(labels).toContain("导航：打开插件页面");
+  });
+});
+
+describe("row shortcut hints", () => {
+  it("shows the live keycap on the switch mode's new-session row", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.switch");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    const row = h.store.getSnapshot().rows.find(entry => entry.key === "scope:new-session");
+    expect(row?.hint).toBe("⌘ N");
+    h.runtime.dispose();
+  });
+
+  it("does not list the new-session command twice in the command mode", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.commands");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    const rows = h.store.getSnapshot().rows;
+    // The catalogue row carries the action; the shortcuts catalogue would have
+    // listed the same command a second time under its shortcut label.
+    expect(rows.filter(row => row.action.kind === "invoke-shortcut" && row.action.id === "session.new")).toEqual([]);
+    expect(rows.filter(row => row.label === "新建会话")).toEqual([]);
+    expect(rows.find(row => row.label === "会话：在当前工作区创建新会话")?.hint).toBe("⌘ N");
+    h.runtime.dispose();
   });
 });
 

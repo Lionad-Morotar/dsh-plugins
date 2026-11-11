@@ -14,6 +14,7 @@ import {
   sessionRows,
   shortcutRows,
   visibleSessions,
+  withShortcutHints,
   workspaceRows,
   type PanelRow,
 } from "../src/client/rows.ts";
@@ -254,6 +255,57 @@ describe("shortcutRows", () => {
   });
 });
 
+describe("withShortcutHints", () => {
+  const bound: readonly ShortcutCatalogEntry[] = [
+    {
+      id: "session.new",
+      label: "新建会话",
+      keys: ["⌘", "N"],
+      binding: { code: "KeyN", modifiers: ["meta"] },
+      modified: false,
+      conflicts: [],
+      issue: null,
+    },
+  ];
+
+  const list = sessionList([SESSION_A, SESSION_B]);
+  const snapshot = workspaceSnapshot();
+
+  it("puts the live keycap on the rows that declare a shortcut", () => {
+    const rows = withShortcutHints(workspaceRows(snapshot, list, copy, now), bound);
+    expect(rows.at(-2)?.hint).toBe("⌘ N");
+    const scoped = withShortcutHints(
+      sessionRows(list, snapshot, { kind: "workspace", workspaceId: "ws-one" }, copy, now),
+      bound,
+    );
+    expect(scoped.at(-2)?.hint).toBe("⌘ N");
+  });
+
+  it("leaves the row without a hint when the shortcut is not usable", () => {
+    const unbound: readonly ShortcutCatalogEntry[] = [{ ...bound[0]!, binding: null, keys: [] }];
+    const rows = withShortcutHints(workspaceRows(snapshot, list, copy, now), unbound);
+    expect(rows.at(-2)?.hint).toBeUndefined();
+  });
+
+  it("leaves the row without a hint when the catalogue does not carry the id", () => {
+    const rows = withShortcutHints(workspaceRows(snapshot, list, copy, now), []);
+    expect(rows.at(-2)?.hint).toBeUndefined();
+  });
+
+  it("never overwrites a hint the row already carries", () => {
+    const rows = workspaceRows(snapshot, list, copy, now);
+    const hinted = withShortcutHints(rows, bound);
+    // The workspace rows and the archive row speak their own trailing text.
+    expect(hinted[0]?.hint).toBe(rows[0]?.hint);
+    expect(hinted.at(-1)?.hint).toBe(rows.at(-1)?.hint);
+  });
+
+  it("returns the same array when no row declares a shortcut", () => {
+    const rows = sessionRows(list, snapshot, { kind: "all" }, copy, now);
+    expect(withShortcutHints(rows, bound)).toBe(rows);
+  });
+});
+
 describe("visibleSessions", () => {
   const list = sessionList([SESSION_A, SESSION_B, SESSION_C, SESSION_BLANK, SESSION_SUBAGENT, SESSION_ARCHIVED]);
   const snapshot = workspaceSnapshot();
@@ -303,6 +355,10 @@ describe("workspaceRows", () => {
   it("offers a plain new-session row that inherits the current workspace", () => {
     const newRow = rows.at(-2);
     expect(newRow?.action).toEqual({ kind: "create-session", scope: "workspace" });
+  });
+
+  it("declares the host's new-session shortcut on that row", () => {
+    expect(rows.at(-2)?.shortcutId).toBe("session.new");
   });
 
   it("omits the ungrouped row when every visible session has an owner", () => {
@@ -358,6 +414,11 @@ describe("sessionRows", () => {
     expect(archiveRow?.key).toBe("scope:archived");
     expect(archiveRow?.hint).toBe(copy.sessionsCount(1));
     expect(archiveRow?.action).toEqual({ kind: "drill-archived" });
+  });
+
+  it("declares the host's new-session shortcut on the workspace-scoped row", () => {
+    const scoped = sessionRows(list, snapshot, { kind: "workspace", workspaceId: "ws-one" }, copy, now);
+    expect(scoped.at(-2)?.shortcutId).toBe("session.new");
   });
 
   it("keeps the archived-sessions row out of the all scope", () => {
