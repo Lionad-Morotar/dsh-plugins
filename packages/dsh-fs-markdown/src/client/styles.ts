@@ -52,6 +52,22 @@ export const MARKDOWN_STYLES = `
   min-height: 100%;
   box-sizing: border-box;
 }
+/* The first frame of a delegated language block: the text, before the block
+   arrives. It is a local fetch, so this shows for well under a second, and a
+   blank box would be worse than the text. Monospace and the code font size keep
+   it from reflowing when the editor replaces it. */
+.fmd-langs-placeholder {
+  margin: 0;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: auto;
+  padding: 18px 24px 64px;
+  font-family: var(--fmd-mono);
+  font-size: var(--fmd-fs-code);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--fmd-text);
+}
 .fmd-editor { height: 100%; min-height: 100%; }
 .fmd-editor .cm-editor {
   height: 100%;

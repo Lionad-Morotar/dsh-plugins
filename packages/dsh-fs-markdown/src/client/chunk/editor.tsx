@@ -26,13 +26,16 @@ import { yaml } from "@codemirror/lang-yaml";
 import { syntaxHighlighting } from "@codemirror/language";
 import { Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, drawSelection, keymap, type KeyBinding } from "@codemirror/view";
-import { useEffect, useRef, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 
 import { CLASS_NAMES } from "../classes.ts";
 import type { EditorBodyProps } from "../contracts.ts";
 import { planDecorations } from "../decorations.ts";
 import { BLOCK_ASSIGNMENT } from "dsh-text-languages/catalog.ts";
 
+import { EDITABLE_LANG_CHUNKS } from "../../shared.ts";
+import type { EditableHandle } from "../contracts.ts";
+import { loadEditableLangChunk } from "../chunk-loader.ts";
 import { ExternalChange, EDITOR_HIGHLIGHT_STYLE } from "./editor-kit.tsx";
 import { languageOf, type EditorLanguage } from "../language.ts";
 import { TableWidget } from "../table-widget.ts";
@@ -210,6 +213,130 @@ function pageCaret(view: EditorView, direction: -1 | 1, extend: boolean): void {
 }
 
 /**
+ * The body for a language whose grammar lives in one of the four batch blocks.
+ *
+ * The shell chunk holds ten grammars statically; the other 44 languages live in
+ * four batch chunks, each carrying its own editor. A file whose language is in
+ * one of those batches is drawn by that block instead, because a grammar cannot
+ * cross a chunk boundary: both bundles inline their own CodeMirror core, so an
+ * extension built in one is rejected by an editor built in the other.
+ *
+ * The first frame is a read-only `<pre>`: the block is a local fetch and arrives
+ * in well under a second, and a blank box would be worse than the text. A block
+ * that fails to load falls back to the shell's own editor, monochrome, because a
+ * file that cannot be coloured must still be editable.
+ */
+function DelegatedBody(props: EditorBodyProps & { readonly block: string }): ReactElement {
+  const { text, path, block } = props;
+  const language = languageOf(path);
+  const host = useRef<HTMLDivElement>(null);
+  const handle = useRef<EditableHandle | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  // The sinks are read through refs so a re-render on every keystroke does not
+  // remount the block: the block is created once per (block, path).
+  const onChange = useRef(props.onChange);
+  onChange.current = props.onChange;
+  const onSave = useRef(props.onSave);
+  onSave.current = props.onSave;
+  const findSink = useRef(props.find);
+  findSink.current = props.find;
+  const pageText = useRef(text);
+  pageText.current = text;
+
+  useEffect(() => {
+    const element = host.current;
+    if (element === null) return;
+    let live = true;
+    /** The editor this effect mounted, so cleanup only destroys its own. */
+    let mine: EditableHandle | null = null;
+    loadEditableLangChunk(block).then(
+      module => {
+        if (!live) return;
+        // Re-derive: the path can change between the fetch starting and the
+        // block landing, and the answer must describe the file on screen.
+        if (BLOCK_ASSIGNMENT[languageOf(path)] !== block) return;
+        try {
+          const created = module.mount(element, {
+            text: pageText.current,
+            path,
+            language,
+            onChange: next => onChange.current(next),
+            onFindInvalidate: () => findSink.current?.invalidate?.(),
+            onSave: () => onSave.current?.(),
+          });
+          mine = created;
+          handle.current = created;
+          setReady(true);
+        } catch {
+          // A block that cannot mount leaves the file to the shell's editor,
+          // which is a readable and editable page.
+          setFailed(true);
+        }
+      },
+      // A block that never arrives falls back the same way. Reporting it would
+      // put an error over text that is fine.
+      () => {
+        if (live) setFailed(true);
+      },
+    );
+    return () => {
+      live = false;
+      mine?.destroy();
+      if (handle.current === mine) handle.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block, path, language]);
+
+  // An external write is the shell's own text coming back, so it goes through
+  // `setText` rather than through the change sink.
+  useEffect(() => {
+    handle.current?.setText(text);
+  }, [text]);
+
+  // The block reads the whole document, unlike the pane's pager, so the counter
+  // may say "whole file". Publishing it here is also what keeps focus out of the
+  // editor while a hit is highlighted.
+  useEffect(() => {
+    const find = props.find;
+    if (find === undefined || !ready) return;
+    find.register({
+      scope: "document",
+      text: () => pageText.current,
+      select: (from, to) => handle.current?.revealRange(from, to),
+      clear: () => handle.current?.clearSelection(),
+    });
+    return () => find.register(null);
+  }, [props.find, ready]);
+
+  if (failed) {
+    // The shell's own editor, with no grammar for this language: monochrome but
+    // fully editable, which is what the file had before this slice existed.
+    // `ShellEditorBody` and not `EditorBody`: the latter would re-enter the
+    // delegation and recurse, since this file's language still maps to a block.
+    return <ShellEditorBody {...props} />;
+  }
+
+  return (
+    <>
+      {ready ? null : (
+        <pre className="fmd-langs-placeholder" data-testid="fs-md-langs-placeholder">
+          {text}
+        </pre>
+      )}
+      <div
+        className="fmd-editor fmd-source-editor"
+        data-testid="fs-md-editor"
+        data-mode={props.mode}
+        data-renderer={block}
+        ref={host}
+      />
+    </>
+  );
+}
+
+/**
  * Mount the editor for one document.
  *
  * The view is created once; text and mode arrive as effects afterwards. That is
@@ -219,6 +346,18 @@ function pageCaret(view: EditorView, direction: -1 | 1, extend: boolean): void {
  * @returns the editor host element.
  */
 export function EditorBody(props: EditorBodyProps): ReactElement {
+  // A language whose grammar lives in a batch block is drawn by that block. The
+  // check is a table lookup, so the ten in-service languages and `.md` cost one
+  // miss and then take the path below unchanged.
+  const block = BLOCK_ASSIGNMENT[languageOf(props.path)];
+  if (block !== undefined && EDITABLE_LANG_CHUNKS[block] !== undefined) {
+    return <DelegatedBody {...props} block={block} />;
+  }
+  return <ShellEditorBody {...props} />;
+}
+
+/** The editor this shell has always been: ten grammars, one view. */
+function ShellEditorBody(props: EditorBodyProps): ReactElement {
   const { text, mode, visible, path } = props;
   // Markdown is the only family whose planner understands the document, so the
   // decoration layer is on only when the caller asked for it.
