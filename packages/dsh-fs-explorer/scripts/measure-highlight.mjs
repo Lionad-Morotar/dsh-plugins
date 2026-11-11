@@ -10,6 +10,10 @@
  * Neither is measurable from the artifacts alone, so this script prints where
  * they are covered rather than inventing a second fixture for them.
  *
+ * M6 is the diagram renderer: whether its chunk exists and fits its ceiling,
+ * whether the two bundles a reader always parses stayed where they were, and
+ * whether mermaid's engine stayed out of both.
+ *
  * Everything is read from the committed `lib/` trees and gzipped with
  * `zlib.gzipSync`, the same call the build scripts use. A different gzip level
  * would make these numbers incomparable with the budgets written into the build,
@@ -80,7 +84,63 @@ const BUDGET = {
   // all 44 grammars, not to police a few KB.
   editBlock: 256000,
   editBlockTotal: 1024000,
+  // The diagram renderer is one library, whole: mermaid 12 with every diagram
+  // type it ships. The ceiling leaves about a tenth of headroom over the measured
+  // 1,530,469 B for a minor upgrade, and fails if a second engine is pulled in
+  // beside it.
+  mermaidChunk: 1700000,
+  // What the wiring may cost the two bundles a reader always parses. The startup
+  // bundle gains the two copy keys; the preview chunk gains the fence, the state
+  // machine and the theme observers.
+  mermaidStartupGrowth: 2048,
+  mermaidPreviewGrowth: 6000,
 };
+
+/**
+ * Baselines for M6, taken from `af37415`'s committed artifacts.
+ *
+ * A second table rather than more rows in {@link BASELINES}: those four are the
+ * highlight delivery's own baselines and M1/M1b compare against them, so adding
+ * rows there would silently re-point an unrelated check. These are measured from
+ * the committed `lib/` at `af37415` with the same `zlib.gzipSync` call, which is
+ * what makes them comparable with the numbers this script prints.
+ */
+const MERMAID_BASELINES = {
+  "dsh-fs-explorer/lib/client.js": 74863,
+  "dsh-fs-explorer/lib/client.preview.js": 132241,
+};
+
+/**
+ * Symbols that only appear when mermaid's engine is bundled.
+ *
+ * The bare word `mermaid` is deliberately absent: the route table names the file
+ * `client.mermaid.js` and the preview chunk carries the fence's class names and
+ * two copy keys, so both bundles contain it by design and a check on the word
+ * alone would fail on a correct build. These are the library's own namespace, its
+ * layout engine, two of its dependencies and two of its internals, all of which
+ * survive minification as property names or string literals.
+ */
+const MERMAID_ENGINE_SYMBOLS = ["@mermaid-js", "cytoscape", "d3-", "dagre", "mermaidAPI", "mermaidCaptureSizes"];
+
+/**
+ * The only shapes the word `mermaid` may take in a bundle that does not render.
+ *
+ * Every one of these is wiring: the chunk's file name, the fence's language id,
+ * the two test ids the DOM contract uses, the two copy keys, and the loader's own
+ * error sentence. Anything else means engine vocabulary arrived, which is what
+ * the check is for. Matching the whole word rather than a prefix keeps
+ * `client.mermaid.js` from being read as the library's name.
+ */
+const MERMAID_WIRING_FORMS = [
+  /client\.mermaid\.js/u,
+  /language-mermaid/u,
+  /fs-preview-mermaid(?:-error)?/u,
+  /preview\.mermaid\.(?:error|source)/u,
+  // The loader's marker comparison: `renderer !== "mermaid"`. The marker is the
+  // chunk's own name, so this is the wiring that checks it, not engine code.
+  /renderer\s*!==\s*"mermaid"/u,
+  /is not the mermaid renderer/u,
+];
 
 /**
  * Symbols that only appear when a grammar package is bundled.
@@ -193,6 +253,37 @@ function grammarSymbolsIn(file) {
 }
 
 /**
+ * Every occurrence of `mermaid` in one bundle that is not wiring.
+ *
+ * The forms in {@link MERMAID_WIRING_FORMS} are removed first, then whatever
+ * `mermaid` is left is reported with a little context. Reporting the context
+ * rather than a count is what makes a failure diagnosable: the message names the
+ * code that arrived, not just the fact that something did.
+ * @param {string} file - absolute path to a bundle.
+ * @returns {string[]} the leftover occurrences, empty when the bundle is clean.
+ */
+function strayMermaidIn(file) {
+  let text = readFileSync(file, "utf8");
+  for (const form of MERMAID_WIRING_FORMS) text = text.replace(new RegExp(form.source, "gu"), " ");
+  return [...text.matchAll(/mermaid/gu)].map(match =>
+    text.slice(Math.max(0, match.index - 32), match.index + 24).replace(/\s+/gu, " "),
+  );
+}
+
+/**
+ * Whether a bundle carries mermaid's engine, by symbol or by stray vocabulary.
+ * @param {string} file - absolute path to a bundle.
+ * @returns {{ symbols: string[], stray: string[] }} what was found, both empty when clean.
+ */
+function mermaidEngineIn(file) {
+  const text = readFileSync(file, "utf8");
+  return {
+    symbols: MERMAID_ENGINE_SYMBOLS.filter(symbol => text.includes(symbol)),
+    stray: strayMermaidIn(file),
+  };
+}
+
+/**
  * Build one row of the size table.
  * @param {string} key - `package/file` label used by the baselines.
  * @param {number} gzip - measured gzipped size.
@@ -293,6 +384,29 @@ async function report() {
   const preview = heavy[0];
   const editor = heavy[1];
 
+  // M6: the diagram renderer. Its own chunk, its own ceiling, and two bundles
+  // that must not have absorbed it.
+  const mermaidFile = join(explorerLib, "client.mermaid.js");
+  let mermaidChunk = null;
+  try {
+    mermaidChunk = measure(mermaidFile);
+  } catch {
+    // A missing artifact is the failure this check exists for, so it is reported
+    // as an absent row rather than thrown: the table still prints every other
+    // measurement beside it.
+    mermaidChunk = null;
+  }
+  const mermaidGrowth = {
+    "dsh-fs-explorer/lib/client.js": measure(join(explorerLib, "client.js")).gzip - MERMAID_BASELINES["dsh-fs-explorer/lib/client.js"],
+    "dsh-fs-explorer/lib/client.preview.js":
+      measure(join(explorerLib, "client.preview.js")).gzip - MERMAID_BASELINES["dsh-fs-explorer/lib/client.preview.js"],
+  };
+  const mermaidEngine = {
+    "dsh-fs-explorer/lib/client.js": mermaidEngineIn(join(explorerLib, "client.js")),
+    "dsh-fs-explorer/lib/client.preview.js": mermaidEngineIn(join(explorerLib, "client.preview.js")),
+  };
+  const mermaidClean = Object.values(mermaidEngine).every(found => found.symbols.length === 0 && found.stray.length === 0);
+
   const checks = {
     M1: {
       status:
@@ -349,6 +463,32 @@ async function report() {
       detail:
         "the edit surface ships one artifact per batch block, each naming its block and listing the catalogue's languages in order, within the per-block and total budgets",
     },
+    M6: {
+      // Three questions at once, because they fail together: the chunk has to
+      // exist and fit, the two bundles a reader always parses may not have grown
+      // beyond the wiring, and neither may carry the engine. A build that inlined
+      // mermaid into the preview chunk would pass the first and fail the other two.
+      status:
+        mermaidChunk !== null &&
+        mermaidChunk.gzip <= BUDGET.mermaidChunk &&
+        mermaidGrowth["dsh-fs-explorer/lib/client.js"] <= BUDGET.mermaidStartupGrowth &&
+        mermaidGrowth["dsh-fs-explorer/lib/client.preview.js"] <= BUDGET.mermaidPreviewGrowth &&
+        mermaidClean
+          ? "pass"
+          : "fail",
+      budget: {
+        chunkGzip: BUDGET.mermaidChunk,
+        startupGrowth: BUDGET.mermaidStartupGrowth,
+        previewGrowth: BUDGET.mermaidPreviewGrowth,
+      },
+      measured: {
+        chunk: mermaidChunk,
+        growth: mermaidGrowth,
+        engine: mermaidEngine,
+      },
+      detail:
+        "the diagram renderer is its own chunk within 1.7 MB gzipped, the startup bundle grew by at most 2 KiB and the preview chunk by at most 6 KiB, and neither carries mermaid's engine",
+    },
   };
 
   return {
@@ -358,6 +498,13 @@ async function report() {
     languageChunks: { explorer: chunkRows, totalGzip: chunkTotal, markdown: markdownChunks },
     pythonChunkGzip: python?.gzip ?? null,
     editBlocks: { files: editRows, totalGzip: editTotal, blocks: editBlocks },
+    mermaid: {
+      chunk: mermaidChunk,
+      baselinesFrom: "af37415",
+      baselines: MERMAID_BASELINES,
+      growth: mermaidGrowth,
+      engine: mermaidEngine,
+    },
     blocks: {
       count: blockCount,
       artifacts: emittedFiles,
@@ -414,8 +561,32 @@ function printTable(data) {
   process.stdout.write(
     `\n=== covered elsewhere ===\n` +
       `M4   a plain-text file fetches no chunk: covered by vitest (test/preview-pane.test.ts)\n` +
-      `M2   both surfaces paint the same colours: covered by the browser evidence in docs/qa/261111\n`,
+      `M2   both surfaces paint the same colours: covered by the browser evidence in docs/qa/261111\n` +
+      `M6b  a document with no diagram fetches no chunk, and a theme switch redraws: covered by vitest\n` +
+      `     (test/markdown-view.test.ts) and by the browser evidence in docs/qa/261112\n`,
   );
+
+  process.stdout.write(`\n=== diagram renderer (M6) ===\n`);
+  process.stdout.write(`${"artifact".padEnd(54)}${"gzip".padStart(9)}${"vs base".padStart(9)}\n`);
+  if (data.mermaid.chunk === null) {
+    process.stdout.write(`dsh-fs-explorer/lib/client.mermaid.js${"MISSING".padStart(9)}${"".padStart(9)}\n`);
+  } else {
+    line("dsh-fs-explorer/lib/client.mermaid.js", data.mermaid.chunk.gzip, null, `budget ${String(data.checks.M6.budget.chunkGzip)}`);
+  }
+  for (const [artifact, delta] of Object.entries(data.mermaid.growth)) {
+    const sign = delta > 0 ? `+${String(delta)}` : String(delta);
+    process.stdout.write(`${artifact.padEnd(54)}${String(data.mermaid.baselines[artifact]).padStart(9)}${sign.padStart(9)}  growth, budget ${String(artifact.endsWith("client.js") ? data.checks.M6.budget.startupGrowth : data.checks.M6.budget.previewGrowth)}\n`);
+  }
+  const engine = Object.entries(data.mermaid.engine);
+  const clean = engine.every(([, found]) => found.symbols.length === 0 && found.stray.length === 0);
+  process.stdout.write(
+    `\n  mermaid engine in the two always-parsed bundles: ${clean ? "none" : "PRESENT"}\n`,
+  );
+  for (const [artifact, found] of engine) {
+    if (found.symbols.length > 0 || found.stray.length > 0) {
+      process.stdout.write(`    ${artifact}: ${[...found.symbols, ...found.stray].join(" | ")}\n`);
+    }
+  }
 
   process.stdout.write(`\n=== checks ===\n`);
   for (const [id, check] of Object.entries(data.checks)) {
