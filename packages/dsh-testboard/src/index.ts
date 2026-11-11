@@ -21,6 +21,8 @@ import { basename, join, sep } from "node:path";
 import type { Context } from "@deepseek-ai/cordis";
 
 import { createRunEngine, type SubprocessLike } from "./host/run-engine.ts";
+import { createResultsStore } from "./host/results-store.ts";
+import { createStateReader } from "./host/state-reader.ts";
 import { registerTestboardRoutes, type TestboardRouteDeps, type WebServerFace } from "./host/routes.ts";
 import {
   resolveSessionRoot,
@@ -199,6 +201,9 @@ export function apply(ctx: Context): void {
     const sessionPersistence = readService(host, "sessionPersistence") as SessionPersistenceFace | undefined;
     const subprocess = readService(host, "subprocess") as SubprocessLike | undefined;
 
+    // Every settled run is written under the workspace; the board falls back to
+    // the newest one when this process has never run anything here.
+    const results = createResultsStore();
     // The line lookup needs the file's text, which needs the workspace; the
     // engine hands both back so this stays a pure read with no ambient state.
     const engine = createRunEngine({
@@ -208,27 +213,20 @@ export function apply(ctx: Context): void {
         spawn: () => ({ done: Promise.reject(new Error("no subprocess service")), collected: {} }),
       },
       fileTextOf: (workspace, path) => readWorkspaceFileSync(workspace, path),
+      onSettled: (workspace, result) => {
+        // Best effort: a read-only checkout or a full disk must not turn a run
+        // that produced a reading into a failed run.
+        void results.save(workspace, result);
+      },
     });
 
     async function resolveWorkspaceRoot(sessionId: string): Promise<string | undefined> {
       return resolveSessionRoot(sessionId, sessions, sessionPersistence);
     }
 
-    async function readState(workspace: string): Promise<TestboardState> {
-      // A session can outlive the directory it pointed at (a deleted checkout, a
-      // renamed folder). Saying so is more useful than an empty board that looks
-      // like a workspace with no tests.
-      if (!(await isDirectory(workspace))) return { workspace, error: "unknown-workspace" };
-      const state = engine.getState(workspace);
-      return {
-        workspace,
-        workspaceName: basename(workspace),
-        ...state,
-        // The last run's error is also the board's: a reader who reloads after a
-        // crashed run must still see why the numbers are stale.
-        ...(state.run?.status === "error" ? { error: "run-failed" as const } : {}),
-      };
-    }
+    // In-memory state first, then the newest on-disk result: a fresh boot or a
+    // new session for the same workspace opens on the last thing the reader saw.
+    const readState = createStateReader({ engine, results, isDirectory });
 
     async function startRun(workspace: string, scope: RunScope): Promise<WireRunStartResponse> {
       if (subprocess === undefined) return { ok: false, error: "no-subprocess" };

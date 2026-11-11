@@ -193,6 +193,13 @@ export interface TestboardState {
   readonly workspaceName?: string;
   readonly snapshot?: TestSnapshot;
   readonly run?: RunProgress;
+  /**
+   * The snapshot and run came from the on-disk cache rather than this process.
+   *
+   * The board reads exactly the same way; the flag lets the view say where the
+   * numbers came from instead of presenting an old run as one that just landed.
+   */
+  readonly cached?: boolean;
   readonly error?: TestboardError;
   /** Present only on the preview's fixture runtime; never sent by the host. */
   readonly demo?: DemoStage;

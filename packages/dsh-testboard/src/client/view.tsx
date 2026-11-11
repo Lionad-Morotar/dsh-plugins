@@ -136,6 +136,7 @@ export interface TestboardViewStrings extends DetailPaneStrings {
   readonly noticeReferenceFailed: string;
   readonly noticeCopied: string;
   readonly noticeCopyFailed: string;
+  readonly fromCache: string;
 }
 
 /** The request the conversation shell carries when `openView` targets this tab. */
@@ -358,6 +359,8 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const previousRunRef = useRef<RunProgress | undefined>(undefined);
     const [stateError, setStateError] = useState<TestboardError | undefined>(undefined);
     const [demo, setDemo] = useState<DemoStage | undefined>(undefined);
+    // Whether the reading came from the on-disk cache instead of this process.
+    const [cached, setCached] = useState(false);
     const [loadError, setLoadError] = useState<string | undefined>(undefined);
     const [editor, setEditor] = useState<EditorChunkModule | undefined>(undefined);
     const [filter, setFilter] = useState<RowFilter>("all");
@@ -442,6 +445,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       setSourceCache(new Map());
       setMenu(undefined);
       setNotice(undefined);
+      setCached(false);
       handledFocus.current = undefined;
       setSessionEpoch(epoch => epoch + 1);
     }, [sessionId]);
@@ -457,6 +461,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       // Only the preview's fixture fills this in; on the host it is absent and
       // the board never invents a fixing stage.
       setDemo(state.demo);
+      setCached(state.cached === true);
     }, []);
 
     // The first load, and every session change. No session id means the host
@@ -965,6 +970,10 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const chartFailures = run === undefined ? [] : run.failures;
     const chartSpanMs = run === undefined ? Math.max(1000, summary.wallClockMs) : Math.max(1000, elapsedMs);
     const meta = runMeta(run, motionStrings, elapsedMs);
+    // A reading recovered from disk is the same result the reader saw last time;
+    // saying where it came from is the difference between "these numbers just
+    // landed" and "this is where you left off".
+    const metaText = cached ? (meta === "" ? strings.fromCache : `${strings.fromCache} · ${meta}`) : meta;
     // The subtitle is `workspace · command`. The command half already names the
     // project in the locale string, so the workspace is only prepended when it
     // says something different: otherwise the line reads `dsh-plugins ·
@@ -1018,9 +1027,9 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
             ) : null
           }
         />
-        {meta === "" ? null : (
-          <p data-testid="run-meta" data-tst="run-meta">
-            {meta}
+        {metaText === "" ? null : (
+          <p data-testid="run-meta" data-tst="run-meta" data-cached={cached ? "true" : "false"}>
+            {metaText}
           </p>
         )}
         <Toolbar

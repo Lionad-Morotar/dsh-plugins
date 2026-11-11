@@ -17,7 +17,9 @@ import { createRoot } from "react-dom/client";
 import snapshotData from "./data/snapshot.json" with { type: "json" };
 import sourcesData from "./data/sources.json" with { type: "json" };
 import { createFixtureRuntime } from "./fixture-runtime.ts";
+import { summarize } from "./model.ts";
 import type { TestboardRuntime } from "./runtime.ts";
+import type { RunProgress } from "../shared.ts";
 import { ensureStyles } from "./styles.ts";
 import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
 import type { EditorChunkModule } from "./code-contract.ts";
@@ -88,31 +90,73 @@ const STRINGS: TestboardViewStrings = {
   noticeReferenceFailed: "引用插入失败",
   noticeCopied: "已复制路径",
   noticeCopyFailed: "复制失败",
+  fromCache: "上次运行",
 };
 
+/** Which static state the page should show instead of the demoting demo loop. */
+type PreviewState = "demo" | "empty" | "cached";
+
 /**
- * Whether the page should show the waiting state instead of the demo loop.
+ * Read the requested state from the query string.
  *
- * The empty board is a real state a reader meets on a fresh workspace, and it is
- * the one state the fixture runtime cannot reach on its own (its whole job is to
- * keep a run moving). `?state=empty` is for looking at and screenshotting it.
+ * The empty and cached boards are real states a reader meets on a fresh
+ * workspace or after a reload, and neither is reachable through the fixture
+ * runtime (its whole job is to keep a run moving). `?state=` is for looking at
+ * and screenshotting them.
  * @param search - the page's query string.
- * @returns whether the empty state was asked for.
+ * @returns the requested state; the demo is the default.
  */
-function requestedEmpty(search: string): boolean {
-  return new URLSearchParams(search).get("state") === "empty";
+function requestedState(search: string): PreviewState {
+  const value = new URLSearchParams(search).get("state");
+  return value === "empty" || value === "cached" ? value : "demo";
 }
 
 /**
  * A runtime whose workspace has never run anything.
  *
- * Only the first answer is overridden: every other method still belongs to the
+ * Only the state answer is overridden: every other method still belongs to the
  * fixture, so the board takes exactly the same data path it takes on the host.
  * @param base - the fixture runtime.
  * @returns the waiting-state runtime.
  */
 function waitingRuntime(base: TestboardRuntime): TestboardRuntime {
   return { ...base, loadState: async () => ({}) };
+}
+
+/**
+ * A runtime that answers as if the newest on-disk result had just been loaded.
+ *
+ * The run is reconstructed from the snapshot the page already has, which is the
+ * shape the host returns when its memory is empty and the cache answers.
+ * @param base - the fixture runtime.
+ * @param snapshot - the snapshot to present as the last run's reading.
+ * @returns the cached-state runtime.
+ */
+function cachedRuntime(base: TestboardRuntime, snapshot: TestSnapshot): TestboardRuntime {
+  const summary = summarize(snapshot);
+  const finishedAt = Date.now();
+  const run: RunProgress = {
+    runId: "cached-run",
+    scope: { kind: "all" },
+    status: summary.failed > 0 ? "failed" : "passed",
+    phase: "finished",
+    runNumber: 1,
+    startedAt: new Date(finishedAt - summary.wallClockMs).toISOString(),
+    finishedAt: new Date(finishedAt).toISOString(),
+    elapsedMs: summary.wallClockMs,
+    completedFiles: snapshot.packages.reduce((count, pkg) => count + pkg.files.length, 0),
+    totalFiles: null,
+    counts: {
+      passed: summary.passed,
+      failed: summary.failed,
+      skipped: summary.skipped,
+      total: summary.total,
+    },
+    series: [],
+    failures: [],
+    cases: [],
+  };
+  return { ...base, loadState: async () => ({ snapshot, run, cached: true }) };
 }
 
 /**
@@ -167,12 +211,18 @@ function wireThemeToggle(): void {
  * @param snapshot - the committed snapshot to render.
  * @param sources - every test file's text, for the code pane.
  */
-function mount(host: HTMLElement, snapshot: TestSnapshot, sources: SourceBundle, empty: boolean): void {
+function mount(host: HTMLElement, snapshot: TestSnapshot, sources: SourceBundle, state: PreviewState): void {
   ensureStyles();
   const fixture = createFixtureRuntime({ snapshot, sources });
+  const runtime =
+    state === "empty"
+      ? waitingRuntime(fixture)
+      : state === "cached"
+        ? cachedRuntime(fixture, snapshot)
+        : fixture;
   const View = createTestboardView({
     strings: STRINGS,
-    runtime: empty ? waitingRuntime(fixture) : fixture,
+    runtime,
     // The preview bundle has no ModuleLoader, so the editor chunk is a plain
     // dynamic import here; the page is a development surface, not the host.
     loadEditor: async () => (await import("./editor-chunk.ts")) as unknown as EditorChunkModule,
@@ -203,7 +253,7 @@ mount(
   host,
   snapshotData as unknown as TestSnapshot,
   sourcesData as unknown as SourceBundle,
-  requestedEmpty(window.location.search),
+  requestedState(window.location.search),
 );
 wireThemeToggle();
 

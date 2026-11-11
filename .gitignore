@@ -19,3 +19,6 @@ zRefs/
 
 # Host UI bundle dumps land at the repo root; packages ship theirs under lib/.
 /client.js
+
+# dsh-testboard writes one directory per run here
+/logs/

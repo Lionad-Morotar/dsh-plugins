@@ -117,6 +117,7 @@ const STRINGS: TestboardViewStrings = {
   noticeReferenceFailed: "引用插入失败",
   noticeCopied: "已复制路径",
   noticeCopyFailed: "复制失败",
+  fromCache: "上次运行",
 };
 
 /**
@@ -1130,6 +1131,31 @@ describe("testboard runtime wiring", () => {
     expect(runtime.calls).toContainEqual({ kind: "loadState", detail: "session-2" });
     // The old workspace's selection must not survive the switch.
     expect(pane(host).getAttribute("data-path")).toBeNull();
+  });
+
+  it("says a board restored from disk is the last run, not a fresh one", async () => {
+    const cachedRun: RunProgress = {
+      runId: "cached-1",
+      scope: { kind: "all" },
+      status: "passed",
+      phase: "finished",
+      runNumber: 1,
+      startedAt: "2026-11-11T01:00:00.000Z",
+      finishedAt: "2026-11-11T01:00:05.000Z",
+      elapsedMs: 5000,
+      completedFiles: 1,
+      totalFiles: null,
+      counts: { passed: 1, failed: 0, skipped: 0, total: 1 },
+      series: [{ tMs: 0, finished: 1, passed: 1, failed: 0 }],
+      failures: [],
+      cases: [],
+    };
+    runtime.setState({ snapshot: SNAPSHOT, run: cachedRun, cached: true });
+    await mount("session-cached");
+
+    const meta = host.querySelector<HTMLElement>('[data-testid="run-meta"]');
+    expect(meta?.getAttribute("data-cached")).toBe("true");
+    expect(meta?.textContent).toContain(STRINGS.fromCache);
   });
 
   it("renders the no-session state when the tab has no session id", async () => {

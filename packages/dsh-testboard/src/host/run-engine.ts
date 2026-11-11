@@ -102,6 +102,20 @@ export interface RunEngineOptions {
   readonly fileTextOf?: (workspace: string, path: string) => string | undefined;
   /** Clock, injectable so a test can pin the wall clock. */
   readonly now?: () => number;
+  /**
+   * Called once a run has settled with a snapshot to show.
+   *
+   * Separate from the engine's own state because persistence is a side effect
+   * the caller owns: the engine answers "what does the board know", the host
+   * half decides where that answer is worth keeping. Only a `finished` run with
+   * a snapshot qualifies; a cancelled or errored run has no new reading.
+   * @param workspace - the canonical workspace root.
+   * @param result - the settled run and the snapshot it produced.
+   */
+  readonly onSettled?: (
+    workspace: string,
+    result: { readonly run: RunProgress; readonly snapshot: NonNullable<TestboardState["snapshot"]> },
+  ) => void;
 }
 
 /**
@@ -539,6 +553,13 @@ export function createRunEngine(options: RunEngineOptions): RunEngine {
       entry.snapshot =
         scope.kind === "file" ? mergeScoped(entry.snapshot, parsed, scope.path) : parsed;
       settle("finished", runFailed(parsed, exitCode) ? "failed" : "passed");
+      // Both halves are defined here: the snapshot was just assigned and
+      // `settle` just wrote the run. The callback is invoked synchronously so a
+      // caller that reads the board in the same tick sees the same result the
+      // cache is about to hold.
+      if (entry.snapshot !== undefined && entry.run !== undefined) {
+        options.onSettled?.(workspace, { snapshot: entry.snapshot, run: entry.run });
+      }
     } catch (error) {
       settle("error", "error", error instanceof Error ? error.message : String(error));
     } finally {

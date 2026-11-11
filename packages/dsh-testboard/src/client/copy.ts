@@ -62,6 +62,7 @@ export const ZH: Record<string, string> = {
   "testboard.noticeReferenceFailed": "引用插入失败",
   "testboard.noticeCopied": "已复制路径",
   "testboard.noticeCopyFailed": "复制失败",
+  "testboard.fromCache": "上次运行",
 };
 
 export const EN: Record<string, string> = {
@@ -121,4 +122,5 @@ export const EN: Record<string, string> = {
   "testboard.noticeReferenceFailed": "Could not insert the reference",
   "testboard.noticeCopied": "Path copied",
   "testboard.noticeCopyFailed": "Copy failed",
+  "testboard.fromCache": "Last run",
 };

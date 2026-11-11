@@ -20,7 +20,7 @@
 - **跑测试**：走宿主的 `subprocess` 服务，argv 数组、无 shell、带 `AbortSignal` 与 `graceMs`。命令是 `<工作区>/node_modules/.bin/vitest run [file] --reporter=verbose --reporter=json --outputFile <tmp>`。用工作区自己的二进制，没装 vitest 就明确报 `no-vitest`，不会拿本仓的副本去跑别人的项目。
 - **逐用例增量**：`verbose` reporter 逐条打印，引擎按 200ms 轮询 `subprocess` 的 offset 读，把新增的 stdout 折进状态，所以轮询方在进程结束前就能看到用例一条条落地。`json` reporter 在结束时写文件，是最终快照的权威来源（它带状态与失败信息，人类可读行不带）。
 - **每工作区一轮**：第二次 `start` 返回 `busy`，不排队。取消走 `AbortSignal`，保留已收集的部分事件与既有快照。
-- **内存态，不落盘**：结果只活在宿主进程里，宿主重启后是空态。这是 v1 的取舍，持久化需要 `storageDomain` 接入。
+- **结果缓存**：每轮跑完把这一轮的 run 与 snapshot 写到工作区 `<workspace>/logs/testboard/<YYMMDD>/<HHmmss>/result.json`（本地时间，同秒重名自动加 `-2` 后缀）。宿主进程里没有该工作区的状态时（重启、新会话、重载页面），`/state` 自动回退到最新一份可读结果，页头 meta 前缀「上次运行」。写盘是 best-effort：只读 checkout 或磁盘满不会把已完成的运行判失败；坏文件或旧版本 schema 会被跳过，而不是清空看板。缓存不自动清理，删 `logs/testboard` 即重置。
 
 ## 交互
 
@@ -103,7 +103,7 @@ cd packages/dsh-testboard
 node scripts/preview.mjs --out ../../temp/testboard-preview
 ```
 
-产出 `index.html` 与 `assets.js`，React 已内联，页面不引用外链，`file://` 直接打开或起静态服务器都能看。`?theme=dark|light` 选主题（缺省暗色），`?state=empty` 渲染首次打开时的等待态；空态与 dsh-arch 的空界面同一套版式：内容区居中、文字弱化，只留一个动作入口。
+产出 `index.html` 与 `assets.js`，React 已内联，页面不引用外链，`file://` 直接打开或起静态服务器都能看。`?theme=dark|light` 选主题（缺省暗色），`?state=empty` 渲染首次打开时的等待态，`?state=cached` 渲染从磁盘缓存载入后的上一次结果。空态与 dsh-arch 的空界面同一套版式：内容区居中、文字弱化，只留一个动作入口。
 
 预览页用 fixture runtime，与线上走同一个 `TestboardRuntime` 接口，所以渲染的是真实 tab 的代码路径。它自动循环演示一遍完整叙事：`running`（竖条逐格点亮、计数增长、图表生长）→ `fixing`（标题 `正在修复 N 个失败`，图表右下浮层卡 `Fixing <file>` / `<model> · Ns` / `+2 −2`）→ `rerunning`（失败用例先扫灰再重亮，元信息 `重跑 · Xs`）→ `finished`（`测试完成`，全绿）→ 循环。
 

@@ -1,7 +1,7 @@
 // src/index.ts
-import { access, readFile as readFile2, realpath as realpath2, stat } from "node:fs/promises";
+import { access, readFile as readFile3, realpath as realpath2, stat } from "node:fs/promises";
 import { readFileSync, realpathSync } from "node:fs";
-import { basename, join as join2, sep } from "node:path";
+import { join as join3, sep } from "node:path";
 
 // src/host/run-engine.ts
 import { readFile, rm } from "node:fs/promises";
@@ -396,6 +396,9 @@ function createRunEngine(options) {
       });
       entry.snapshot = scope.kind === "file" ? mergeScoped(entry.snapshot, parsed, scope.path) : parsed;
       settle("finished", runFailed(parsed, exitCode) ? "failed" : "passed");
+      if (entry.snapshot !== void 0 && entry.run !== void 0) {
+        options.onSettled?.(workspace, { snapshot: entry.snapshot, run: entry.run });
+      }
     } catch (error) {
       settle("error", "error", error instanceof Error ? error.message : String(error));
     } finally {
@@ -425,6 +428,151 @@ function createRunEngine(options) {
       controller.abort();
       return true;
     }
+  };
+}
+
+// src/host/results-store.ts
+import { readdir, readFile as readFile2, rename, writeFile, mkdir } from "node:fs/promises";
+import { dirname, join as join2 } from "node:path";
+var RESULT_ROOT = join2("logs", "testboard");
+var RESULT_FILE = "result.json";
+var RESULT_VERSION = 1;
+function two(value) {
+  return String(value).padStart(2, "0");
+}
+function resultDirectory(now) {
+  const day = `${String(now.getFullYear()).slice(-2)}${two(now.getMonth() + 1)}${two(now.getDate())}`;
+  const time = `${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+  return join2(RESULT_ROOT, day, time);
+}
+function readRecord(value) {
+  if (value === null || typeof value !== "object") return void 0;
+  const fields = value;
+  if (fields.version !== RESULT_VERSION) return void 0;
+  if (fields.snapshot === null || typeof fields.snapshot !== "object") return void 0;
+  if (fields.run === null || typeof fields.run !== "object") return void 0;
+  const run = fields.run;
+  if (typeof run.phase !== "string" || typeof run.startedAt !== "string") return void 0;
+  const savedAt = typeof fields.savedAt === "string" ? fields.savedAt : run.finishedAt ?? run.startedAt;
+  return {
+    savedAt,
+    run,
+    snapshot: fields.snapshot
+  };
+}
+function descending(left, right) {
+  return left < right ? 1 : left > right ? -1 : 0;
+}
+function createResultsStore() {
+  const memory = /* @__PURE__ */ new Map();
+  async function newestPath(workspace) {
+    const root = join2(workspace, RESULT_ROOT);
+    let days;
+    try {
+      days = (await readdir(root, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+    } catch {
+      return void 0;
+    }
+    days.sort(descending);
+    for (const day of days.slice(0, 30)) {
+      let times;
+      try {
+        times = (await readdir(join2(root, day), { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+      } catch {
+        continue;
+      }
+      times.sort(descending);
+      for (const time of times.slice(0, 50)) {
+        let raw;
+        try {
+          raw = await readFile2(join2(root, day, time, RESULT_FILE), "utf8");
+        } catch {
+          continue;
+        }
+        let parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+        const record = readRecord(parsed);
+        if (record !== void 0) return record;
+      }
+    }
+    return void 0;
+  }
+  return {
+    async save(workspace, result, now = /* @__PURE__ */ new Date()) {
+      const directory = resultDirectory(now);
+      const body = JSON.stringify({
+        version: RESULT_VERSION,
+        savedAt: now.toISOString(),
+        run: result.run,
+        snapshot: result.snapshot
+      });
+      for (let attempt = 1; attempt <= 20; attempt += 1) {
+        const suffix = attempt === 1 ? "" : `-${String(attempt)}`;
+        const runDirectory = join2(workspace, `${directory}${suffix}`);
+        try {
+          await mkdir(dirname(runDirectory), { recursive: true });
+          await mkdir(runDirectory);
+        } catch (error) {
+          const code = error.code;
+          if (code === "EEXIST") continue;
+          return void 0;
+        }
+        const absolute = join2(runDirectory, RESULT_FILE);
+        try {
+          const temporary = `${absolute}.tmp-${String(process.pid)}-${String(Date.now())}`;
+          await writeFile(temporary, body, "utf8");
+          await rename(temporary, absolute);
+        } catch {
+          continue;
+        }
+        memory.set(workspace, {
+          savedAt: now.toISOString(),
+          run: result.run,
+          snapshot: result.snapshot
+        });
+        return absolute;
+      }
+      return void 0;
+    },
+    async latest(workspace) {
+      if (memory.has(workspace)) return memory.get(workspace);
+      const record = await newestPath(workspace);
+      memory.set(workspace, record);
+      return record;
+    }
+  };
+}
+
+// src/host/state-reader.ts
+import { basename } from "node:path";
+function createStateReader(deps) {
+  return async (workspace) => {
+    if (!await deps.isDirectory(workspace)) return { workspace, error: "unknown-workspace" };
+    const state = deps.engine.getState(workspace);
+    const empty = state.snapshot === void 0 && state.run === void 0;
+    if (empty) {
+      const cached = await deps.results.latest(workspace);
+      if (cached === void 0) return { workspace, workspaceName: basename(workspace) };
+      return {
+        workspace,
+        workspaceName: basename(workspace),
+        snapshot: cached.snapshot,
+        run: cached.run,
+        cached: true
+      };
+    }
+    return {
+      workspace,
+      workspaceName: basename(workspace),
+      ...state,
+      // The last run's error is also the board's: a reader who reloads after a
+      // crashed run must still see why the numbers are stale.
+      ...state.run?.status === "error" ? { error: "run-failed" } : {}
+    };
   };
 }
 
@@ -608,7 +756,7 @@ function whenWebServer(host, register) {
 }
 async function hasVitest(workspace) {
   try {
-    await access(join2(workspace, "node_modules", ".bin", "vitest"));
+    await access(join3(workspace, "node_modules", ".bin", "vitest"));
     return true;
   } catch {
     return false;
@@ -627,7 +775,7 @@ function withinWorkspace(root, target) {
 function readWorkspaceFileSync(workspace, path) {
   try {
     const root = realpathSync(workspace);
-    const target = realpathSync(join2(root, path));
+    const target = realpathSync(join3(root, path));
     if (!withinWorkspace(root, target)) return void 0;
     return readFileSync(target, "utf8");
   } catch {
@@ -637,11 +785,11 @@ function readWorkspaceFileSync(workspace, path) {
 async function readWorkspaceFile(workspace, path) {
   try {
     const root = await realpath2(workspace);
-    const target = await realpath2(join2(root, path));
+    const target = await realpath2(join3(root, path));
     if (!withinWorkspace(root, target)) return void 0;
     const info = await stat(target);
     if (!info.isFile()) return void 0;
-    return await readFile2(target, "utf8");
+    return await readFile3(target, "utf8");
   } catch {
     return void 0;
   }
@@ -652,29 +800,22 @@ function apply(ctx) {
     const sessions = readService(host, "sessions");
     const sessionPersistence = readService(host, "sessionPersistence");
     const subprocess = readService(host, "subprocess");
+    const results = createResultsStore();
     const engine = createRunEngine({
       subprocess: subprocess ?? {
         // A host without a subprocess service cannot run anything. The engine is
         // still built so state reads work; `startRun` refuses before reaching it.
         spawn: () => ({ done: Promise.reject(new Error("no subprocess service")), collected: {} })
       },
-      fileTextOf: (workspace, path) => readWorkspaceFileSync(workspace, path)
+      fileTextOf: (workspace, path) => readWorkspaceFileSync(workspace, path),
+      onSettled: (workspace, result) => {
+        void results.save(workspace, result);
+      }
     });
     async function resolveWorkspaceRoot(sessionId) {
       return resolveSessionRoot(sessionId, sessions, sessionPersistence);
     }
-    async function readState(workspace) {
-      if (!await isDirectory(workspace)) return { workspace, error: "unknown-workspace" };
-      const state = engine.getState(workspace);
-      return {
-        workspace,
-        workspaceName: basename(workspace),
-        ...state,
-        // The last run's error is also the board's: a reader who reloads after a
-        // crashed run must still see why the numbers are stale.
-        ...state.run?.status === "error" ? { error: "run-failed" } : {}
-      };
-    }
+    const readState = createStateReader({ engine, results, isDirectory });
     async function startRun(workspace, scope) {
       if (subprocess === void 0) return { ok: false, error: "no-subprocess" };
       if (!await hasVitest(workspace)) return { ok: false, error: "no-vitest" };
