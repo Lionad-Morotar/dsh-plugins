@@ -9,15 +9,26 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildMapData,
   churnOf,
+  directoryChain,
   fill,
+  indexReadings,
   sortFiles,
   splitPath,
   statusMark,
   summaryOf,
   type Churn,
 } from "../src/client/model.ts";
-import type { ChangedFile, ChangedFileStatus, ReviewSnapshot } from "../src/shared.ts";
+import type {
+  ChangedFile,
+  ChangedFileStatus,
+  ChangedMapEntry,
+  ReviewIndex,
+  ReviewSnapshot,
+  StructureDir,
+  StructureFile,
+} from "../src/shared.ts";
 
 /** One changed file, with the fields a case does not care about defaulted. */
 function file(overrides: Partial<ChangedFile> & { path: string }): ChangedFile {
@@ -233,5 +244,272 @@ describe("filling a template", () => {
 
   it("leaves an unknown placeholder alone rather than printing undefined", () => {
     expect(fill("对比 {base}", {})).toBe("对比 {base}");
+  });
+});
+
+/** One structure file, with the fields a case does not care about defaulted. */
+function structureFile(overrides: Partial<StructureFile> & { path: string }): StructureFile {
+  return { lines: 10, binary: false, deleted: false, ...overrides };
+}
+
+/** One directory aggregate. */
+function structureDir(overrides: Partial<StructureDir> & { path: string }): StructureDir {
+  return { lines: 0, files: 0, changed: 0, additions: 0, deletions: 0, ...overrides };
+}
+
+/** One change entry. */
+function changedEntry(overrides: Partial<ChangedMapEntry> & { path: string }): ChangedMapEntry {
+  return { status: "modified", additions: 1, deletions: 0, binary: false, hunks: [], ...overrides };
+}
+
+/** A whole index over the given parts. */
+function indexOf(parts: {
+  files?: StructureFile[];
+  dirs?: StructureDir[];
+  changed?: ChangedMapEntry[];
+  newImports?: number;
+  droppedImports?: number;
+  unresolved?: number;
+  complete?: boolean;
+  parsed?: number;
+  total?: number;
+}): ReviewIndex {
+  return {
+    files: parts.files ?? [],
+    dirs: parts.dirs ?? [],
+    changed: parts.changed ?? [],
+    edges: [],
+    imports: { newImports: parts.newImports ?? 0, droppedImports: parts.droppedImports ?? 0 },
+    unresolved: { count: parts.unresolved ?? 0, files: [] },
+    indexed: {
+      files: parts.total ?? parts.files?.length ?? 0,
+      parsed: parts.parsed ?? parts.files?.length ?? 0,
+      complete: parts.complete ?? true,
+      note: null,
+    },
+    snapshotId: "worktree:HEAD..HEAD",
+  };
+}
+
+describe("buildMapData", () => {
+  it("always produces a root level", () => {
+    const data = buildMapData(indexOf({}), "repo");
+
+    expect(data.rootPath).toBe("");
+    expect(data.levels.has("")).toBe(true);
+    expect(data.levels.get("")?.dirs).toEqual([]);
+    expect(data.levels.get("")?.files).toEqual([]);
+  });
+
+  it("puts a root file on the root level", () => {
+    const data = buildMapData(indexOf({ files: [structureFile({ path: "readme.md", lines: 7 })] }), "repo");
+
+    const root = data.levels.get("");
+    expect(root?.files).toHaveLength(1);
+    expect(root?.files[0]?.path).toBe("readme.md");
+    expect(root?.files[0]?.lines).toBe(7);
+  });
+
+  it("puts a nested file on its own directory's level", () => {
+    const data = buildMapData(
+      indexOf({
+        files: [structureFile({ path: "src/deep/a.ts" })],
+        dirs: [structureDir({ path: "", lines: 10, files: 1 }), structureDir({ path: "src", lines: 10, files: 1 }), structureDir({ path: "src/deep", lines: 10, files: 1 })],
+      }),
+      "repo",
+    );
+
+    expect(data.levels.get("src/deep")?.files.map(file => file.path)).toEqual(["src/deep/a.ts"]);
+    // A directory is a child of its parent level, not of the root.
+    expect(data.levels.get("src")?.dirs.map(dir => dir.path)).toEqual(["src/deep"]);
+    expect(data.levels.get("")?.dirs.map(dir => dir.path)).toEqual(["src"]);
+  });
+
+  it("gives a directory its subtree totals rather than re-summing them", () => {
+    const data = buildMapData(
+      indexOf({
+        files: [structureFile({ path: "src/a.ts" })],
+        dirs: [
+          structureDir({ path: "", lines: 500, files: 9 }),
+          structureDir({ path: "src", lines: 500, files: 9, changed: 2, additions: 30, deletions: 4 }),
+        ],
+      }),
+      "repo",
+    );
+
+    const src = data.levels.get("")?.dirs[0];
+    expect(src).toMatchObject({ path: "src", lines: 500, files: 9, changedFiles: 2, additions: 30, deletions: 4 });
+    // A folder whose changes are deeper still lights up.
+    expect(src?.changed).toBe(true);
+  });
+
+  it("keeps a directory with no changes unlit", () => {
+    const data = buildMapData(
+      indexOf({ dirs: [structureDir({ path: "", lines: 0 }), structureDir({ path: "docs", lines: 40, files: 2 })] }),
+      "repo",
+    );
+
+    expect(data.levels.get("")?.dirs[0]?.changed).toBe(false);
+  });
+
+  it("passes the change fields through to the file", () => {
+    const data = buildMapData(
+      indexOf({
+        files: [structureFile({ path: "a.ts", lines: 20 })],
+        changed: [changedEntry({ path: "a.ts", status: "deleted", additions: 0, deletions: 12 })],
+      }),
+      "repo",
+    );
+
+    const file = data.levels.get("")?.files[0];
+    expect(file?.changed).toBe(true);
+    expect(file?.status).toBe("deleted");
+    expect(file?.additions).toBe(0);
+    expect(file?.deletions).toBe(12);
+  });
+
+  it("passes hunk ranges through for the distribution bar", () => {
+    const data = buildMapData(
+      indexOf({
+        files: [structureFile({ path: "a.ts", lines: 100 })],
+        changed: [
+          changedEntry({
+            path: "a.ts",
+            hunks: [
+              { oldStart: 1, oldLines: 0, newStart: 1, newLines: 5 },
+              { oldStart: 60, oldLines: 2, newStart: 61, newLines: 3 },
+            ],
+          }),
+        ],
+      }),
+      "repo",
+    );
+
+    expect(data.levels.get("")?.files[0]?.hunks).toEqual([
+      { newStart: 1, newLines: 5, oldLines: 0 },
+      { newStart: 61, newLines: 3, oldLines: 2 },
+    ]);
+  });
+
+  it("keeps a binary file's line count null", () => {
+    const data = buildMapData(
+      indexOf({
+        files: [structureFile({ path: "logo.png", lines: null, binary: true })],
+        changed: [changedEntry({ path: "logo.png", binary: true, additions: null, deletions: null })],
+      }),
+      "repo",
+    );
+
+    const file = data.levels.get("")?.files[0];
+    expect(file?.lines).toBeNull();
+    expect(file?.binary).toBe(true);
+  });
+
+  it("includes non-code files, filtered by nothing", () => {
+    const data = buildMapData(
+      indexOf({
+        files: [
+          structureFile({ path: "a.ts" }),
+          structureFile({ path: "notes.md" }),
+          structureFile({ path: "icon.png", lines: null, binary: true }),
+          structureFile({ path: "data.json" }),
+        ],
+      }),
+      "repo",
+    );
+
+    // R9.3: the map shows the whole tree. An extension filter would quietly turn
+    // it into a code-only view.
+    expect(data.levels.get("")?.files.map(file => file.path)).toEqual(["a.ts", "data.json", "icon.png", "notes.md"]);
+  });
+
+  it("sorts every level by path so the layout is deterministic", () => {
+    const data = buildMapData(
+      indexOf({
+        files: [structureFile({ path: "z.ts" }), structureFile({ path: "a.ts" }), structureFile({ path: "m.ts" })],
+        dirs: [structureDir({ path: "" }), structureDir({ path: "zz" }), structureDir({ path: "aa" })],
+      }),
+      "repo",
+    );
+
+    expect(data.levels.get("")?.files.map(file => file.path)).toEqual(["a.ts", "m.ts", "z.ts"]);
+    expect(data.levels.get("")?.dirs.map(dir => dir.path)).toEqual(["aa", "zz"]);
+  });
+
+  it("marks an unchanged file as unchanged", () => {
+    const data = buildMapData(indexOf({ files: [structureFile({ path: "quiet.ts" })] }), "repo");
+
+    expect(data.levels.get("")?.files[0]?.changed).toBe(false);
+    expect(data.levels.get("")?.files[0]?.status).toBeUndefined();
+  });
+});
+
+describe("indexReadings", () => {
+  it("sums the change entries into the four headline numbers", () => {
+    const readings = indexReadings(
+      indexOf({
+        changed: [
+          changedEntry({ path: "a.ts", additions: 10, deletions: 2 }),
+          changedEntry({ path: "b.ts", additions: 5, deletions: 1 }),
+        ],
+        newImports: 3,
+        droppedImports: 1,
+      }),
+    );
+
+    expect(readings.additions).toBe(15);
+    expect(readings.deletions).toBe(3);
+    expect(readings.files).toBe(2);
+    expect(readings.newImports).toBe(3);
+    expect(readings.droppedImports).toBe(1);
+  });
+
+  it("treats a null line count as contributing nothing", () => {
+    const readings = indexReadings(
+      indexOf({
+        changed: [
+          changedEntry({ path: "a.ts", additions: 4, deletions: 0 }),
+          changedEntry({ path: "b.png", binary: true, additions: null, deletions: null }),
+        ],
+      }),
+    );
+
+    expect(readings.additions).toBe(4);
+    expect(readings.deletions).toBe(0);
+    // The binary file is still a changed file.
+    expect(readings.files).toBe(2);
+  });
+
+  it("reports no partial marker when the index finished", () => {
+    const readings = indexReadings(indexOf({ files: [structureFile({ path: "a.ts" })], complete: true }));
+
+    expect(readings.partial).toBeNull();
+  });
+
+  it("reports parsed-of-total when the index stopped early", () => {
+    const readings = indexReadings(indexOf({ complete: false, parsed: 320, total: 400 }));
+
+    expect(readings.partial).toEqual({ parsed: 320, total: 400 });
+  });
+
+  it("carries the unresolved count as a lower bound", () => {
+    const readings = indexReadings(indexOf({ unresolved: 12 }));
+
+    expect(readings.unresolved).toBe(12);
+  });
+
+  it("reports a real zero when nothing is unresolved", () => {
+    const readings = indexReadings(indexOf({ unresolved: 0 }));
+
+    // Zero here is a fact, not a placeholder: the index looked and found none.
+    expect(readings.unresolved).toBe(0);
+  });
+
+  it("reports an empty change set as a real zero", () => {
+    const readings = indexReadings(indexOf({}));
+
+    expect(readings.files).toBe(0);
+    expect(readings.additions).toBe(0);
+    expect(readings.partial).toBeNull();
   });
 });

@@ -38,12 +38,16 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 
 import { createHttpRuntime, type ReviewRuntime } from "./runtime.ts";
+import { loadMapChunk, type MapChunkModule } from "./chunk-loader.ts";
+import type { MapHandle } from "./map/contract.ts";
 import {
+  buildMapData,
   churnOf,
   churnText,
   diffRows,
   fill,
   formatBytes,
+  indexReadings,
   shortRef,
   sortFiles,
   splitPath,
@@ -55,6 +59,7 @@ import type {
   ChangedFileStatus,
   FileDiff,
   ReviewErrorCode,
+  ReviewIndex,
   ReviewScope,
   ReviewSnapshot,
 } from "../shared.ts";
@@ -73,6 +78,22 @@ export interface ReviewMapViewStrings {
   readonly refresh: string;
   readonly statLines: string;
   readonly statFiles: string;
+  /**
+   * The map's copy.
+   *
+   * Optional because the map is an addition to a view that already worked, and a
+   * harness written before it should not have to grow eight keys to keep
+   * compiling. The entry always supplies them; the fallbacks below are the
+   * English words, which is the same thing the dictionaries say.
+   */
+  readonly statNewImports?: string;
+  readonly statDroppedImports?: string;
+  readonly indexPartial?: string;
+  readonly unresolved?: string;
+  readonly mapTitle?: string;
+  readonly mapLoading?: string;
+  readonly mapEmpty?: string;
+  readonly mapError?: string;
   readonly uncommitted: string;
   readonly listMetaWorktree: string;
   readonly listMetaBranch: string;
@@ -118,6 +139,15 @@ export interface ReviewMapViewOptions {
   readonly strings: ReviewMapViewStrings;
   /** The host seam; absent means the real HTTP runtime. */
   readonly runtime?: ReviewRuntime;
+  /**
+   * How the map chunk is fetched.
+   *
+   * Injected rather than imported directly so a test can hand over a fake
+   * renderer: the real one goes through the loader's `require.async`, which only
+   * exists inside the host's module factory, and a test that needed it would be
+   * testing the loader rather than the view.
+   */
+  readonly mapLoader?: () => Promise<MapChunkModule>;
 }
 
 /** The two ranges a review can be about. */
@@ -128,6 +158,20 @@ type Phase =
   | { readonly kind: "idle" }
   | { readonly kind: "loading" }
   | { readonly kind: "ready"; readonly snapshot: ReviewSnapshot }
+  | { readonly kind: "error"; readonly code: ReviewErrorCode };
+
+/**
+ * What the map's index is doing right now.
+ *
+ * A phase of its own rather than a field on the list's: the index is the slow
+ * half and the list must not wait for it. `error` is separate from `idle` for
+ * the same reason the list's is — a failed index and a session with no index are
+ * different sentences.
+ */
+type IndexPhase =
+  | { readonly kind: "idle" }
+  | { readonly kind: "loading" }
+  | { readonly kind: "ready"; readonly index: ReviewIndex }
   | { readonly kind: "error"; readonly code: ReviewErrorCode };
 
 /** What the detail panel is showing right now. */
@@ -383,6 +427,7 @@ function DetailBody({ diff, strings }: { readonly diff: FileDiff; readonly strin
 export function createReviewMapView({
   strings,
   runtime = createHttpRuntime(),
+  mapLoader = loadMapChunk,
 }: ReviewMapViewOptions): (props: ConversationViewProps) => ReactElement {
   return function ReviewMapView({ sessionId }: ConversationViewProps): ReactElement {
     const [scopeKind, setScopeKind] = useState<ScopeKind>("worktree");
@@ -390,12 +435,19 @@ export function createReviewMapView({
     const [selectedPath, setSelectedPath] = useState<string | undefined>(undefined);
     const [openPath, setOpenPath] = useState<string | undefined>(undefined);
     const [detailPhase, setDetailPhase] = useState<DetailPhase | undefined>(undefined);
+    const [indexPhase, setIndexPhase] = useState<IndexPhase>({ kind: "idle" });
     // The identity of the newest list request. A response whose id is not this
     // one is an answer to a question the reader has already moved on from.
     const listRequest = useRef(0);
     // The same, for the panel: opening two files quickly must not let the first
     // answer land on the second file's panel.
     const detailRequest = useRef(0);
+    // The same, for the index: it is the slowest of the three, so it is the one
+    // most likely to answer after the reader has moved on.
+    const indexRequest = useRef(0);
+    // The element the map chunk draws into, and the handle it handed back.
+    const mapHost = useRef<HTMLDivElement | null>(null);
+    const mapHandle = useRef<MapHandle | null>(null);
     // A session change resets the range, so the reset and the load have to be
     // one effect: two effects would let the first load run against the old range.
     const lastSession = useRef<string | undefined>(sessionId);
@@ -444,14 +496,53 @@ export function createReviewMapView({
       [runtime],
     );
 
+    /**
+     * Ask for the structure index.
+     *
+     * Separate from `load` because it answers a different question and is
+     * allowed to fail on its own: a review whose map cannot be drawn is still a
+     * usable review, so an index failure never touches the list's phase.
+     * @param session - the session whose workspace to index.
+     * @param kind - which comparison to index.
+     */
+    const loadIndex = useCallback(
+      (session: string, kind: ScopeKind): void => {
+        const ask = runtime.loadIndex;
+        if (ask === undefined) {
+          // A runtime without an index route serves the list and nothing else.
+          setIndexPhase({ kind: "idle" });
+          return;
+        }
+        indexRequest.current += 1;
+        const mine = indexRequest.current;
+        setIndexPhase({ kind: "loading" });
+        const scope: ReviewScope = kind === "branch" ? { kind: "branch" } : { kind: "worktree" };
+        ask.call(runtime, session, scope).then(
+          result => {
+            // The generational check: an answer for a range the reader has left
+            // is dropped rather than painted over the new map.
+            if (indexRequest.current !== mine) return;
+            setIndexPhase(result.ok ? { kind: "ready", index: result.index } : { kind: "error", code: result.error.code });
+          },
+          () => {
+            if (indexRequest.current !== mine) return;
+            setIndexPhase({ kind: "error", code: "unreadable" });
+          },
+        );
+      },
+      [runtime],
+    );
+
     useEffect(() => {
       if (sessionId === undefined || sessionId === "") {
         // Nothing to ask about. Bumping the counters drops any answer still in
         // flight for the session that just went away.
         listRequest.current += 1;
         detailRequest.current += 1;
+        indexRequest.current += 1;
         lastSession.current = sessionId;
         setPhase({ kind: "idle" });
+        setIndexPhase({ kind: "idle" });
         setSelectedPath(undefined);
         setOpenPath(undefined);
         setDetailPhase(undefined);
@@ -467,10 +558,12 @@ export function createReviewMapView({
         setDetailPhase(undefined);
         setSelectedPath(undefined);
         load(sessionId, "worktree");
+        loadIndex(sessionId, "worktree");
         return;
       }
       load(sessionId, scopeKind);
-    }, [sessionId, scopeKind, load]);
+      loadIndex(sessionId, scopeKind);
+    }, [sessionId, scopeKind, load, loadIndex]);
 
     // A new file starts at its first line. Doing it in an effect rather than in
     // the click handler keeps it tied to the render that actually changed the
@@ -479,11 +572,62 @@ export function createReviewMapView({
       if (detailBody.current !== null) detailBody.current.scrollTop = 0;
     }, [openPath, detailPhase?.kind === "ready" ? detailPhase.diff.path : ""]);
 
+    // The map is mounted once per ready index and torn down when that index is
+    // replaced. It is deliberately NOT re-mounted on selection or on opening a
+    // detail: the map is a place, and rebuilding it would throw away the level
+    // the reader had drilled into every time they clicked a card.
+    const readyIndex = indexPhase.kind === "ready" ? indexPhase.index : undefined;
+    // Read from the phase rather than from `snapshot`: that binding is derived
+    // further down, and a hook dependency may not reach forward past its own
+    // declaration.
+    const repoName = (phase.kind === "ready" ? phase.snapshot.repo : undefined) ?? strings.repoFallback;
+    const openFromMap = useCallback(
+      (path: string): void => {
+        if (sessionId === undefined || sessionId === "") return;
+        setSelectedPath(path);
+        openDetail(sessionId, scopeKind, path);
+      },
+      [sessionId, scopeKind, openDetail],
+    );
+
+    useEffect(() => {
+      const host = mapHost.current;
+      if (host === null || readyIndex === undefined) return;
+      // Nothing to draw: fetching the renderer to paint an empty box would be a
+      // request spent on a state the pane already says in words.
+      if (readyIndex.files.length === 0) return;
+      let cancelled = false;
+      let handle: MapHandle | null = null;
+      mapLoader().then(
+        chunk => {
+          // A chunk that arrives after the index was replaced (or after the
+          // component unmounted) must not paint: the host may already hold a
+          // newer map.
+          if (cancelled) return;
+          handle = chunk.createMap(host, buildMapData(readyIndex, repoName), { onOpenFile: openFromMap });
+          mapHandle.current = handle;
+        },
+        () => {
+          if (cancelled) return;
+          setIndexPhase({ kind: "error", code: "unreadable" });
+        },
+      );
+      return () => {
+        cancelled = true;
+        handle?.destroy();
+        if (mapHandle.current === handle) mapHandle.current = null;
+      };
+    }, [readyIndex, repoName, mapLoader, openFromMap]);
+
     const selectScope = (kind: ScopeKind): void => {
       if (kind === scopeKind) return;
       // The panel is about a file in the previous comparison; the two ranges can
       // disagree about which files exist at all.
       detailRequest.current += 1;
+      // The index is about the same two revisions, so a range switch makes the
+      // answer in flight stale for exactly the same reason the list's does.
+      indexRequest.current += 1;
+      setIndexPhase({ kind: "loading" });
       setOpenPath(undefined);
       setDetailPhase(undefined);
       setSelectedPath(undefined);
@@ -493,9 +637,22 @@ export function createReviewMapView({
     const refresh = (): void => {
       if (sessionId === undefined || sessionId === "") return;
       load(sessionId, scopeKind);
+      loadIndex(sessionId, scopeKind);
     };
 
     const hasSession = sessionId !== undefined && sessionId !== "";
+    const readings = readyIndex === undefined ? undefined : indexReadings(readyIndex);
+    // The map's copy, with the dictionary's own wording as the fallback.
+    const mapCopy = {
+      statNewImports: strings.statNewImports ?? "New imports",
+      statDroppedImports: strings.statDroppedImports ?? "Dropped imports",
+      indexPartial: strings.indexPartial ?? "indexed {parsed}/{total}",
+      unresolved: strings.unresolved ?? "≥{count} unresolved",
+      mapTitle: strings.mapTitle ?? "Directory map",
+      mapLoading: strings.mapLoading ?? "Indexing the map",
+      mapEmpty: strings.mapEmpty ?? "No structure to lay out",
+      mapError: strings.mapError ?? "The map index failed",
+    };
     const snapshot = phase.kind === "ready" ? phase.snapshot : undefined;
     const summary = snapshot === undefined ? undefined : summaryOf(snapshot);
     const files = snapshot === undefined ? [] : sortFiles(snapshot.files);
@@ -617,15 +774,56 @@ export function createReviewMapView({
               <div data-rm="stat" data-stat="lines">
                 <span data-rm="stat-label">{strings.statLines}</span>
                 <span data-rm="stat-value">
-                  <span data-rm="stat-add">+{summary.additions}</span>{" "}
-                  <span data-rm="stat-del">−{summary.deletions}</span>
+                  {/* Once the index is ready its change entries are the source
+                      for every reading on this row, so the four cards cannot
+                      disagree with each other. Before that the snapshot's own
+                      summary is the only answer there is. */}
+                  <span data-rm="stat-add">+{readings?.additions ?? summary.additions}</span>{" "}
+                  <span data-rm="stat-del">−{readings?.deletions ?? summary.deletions}</span>
                 </span>
               </div>
               <div data-rm="stat" data-stat="files">
                 <span data-rm="stat-label">{strings.statFiles}</span>
-                <span data-rm="stat-value">{summary.files}</span>
+                <span data-rm="stat-value">{readings?.files ?? summary.files}</span>
                 <span data-rm="uncommitted">{fill(strings.uncommitted, { count: String(snapshot.uncommitted) })}</span>
               </div>
+              {/* The import readings come from the index, so they are absent
+                  until it answers: a card showing a definite 0 before the
+                  index has run would be the "unknown drawn as zero" failure. */}
+              {readings === undefined ? null : (
+                <>
+                  <div data-rm="stat" data-stat="new-imports">
+                    <span data-rm="stat-label">{mapCopy.statNewImports}</span>
+                    <span data-rm="stat-value" data-rm-value="new-imports">
+                      +{readings.newImports}
+                    </span>
+                  </div>
+                  <div data-rm="stat" data-stat="dropped-imports">
+                    <span data-rm="stat-label">{mapCopy.statDroppedImports}</span>
+                    <span data-rm="stat-value" data-rm-value="dropped-imports">
+                      −{readings.droppedImports}
+                    </span>
+                    {readings.unresolved > 0 ? (
+                      <span data-rm="unresolved" data-count={readings.unresolved}>
+                        {fill(mapCopy.unresolved, { count: String(readings.unresolved) })}
+                      </span>
+                    ) : null}
+                    {readings.partial === null ? null : (
+                      <span
+                        data-rm="index-partial"
+                        data-parsed={readings.partial.parsed}
+                        data-total={readings.partial.total}
+                        title={readings.note ?? undefined}
+                      >
+                        {fill(mapCopy.indexPartial, {
+                          parsed: String(readings.partial.parsed),
+                          total: String(readings.partial.total),
+                        })}
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
 
             <div data-rm="split" data-open={panelPath === undefined ? "false" : "true"}>
@@ -649,6 +847,24 @@ export function createReviewMapView({
                     />
                   ))
                 )}
+              </div>
+              <div
+                data-rm="map-pane"
+                data-state={indexPhase.kind}
+                aria-label={mapCopy.mapTitle}
+                role="group"
+              >
+                {indexPhase.kind === "loading" ? (
+                  <p data-rm="map-loading">{mapCopy.mapLoading}</p>
+                ) : null}
+                {indexPhase.kind === "error" ? <p data-rm="map-error">{mapCopy.mapError}</p> : null}
+                {indexPhase.kind === "ready" && (readyIndex?.files.length ?? 0) === 0 ? (
+                  <p data-rm="map-empty">{mapCopy.mapEmpty}</p>
+                ) : null}
+                {/* The chunk draws here. The element stays mounted across index
+                    changes so the effect can tear one map down and mount the
+                    next into the same box. */}
+                <div data-rm="map-host" ref={mapHost} />
               </div>
               {panelPath === undefined || detailPhase === undefined ? null : (
                 <DetailPanel

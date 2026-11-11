@@ -180,17 +180,75 @@ const STYLESHEET = `[data-testid="review-map"] {
   gap: 0;
 }
 
-[data-testid="review-map"] [data-rm="split"][data-open="true"] {
-  grid-template-columns: minmax(280px, 1fr) minmax(0, 1.4fr);
+/* Three regions, and the map is always one of them: the review is a map with a
+   list beside it, not a list that sometimes grows a map. The list keeps a
+   readable minimum, the map takes the slack, and the detail takes the larger
+   share only while it is open. */
+[data-testid="review-map"] [data-rm="split"] {
+  grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.2fr);
   gap: 14px;
+}
+
+[data-testid="review-map"] [data-rm="split"][data-open="true"] {
+  grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1fr) minmax(0, 1.3fr);
+  gap: 14px;
+}
+
+/* The map pane: a frame the chunk draws inside. */
+[data-testid="review-map"] [data-rm="map-pane"] {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.1));
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.02));
+  overflow: hidden;
+}
+
+[data-testid="review-map"] [data-rm="map-host"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+[data-testid="review-map"] [data-rm="map-loading"],
+[data-testid="review-map"] [data-rm="map-error"],
+[data-testid="review-map"] [data-rm="map-empty"] {
+  margin: 12px;
+  font-size: calc(var(--dsh-content-font-size, 14px) * 12 / 14);
+  color: var(--dsw-alias-label-tertiary, #a39c91);
+  text-align: center;
+}
+
+[data-testid="review-map"] [data-rm="map-error"] {
+  color: var(--dsw-alias-state-error-primary, #cf222e);
+}
+
+/* The index annotations sit under their card's number: they qualify it rather
+   than competing with it. */
+[data-testid="review-map"] [data-rm="index-partial"],
+[data-testid="review-map"] [data-rm="unresolved"] {
+  font-family: var(--rm-mono);
+  font-size: var(--rm-code);
+  color: var(--dsw-alias-label-tertiary, #a39c91);
+}
+
+[data-testid="review-map"] [data-rm="unresolved"] {
+  color: var(--dsw-alias-state-warning-primary, #bf8700);
 }
 
 /* A narrow panel stacks instead of scrolling sideways: a two-column split at
    this width would leave the diff narrower than its line numbers. */
 @media (max-width: 720px) {
+  [data-testid="review-map"] [data-rm="split"],
   [data-testid="review-map"] [data-rm="split"][data-open="true"] {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(120px, 0.8fr) minmax(0, 1.2fr);
+    grid-template-rows: minmax(120px, 0.8fr) minmax(120px, 1fr);
+  }
+
+  [data-testid="review-map"] [data-rm="split"][data-open="true"] {
+    grid-template-rows: minmax(100px, 0.6fr) minmax(100px, 0.8fr) minmax(0, 1.2fr);
   }
 }
 

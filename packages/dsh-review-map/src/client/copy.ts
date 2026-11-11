@@ -25,6 +25,14 @@ export const ZH: Record<string, string> = {
   // Stats
   "review-map.statLines": "源码行",
   "review-map.statFiles": "改动文件",
+  "review-map.statNewImports": "新增导入",
+  "review-map.statDroppedImports": "丢失导入",
+  "review-map.indexPartial": "索引 {parsed}/{total}",
+  "review-map.unresolved": "≥{count} 未解析",
+  "review-map.mapTitle": "目录地图",
+  "review-map.mapLoading": "地图索引中",
+  "review-map.mapEmpty": "没有可铺开的结构",
+  "review-map.mapError": "地图索引失败",
   "review-map.uncommitted": "未提交 {count}",
 
   // List
@@ -89,6 +97,14 @@ export const EN: Record<string, string> = {
   // Stats
   "review-map.statLines": "Source lines",
   "review-map.statFiles": "Files changed",
+  "review-map.statNewImports": "New imports",
+  "review-map.statDroppedImports": "Dropped imports",
+  "review-map.indexPartial": "indexed {parsed}/{total}",
+  "review-map.unresolved": "≥{count} unresolved",
+  "review-map.mapTitle": "Directory map",
+  "review-map.mapLoading": "Indexing the map",
+  "review-map.mapEmpty": "No structure to lay out",
+  "review-map.mapError": "The map index failed",
   "review-map.uncommitted": "{count} uncommitted",
 
   // List

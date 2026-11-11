@@ -20,10 +20,12 @@ import type { ReviewRuntime } from "../src/client/runtime.ts";
 import type {
   ChangedFile,
   FileDiffResult,
+  ReviewIndexResult,
   ReviewScope,
   ReviewSnapshot,
   ReviewSnapshotResult,
 } from "../src/shared.ts";
+import type { MapChunkModule } from "../src/client/chunk-loader.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,6 +37,14 @@ const STRINGS: ReviewMapViewStrings = {
   refresh: "重新读取",
   statLines: "源码行",
   statFiles: "改动文件",
+  statNewImports: "新增导入",
+  statDroppedImports: "丢失导入",
+  indexPartial: "索引 {parsed}/{total}",
+  unresolved: "≥{count} 未解析",
+  mapTitle: "目录地图",
+  mapLoading: "地图索引中",
+  mapEmpty: "没有可铺开的结构",
+  mapError: "地图索引失败",
   uncommitted: "未提交 {count}",
   listMetaWorktree: "未提交改动",
   listMetaBranch: "对比 {base}",
@@ -655,5 +665,175 @@ describe("the detail panel", () => {
     await openRow("a.ts");
 
     expect(part("detail-empty")?.textContent).toBe("该文件没有可显示的差异");
+  });
+});
+
+describe("the three-column layout", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  /** A map chunk stub that counts how often it is asked for. */
+  function countingMapLoader() {
+    let calls = 0;
+    const mounts: HTMLElement[] = [];
+    const loader = async (): Promise<MapChunkModule> => {
+      calls += 1;
+      return {
+        createMap(target) {
+          mounts.push(target);
+          return {
+            destroy: () => {},
+            path: () => "",
+            setHighlight: () => {},
+            reveal: () => {},
+          };
+        },
+      };
+    };
+    return { loader, mounts, callCount: () => calls };
+  }
+
+  /** A runtime with a fixed snapshot, a fixed index and answered diffs. */
+  function runtimeWith(files: readonly ChangedFile[], diffs: Readonly<Record<string, FileDiffResult>>) {
+    const runtime: ReviewRuntime = {
+      async loadSnapshot() {
+        return { ok: true, snapshot: snapshot(files) } satisfies ReviewSnapshotResult;
+      },
+      async loadDiff(_sessionId, _scope, path) {
+        const answer = diffs[path];
+        if (answer === undefined) throw new Error(`no diff fixture for ${path}`);
+        return answer;
+      },
+      async loadIndex() {
+        return {
+          ok: true,
+          index: {
+            files: files.map(entry => ({ path: entry.path, lines: 10, binary: false, deleted: false })),
+            dirs: [{ path: "", lines: 10 * files.length, files: files.length, changed: files.length, additions: 1, deletions: 0 }],
+            changed: files.map(entry => ({
+              path: entry.path,
+              status: entry.status,
+              additions: entry.additions,
+              deletions: entry.deletions,
+              binary: entry.binary,
+              hunks: [],
+            })),
+            edges: [],
+            imports: { newImports: 0, droppedImports: 0 },
+            unresolved: { count: 0, files: [] },
+            indexed: { files: files.length, parsed: files.length, complete: true, note: null },
+            snapshotId: "worktree:HEAD..HEAD",
+          },
+        } satisfies ReviewIndexResult;
+      },
+    };
+    return runtime;
+  }
+
+  /** Mount with the given runtime and map loader. */
+  async function mount(runtime: ReviewRuntime, mapLoader: () => Promise<MapChunkModule>): Promise<void> {
+    const View = createReviewMapView({ strings: STRINGS, runtime, mapLoader });
+    await act(async () => {
+      root.render(createElement(View, { sessionId: "session-1" }));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+  }
+
+  /** One element by its `data-rm` marker. */
+  function marker(name: string): HTMLElement | null {
+    return host.querySelector<HTMLElement>(`[data-rm="${name}"]`);
+  }
+
+  /** The detail panel, when it is open. */
+  function panel(): HTMLElement | null {
+    return host.querySelector<HTMLElement>('[data-testid="review-detail"]');
+  }
+
+  it("puts the list, the map pane and the detail side by side", async () => {
+    const files = [file({ path: "a.ts" }), file({ path: "b.ts" })];
+    const map = countingMapLoader();
+    await mount(runtimeWith(files, { "a.ts": TEXT_DIFF }), map.loader);
+
+    expect(marker("list")).not.toBeNull();
+    expect(marker("map-pane")).not.toBeNull();
+    expect(marker("map-host")).not.toBeNull();
+    // The split is one grid whose column count changes, so the three regions are
+    // siblings rather than nested layouts.
+    const split = marker("split");
+    expect(split?.querySelector('[data-rm="list"]')).not.toBeNull();
+    expect(split?.querySelector('[data-rm="map-pane"]')).not.toBeNull();
+  });
+
+  it("does not rebuild the map when the detail opens or closes", async () => {
+    const files = [file({ path: "a.ts" }), file({ path: "b.ts" })];
+    const map = countingMapLoader();
+    await mount(runtimeWith(files, { "a.ts": TEXT_DIFF }), map.loader);
+    const afterMount = map.callCount();
+
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="review-row"][data-path="a.ts"]')?.click();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(panel()).not.toBeNull();
+
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-rm="detail-close"]')?.click();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    // The map is a place: opening a file must not throw away the level the
+    // reader had drilled into.
+    expect(map.callCount()).toBe(afterMount);
+    expect(map.mounts).toHaveLength(1);
+  });
+
+  it("closes the detail on Escape without touching the map", async () => {
+    const files = [file({ path: "a.ts" })];
+    const map = countingMapLoader();
+    await mount(runtimeWith(files, { "a.ts": TEXT_DIFF }), map.loader);
+
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="review-row"][data-path="a.ts"]')?.click();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(panel()).not.toBeNull();
+
+    await act(async () => {
+      host
+        .querySelector<HTMLElement>('[data-testid="review-row"][data-path="a.ts"]')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(panel()).toBeNull();
+    expect(map.callCount()).toBe(1);
+  });
+
+  it("keeps the map mounted while the detail is open", async () => {
+    const files = [file({ path: "a.ts" })];
+    const map = countingMapLoader();
+    await mount(runtimeWith(files, { "a.ts": TEXT_DIFF }), map.loader);
+
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="review-row"][data-path="a.ts"]')?.click();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(marker("map-pane")).not.toBeNull();
+    expect(marker("map-host")).not.toBeNull();
+    expect(panel()).not.toBeNull();
   });
 });

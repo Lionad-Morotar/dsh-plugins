@@ -11,7 +11,13 @@
  * host boot, so an absolute URL composed here would be stale by the time a tab
  * read it.
  */
-import { ROUTE_PREFIX, type FileDiffResult, type ReviewScope, type ReviewSnapshotResult } from "../shared.ts";
+import {
+  ROUTE_PREFIX,
+  type FileDiffResult,
+  type ReviewIndexResult,
+  type ReviewScope,
+  type ReviewSnapshotResult,
+} from "../shared.ts";
 
 /** What the view asks of the host. */
 export interface ReviewRuntime {
@@ -19,6 +25,19 @@ export interface ReviewRuntime {
   loadSnapshot(sessionId: string, scope: ReviewScope): Promise<ReviewSnapshotResult>;
   /** One file's detail for the same comparison. */
   loadDiff(sessionId: string, scope: ReviewScope, path: string): Promise<FileDiffResult>;
+  /**
+   * The structure index and import edges for the same comparison.
+   *
+   * A separate request from the snapshot on purpose: the index reads every file
+   * in the tree and is the slow half, while the change list is a couple of git
+   * commands. Asking for them together would make the list wait for the map.
+   *
+   * Optional because the map is an enhancement and the list is the product: a
+   * runtime that cannot serve an index (an older host, a preview harness) still
+   * serves a usable review, and the view renders the map's empty state rather
+   * than failing. `createHttpRuntime` always provides it.
+   */
+  loadIndex?(sessionId: string, scope: ReviewScope): Promise<ReviewIndexResult>;
 }
 
 /**
@@ -68,6 +87,15 @@ export function createHttpRuntime(fetchImpl: typeof fetch = fetch): ReviewRuntim
       // hand-built query would cut it in half at the first of those.
       const body = await requestJson(fetchImpl, `${ROUTE_PREFIX}/diff?${query.toString()}`);
       return body as FileDiffResult;
+    },
+
+    async loadIndex(sessionId, scope) {
+      // Same query shape as the change list, because it is the same question
+      // about the same two revisions; only the answer is bigger.
+      const query = new URLSearchParams({ sessionId, scope: scope.kind });
+      if (scope.kind === "branch" && scope.baseRef !== undefined) query.set("base", scope.baseRef);
+      const body = await requestJson(fetchImpl, `${ROUTE_PREFIX}/index?${query.toString()}`);
+      return body as ReviewIndexResult;
     },
   };
 }
