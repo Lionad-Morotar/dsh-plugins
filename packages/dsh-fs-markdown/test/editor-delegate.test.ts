@@ -217,3 +217,92 @@ describe("editor chunk module exports", () => {
     await expect(loader.loadEditableLangChunk("batch-script")).rejects.toThrow(/is not the batch-script block/u);
   });
 });
+
+/**
+ * The delegated editor publishes normalized text to the find bar.
+ *
+ * The bar searches the text a body publishes and then asks that body to select at
+ * the offset it found. If the published text keeps the file's CRLF while the
+ * editor's offsets count a line break as one character, every hit on the second
+ * line and later lands one position too far per preceding line. The shell's own
+ * editor has always published `doc.toString()` for exactly this reason; the
+ * delegated path has to do the same.
+ */
+describe("delegated find source", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let Pane: (props: EditorBodyProps) => unknown;
+  let registered: { text(): string } | null;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const loader = await import("../src/client/chunk-loader.ts");
+    const require = ((specifier: string): unknown => {
+      throw new Error(`unexpected platform require: ${specifier}`);
+    }) as { (specifier: string): unknown; async(specifier: string): Promise<unknown> };
+    require.async = async (specifier: string): Promise<unknown> => {
+      const block = /^\.\/client\.editor-langs-(.+)\.js$/u.exec(specifier)?.[1];
+      if (block === undefined) throw new Error(`no chunk built for ${specifier}`);
+      return {
+        renderer: block,
+        mount: (element: HTMLElement, options: { text: string }) => {
+          // A real editor normalizes CRLF to \n; the fake does the same so the
+          // assertion is about the contract rather than about the fake.
+          const normalized = options.text.replace(/\r\n/gu, "\n");
+          element.textContent = normalized;
+          return {
+            setText() {},
+            getText: () => normalized,
+            revealRange() {},
+            clearSelection() {},
+            focus() {},
+            destroy() {},
+          };
+        },
+      };
+    };
+    loader.boot(require);
+    Pane = (await import("../src/client/chunk/editor.tsx")).EditorBody as never;
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    registered = null;
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("publishes text without carriage returns", async () => {
+    const find = {
+      register: (source: { text(): string } | null) => {
+        if (source !== null) registered = source;
+      },
+    };
+    await act(async () => {
+      root.render(
+        createElement(Pane as never, {
+          path: "sample.rs",
+          sessionId: "s1",
+          mode: "source",
+          text: "fn main() {\r\n    let x = 1;\r\n}\r\n",
+          t: (key: string) => key,
+          onChange: () => undefined,
+          find,
+        } as never),
+      );
+    });
+    await act(async () => {
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+
+    expect(registered).not.toBeNull();
+    const text = registered?.text() ?? "";
+    expect(text).not.toContain("\r");
+    // The offset the bar would report for `let` must equal its document offset.
+    expect(text.indexOf("let")).toBe("fn main() {\n    let x = 1;\n}\n".indexOf("let"));
+  });
+});

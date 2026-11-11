@@ -303,7 +303,10 @@ function DelegatedBody(props: EditorBodyProps & { readonly block: string }): Rea
     if (find === undefined || !ready) return;
     find.register({
       scope: "document",
-      text: () => pageText.current,
+      // The handle's own text, not the raw props text: the bar searches this and
+      // then asks the handle to select at that offset, so a CRLF file would put
+      // every hit after the first line one position too far per preceding line.
+      text: () => handle.current?.getText() ?? "",
       select: (from, to) => handle.current?.revealRange(from, to),
       clear: () => handle.current?.clearSelection(),
     });

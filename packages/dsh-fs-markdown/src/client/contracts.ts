@@ -125,6 +125,16 @@ export interface EditableMountOptions {
 export interface EditableHandle {
   /** Replace the document from outside; must not echo back through `onChange`. */
   setText(text: string): void;
+  /**
+   * The document text, normalized the way the editor counts positions.
+   *
+   * A find bar searches this and then asks the editor to select at the offset it
+   * found, so the two have to agree on what a line break costs. The file's own
+   * CRLF would put an extra character before every line and push every hit after
+   * the first one out of place; the editor's document counts a break as one
+   * character, so this returns the document's own text rather than the raw file.
+   */
+  getText(): string;
   /** Select one `[from, to)` interval of the document and scroll to it. */
   revealRange(from: number, to: number): void;
   /** Drop the selection the last `revealRange` made. */

@@ -105,6 +105,18 @@ describe("mountEditable", () => {
     expect(view().state.sliceDoc()).toContain("\r\n");
   });
 
+  it("reports normalized text, so a find offset matches a document offset", () => {
+    // The find bar searches the text this returns and then asks the editor to
+    // select at that offset. `sliceDoc()` keeps the file's CRLF, which would put
+    // one extra character before every line, so the text has to be the document's
+    // own `toString()`: the same normalization the shell's editor publishes.
+    const mounted = mount("a\r\nb\r\n");
+    const text = mounted.getText();
+    expect(text).not.toContain("\r");
+    expect(text).toBe("a\nb\n");
+    expect(text.length).toBe(view().state.doc.length);
+  });
+
   it("reveals a range and clears it again", () => {
     const mounted = mount("alpha\nbravo\n");
     mounted.revealRange(0, 5);

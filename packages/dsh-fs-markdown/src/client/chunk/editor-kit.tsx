@@ -205,6 +205,14 @@ export function mountEditable(host: HTMLElement, options: EditableMountOptions, 
         annotations: ExternalChange.of(true),
       });
     },
+    getText() {
+      // `doc.toString()` and not `sliceDoc()`: a CodeMirror position counts a
+      // line break as one unit whatever the file's separator is, and the
+      // document's own `toString()` uses the same \n. `sliceDoc()` returns CRLF
+      // for a CRLF file, whose offsets would drift by one per line before the
+      // hit and select the wrong text.
+      return view.state.doc.toString();
+    },
     revealRange(from, to) {
       const length = view.state.doc.length;
       // A page change can land between the find bar's read and this dispatch, so
