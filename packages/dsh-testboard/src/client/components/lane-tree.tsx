@@ -87,14 +87,22 @@ function DirectoryBranch({
           type="button"
           data-testid="directory-toggle"
           data-tst="directory-toggle"
-          // Not a tab stop and not an option: the list owns the focus and the
-          // arrow keys, and a focusable header would take the focus away from it
-          // and strand a keyboard reader mid-list. The pointer is the way in.
+          // Out of the tab order on purpose. The list owns the focus and the
+          // arrow keys, so a focusable header would take the focus away from it
+          // and strand a keyboard reader mid-list; folding is a pointer gesture
+          // by design, and the keyboard's way to change what is on screen is the
+          // search box and the filter.
+          tabIndex={-1}
           aria-expanded={!folded}
           data-collapsed={folded ? "true" : "false"}
           aria-label={folded ? strings.expandDirectory : strings.collapseDirectory}
           title={folded ? strings.expandDirectory : strings.collapseDirectory}
           onClick={() => onToggle(key)}
+          // A key pressed while the header has focus would bubble to the list's
+          // own handler, where Enter and Space mean "activate the selected
+          // row": the reader would fold a directory and open an unrelated file
+          // in one stroke. The header handles no keys, so it keeps them all.
+          onKeyDown={event => event.stopPropagation()}
         >
           <span aria-hidden="true" data-tst="directory-chevron">
             {folded ? "▸" : "▾"}

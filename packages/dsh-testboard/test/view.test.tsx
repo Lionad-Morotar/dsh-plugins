@@ -592,11 +592,43 @@ describe("testboard view", () => {
       it("keeps the toggle out of the listbox keyboard order", async () => {
         await mountTree();
         const toggle = toggleOf("tree:test/unit");
-        // The list owns the arrow keys; a focusable header would take the focus
-        // away from it and strand the keyboard reader.
-        expect(toggle.hasAttribute("tabindex")).toBe(false);
+        // The list owns the focus and the arrow keys. A header that took the
+        // focus would strand a keyboard reader mid-list, and the toggle is a
+        // pointer affordance by design, so it is explicitly out of the tab order.
+        expect(toggle.getAttribute("tabindex")).toBe("-1");
         expect(toggle.getAttribute("role")).not.toBe("option");
         expect(toggle.getAttribute("aria-label")).toBe(STRINGS.collapseDirectory);
+      });
+
+      it("does not let Enter or Space on the toggle reach the listbox", async () => {
+        await mountTree();
+        // Select a file first, so the listbox has something to activate: without
+        // the guard, Enter on the header would toggle that file's cases as well
+        // as folding the directory.
+        const row = rows(host).find(candidate => candidate.getAttribute("data-path") === "packages/tree/test/unit/a.test.ts");
+        if (row === undefined) throw new Error("no row");
+        await act(async () => row.click());
+        expect(host.querySelectorAll('[data-testid="case-item"]')).toHaveLength(1);
+
+        const toggle = toggleOf("tree:test/unit");
+        for (const key of ["Enter", " "]) {
+          const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+          await act(async () => {
+            toggle.dispatchEvent(event);
+          });
+          // The stroke is the header's, not the list's: it must not be read as
+          // an activate on whatever file happens to be selected.
+          expect(event.defaultPrevented).toBe(false);
+        }
+
+        // The fold is still the only thing that happened: the directory is
+        // untouched (no click was dispatched) and the file's cases are as they
+        // were.
+        expect(toggle.getAttribute("aria-expanded")).toBe("true");
+        expect(host.querySelectorAll('[data-testid="case-item"]')).toHaveLength(1);
+        expect(rows(host).find(candidate => candidate.getAttribute("data-selected") === "true")?.getAttribute("data-path")).toBe(
+          "packages/tree/test/unit/a.test.ts",
+        );
       });
 
       it("shows every match while a search is running, then restores the fold", async () => {
