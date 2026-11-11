@@ -31,6 +31,7 @@ import type {
   SessionOpenFace,
   SessionSummary,
   ShortcutCommand,
+  ShortcutCatalogEntry,
   ShortcutConfigSnapshot,
 } from "../src/client/dsh.ts";
 import {
@@ -86,6 +87,11 @@ interface HarnessOptions {
   readonly openViewResult?: { readonly opened: boolean; readonly focused: boolean };
   /** `null` leaves the right column out; `openResource: false` keeps a column without resource tabs. */
   readonly sidebarRight?: null | { readonly openResource?: boolean };
+  /**
+   * What the shortcuts catalogue says about `session.new`; the default is a
+   * clean `⌘⌥N` binding, and a case overrides it to make the chord unusable.
+   */
+  readonly sessionNewShortcut?: Partial<ShortcutCatalogEntry>;
   /** The filesystem exploration remote; null keeps it out of the context. */
   readonly pathExplorer?: PathExplorerRemote | null;
   /** The session open remote for the reveal fallback; null keeps it out. */
@@ -122,6 +128,7 @@ interface Harness {
   readonly shortcuts: {
     readonly edit: ReturnType<typeof vi.fn>;
     readonly describeBinding: ReturnType<typeof vi.fn>;
+    readonly invoke: ReturnType<typeof vi.fn>;
   };
   readonly files: { readonly list: ReturnType<typeof vi.fn> };
   readonly workbench: {
@@ -145,6 +152,7 @@ function harness(options: HarnessOptions = {}): Harness {
   const commands: ShortcutCommand[] = [];
   const inserted: string[] = [];
   const edit = vi.fn(async () => ({ status: "saved" }));
+  const invoke = vi.fn();
   const sidebarOpenResource = vi.fn();
   const sidebarOpenTab = vi.fn();
   const describeBinding = vi.fn(() => ({
@@ -223,12 +231,16 @@ function harness(options: HarnessOptions = {}): Harness {
         {
           id: "session.new",
           label: "新建会话",
-          binding: { code: "KeyN", modifiers: ["primary"] as const },
-          keys: ["⌘", "N"],
+          binding: { code: "KeyN", modifiers: ["meta", "alt"] as const },
+          keys: ["⌘", "⌥", "N"],
           issue: null,
           conflicts: [],
+          ...options.sessionNewShortcut,
         },
       ]),
+      runtime: "web" as const,
+      platform: "macos" as const,
+      registry: { invoke },
       config: snapshotOf<ShortcutConfigSnapshot>({ revision: 4, status: "ready", usingDefaults: true }),
       register: (command: ShortcutCommand) => {
         commands.push(command);
@@ -313,7 +325,7 @@ function harness(options: HarnessOptions = {}): Harness {
   return {
     runtime,
     commands,
-    shortcuts: { edit, describeBinding },
+    shortcuts: { edit, describeBinding, invoke },
     files,
     workbench,
     input,
@@ -452,7 +464,7 @@ describe("row shortcut hints", () => {
     await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
 
     const row = h.store.getSnapshot().rows.find(entry => entry.key === "scope:new-session");
-    expect(row?.hint).toBe("⌘ N");
+    expect(row?.hint).toBe("⌘ ⌥ N");
     h.runtime.dispose();
   });
 
@@ -466,7 +478,82 @@ describe("row shortcut hints", () => {
     // listed the same command a second time under its shortcut label.
     expect(rows.filter(row => row.action.kind === "invoke-shortcut" && row.action.id === "session.new")).toEqual([]);
     expect(rows.filter(row => row.label === "新建会话")).toEqual([]);
-    expect(rows.find(row => row.label === "会话：在当前工作区创建新会话")?.hint).toBe("⌘ N");
+    expect(rows.find(row => row.label === "会话：在当前工作区创建新会话")?.hint).toBe("⌘ ⌥ N");
+    h.runtime.dispose();
+  });
+});
+
+describe("row shortcut keys", () => {
+  /** `⌘⌥N` as macOS web delivers it: a Dead key event, not `KeyN`. */
+  function deadEvent(overrides: Record<string, unknown> = {}): KeyboardEvent {
+    return {
+      code: "KeyN",
+      key: "Dead",
+      repeat: false,
+      ctrlKey: false,
+      metaKey: true,
+      altKey: true,
+      shiftKey: false,
+      getModifierState: () => false,
+      ...overrides,
+    } as never;
+  }
+
+  /** Open the switch mode, where the new-session row declares its shortcut. */
+  async function openSwitch(h: Harness): Promise<void> {
+    runCommand(h, "command-panel.switch");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+  }
+
+  it("hands a declared chord to the host command and consumes the key", async () => {
+    const h = harness();
+    await openSwitch(h);
+
+    expect(h.verbs.shortcutKey(deadEvent(), false)).toBe(true);
+    // The modal is deliberately null: a palette row speaks for the page, not for
+    // the panel's own modal scope, which is what the host menu bridge does.
+    expect(h.shortcuts.invoke).toHaveBeenCalledExactlyOnceWith("session.new", {
+      region: "page",
+      modal: null,
+      target: null,
+    });
+    h.runtime.dispose();
+  });
+
+  it("consumes a held key without running the command a second time", async () => {
+    const h = harness();
+    await openSwitch(h);
+
+    expect(h.verbs.shortcutKey(deadEvent({ repeat: true }), false)).toBe(true);
+    expect(h.shortcuts.invoke).not.toHaveBeenCalled();
+    h.runtime.dispose();
+  });
+
+  it("leaves a contested chord to the host", async () => {
+    const h = harness({ sessionNewShortcut: { conflicts: ["workspace.add"] } });
+    await openSwitch(h);
+
+    expect(h.verbs.shortcutKey(deadEvent(), false)).toBe(false);
+    expect(h.shortcuts.invoke).not.toHaveBeenCalled();
+    h.runtime.dispose();
+  });
+
+  it("ignores a key that is not the declared chord", async () => {
+    const h = harness();
+    await openSwitch(h);
+
+    expect(h.verbs.shortcutKey(deadEvent({ code: "KeyJ", key: "j" }), false)).toBe(false);
+    expect(h.shortcuts.invoke).not.toHaveBeenCalled();
+    h.runtime.dispose();
+  });
+
+  it("ignores the chord while an IME is composing", async () => {
+    const h = harness();
+    await openSwitch(h);
+
+    // A live chord, not the Dead key: the Dead exception outranks composing.
+    expect(h.verbs.shortcutKey(deadEvent({ key: "n" }), true)).toBe(false);
+    expect(h.shortcuts.invoke).not.toHaveBeenCalled();
     h.runtime.dispose();
   });
 });

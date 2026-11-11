@@ -57,6 +57,12 @@ export interface PanelVerbs {
   readonly switchMode: (mode: PanelMode) => void;
   /** Breadcrumb of the drilled level, or null at the top level. */
   readonly crumbLabel: () => string | null;
+  /**
+   * Hand a key to the host commands the open panel's rows declare. Answers true
+   * when one of them owns the chord, and the view then consumes the key so the
+   * host's modal gate does not swallow it.
+   */
+  readonly shortcutKey: (event: KeyboardEvent, composing: boolean) => boolean;
 }
 
 /** Everything the view receives: the platform slices plus the runtime's verbs. */
@@ -170,7 +176,16 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
       if (target === undefined) return undefined;
 
       const onKeyDown = (event: KeyboardEvent): void => {
-        if (!OWNED_KEYS.has(event.key)) return;
+        if (!OWNED_KEYS.has(event.key)) {
+          // A chord a row declares belongs to that row's command, but the host's
+          // modal gate eats it before the command runs. The panel is the only
+          // listener early enough to claim it back.
+          if (deps.shortcutKey(event, composition.guards(event))) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          return;
+        }
         // The committing Enter of an IME session is not a confirmation: the host's
         // gate covers `composing`, `isComposing`, keyCode 229 and the one-shot
         // `ended` flag that makes Chinese input commit without selecting a row.

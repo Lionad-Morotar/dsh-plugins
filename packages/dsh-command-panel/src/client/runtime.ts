@@ -83,6 +83,7 @@ import { composeInsertion } from "./paths.ts";
 import { rankRows } from "./ranking.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
 import { catalogRows, shortcutRows, withConfirmLabel, withShortcutHints, type PanelRow } from "./rows.ts";
+import { matchesShortcut, usableShortcut } from "./shortcut-key.ts";
 import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from "./sources.ts";
 import { statusStamp } from "./status.ts";
 import { createPanelStore } from "./store.ts";
@@ -1075,6 +1076,62 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     return store.getSnapshot().model.mode === "navigate";
   }
 
+  /**
+   * Run the host command behind a chord one of the open panel's rows declares.
+   *
+   * The candidate set is every `shortcutId` in the mode's own rows, not the
+   * filtered view: a chord belongs to the mode, and having it stop working
+   * because the reader typed a query would make the panel's own keycap a lie.
+   *
+   * @param event - the keydown the panel's capture listener saw.
+   * @param composing - whether an IME currently owns the keystrokes.
+   * @returns true when a row's command owns this chord and the key is consumed.
+   */
+  function shortcutKey(event: KeyboardEvent, composing: boolean): boolean {
+    const shortcuts = services.shortcuts();
+    if (shortcuts === undefined) return false;
+    const entries = shortcuts.catalog.getSnapshot();
+    const env = { runtime: shortcuts.runtime, platform: shortcuts.platform };
+    const facts = {
+      code: event.code,
+      key: event.key,
+      repeat: event.repeat,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+      altGraph: event.getModifierState?.("AltGraph") === true,
+      composing,
+    };
+
+    const declared = new Set(
+      rawRows.flatMap(row => (row.shortcutId === undefined ? [] : [row.shortcutId])),
+    );
+    for (const id of declared) {
+      const usable = usableShortcut(entries, id);
+      if (usable === undefined) continue;
+      if (!matchesShortcut(facts, usable.binding, env)) continue;
+      // A held key repeats the same chord; the command runs once, and every
+      // repeat is still consumed so the host never sees it.
+      if (!event.repeat) runShortcut(id, shortcuts);
+      return true;
+    }
+    return false;
+  }
+
+  /** Execute one declared shortcut, through the host registry when it has one. */
+  function runShortcut(id: string, shortcuts: ShortcutsService): void {
+    if (shortcuts.registry !== undefined) {
+      // Menu semantics: the row speaks for the page, so the panel's own modal
+      // scope is deliberately not passed.
+      shortcuts.registry.invoke(id, { region: "page", modal: null, target: null });
+      return;
+    }
+    const row = rawRows.find(candidate => candidate.shortcutId === id);
+    if (row === undefined) return;
+    void runCatalogAction(row.action, actionDeps());
+  }
+
   /** Rewrite the query through the same path typing takes. */
   function applyQuery(raw: string): void {
     const snapshot = store.getSnapshot();
@@ -1723,6 +1780,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     openInSidebar,
     treeActive,
     crumbLabel,
+    shortcutKey,
   };
 
   // ── assembly ────────────────────────────────────────────────────────────
