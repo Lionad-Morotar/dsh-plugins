@@ -68,6 +68,11 @@ const BUDGET = {
   startupGrowth: 8192,
   previewDrop: 20000,
   editorGrowth: 40960,
+  // The edit surface's four batch blocks. Each inlines its own CodeMirror, so the
+  // ceiling is per block and generous; it exists to catch a block that carried
+  // all 44 grammars, not to police a few KB.
+  editBlock: 256000,
+  editBlockTotal: 1024000,
 };
 
 /**
@@ -106,6 +111,48 @@ function languageChunks(lib) {
   return readdirSync(lib)
     .filter(name => /^client\.lang-.+\.js$/u.test(name))
     .sort();
+}
+
+/**
+ * The editable language blocks a package emitted, sorted by name.
+ *
+ * The edit surface names them `client.editor-langs-<block>.js`, which is a
+ * different prefix from the read-only surface's `client.lang-<block>.js`: the two
+ * surfaces ship different bundles for the same blocks.
+ * @param {string} lib - absolute path to the package's `lib/`.
+ * @returns {string[]} file names matching `client.editor-langs-*.js`.
+ */
+function editableLangChunks(lib) {
+  return readdirSync(lib)
+    .filter(name => /^client\.editor-langs-.+\.js$/u.test(name))
+    .sort();
+}
+
+/**
+ * The block name an editable artifact is named after.
+ * @param {string} file - artifact file name.
+ * @returns the block name.
+ */
+function blockOfEditableFile(file) {
+  return file.replace(/^client\.editor-langs-/u, "").replace(/\.js$/u, "");
+}
+
+/**
+ * The `ids` array a minified block exports.
+ *
+ * The bundle keeps the export as `ids:()=><binding>` and the array as a separate
+ * `var <binding>=[...]`, so the ids are read by following the binding rather than
+ * by searching for the array: a bare list of language names would also match the
+ * grammar table.
+ * @param {string} text - one block artifact.
+ * @returns {string[]} the language ids, or an empty list when the export is absent.
+ */
+function readExportedIds(text) {
+  const binding = /\bids\s*:\s*\(\s*\)\s*=>\s*([A-Za-z0-9_$]+)/u.exec(text);
+  if (binding === null) return [];
+  const declared = new RegExp(`\\b${binding[1]}\\s*=\\s*\\[([\\s\\S]*?)\\]`, "u").exec(text);
+  if (declared === null) return [];
+  return [...declared[1].matchAll(/"([^"]+)"/gu)].map(match => match[1]);
 }
 
 /**
@@ -203,6 +250,37 @@ async function report() {
     "dsh-fs-markdown/lib/client.js": grammarSymbolsIn(join(markdownLib, "client.js")),
   };
 
+  // The edit surface's four blocks. Their artifact prefix differs from the
+  // read-only surface's, so they are collected separately and compared against
+  // the catalogue's batch keys.
+  const editFiles = editableLangChunks(markdownLib);
+  const editBlocks = editFiles.map(blockOfEditableFile);
+  const editRows = editFiles.map(name => ({ file: name, ...measure(join(markdownLib, name)) }));
+  const editTotal = editRows.reduce((sum, entry) => sum + entry.gzip, 0);
+  const batchBlocks = Object.keys(catalogue.languages).filter(name => name.startsWith("batch-"));
+  // Compared as sets, not sequences: the artifacts are listed alphabetically and
+  // the catalogue lists them in assignment order, and neither order is a contract.
+  // The per-block id list below is where order does matter.
+  const editSetMatches =
+    editBlocks.length === batchBlocks.length && editBlocks.every(block => batchBlocks.includes(block));
+  // Each artifact must name its own block and list the catalogue's languages in
+  // the catalogue's order: a block that drifted would mount the wrong grammar.
+  const editProblems = [];
+  for (const [index, file] of editFiles.entries()) {
+    const block = editBlocks[index];
+    const text = readFileSync(join(markdownLib, file), "utf8");
+    if (!text.includes(JSON.stringify(block))) editProblems.push(`${file} does not name ${block}`);
+    const expected = catalogue.languages[block] ?? [];
+    // Minification renames the export: the bundle carries `ids:()=>rm` and the
+    // array itself as `var rm=[...]`. Following the binding is what makes this
+    // readable without importing the chunk.
+    const ids = readExportedIds(text);
+    const sameOrder = ids.length === expected.length && ids.every((id, at) => id === expected[at]);
+    if (!sameOrder) editProblems.push(`${file} lists [${ids.join(",")}] but the catalogue says [${expected.join(",")}]`);
+  }
+  const editBlocksWithinBudget =
+    editRows.every(entry => entry.gzip <= BUDGET.editBlock) && editTotal <= BUDGET.editBlockTotal;
+
   const explorerStartup = startup[0];
   const markdownStartup = startup[1];
   const preview = heavy[0];
@@ -249,6 +327,21 @@ async function report() {
       measured: startupSymbols,
       detail: "no grammar symbol may appear in a startup bundle; language names are excluded because the catalogue carries them",
     },
+    M5: {
+      // The edit surface ships its own four blocks. They are checked the same way
+      // the read-only set is: the artifact set matches the catalogue's batch keys,
+      // each artifact names its own block, and each lists the catalogue's
+      // languages in order.
+      status: editSetMatches && editProblems.length === 0 && editBlocksWithinBudget ? "pass" : "fail",
+      measured: {
+        blocks: editBlocks.length,
+        catalogueBatches: batchBlocks.length,
+        totalGzip: editTotal,
+        problems: editProblems,
+      },
+      detail:
+        "the edit surface ships one artifact per batch block, each naming its block and listing the catalogue's languages in order, within the per-block and total budgets",
+    },
   };
 
   return {
@@ -257,6 +350,7 @@ async function report() {
     heavy,
     languageChunks: { explorer: chunkRows, totalGzip: chunkTotal, markdown: markdownChunks },
     pythonChunkGzip: python?.gzip ?? null,
+    editBlocks: { files: editRows, totalGzip: editTotal, blocks: editBlocks },
     blocks: {
       count: blockCount,
       artifacts: emittedFiles,
@@ -302,6 +396,13 @@ function printTable(data) {
       `${String(data.blocks.uncolouredLanguages.length)} stay monochrome:\n`,
   );
   process.stdout.write(`    ${data.blocks.uncolouredLanguages.join(", ")}\n`);
+
+  process.stdout.write(`\n=== editable language blocks (M5) ===\n`);
+  process.stdout.write(`${"artifact".padEnd(54)}${"gzip".padStart(9)}${"vs base".padStart(9)}\n`);
+  for (const entry of data.editBlocks.files) {
+    line(`dsh-fs-markdown/lib/${entry.file}`, entry.gzip, null);
+  }
+  line(`  total (${String(data.editBlocks.blocks.length)} blocks)`, data.editBlocks.totalGzip, null);
 
   process.stdout.write(
     `\n=== covered elsewhere ===\n` +
