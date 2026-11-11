@@ -98,11 +98,15 @@ function DirectoryBranch({
           aria-label={folded ? strings.expandDirectory : strings.collapseDirectory}
           title={folded ? strings.expandDirectory : strings.collapseDirectory}
           onClick={() => onToggle(key)}
-          // A key pressed while the header has focus would bubble to the list's
-          // own handler, where Enter and Space mean "activate the selected
-          // row": the reader would fold a directory and open an unrelated file
-          // in one stroke. The header handles no keys, so it keeps them all.
-          onKeyDown={event => event.stopPropagation()}
+          // A click gives the button focus in Chromium and Firefox, so only the
+          // two keys that would reach the list's "activate" branch are stopped:
+          // Enter and Space would otherwise fold the directory and open the
+          // selected file in one stroke. Arrow keys and PageUp/PageDown must
+          // keep bubbling, or the reader who just folded a branch would find
+          // the list's navigation dead until they clicked back into it.
+          onKeyDown={event => {
+            if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+          }}
         >
           <span aria-hidden="true" data-tst="directory-chevron">
             {folded ? "▸" : "▾"}
@@ -162,6 +166,11 @@ export function LaneTree({ pkg, renderRow, collapsed, onToggle, strings }: LaneT
   }
   return (
     <>
+      {pkg.rootFiles.map(row => (
+        <div key={row.path} data-tst="lane-slot">
+          {renderRow(row)}
+        </div>
+      ))}
       {pkg.directories.map(node => (
         <DirectoryBranch
           key={node.key}

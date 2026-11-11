@@ -399,6 +399,7 @@ describe("testboard view", () => {
         {
           name: "tree",
           files: [
+            { path: "packages/tree/smoke.test.ts", cases: [{ path: "packages/tree/smoke.test.ts", line: 1, name: "smoke", status: "passed", durationMs: 1 }] },
             { path: "packages/tree/test/unit/a.test.ts", cases: [{ path: "packages/tree/test/unit/a.test.ts", line: 1, name: "a", status: "passed", durationMs: 5 }] },
             { path: "packages/tree/test/unit/nested/b.test.ts", cases: [{ path: "packages/tree/test/unit/nested/b.test.ts", line: 1, name: "b", status: "failed", durationMs: 6 }] },
             { path: "packages/tree/test/integration/c.test.ts", cases: [{ path: "packages/tree/test/integration/c.test.ts", line: 1, name: "c", status: "passed", durationMs: 7 }] },
@@ -541,6 +542,20 @@ describe("testboard view", () => {
       expect(host.querySelectorAll('[data-testid="case-item"]')).toHaveLength(1);
     });
 
+    it("renders a package-root file under its package heading", async () => {
+      await mountTree();
+      const tree = section(host, "tree");
+      const first = tree.querySelector<HTMLElement>('[data-testid="file-row"]');
+      // The package heading already says where the file is, so it comes before
+      // the directory headers and needs no header of its own.
+      expect(first?.getAttribute("data-path")).toBe("packages/tree/smoke.test.ts");
+      expect(tree.querySelector('[data-testid="directory-section"]')?.getAttribute("data-dir")).toBe("tree:test");
+      const row = rows(host).find(candidate => candidate.getAttribute("data-path") === "packages/tree/smoke.test.ts");
+      if (row === undefined) throw new Error("no root row");
+      await act(async () => row.click());
+      expect(row.getAttribute("data-selected")).toBe("true");
+    });
+
     /** The toggle inside one directory header. */
     function toggleOf(dir: string): HTMLElement {
       const found = host.querySelector<HTMLElement>(`[data-dir="${dir}"] [data-testid="directory-toggle"]`);
@@ -631,6 +646,19 @@ describe("testboard view", () => {
         );
       });
 
+      it("keeps arrow-key navigation alive after a click puts focus on the toggle", async () => {
+        await mountTree();
+        const toggle = toggleOf("tree:test/unit");
+        await act(async () => toggle.click());
+        // Browsers focus a clicked button even when it is out of the tab order;
+        // the list's keys must keep bubbling from there.
+        await act(async () => toggle.focus());
+        await act(async () => {
+          toggle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+        });
+        expect(rows(host).some(row => row.getAttribute("aria-selected") === "true")).toBe(true);
+      });
+
       it("shows every match while a search is running, then restores the fold", async () => {
         await mountTree();
         await act(async () => toggleOf("tree:test/unit").click());
@@ -676,12 +704,11 @@ describe("testboard view", () => {
         if (target === undefined) throw new Error("no target row");
         await act(async () => target.click());
 
-        // Folding the whole `tree` package leaves the root group and `flat`
-        // visible, all of them earlier in render order, so the nearest surviving
-        // row is the last one before the fold.
+        // Folding the whole `tree` package still leaves the package-root file
+        // visible above the tree, and it is the nearest surviving row.
         await act(async () => toggleOf("tree:test").click());
         const selected = rows(host).find(row => row.getAttribute("data-selected") === "true");
-        expect(selected?.getAttribute("data-path")).toBe("packages/flat/test/a.test.ts");
+        expect(selected?.getAttribute("data-path")).toBe("packages/tree/smoke.test.ts");
         expect(host.querySelector('[data-testid="detail-file"]')).not.toBeNull();
       });
 

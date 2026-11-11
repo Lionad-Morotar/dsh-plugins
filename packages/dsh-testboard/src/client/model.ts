@@ -385,6 +385,14 @@ export interface PackageTree {
    */
   readonly grouped: boolean;
   readonly rows: readonly TestFileRow[];
+  /**
+   * Rows that live directly in the package, outside every directory.
+   *
+   * They render under the package heading before the tree. Dropping them when a
+   * package is grouped would hide a `smoke.test.ts` that the flat list used to
+   * show, and no directory header could stand for it.
+   */
+  readonly rootFiles: readonly TestFileRow[];
   readonly directories: readonly DirectoryNode[];
 }
 
@@ -522,9 +530,13 @@ export function groupFileRowsIntoTree(rows: readonly TestFileRow[]): PackageTree
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([packageName, packageRows]) => {
       const roots = new Map<string, DraftDirectory>();
+      const rootFiles: TestFileRow[] = [];
       for (const row of packageRows) {
         const segments = directoryOfRow(row).split("/").filter(segment => segment !== "");
-        if (segments.length === 0) continue;
+        if (segments.length === 0) {
+          rootFiles.push(row);
+          continue;
+        }
         let level = roots;
         let key = "";
         for (let depth = 0; depth < segments.length; depth += 1) {
@@ -550,9 +562,9 @@ export function groupFileRowsIntoTree(rows: readonly TestFileRow[]): PackageTree
       // directory to file it under.
       const flat = directories.length === 1 && (directories[0]?.directories.length ?? 0) === 0;
       if (flat || directories.length === 0) {
-        return { packageName, grouped: false, rows: packageRows, directories: [] };
+        return { packageName, grouped: false, rows: packageRows, rootFiles: [], directories: [] };
       }
-      return { packageName, grouped: true, rows: [], directories };
+      return { packageName, grouped: true, rows: [], rootFiles, directories };
     });
 }
 
@@ -571,7 +583,7 @@ export function treeFileRows(pkg: PackageTree): TestFileRow[] {
     ...node.files,
     ...node.directories.flatMap(child => walk(child)),
   ];
-  return pkg.directories.flatMap(node => walk(node));
+  return [...pkg.rootFiles, ...pkg.directories.flatMap(node => walk(node))];
 }
 
 /**
@@ -595,6 +607,7 @@ export function visibleFileRows(
       rows.push(...pkg.rows);
       continue;
     }
+    rows.push(...pkg.rootFiles);
     const walk = (node: DirectoryNode): void => {
       if (collapsed.has(`${pkg.packageName}:${node.key}`)) return;
       rows.push(...node.files);

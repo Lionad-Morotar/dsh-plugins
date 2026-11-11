@@ -334,6 +334,29 @@ describe("groupFileRowsIntoTree", () => {
     expect(pkg.directories[0]?.directories.map(node => node.key)).toEqual(["test/integration"]);
   });
 
+  it("keeps a package-root file alongside the tree instead of dropping it", () => {
+    // A `smoke.test.ts` next to the test directories has no directory header of
+    // its own; the package heading is where it belongs. The tree must not lose
+    // it just because the package also has directories.
+    const tree = groupFileRowsIntoTree([
+      fileRow("a", "packages/a/smoke.test.ts"),
+      fileRow("a", "packages/a/test/one.test.ts"),
+      fileRow("a", "packages/a/test/integration/two.test.ts"),
+    ]);
+    const pkg = tree[0];
+    if (pkg === undefined) throw new Error("no package");
+    expect(pkg.grouped).toBe(true);
+    expect(pkg.rootFiles.map(row => row.path)).toEqual(["packages/a/smoke.test.ts"]);
+    expect(treeFileRows(pkg).map(row => row.path)).toEqual([
+      "packages/a/smoke.test.ts",
+      "packages/a/test/one.test.ts",
+      "packages/a/test/integration/two.test.ts",
+    ]);
+    // Navigable as well: a row the keyboard cannot reach is a row the reader
+    // cannot open from the tree.
+    expect(visibleFileRows(tree, new Set()).map(row => row.path)).toContain("packages/a/smoke.test.ts");
+  });
+
   it("uses the whole path as the directory for the root group", () => {
     // The root group's rows are not under `packages/./`, so there is no prefix to
     // strip: `tests/server/api` is already the directory.
