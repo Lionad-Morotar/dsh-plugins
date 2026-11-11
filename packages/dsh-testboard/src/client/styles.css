@@ -433,6 +433,24 @@ body.tst-pane-resizing {
 
 [data-tst="package-name"] {margin: 0 0 4px;font-weight: 500;color: var(--tst-ink-faint);letter-spacing: 0.04em}
 
+/* A directory header is a label, not a row: it carries no ticks, no reading and
+   no selection, so it stays quieter than the files under it. The indent comes
+   from an inline padding because the depth is data, not a style choice. */
+[data-tst="directory"] {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 2px;
+  color: var(--tst-ink-faint);
+  font-size: var(--tst-fs-code);
+  letter-spacing: 0.02em;
+}
+
+[data-tst="directory-name"] {overflow: hidden;text-overflow: ellipsis;white-space: nowrap}
+
+[data-tst="directory-failed"] {flex: 0 0 auto;color: var(--tst-fail);white-space: nowrap}
+
 [data-tst="lane"] {
   display: flex;
   align-items: center;

@@ -27,12 +27,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, 
 
 import type { TestSnapshot } from "./model.ts";
 import {
-  groupFileRows,
+  groupFileRowsIntoTree,
   listFileRows,
   summarize,
   throughputSeries,
+  treeFileRows,
   type RowFilter,
   type RowSort,
+  type TestFileRow,
   type ThroughputBucket,
 } from "./model.ts";
 import type { TestboardRuntime } from "./runtime.ts";
@@ -73,6 +75,7 @@ import { CaseList } from "./components/case-list.tsx";
 import { ContextMenu } from "./components/context-menu.tsx";
 import { DetailPane, type DetailPaneStrings } from "./components/detail-pane.tsx";
 import { LaneRow } from "./components/lane-row.tsx";
+import { LaneTree } from "./components/lane-tree.tsx";
 import { PaneHandle } from "./components/pane-handle.tsx";
 import { AreaChart } from "./components/area-chart.tsx";
 import { RunHeader } from "./components/run-header.tsx";
@@ -570,16 +573,16 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       };
     }, [selection, loadEditor]);
 
-    // The rows are grouped before anything reads them, and the flat navigation
-    // order is built from the groups rather than from the sorted row list: the
-    // board renders one section per package, so walking the row list's own order
-    // would move the selection up and down a different sequence than the one on
-    // screen.
-    const groups = useMemo(
-      () => (snapshot === undefined ? [] : groupFileRows(listFileRows(snapshot, { filter, query, sort }))),
+    // The rows are grouped into one directory tree per package before anything
+    // reads them, and the flat navigation order is built from that tree rather
+    // than from the sorted row list: the board renders directories and hangs the
+    // files under them, so walking the row list's own order would move the
+    // selection up and down a different sequence than the one on screen.
+    const packages = useMemo(
+      () => (snapshot === undefined ? [] : groupFileRowsIntoTree(listFileRows(snapshot, { filter, query, sort }))),
       [snapshot, filter, query, sort],
     );
-    const rows = useMemo(() => groups.flatMap(group => group.rows), [groups]);
+    const rows = useMemo(() => packages.flatMap(pkg => treeFileRows(pkg)), [packages]);
 
     // A chip click asks the tab to select one row. The request can arrive before
     // the first state answer (the tab mounts lazily), so it is applied once both
@@ -875,6 +878,66 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const canRun = sessionId !== undefined && sessionId !== "" && stateError === undefined && !running;
 
     /**
+     * Draw one file row, wherever the tree decides it belongs.
+     *
+     * The tree owns the layout and the view owns the reading, so the split is a
+     * callback rather than a prop per row: a directory's files and a flat
+     * package's rows are the same row, and drawing them through one function is
+     * what keeps a tick, a reading and a selection identical in both places.
+     * `showDirectory` is false inside a tree because the header above the row
+     * already names the directory.
+     */
+    const renderRow = (row: TestFileRow, showDirectory: boolean): ReactElement => {
+      const fileItem: NavSelection = { kind: "file", path: row.path };
+      const isSelected = resolved?.kind === "file" && resolved.path === row.path;
+      return (
+        <>
+          <LaneRow
+            row={row}
+            expanded={expanded.has(row.path)}
+            selected={isSelected}
+            optionId={optionId(fileItem)}
+            running={running}
+            ticks={caseTickStates({
+              snapshotCases: row.cases,
+              runCases: runCasesFor(row.path),
+              scope: run?.scope,
+              rerunning: run !== undefined && run.runNumber > 1,
+              running,
+              path: row.path,
+            })}
+            reduced={motion.reduced}
+            reading={rowReading({
+              snapshotDurationMs: row.durationMs,
+              snapshotFailed: row.failed,
+              snapshotCaseCount: row.cases.length,
+              runCases: runCasesFor(row.path),
+              running,
+              inScope:
+                run === undefined || run.scope.kind === "all" || run.scope.path === row.path,
+            })}
+            strings={{ failed: strings.failed, runFile: strings.runFile }}
+            showDirectory={showDirectory}
+            onSelect={onFileClick}
+            onRun={onRunFile}
+            onContextMenu={onFileMenu}
+          />
+          {expanded.has(row.path) ? (
+            <CaseList
+              cases={row.cases}
+              selectedIndex={resolved?.kind === "case" && resolved.path === row.path ? resolved.index : -1}
+              optionId={index => optionId({ kind: "case", path: row.path, index })}
+              onSelect={index => onCaseClick(row.path, index)}
+              onContextMenu={(index, anchor) =>
+                onCaseMenu(row.path, index, row.cases[index]?.name ?? "", anchor)
+              }
+            />
+          ) : null}
+        </>
+      );
+    };
+
+    /**
      * The sentence explaining an empty board, or undefined when there is one.
      *
      * Ordered by what the reader needs first: a failed request, then a host
@@ -1085,60 +1148,18 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
               tabIndex={0}
               onKeyDown={onListKeyDown}
             >
-              {groups.length === 0 ? <p data-testid="empty" data-tst="empty">{strings.empty}</p> : null}
-              {groups.map(group => (
-                <section key={group.packageName} data-testid="package-section" data-tst="package" data-package={group.packageName}>
-                  <h2 data-tst="package-name">{group.packageName}</h2>
-                  {group.rows.map(row => {
-                    const fileItem: NavSelection = { kind: "file", path: row.path };
-                    const isSelected = resolved?.kind === "file" && resolved.path === row.path;
-                    return (
-                      <div key={row.path} data-tst="lane-slot">
-                        <LaneRow
-                          row={row}
-                          expanded={expanded.has(row.path)}
-                          selected={isSelected}
-                          optionId={optionId(fileItem)}
-                          running={running}
-                          ticks={caseTickStates({
-                            snapshotCases: row.cases,
-                            runCases: runCasesFor(row.path),
-                            scope: run?.scope,
-                            rerunning: run !== undefined && run.runNumber > 1,
-                            running,
-                            path: row.path,
-                          })}
-                          reduced={motion.reduced}
-                          reading={rowReading({
-                            snapshotDurationMs: row.durationMs,
-                            snapshotFailed: row.failed,
-                            snapshotCaseCount: row.cases.length,
-                            runCases: runCasesFor(row.path),
-                            running,
-                            inScope:
-                              run === undefined ||
-                              run.scope.kind === "all" ||
-                              run.scope.path === row.path,
-                          })}
-                          strings={{ failed: strings.failed, runFile: strings.runFile }}
-                          onSelect={onFileClick}
-                          onRun={onRunFile}
-                          onContextMenu={onFileMenu}
-                        />
-                        {expanded.has(row.path) ? (
-                          <CaseList
-                            cases={row.cases}
-                            selectedIndex={resolved?.kind === "case" && resolved.path === row.path ? resolved.index : -1}
-                            optionId={index => optionId({ kind: "case", path: row.path, index })}
-                            onSelect={index => onCaseClick(row.path, index)}
-                            onContextMenu={(index, anchor) =>
-                              onCaseMenu(row.path, index, row.cases[index]?.name ?? "", anchor)
-                            }
-                          />
-                        ) : null}
-                      </div>
-                    );
-                  })}
+              {packages.length === 0 ? <p data-testid="empty" data-tst="empty">{strings.empty}</p> : null}
+              {packages.map(pkg => (
+                <section key={pkg.packageName} data-testid="package-section" data-tst="package" data-package={pkg.packageName}>
+                  {/* The root group's name is the path separator, which says
+                      nothing a reader needs: its directories are already the
+                      top of the list. */}
+                  {pkg.packageName === "." ? null : <h2 data-tst="package-name">{pkg.packageName}</h2>}
+                  <LaneTree
+                    pkg={pkg}
+                    renderRow={row => renderRow(row, !pkg.grouped)}
+                    strings={{ failed: strings.failed }}
+                  />
                 </section>
               ))}
           </div>

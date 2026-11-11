@@ -13,14 +13,17 @@ import snapshotData from "../src/client/data/snapshot.json" with { type: "json" 
 import {
   groupByPackage,
   groupFileRows,
+  groupFileRowsIntoTree,
   listFileRows,
   listRows,
   PARALLEL_TEST_PROCESSES,
   peakThroughput,
   summarize,
   throughputSeries,
+  treeFileRows,
   wallClockMs,
   type TestCase,
+  type TestFileRow,
   type TestSnapshot,
 } from "../src/client/model.ts";
 
@@ -220,6 +223,185 @@ describe("groupFileRows", () => {
   it("drops a package whose files were all filtered out", () => {
     const groups = groupFileRows(listFileRows(SNAPSHOT, { filter: "failed", query: "", sort: "fail-first" }));
     expect(groups.map(group => group.packageName)).toEqual(["a"]);
+  });
+});
+
+/**
+ * One file row, built by hand.
+ *
+ * The tree builder is a pure function over rows, so its fixtures are rows: going
+ * through a snapshot would make every case carry a package and a file it does
+ * not care about, and the order the builder must preserve is the order of this
+ * array, which a snapshot cannot express.
+ * @param packageName - owning package.
+ * @param path - repo-relative test path.
+ * @param failed - how many of the file's cases failed.
+ * @param durationMs - the file's summed case time.
+ * @returns the row.
+ */
+function fileRow(packageName: string, path: string, failed = 0, durationMs = 0): TestFileRow {
+  return { packageName, path, cases: [], passed: 0, failed, skipped: 0, durationMs, hasFailed: failed > 0 };
+}
+
+describe("groupFileRowsIntoTree", () => {
+  it("nests directories by path segment and keys each by its full path", () => {
+    const tree = groupFileRowsIntoTree([
+      fileRow("a", "packages/a/test/unit/two.test.ts"),
+      fileRow("a", "packages/a/test/unit/deep/one.test.ts"),
+      fileRow("a", "packages/a/test/integration/three.test.ts"),
+    ]);
+
+    expect(tree).toHaveLength(1);
+    const pkg = tree[0];
+    if (pkg === undefined) throw new Error("no package");
+    expect(pkg.grouped).toBe(true);
+    // A grouped package renders its rows through the tree, so the flat list is
+    // empty: two sources of the same row would render it twice.
+    expect(pkg.rows).toEqual([]);
+    expect(pkg.directories.map(node => node.name)).toEqual(["test"]);
+
+    const test = pkg.directories[0];
+    if (test === undefined) throw new Error("no test dir");
+    expect(test.key).toBe("test");
+    expect(test.depth).toBe(0);
+    expect(test.directories.map(node => node.name)).toEqual(["integration", "unit"]);
+
+    const unit = test.directories[1];
+    if (unit === undefined) throw new Error("no unit dir");
+    expect(unit.key).toBe("test/unit");
+    expect(unit.depth).toBe(1);
+    expect(unit.files.map(row => row.path)).toEqual(["packages/a/test/unit/two.test.ts"]);
+    expect(unit.directories.map(node => node.name)).toEqual(["deep"]);
+    expect(unit.directories[0]?.key).toBe("test/unit/deep");
+    expect(unit.directories[0]?.depth).toBe(2);
+  });
+
+  it("orders sibling directories by segment name, not by insertion", () => {
+    const tree = groupFileRowsIntoTree([
+      fileRow("a", "packages/a/zeta/one.test.ts"),
+      fileRow("a", "packages/a/alpha/two.test.ts"),
+      fileRow("a", "packages/a/middle/three.test.ts"),
+    ]);
+    expect(tree[0]?.directories.map(node => node.key)).toEqual(["alpha", "middle", "zeta"]);
+  });
+
+  it("keeps the input's file order inside a directory", () => {
+    // The rows arrive already filtered, searched and sorted; re-sorting them here
+    // would quietly undo the reader's chosen order.
+    const tree = groupFileRowsIntoTree([
+      fileRow("a", "packages/a/test/unit/zeta.test.ts"),
+      fileRow("a", "packages/a/test/unit/alpha.test.ts"),
+    ]);
+    expect(tree[0]?.directories[0]?.directories[0]?.files.map(row => row.path)).toEqual([
+      "packages/a/test/unit/zeta.test.ts",
+      "packages/a/test/unit/alpha.test.ts",
+    ]);
+  });
+
+  it("keeps a package whose only directory has no children flat", () => {
+    const tree = groupFileRowsIntoTree([
+      fileRow("a", "packages/a/test/one.test.ts"),
+      fileRow("a", "packages/a/test/two.test.ts"),
+    ]);
+    const pkg = tree[0];
+    if (pkg === undefined) throw new Error("no package");
+    expect(pkg.grouped).toBe(false);
+    expect(pkg.directories).toEqual([]);
+    expect(pkg.rows.map(row => row.path)).toEqual(["packages/a/test/one.test.ts", "packages/a/test/two.test.ts"]);
+  });
+
+  it("groups a package whose one top directory has subdirectories", () => {
+    // The suppression is about a package that has nothing to nest, not about the
+    // number of top-level directories: `test` plus `test/integration` is a tree.
+    const tree = groupFileRowsIntoTree([
+      fileRow("a", "packages/a/test/one.test.ts"),
+      fileRow("a", "packages/a/test/integration/two.test.ts"),
+    ]);
+    const pkg = tree[0];
+    if (pkg === undefined) throw new Error("no package");
+    expect(pkg.grouped).toBe(true);
+    expect(pkg.directories.map(node => node.key)).toEqual(["test"]);
+    expect(pkg.directories[0]?.directories.map(node => node.key)).toEqual(["test/integration"]);
+  });
+
+  it("uses the whole path as the directory for the root group", () => {
+    // The root group's rows are not under `packages/./`, so there is no prefix to
+    // strip: `tests/server/api` is already the directory.
+    const tree = groupFileRowsIntoTree([
+      fileRow(".", "tests/server/api/one.test.ts"),
+      fileRow(".", "tests/client/two.test.ts"),
+    ]);
+    const pkg = tree[0];
+    if (pkg === undefined) throw new Error("no package");
+    expect(pkg.packageName).toBe(".");
+    expect(pkg.grouped).toBe(true);
+    expect(pkg.directories.map(node => node.key)).toEqual(["tests"]);
+    expect(pkg.directories[0]?.directories.map(node => node.key)).toEqual(["tests/client", "tests/server"]);
+    expect(pkg.directories[0]?.directories[1]?.directories.map(node => node.key)).toEqual(["tests/server/api"]);
+  });
+
+  it("aggregates file, failure and duration totals up the tree", () => {
+    const tree = groupFileRowsIntoTree([
+      fileRow("a", "packages/a/test/one.test.ts", 2, 100),
+      fileRow("a", "packages/a/test/unit/two.test.ts", 1, 50),
+      fileRow("a", "packages/a/test/unit/deep/three.test.ts", 0, 25),
+    ]);
+    const test = tree[0]?.directories[0];
+    if (test === undefined) throw new Error("no test dir");
+    expect(test.stats).toEqual({ files: 3, failed: 3, durationMs: 175 });
+    expect(test.directories[0]?.stats).toEqual({ files: 2, failed: 1, durationMs: 75 });
+  });
+
+  it("orders packages by name, like groupFileRows", () => {
+    const tree = groupFileRowsIntoTree([
+      fileRow("b", "packages/b/test/one.test.ts"),
+      fileRow("a", "packages/a/test/two.test.ts"),
+    ]);
+    expect(tree.map(pkg => pkg.packageName)).toEqual(["a", "b"]);
+  });
+
+  it("reports nothing for an empty row list", () => {
+    expect(groupFileRowsIntoTree([])).toEqual([]);
+  });
+
+  it("keeps every file of the real snapshot exactly once", () => {
+    const rows = listFileRows(REAL_SNAPSHOT, { filter: "all", query: "", sort: "fail-first" });
+    const tree = groupFileRowsIntoTree(rows);
+    const seen = tree.flatMap(pkg => treeFileRows(pkg)).map(row => row.path);
+    expect(seen).toHaveLength(rows.length);
+    expect(new Set(seen).size).toBe(rows.length);
+  });
+});
+
+describe("treeFileRows", () => {
+  it("walks a grouped tree in render order: a directory's files, then its children", () => {
+    const tree = groupFileRowsIntoTree([
+      fileRow("a", "packages/a/test/integration/three.test.ts"),
+      fileRow("a", "packages/a/test/one.test.ts"),
+      fileRow("a", "packages/a/test/unit/two.test.ts"),
+    ]);
+    const pkg = tree[0];
+    if (pkg === undefined) throw new Error("no package");
+    // The order the tree draws, which is also the order the keyboard walks: a
+    // flat list in any other order would make ArrowDown jump around the screen.
+    expect(treeFileRows(pkg).map(row => row.path)).toEqual([
+      "packages/a/test/one.test.ts",
+      "packages/a/test/integration/three.test.ts",
+      "packages/a/test/unit/two.test.ts",
+    ]);
+  });
+
+  it("returns a flat package's own rows untouched", () => {
+    const tree = groupFileRowsIntoTree([
+      fileRow("a", "packages/a/test/zeta.test.ts"),
+      fileRow("a", "packages/a/test/alpha.test.ts"),
+    ]);
+    const pkg = tree[0];
+    if (pkg === undefined) throw new Error("no package");
+    expect(treeFileRows(pkg).map(row => row.path)).toEqual([
+      "packages/a/test/zeta.test.ts",
+      "packages/a/test/alpha.test.ts",
+    ]);
   });
 });
 

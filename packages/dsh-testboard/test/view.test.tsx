@@ -367,6 +367,162 @@ describe("testboard view", () => {
     expect(board?.className).toContain("tst-theme-light");
   });
 
+  describe("directory tree", () => {
+    /**
+     * A snapshot built for these cases only.
+     *
+     * The committed snapshot has exactly one package with a subdirectory, so it
+     * cannot show a three-level tree, a suppressed package and a root group side
+     * by side. The board takes its data through the runtime, so a runtime over
+     * this snapshot exercises the same path the host's data takes.
+     */
+    const TREE_SNAPSHOT: TestSnapshot = {
+      version: 2,
+      statusSource: "synthetic",
+      packages: [
+        {
+          name: ".",
+          files: [
+            { path: "tests/client/y.test.ts", cases: [{ path: "tests/client/y.test.ts", line: 1, name: "y", status: "passed", durationMs: 3 }] },
+            { path: "tests/server/api/x.test.ts", cases: [{ path: "tests/server/api/x.test.ts", line: 1, name: "x", status: "passed", durationMs: 2 }] },
+          ],
+        },
+        {
+          name: "flat",
+          files: [
+            { path: "packages/flat/test/a.test.ts", cases: [{ path: "packages/flat/test/a.test.ts", line: 1, name: "a", status: "passed", durationMs: 1 }] },
+            { path: "packages/flat/test/b.test.ts", cases: [{ path: "packages/flat/test/b.test.ts", line: 1, name: "b", status: "failed", durationMs: 4 }] },
+          ],
+        },
+        {
+          name: "tree",
+          files: [
+            { path: "packages/tree/test/unit/a.test.ts", cases: [{ path: "packages/tree/test/unit/a.test.ts", line: 1, name: "a", status: "passed", durationMs: 5 }] },
+            { path: "packages/tree/test/unit/nested/b.test.ts", cases: [{ path: "packages/tree/test/unit/nested/b.test.ts", line: 1, name: "b", status: "failed", durationMs: 6 }] },
+            { path: "packages/tree/test/integration/c.test.ts", cases: [{ path: "packages/tree/test/integration/c.test.ts", line: 1, name: "c", status: "passed", durationMs: 7 }] },
+          ],
+        },
+      ],
+    };
+
+    /** Mount the board over the tree snapshot instead of the committed one. */
+    async function mountTree(): Promise<void> {
+      runtime = makeRuntime({ snapshot: TREE_SNAPSHOT, workspaceName: "tree" });
+      await mount();
+    }
+
+    /** Every rendered directory header, in document order. */
+    function directories(host: HTMLElement): HTMLElement[] {
+      return [...host.querySelectorAll<HTMLElement>('[data-testid="directory-section"]')];
+    }
+
+    /** The package section for one package name. */
+    function section(host: HTMLElement, packageName: string): HTMLElement {
+      const found = host.querySelector<HTMLElement>(`[data-testid="package-section"][data-package="${packageName}"]`);
+      if (found === null) throw new Error(`no section for ${packageName}`);
+      return found;
+    }
+
+    /** The branch wrapper a directory header belongs to, which holds its rows. */
+    function branchOf(host: HTMLElement, dir: string): HTMLElement {
+      const header = host.querySelector<HTMLElement>(`[data-testid="directory-section"][data-dir="${dir}"]`);
+      const branch = header?.parentElement;
+      if (branch === null || branch === undefined) throw new Error(`no branch for ${dir}`);
+      return branch;
+    }
+
+    it("renders one header per directory, in tree order, with its depth", async () => {
+      await mountTree();
+      expect(directories(host).map(node => node.getAttribute("data-dir"))).toEqual([
+        ".:tests",
+        ".:tests/client",
+        ".:tests/server",
+        ".:tests/server/api",
+        "tree:test",
+        "tree:test/integration",
+        "tree:test/unit",
+        "tree:test/unit/nested",
+      ]);
+      expect(directories(host).map(node => node.getAttribute("data-depth"))).toEqual([
+        "0", "1", "1", "2", "0", "1", "1", "2",
+      ]);
+    });
+
+    it("names a directory by its own segment, not by its path", async () => {
+      await mountTree();
+      const labels = directories(host).map(node => node.querySelector('[data-tst="directory-name"]')?.textContent);
+      expect(labels).toEqual(["tests", "client", "server", "api", "test", "integration", "unit", "nested"]);
+    });
+
+    it("hangs each file under its own directory", async () => {
+      await mountTree();
+      // Direct slots only: a branch also contains its child branches, and their
+      // rows belong to them, not to this directory.
+      const own = (dir: string): (string | null)[] =>
+        [...branchOf(host, dir).querySelectorAll<HTMLElement>(':scope > [data-tst="lane-slot"] [data-testid="file-row"]')].map(
+          row => row.getAttribute("data-path"),
+        );
+
+      expect(own("tree:test/unit")).toEqual(["packages/tree/test/unit/a.test.ts"]);
+      expect(own("tree:test/unit/nested")).toEqual(["packages/tree/test/unit/nested/b.test.ts"]);
+      expect(own("tree:test/integration")).toEqual(["packages/tree/test/integration/c.test.ts"]);
+    });
+
+    it("drops the directory suffix from rows inside the tree", async () => {
+      await mountTree();
+      // The header above the row already says the directory; repeating it on
+      // every line is what the tree replaces.
+      expect(section(host, "tree").querySelectorAll('[data-tst="lane-dir"]')).toHaveLength(0);
+      expect(section(host, ".").querySelectorAll('[data-tst="lane-dir"]')).toHaveLength(0);
+    });
+
+    it("keeps a single-directory package flat, suffix and all", async () => {
+      await mountTree();
+      const flat = section(host, "flat");
+      expect(flat.querySelectorAll('[data-testid="directory-section"]')).toHaveLength(0);
+      const shown = [...flat.querySelectorAll<HTMLElement>('[data-testid="file-row"]')];
+      // The default sort puts the failing file first, and a flat package keeps
+      // exactly that order: the tree never reorders rows.
+      expect(shown.map(row => row.getAttribute("data-path"))).toEqual([
+        "packages/flat/test/b.test.ts",
+        "packages/flat/test/a.test.ts",
+      ]);
+      expect(shown[0]?.querySelector('[data-tst="lane-dir"]')?.textContent).toBe("test");
+    });
+
+    it("hides the package title for the root group but keeps its section", async () => {
+      await mountTree();
+      const root = section(host, ".");
+      expect(root.querySelector('[data-tst="package-name"]')).toBeNull();
+      expect(root.querySelectorAll('[data-testid="directory-section"]').length).toBeGreaterThan(0);
+      // The other packages still name themselves.
+      expect(section(host, "tree").querySelector('[data-tst="package-name"]')?.textContent).toBe("tree");
+    });
+
+    it("shows a directory's failure count beside its title", async () => {
+      await mountTree();
+      const unit = host.querySelector<HTMLElement>('[data-dir="tree:test/unit"]');
+      expect(unit?.textContent).toContain(`1 ${STRINGS.failed}`);
+      const integration = host.querySelector<HTMLElement>('[data-dir="tree:test/integration"]');
+      expect(integration?.textContent).not.toContain(STRINGS.failed);
+    });
+    it("still renders every file exactly once", async () => {
+      await mountTree();
+      const total = TREE_SNAPSHOT.packages.reduce((sum, pkg) => sum + pkg.files.length, 0);
+      expect(rows(host)).toHaveLength(total);
+      expect(new Set(rows(host).map(row => row.getAttribute("data-path"))).size).toBe(total);
+    });
+
+    it("keeps a tree row selectable and expandable", async () => {
+      await mountTree();
+      const row = rows(host).find(candidate => candidate.getAttribute("data-path") === "packages/tree/test/unit/nested/b.test.ts");
+      if (row === undefined) throw new Error("no nested row");
+      await act(async () => row.click());
+      expect(row.getAttribute("data-selected")).toBe("true");
+      expect(host.querySelectorAll('[data-testid="case-item"]')).toHaveLength(1);
+    });
+  });
+
   describe("split layout", () => {
     it("marks the root as the composer overlay so the host gives it a fixed height", async () => {
       await mount();

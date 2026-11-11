@@ -353,6 +353,175 @@ export function groupFileRows(rows: readonly TestFileRow[]): TestFileRowGroup[] 
     .map(([packageName, groupRows]) => ({ packageName, rows: groupRows }));
 }
 
+/** One directory in a package's tree: its own files and its subdirectories. */
+export interface DirectoryNode {
+  /**
+   * The directory's path inside the package, e.g. `test/unit`.
+   *
+   * The full path rather than the segment, because this is the identity a later
+   * collapse state keys on: `test/unit` and `src/unit` are different directories
+   * that share a name.
+   */
+  readonly key: string;
+  /** The last path segment, which is what the header shows. */
+  readonly name: string;
+  /** Nesting level, root directories at 0; drives the header's indent. */
+  readonly depth: number;
+  readonly files: readonly TestFileRow[];
+  readonly directories: readonly DirectoryNode[];
+  /** Totals for this directory and everything below it. */
+  readonly stats: { readonly files: number; readonly failed: number; readonly durationMs: number };
+}
+
+/** One package's slice of the board: either a tree, or its rows flat. */
+export interface PackageTree {
+  readonly packageName: string;
+  /**
+   * Whether the rows render through `directories`.
+   *
+   * A package with one directory and no nesting has nothing to show a header
+   * for, so it keeps the flat list it always had; `rows` and `directories` are
+   * never both populated.
+   */
+  readonly grouped: boolean;
+  readonly rows: readonly TestFileRow[];
+  readonly directories: readonly DirectoryNode[];
+}
+
+/**
+ * The directory a row sits in, relative to its package.
+ *
+ * Package rows are under `packages/<name>/`, so the prefix comes off. The root
+ * group's rows are not under `packages/./`, so they keep their whole path.
+ * @param row - the file row.
+ * @returns the directory path, or an empty string for a file at the package root.
+ */
+function directoryOfRow(row: TestFileRow): string {
+  const prefix = `packages/${row.packageName}/`;
+  const relative = row.path.startsWith(prefix) ? row.path.slice(prefix.length) : row.path;
+  const index = relative.lastIndexOf("/");
+  return index === -1 ? "" : relative.slice(0, index);
+}
+
+/** A directory while it is being built, before its totals are known. */
+interface DraftDirectory {
+  readonly name: string;
+  readonly key: string;
+  readonly depth: number;
+  readonly files: TestFileRow[];
+  readonly directories: Map<string, DraftDirectory>;
+}
+
+/**
+ * Fold a draft directory into its finished node, totals included.
+ *
+ * The totals are summed on the way out rather than maintained on the way in: a
+ * directory's figures are its own files plus its children's, and computing them
+ * once here keeps the two from drifting apart.
+ * @param draft - the directory being finished.
+ * @returns the node, children sorted by name.
+ */
+function finishDirectory(draft: DraftDirectory): DirectoryNode {
+  const directories = [...draft.directories.values()]
+    .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+    .map(child => finishDirectory(child));
+  let files = draft.files.length;
+  let failed = draft.files.reduce((sum, row) => sum + row.failed, 0);
+  let durationMs = draft.files.reduce((sum, row) => sum + row.durationMs, 0);
+  for (const child of directories) {
+    files += child.stats.files;
+    failed += child.stats.failed;
+    durationMs += child.stats.durationMs;
+  }
+  return {
+    key: draft.key,
+    name: draft.name,
+    depth: draft.depth,
+    files: draft.files,
+    directories,
+    stats: { files, failed, durationMs },
+  };
+}
+
+/**
+ * Group file rows into one directory tree per package.
+ *
+ * The board used to list a package's files flat, with the directory repeated on
+ * every row; in a repository where one directory holds a hundred and eighty
+ * files that is a hundred and eighty copies of the same word. The tree says it
+ * once.
+ *
+ * Two properties matter more than the shape. The rows arrive already filtered,
+ * searched and sorted, so the builder never reorders files: the reader's chosen
+ * order survives, and a directory's files stay in the sequence they were given.
+ * And a package with a single unnested directory is returned flat, because a
+ * header over a list that is already all one directory is a line of noise.
+ * @param rows - rows from `listFileRows`.
+ * @returns one entry per package, package name ascending.
+ */
+export function groupFileRowsIntoTree(rows: readonly TestFileRow[]): PackageTree[] {
+  const byPackage = new Map<string, TestFileRow[]>();
+  for (const row of rows) {
+    const bucket = byPackage.get(row.packageName);
+    if (bucket === undefined) byPackage.set(row.packageName, [row]);
+    else bucket.push(row);
+  }
+
+  return [...byPackage.entries()]
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([packageName, packageRows]) => {
+      const roots = new Map<string, DraftDirectory>();
+      for (const row of packageRows) {
+        const segments = directoryOfRow(row).split("/").filter(segment => segment !== "");
+        if (segments.length === 0) continue;
+        let level = roots;
+        let key = "";
+        for (let depth = 0; depth < segments.length; depth += 1) {
+          const name = segments[depth] ?? "";
+          key = key === "" ? name : `${key}/${name}`;
+          let node = level.get(name);
+          if (node === undefined) {
+            node = { name, key, depth, files: [], directories: new Map() };
+            level.set(name, node);
+          }
+          if (depth === segments.length - 1) node.files.push(row);
+          level = node.directories;
+        }
+      }
+
+      const directories = [...roots.values()]
+        .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+        .map(draft => finishDirectory(draft));
+
+      // One directory, no nesting: the header would name the only place the rows
+      // could be. A row at the package root also lands here, since it has no
+      // directory to file it under.
+      const flat = directories.length === 1 && (directories[0]?.directories.length ?? 0) === 0;
+      if (flat || directories.length === 0) {
+        return { packageName, grouped: false, rows: packageRows, directories: [] };
+      }
+      return { packageName, grouped: true, rows: [], directories };
+    });
+}
+
+/**
+ * Every row a package renders, in the order the tree draws them.
+ *
+ * The board's keyboard order and its selection normalisation both walk this, so
+ * it is the tree's own traversal rather than a second sort: a flat list in any
+ * other order would make ArrowDown jump around the screen.
+ * @param pkg - one package's tree.
+ * @returns the rows, a directory's files before its children's.
+ */
+export function treeFileRows(pkg: PackageTree): TestFileRow[] {
+  if (!pkg.grouped) return [...pkg.rows];
+  const walk = (node: DirectoryNode): TestFileRow[] => [
+    ...node.files,
+    ...node.directories.flatMap(child => walk(child)),
+  ];
+  return pkg.directories.flatMap(node => walk(node));
+}
+
 /** One second of the run: how many cases finished, and how many of those failed. */
 export interface ThroughputBucket {
   readonly second: number;
