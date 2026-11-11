@@ -558,6 +558,44 @@ describe("row shortcut keys", () => {
   });
 });
 
+describe("screen session switching", () => {
+  it("closes the open panel when the screen moves to another session", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.switch");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    // The bridge's first publish is not a switch: the session was already there.
+    h.runtime.__test.publishScreenSession({ sessionId: "sess-a", inputActions: null });
+    expect(h.store.getSnapshot().open).toBe(true);
+
+    h.runtime.__test.publishScreenSession({ sessionId: "sess-b", inputActions: null });
+    expect(h.store.getSnapshot().open).toBe(false);
+    h.runtime.dispose();
+  });
+
+  it("leaves a closed panel closed and does nothing else", async () => {
+    const h = harness();
+    h.runtime.__test.publishScreenSession({ sessionId: "sess-a", inputActions: null });
+    h.runtime.__test.publishScreenSession({ sessionId: "sess-b", inputActions: null });
+
+    const snapshot = h.store.getSnapshot();
+    expect(snapshot.open).toBe(false);
+    expect(snapshot.status).toBe("idle");
+    h.runtime.dispose();
+  });
+
+  it("keeps the panel while the same session is republished", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.switch");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.runtime.__test.publishScreenSession({ sessionId: "sess-a", inputActions: null });
+    h.runtime.__test.publishScreenSession({ sessionId: "sess-a", inputActions: null });
+    expect(h.store.getSnapshot().open).toBe(true);
+    h.runtime.dispose();
+  });
+});
+
 describe("client command contributions", () => {
   it("rebuilds immediately on every opening and executes only the current available action", async () => {
     let current = SESSION_A.id;

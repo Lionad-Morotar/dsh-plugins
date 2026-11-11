@@ -66,6 +66,7 @@ import {
   PANEL_MODES,
   back as backModel,
   clampHighlight,
+  dismissOnSessionSwitch,
   drill,
   drillArchived,
   highlightAt,
@@ -203,6 +204,12 @@ export interface PanelRuntime {
   readonly __test: {
     readonly store: ReturnType<typeof createPanelStore>;
     readonly verbs: PanelVerbs;
+    /**
+     * The bridge's sink, exposed because the test harness never mounts the
+     * bridge view: a suite drives the screen session through this instead of
+     * through React.
+     */
+    readonly publishScreenSession: (state: BridgeState) => void;
   };
 }
 
@@ -858,6 +865,24 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     lastSignature = "";
     prefixEntry = false;
     store.set({ open: false, status: "idle", notice: null, noticeTone: undefined });
+  }
+
+  /**
+   * Take one bridge publish: record it, warm the session, and follow the screen.
+   *
+   * A session switch is the one change the panel cannot survive. It is a surface
+   * for the session it was opened on, so a native `⌘N` on the desktop, which
+   * creates a session without going through the panel, would otherwise leave the
+   * palette covering the new session as if the key had done nothing.
+   *
+   * @param state - what the bridge just published.
+   */
+  function publishScreenSession(state: BridgeState): void {
+    const previous = bridge.state.sessionId;
+    bridge.state = state;
+    if (state.sessionId === previous) return;
+    void warm(state.sessionId);
+    if (dismissOnSessionSwitch(store.getSnapshot().open, previous, state.sessionId)) close();
   }
 
   function crumbLabel(): string | null {
@@ -1638,11 +1663,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     });
 
     // The bridge publishes the session on screen and its live composer face.
-    const bridgeView = createBridgeView(deps.React, state => {
-      const changed = state.sessionId !== bridge.state.sessionId;
-      bridge.state = state;
-      if (changed) void warm(state.sessionId);
-    });
+    const bridgeView = createBridgeView(deps.React, publishScreenSession);
 
     const stops: Unsubscribe[] = [
       slots.inject("shell.overlay", () =>
@@ -1955,7 +1976,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   disposers.push(deps.ctx.inject(["sessions", "workspaces"], watchCatalogs));
 
   return {
-    __test: { store, verbs },
+    __test: { store, verbs, publishScreenSession },
     dispose(): void {
       if (disposed) return;
       disposed = true;
