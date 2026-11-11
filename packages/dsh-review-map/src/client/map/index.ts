@@ -404,7 +404,20 @@ export function createMap(
       onDrill: (path: string) => {
         go(path);
       },
-      ...(handlers.onHover === undefined ? {} : { onHover: handlers.onHover }),
+      // Hovering a card is the map's own behaviour, exactly like drilling: the
+      // map sets its own highlight and redraws the edges first, then tells the
+      // caller so the list can light the matching row. Forwarding the callback
+      // straight through — which is what this did — left the map's own highlight
+      // untouched, so the edges only ever appeared when the list drove
+      // `setHighlight`. R4.1 says hovering the card is enough.
+      onHover: (path: string | null) => {
+        // One assignment and one repaint per event: `paintHighlight` rebuilds
+        // the edge layer from the current highlight, so calling it twice would
+        // be two redraws for one hover.
+        highlighted = path;
+        paintHighlight();
+        handlers.onHover?.(path);
+      },
       // The preview reads the directory's own level out of the same data the
       // map is drawing from: a folder's children are the level keyed by its
       // path, so there is no second source to keep in step.

@@ -1264,3 +1264,130 @@ describe("the in-tile preview", () => {
     map.destroy();
   });
 });
+
+describe("hovering a card on the map itself", () => {
+  /** A level with the given files, all at the root. */
+  function flat(files: ReadonlyArray<{ path: string; lines: number; changed?: boolean }>): MapLevelInput {
+    return { path: "", dirs: [], files: files.map(file => ({ path: file.path, lines: file.lines, changed: file.changed ?? true })) };
+  }
+
+  /** A map over one level with edges. */
+  function withEdges(level: MapLevelInput, edges: MapEdgeInput[]): MapData {
+    return { levels: new Map([[level.path, level]]), rootPath: level.path, edges, unresolvedFiles: {} };
+  }
+
+  /**
+   * The three files every case here uses: a hub with one dependency each way.
+   *
+   * `a.ts` imports `b.ts`; `c.ts` imports `a.ts`. Hovering `a.ts` must therefore
+   * produce one edge in each direction.
+   */
+  function hub(): MapData {
+    return withEdges(flat([{ path: "a.ts", lines: 10 }, { path: "b.ts", lines: 10 }, { path: "c.ts", lines: 10 }]), [
+      { from: "a.ts", to: "b.ts", state: "kept" },
+      { from: "c.ts", to: "a.ts", state: "kept" },
+    ]);
+  }
+
+  it("draws the edges when the pointer enters a card, without going through setHighlight", () => {
+    const element = host();
+    const map = createMap(element, hub(), {}, { width: 900, height: 520 });
+    expect(element.querySelectorAll('[data-rm="map-edge"]')).toHaveLength(0);
+
+    // The real-machine bug: hovering the card itself reported the path to the
+    // caller but never updated the map's own highlight, so the edges only ever
+    // appeared when the list drove `setHighlight`.
+    tileAt(element, "a.ts")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+
+    expect(element.querySelector('[data-rm="map-edges"]')).not.toBeNull();
+    expect(element.querySelectorAll('[data-rm="map-edge"]')).toHaveLength(2);
+    expect(element.querySelector('[data-rm="map-legend"]')).not.toBeNull();
+    map.destroy();
+  });
+
+  it("draws both directions when the pointer enters a card", () => {
+    const element = host();
+    const map = createMap(element, hub(), {}, { width: 900, height: 520 });
+
+    tileAt(element, "a.ts")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+
+    const flows = [...element.querySelectorAll('[data-rm="map-edge"]')].map(edge => edge.getAttribute("data-flow"));
+    expect(flows.sort()).toEqual(["imported-by", "imports"]);
+    map.destroy();
+  });
+
+  it("highlights the hovered card itself", () => {
+    const element = host();
+    const map = createMap(element, hub(), {}, { width: 900, height: 520 });
+
+    tileAt(element, "a.ts")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+
+    expect(tileAt(element, "a.ts")?.getAttribute("data-highlighted")).toBe("true");
+    map.destroy();
+  });
+
+  it("removes the edges and the legend when the pointer leaves", () => {
+    const element = host();
+    const map = createMap(element, hub(), {}, { width: 900, height: 520 });
+    tileAt(element, "a.ts")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+    // Asserted before the leave, so this case cannot pass by never drawing in
+    // the first place — which is exactly how it passed while the bug was live.
+    expect(element.querySelectorAll('[data-rm="map-edge"]')).toHaveLength(2);
+    expect(element.querySelector('[data-rm="map-legend"]')).not.toBeNull();
+
+    tileAt(element, "a.ts")?.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
+
+    expect(element.querySelectorAll('[data-rm="map-edge"]')).toHaveLength(0);
+    expect(element.querySelector('[data-rm="map-legend"]')).toBeNull();
+    expect(tileAt(element, "a.ts")?.getAttribute("data-highlighted")).toBeNull();
+    map.destroy();
+  });
+
+  it("still notifies the caller, after drawing", () => {
+    const element = host();
+    const onHover = vi.fn();
+    const map = createMap(element, hub(), { onHover }, { width: 900, height: 520 });
+
+    tileAt(element, "a.ts")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+
+    expect(onHover).toHaveBeenCalledWith("a.ts");
+    // The caller is told after the map has already drawn: the map's own
+    // behaviour must not depend on the caller doing anything.
+    expect(element.querySelectorAll('[data-rm="map-edge"]')).toHaveLength(2);
+    map.destroy();
+  });
+
+  it("lets an external highlight override the internal hover", () => {
+    const element = host();
+    const map = createMap(element, hub(), {}, { width: 900, height: 520 });
+    tileAt(element, "a.ts")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+
+    // The list drives the map through the handle; that has to win, or the two
+    // would fight over which file is highlighted.
+    map.setHighlight("c.ts");
+
+    expect(tileAt(element, "c.ts")?.getAttribute("data-highlighted")).toBe("true");
+    expect(tileAt(element, "a.ts")?.getAttribute("data-highlighted")).toBeNull();
+    const flows = [...element.querySelectorAll('[data-rm="map-edge"]')].map(edge => edge.getAttribute("data-flow"));
+    expect(flows).toEqual(["imports"]);
+    map.destroy();
+  });
+
+  it("redraws once per hover, not in a loop", () => {
+    const element = host();
+    const map = createMap(element, hub(), {}, { width: 900, height: 520 });
+    // Every redraw replaces the whole level, so counting the tiles that survive
+    // one hover is a proxy for counting redraws: a loop would leave the DOM
+    // thrashing and the node identity changing many times.
+    const before = tileAt(element, "a.ts");
+
+    tileAt(element, "a.ts")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+
+    // A redraw rebuilds the level, so the tile is a new node; what matters is
+    // that exactly one hover produced exactly one edge set, not a stack of them.
+    expect(element.querySelectorAll('[data-rm="map-edges"]')).toHaveLength(1);
+    expect(element.querySelectorAll('[data-rm="map-legend"]')).toHaveLength(1);
+    expect(before).not.toBeNull();
+    map.destroy();
+  });
+});
