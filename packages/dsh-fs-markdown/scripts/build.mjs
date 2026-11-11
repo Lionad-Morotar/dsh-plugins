@@ -26,6 +26,7 @@ import { createRequire } from "node:module";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "..");
@@ -35,6 +36,55 @@ const manifest = require(join(packageRoot, "package.json"));
 
 /** The lazy chunk's name; must match `EDITOR_CHUNK` in src/shared.ts. */
 const EDITOR_CHUNK = "client.editor.js";
+
+/**
+ * The four editable language blocks; must match `EDITABLE_LANG_CHUNKS` in
+ * src/shared.ts.
+ *
+ * The edit surface's own chunk holds ten grammars statically. The other 44
+ * languages live here, one chunk per batch, because adding them to the editor
+ * chunk would push a Markdown first-open from about 214 KB to about 400 KB.
+ */
+const EDITABLE_LANG_BLOCKS = ["batch-systems", "batch-script", "batch-webstyle", "batch-datadoc"];
+
+/** The artifact name for one editable language block. */
+const editableLangChunk = block => `client.editor-langs-${block}.js`;
+
+/**
+ * Size ceilings for the editable language blocks, in gzipped bytes.
+ *
+ * A block inlines its own copy of CodeMirror plus its batch's grammars, so the
+ * ceiling exists to catch a block that accidentally carries all 44 grammars, not
+ * to police a few KB. The first measurement calibrated it: the four blocks came
+ * out at 154,237 / 194,961 / 234,950 / 136,774 B, and webstyle is the heaviest
+ * because four of its nine languages have a real grammar package (php, html,
+ * less, sass) while the other batches lean on legacy stream modes. A probe of the
+ * webstyle artifact found none of the other batches' markers, so the excess is
+ * its own grammars rather than a leak. The ceiling is therefore 256 KB per block
+ * and 1 MB for the set, which still fails loudly if a block doubles.
+ */
+const EDITABLE_LANG_BUDGET = {
+  perBlock: 256000,
+  total: 1024000,
+};
+
+/**
+ * How much the editor chunk may grow.
+ *
+ * This slice only moves the colour table and the annotation into the shared kit,
+ * so the editor chunk should be unchanged or slightly smaller. The allowance is
+ * for the kit's own code being inlined into it, which is a few hundred bytes.
+ */
+const EDITOR_GROWTH_ALLOWANCE = 4096;
+
+/**
+ * The editor chunk's gzipped size when this budget was written.
+ *
+ * Measured from the committed `lib/client.editor.js` at the time the four
+ * editable blocks landed, so the allowance above is a drift guard rather than a
+ * second, unrelated number.
+ */
+const EDITOR_BASELINE_GZIP = 213023;
 
 /**
  * Platform modules the host seeds for a third-party client bundle: React
@@ -133,7 +183,7 @@ async function bundle(entry, format, external) {
  * @param chunkText - built chunk text.
  * @throws when a name, a boundary or a marker is wrong.
  */
-function assertArtifacts(entryText, chunkText) {
+function assertArtifacts(entryText, chunkText, langTexts) {
   if (!entryText.includes(`"${EDITOR_CHUNK}"`)) {
     throw new Error(`client.js no longer names its lazy chunk ${EDITOR_CHUNK}; the body would fetch nothing`);
   }
@@ -146,6 +196,41 @@ function assertArtifacts(entryText, chunkText) {
   if (!chunkText.includes('"codemirror"')) {
     throw new Error(`${EDITOR_CHUNK} does not carry its renderer marker`);
   }
+
+  // Every block must be the block it claims: the marker is the block name, so a
+  // chunk built from the wrong entry is caught here rather than at mount time.
+  for (const block of EDITABLE_LANG_BLOCKS) {
+    const file = editableLangChunk(block);
+    const text = langTexts[file] ?? "";
+    if (text === "") throw new Error(`${file} was not emitted`);
+    if (!text.includes(JSON.stringify(block))) {
+      throw new Error(`${file} does not carry its renderer marker (${block})`);
+    }
+    // A block that lost its editor is not a block: `cm-editor` is CodeMirror's
+    // own root class and survives minification because it is a DOM string.
+    if (!text.includes("cm-editor")) throw new Error(`${file} does not look like an editor`);
+  }
+}
+
+/**
+ * Compare the emitted block set against the catalogue's batch blocks.
+ *
+ * Both directions matter: a missing block means a language the catalogue says is
+ * editable has nowhere to mount, and an extra one means a file ships that nothing
+ * claims.
+ * @param emitted - block names this build produced.
+ * @param expected - batch block names the catalogue declares.
+ * @throws when the two differ.
+ */
+function assertBlockSet(emitted, expected) {
+  const missing = expected.filter(block => !emitted.includes(block));
+  const extra = emitted.filter(block => !expected.includes(block));
+  if (missing.length === 0 && extra.length === 0) return;
+  const problems = [
+    ...missing.map(block => `${block} is in the catalogue but was not emitted`),
+    ...extra.map(block => `${block} was emitted but the catalogue declares no such batch`),
+  ];
+  throw new Error(`editable block set and catalogue disagree:\n  ${problems.join("\n  ")}`);
 }
 
 /**
@@ -180,9 +265,49 @@ async function main(checkOnly) {
   const chunkText = wrap(manifest.name, editor, { chunk: EDITOR_CHUNK });
   await emit(EDITOR_CHUNK, chunkText);
 
-  assertArtifacts(entryText, chunkText);
+  // The block set has to match the catalogue's batch blocks in both directions: a
+  // missing block leaves a language with nowhere to mount, and an extra one ships
+  // a file nothing claims. Checked before bundling so a wrong name is reported as
+  // a block-set mismatch rather than as a missing entry file.
+  const catalogue = await import(
+    new URL("../../dsh-text-languages/src/index.ts", import.meta.url).href
+  );
+  const batchBlocks = Object.keys(catalogue.LANGUAGE_CHUNK_LANGUAGES).filter(name => name.startsWith("batch-"));
+  assertBlockSet(EDITABLE_LANG_BLOCKS, batchBlocks);
 
-  const written = ["index.js", "client.js", EDITOR_CHUNK];
+  // The four editable language blocks. Each is its own bundle, so each carries a
+  // copy of CodeMirror; that is the chunk contract's cost, not a mistake to
+  // optimise away.
+  const langTexts = {};
+  for (const block of EDITABLE_LANG_BLOCKS) {
+    const code = await bundle(
+      join(packageRoot, "src", "client", "chunk", `editor-langs-${block}.tsx`),
+      "cjs",
+      CLIENT_EXTERNALS,
+    );
+    const file = editableLangChunk(block);
+    const text = wrap(manifest.name, code, { chunk: file });
+    langTexts[file] = text;
+    await emit(file, text);
+  }
+
+  assertArtifacts(entryText, chunkText, langTexts);
+
+
+  // The editor chunk carries the ten in-service grammars plus the shared kit, and
+  // this slice only moved code around, so it is allowed a small drift and no more.
+  // Measured from the produced text, so the guard runs on the check path too.
+  const editorGzip = gzipSync(Buffer.from(chunkText, "utf8")).length;
+  const editorCeiling = EDITOR_BASELINE_GZIP + EDITOR_GROWTH_ALLOWANCE;
+  if (editorGzip > editorCeiling) {
+    process.stderr.write(
+      `${EDITOR_CHUNK}: ${String(editorGzip)} B gzipped, over ${String(editorCeiling)} B ` +
+        `(${String(EDITOR_BASELINE_GZIP)} B baseline plus ${String(EDITOR_GROWTH_ALLOWANCE)} B allowance)\n`,
+    );
+    process.exitCode = 1;
+  }
+
+  const written = ["index.js", "client.js", EDITOR_CHUNK, ...EDITABLE_LANG_BLOCKS.map(editableLangChunk)];
 
   if (checkOnly) {
     const stale = [];
@@ -210,10 +335,31 @@ async function main(checkOnly) {
   const sizes = await Promise.all(
     written.map(async file => {
       const bytes = await readFile(join(libRoot, file));
-      return `${file.padEnd(22)} ${String(bytes.length).padStart(9)} B`;
+      const gzipped = gzipSync(bytes).length;
+      return `${file.padEnd(34)} ${String(bytes.length).padStart(9)} B ${String(gzipped).padStart(8)} B gzip`;
     }),
   );
   process.stdout.write(`${written.length} files\n${sizes.join("\n")}\n`);
+
+  // The budgets are printed as well as asserted: a block that grows toward its
+  // ceiling is worth seeing in the build log before it crosses it.
+  const over = [];
+  let langTotal = 0;
+  for (const block of EDITABLE_LANG_BLOCKS) {
+    const gzipped = gzipSync(await readFile(join(libRoot, editableLangChunk(block)))).length;
+    langTotal += gzipped;
+    if (gzipped > EDITABLE_LANG_BUDGET.perBlock) {
+      over.push(`${editableLangChunk(block)}: ${String(gzipped)} B gzipped, budget ${String(EDITABLE_LANG_BUDGET.perBlock)} B`);
+    }
+  }
+  if (langTotal > EDITABLE_LANG_BUDGET.total) {
+    over.push(`editable blocks total: ${String(langTotal)} B gzipped, budget ${String(EDITABLE_LANG_BUDGET.total)} B`);
+  }
+  if (over.length > 0) {
+    process.stderr.write(`over size budget:\n  ${over.join("\n  ")}\n`);
+    process.exitCode = 1;
+  }
+
 }
 
 await main(process.argv.includes("--check"));

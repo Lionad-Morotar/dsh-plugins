@@ -28,6 +28,22 @@ export const MARKDOWN_STYLES = `
   --fmd-border: var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 12%, transparent));
   --fmd-panel: var(--dsw-alias-bg-layer-2, color-mix(in srgb, currentColor 4%, transparent));
   --fmd-accent: var(--dsw-alias-brand-primary, currentColor);
+  /* The syntax palette. Every tag in the editor's highlight style names one of
+     these, and until they existed all ten resolved to currentColor, so a .py
+     file in the editor was one flat colour while the read-only pane coloured it
+     properly. The values mirror the explorer's --fx-syn-* table one for one,
+     which is what makes the two surfaces agree rather than merely both being
+     coloured. */
+  --fmd-syn-keyword: var(--dsw-alias-state-business-primary, currentColor);
+  --fmd-syn-string: var(--dsw-alias-state-success-primary, currentColor);
+  --fmd-syn-number: var(--dsw-alias-state-warn-primary, currentColor);
+  --fmd-syn-comment: var(--fmd-caption);
+  --fmd-syn-function: color-mix(in oklab, var(--fmd-accent) 65%, var(--dsw-alias-state-success-primary, currentColor));
+  --fmd-syn-type: var(--dsw-alias-state-error-primary, currentColor);
+  --fmd-syn-property: var(--dsw-alias-label-secondary, currentColor);
+  --fmd-syn-heading: var(--fmd-text);
+  --fmd-syn-link: var(--fmd-accent);
+  --fmd-syn-invalid: var(--dsw-alias-state-error-primary, currentColor);
   /* Fill the pane so CodeMirror's own scroller, not the pane, owns the
      overflow. Height must be definite here: the editor's height: 100% below
      resolves against this box, and a percentage of an auto height is auto,
@@ -35,6 +51,22 @@ export const MARKDOWN_STYLES = `
   height: 100%;
   min-height: 100%;
   box-sizing: border-box;
+}
+/* The first frame of a delegated language block: the text, before the block
+   arrives. It is a local fetch, so this shows for well under a second, and a
+   blank box would be worse than the text. Monospace and the code font size keep
+   it from reflowing when the editor replaces it. */
+.fmd-langs-placeholder {
+  margin: 0;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: auto;
+  padding: 18px 24px 64px;
+  font-family: var(--fmd-mono);
+  font-size: var(--fmd-fs-code);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--fmd-text);
 }
 .fmd-editor { height: 100%; min-height: 100%; }
 .fmd-editor .cm-editor {

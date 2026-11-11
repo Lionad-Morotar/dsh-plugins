@@ -94,6 +94,62 @@ export interface EditorBodyProps extends RendererBodyProps {
   readonly decorate?: boolean;
 }
 
+/**
+ * What one editable language block needs to mount its editor.
+ *
+ * The block owns the editor and the grammar; the shell owns the document, the
+ * draft and the find bar. These callbacks are the whole contract between them,
+ * and they are the same ones the shell's own editor uses, so a `.rs` file and a
+ * `.md` file behave identically.
+ */
+export interface EditableMountOptions {
+  readonly text: string;
+  readonly path: string;
+  /**
+   * Which language this document is.
+   *
+   * A block carries several grammars, so it cannot pick one from the path alone:
+   * the caller resolves the language once (through the catalogue) and hands the
+   * id down, which keeps the block free of any matching logic.
+   */
+  readonly language: string;
+  /** One user edit, never an external `setText`. */
+  onChange(text: string): void;
+  /** Any document change; the find bar recounts against it. */
+  onFindInvalidate(): void;
+  /** The save chord. */
+  onSave(): void;
+}
+
+/** The handle a mounted editable block exposes. */
+export interface EditableHandle {
+  /** Replace the document from outside; must not echo back through `onChange`. */
+  setText(text: string): void;
+  /**
+   * The document text, normalized the way the editor counts positions.
+   *
+   * A find bar searches this and then asks the editor to select at the offset it
+   * found, so the two have to agree on what a line break costs. The file's own
+   * CRLF would put an extra character before every line and push every hit after
+   * the first one out of place; the editor's document counts a break as one
+   * character, so this returns the document's own text rather than the raw file.
+   */
+  getText(): string;
+  /** Select one `[from, to)` interval of the document and scroll to it. */
+  revealRange(from: number, to: number): void;
+  /** Drop the selection the last `revealRange` made. */
+  clearSelection(): void;
+  focus(): void;
+  destroy(): void;
+}
+
+/** Everything one editable language block exports. */
+export interface EditableChunkModule {
+  /** Diagnostic marker: the block name. Asserted by the build and the loader. */
+  readonly renderer: string;
+  mount(host: HTMLElement, options: EditableMountOptions): EditableHandle;
+}
+
 /** One rendered failure, after transport envelopes are folded away. */
 export interface DocumentErrorFace {
   readonly code: string;

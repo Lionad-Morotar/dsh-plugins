@@ -8,13 +8,15 @@
  * because the pane is the entry that fetches them — reuse it instead of
  * shipping a second copy of the copy table.
  *
- * The classification itself stays in `preview.ts`; this module only renders a
- * decision someone else already made.
+ * The classification itself stays in `preview-failure.ts`; this module only
+ * renders a decision someone else already made. It imports that module rather
+ * than `preview.ts` so a family chunk that renders a failure never pulls in the
+ * language catalogue `preview.ts` re-exports.
  */
 import type { ReactElement } from "react";
 
 import type { Translate } from "./copy.ts";
-import type { PreviewFailure } from "./preview.ts";
+import type { PreviewFailure } from "./preview-failure.ts";
 
 function failureTitle(failure: PreviewFailure, t: Translate): string {
   switch (failure.kind) {

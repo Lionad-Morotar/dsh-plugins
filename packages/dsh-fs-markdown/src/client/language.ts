@@ -1,57 +1,33 @@
 /**
  * Which CodeMirror language a path gets.
  *
+ * The mapping is not defined here. It lives in `dsh-text-languages`, which is the
+ * single source of truth for every text surface in this repo, and this module
+ * re-exports it so the editor chunk and its callers keep their import path.
+ * Re-exporting rather than re-implementing is what makes the two surfaces agree:
+ * the read-only pane and this editor resolve the same file to the same id, and a
+ * second table here is exactly how they drifted apart before (`.ts` was
+ * `javascript` on this side and `typescript` on the other).
+ *
  * Kept apart from the editor chunk so the mapping is assertable in Node: the
- * chunk itself imports CodeMirror and cannot be loaded without a DOM. The ids
- * mirror the explorer's own `languageFor`, because a file highlighted one way in
- * the read-only view and another way here would be a visible regression.
+ * chunk itself imports CodeMirror and needs a DOM.
  */
+import { languageFor } from "dsh-text-languages/index.ts";
 
-/** The language ids this editor can highlight. */
-export type EditorLanguage = "javascript" | "json" | "markdown" | "css" | "html" | "yaml" | "plaintext";
-
-const LANGUAGE_BY_SUFFIX: Readonly<Record<string, EditorLanguage>> = {
-  ts: "javascript",
-  tsx: "javascript",
-  mts: "javascript",
-  cts: "javascript",
-  js: "javascript",
-  jsx: "javascript",
-  mjs: "javascript",
-  cjs: "javascript",
-  json: "json",
-  jsonc: "json",
-  json5: "json",
-  md: "markdown",
-  mdx: "markdown",
-  markdown: "markdown",
-  mdown: "markdown",
-  css: "css",
-  scss: "css",
-  sass: "css",
-  less: "css",
-  html: "html",
-  htm: "html",
-  xhtml: "html",
-  vue: "html",
-  svelte: "html",
-  yml: "yaml",
-  yaml: "yaml",
-};
+/**
+ * A language id as this editor sees it.
+ *
+ * An alias rather than a union: the catalogue decides which ids exist, and a
+ * union here would have to be edited every time it learns a language. The value
+ * is opaque to this package — it is a key into the grammar factory table.
+ */
+export type EditorLanguage = string;
 
 /**
  * Map a file name to the language the editor highlights it as.
  *
- * A suffix this table does not know is `plaintext` rather than an error: the
- * file is still editable, it just gets no parser. Guessing a language from a
- * near-miss suffix (`h` as C, `m` as Objective-C) would colour half of them
- * wrong, so the table stays explicit.
- * @param path - workspace path or bare filename.
- * @returns the language id for that file.
+ * The catalogue's own function, re-exported unchanged: the identity matters,
+ * because a caller comparing the two surfaces must get the same answer and the
+ * same instance.
  */
-export function languageOf(path: string): EditorLanguage {
-  const base = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
-  const dot = base.lastIndexOf(".");
-  if (dot <= 0) return "plaintext";
-  return LANGUAGE_BY_SUFFIX[base.slice(dot + 1)] ?? "plaintext";
-}
+export const languageOf = languageFor;

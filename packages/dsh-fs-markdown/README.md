@@ -57,6 +57,26 @@
 
 正文铺满预览面板的可用宽度，不再在面板内部限一道固定阅读宽度：工作台的文件区域本来就可拖拽分栏，面板宽度是读者自己定的，正文再收一道上限等于替读者把宽度退回去。左右各留 24px 内边距，阅读态、源码态与非 Markdown 文本共用同一条宽度规则；表格按内容取自然宽度，超出面板时在表格块内部横向滚动，不撑宽正文。
 
+## 语法高亮
+
+语言与只读面同源：`languageOf` 是 `dsh-text-languages` 目录包 `languageFor` 的薄 re-export（同一函数实例），所以同一份文件在预览面板与编辑器里解析成同一个语言 id。编辑器按 descriptor id 选方言，十个激活 id 各有工厂：`javascript` 是纯 JavaScript（不带 JSX 与 TypeScript），`typescript` 只开 TypeScript，`typescriptreact` 两个都开，`javascriptreact` 只开 JSX，其余 `json` / `css` / `html` / `markdown` / `yaml` / `python` 各用自己的语法包。名表外的 id 得到空扩展，文件照样可编辑，只是不着色。
+
+`.js` 从「JSX 与 TypeScript 全开」收敛为纯 javascript，与 VS Code 一致：旧配置让普通脚本里的类型标注看起来合法，也让没有 JSX 的文件接受 JSX。`.mdx` 由目录包归到 markdown，这里不再另写后缀判断。
+
+十个语法色变量 `--fmd-syn-*`（keyword / string / number / comment / function / type / property / heading / link / invalid）逐条镜像只读面的 `--fx-syn-*`，这是两面同色的前提。这组变量与整套 `--fmd-*` 版式变量一起定义在 `.fmd-read, .fmd-source-editor` 上，所以编辑器根节点按模式穿上对应的类；没有这个类，所有 `var(--fmd-syn-*)` 会回落到 `currentColor`，整篇渲染成一片正文字色。
+
+十个在役语法静态留在 `client.editor.js` 一个块里，因为宿主 chunk 契约下每个 chunk 是独立 bundle，`require` 不解析 `@codemirror/*`，跨 bundle 传扩展会在运行期抛 `multiple instances of @codemirror/state`。其余 44 门语言不塞进这个块（那会把 `.md` 首开从约 214 KB 抬到约 400 KB），改为按批量拆成四个可编辑块。
+
+### 编辑面的四个可编辑块
+
+`client.editor-langs-<block>.js` 共四个，块名取自目录包 `LANGUAGE_CHUNK_LANGUAGES` 的四个 `batch-*` 键：`batch-systems`、`batch-script`、`batch-webstyle`、`batch-datadoc`。每块内联一份 CodeMirror、该块的语法表与 `mountEditable`，导出 `renderer`（块名）、`ids`（与目录逐条一致）与 `mount`。
+
+`EditorBody` 按 `BLOCK_ASSIGNMENT[language]` 决定委派：命中这四个块的语言走块内编辑器，`.md` 与十个在役语言的路径一字未改。块未就绪时渲染只读占位 `<pre>`（本地 fetch，预期远低于一秒），失败回落 shell 的单色编辑器，文件始终可编辑。外部文本变更走 `setText`（不回声为 `onChange`），用户编辑走 `onChange`，`find` 通道按 `document` 作用域发布，卸载时销毁块编辑器。
+
+体积（gzip，实测）：`batch-datadoc` 136,774 B、`batch-systems` 154,237 B、`batch-script` 194,961 B、`batch-webstyle` 234,950 B，四块合计 720,922 B。webstyle 最重是因为它九门语言里有四个真语法包（php、html、less、sass），其余批量块多靠 legacy stream mode。
+
+块内若需要宿主 `require`（例如再懒加载更细的块），必须由加载方在 resolve 后注入（`chunk.boot?.(require)`）：每个 chunk 有自己的一份模块实例，启动包里初始化的那份到不了块内。编辑面委派曾因此在真实产物里静默回落单色，修复见 `docs/qa/261111/highlight-catalog-slice3-evidence/README.md`。
+
 ## 第一期的呈现边界
 
 - 数学公式不做渲染：行内 `$…$` 与块级 `$$…$$` 都按普通文本保留，没有等宽或公式样式。

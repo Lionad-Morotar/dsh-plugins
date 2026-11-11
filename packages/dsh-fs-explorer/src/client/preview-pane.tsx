@@ -19,6 +19,8 @@
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from "react";
 
+import { ALL_LANGUAGES, BY_ID } from "dsh-text-languages/catalog.ts";
+
 import { FAMILY_CHUNKS } from "../shared.ts";
 import { writeClipboard } from "./clipboard.ts";
 import type { Translate } from "./copy.ts";
@@ -31,7 +33,7 @@ import {
   familyOf,
   IDLE_PREVIEW,
   isMarkdownFile,
-  languageFor,
+  matchLanguage,
   PREVIEW_MAX_LINES,
   type PreviewFailure,
   type PreviewFamily,
@@ -40,7 +42,9 @@ import {
   type SymlinkLocator,
 } from "./preview.ts";
 import {
+  hasLanguageChunk,
   loadFamilyChunk,
+  loadLanguageChunk,
   loadPreviewChunk,
   type CodePreviewHandle,
   type FamilyChunkModule,
@@ -200,8 +204,48 @@ type RendererState =
 
 const IDLE_RENDERER: RendererState = { status: "idle" };
 
-/** Suffixes the built-in Markdown reader owns; mirrors `languageFor`'s table. */
-const MARKDOWN_EXTENSIONS = [".md", ".mdx", ".markdown", ".mdown"] as const;
+/**
+ * Suffixes the built-in Markdown reader claims.
+ *
+ * Derived from the catalogue rather than listed: this was the third copy of the
+ * same list, and a copy is what let the reader and the highlighter disagree
+ * about whether `.mdx` is markdown.
+ */
+const MARKDOWN_EXTENSIONS: readonly string[] = (BY_ID.get("markdown")?.extensions ?? []).filter(
+  extension => extension.startsWith(".") && !/[*?[\]]/u.test(extension),
+);
+
+/**
+ * The rows whose files are plain text and will never have a grammar.
+ *
+ * Two kinds qualify: the explicit plaintext row (`.txt`, `.text`, and the
+ * `LICENSE` / `README` / `CHANGELOG` names) and the backlog rows, which are
+ * deliberately monochrome because no grammar covers them. The excluded rows are
+ * not here: they have no file entry of their own, so nothing can open as them.
+ */
+const PLAINTEXT_ROWS = ALL_LANGUAGES.filter(row => row.id === "plaintext" || row.disposition === "backlog");
+
+/**
+ * The suffixes these rows own, minus the ones that are not suffixes.
+ *
+ * `*.log.?` is a wildcard upstream wrote into the extensions column; it can never
+ * match a real name and the registry does not do globs, so it is dropped rather
+ * than registered as a literal that would never fire.
+ */
+const PLAINTEXT_EXTENSIONS: readonly string[] = [
+  ...new Set(PLAINTEXT_ROWS.flatMap(row => row.extensions).filter(extension => !/[*?[\]]/u.test(extension))),
+];
+
+/**
+ * The exact filenames these rows own: `Makefile`, `LICENSE`, `COMMIT_EDITMSG`.
+ *
+ * Derived from the same rows as the suffixes, so the two cannot disagree about
+ * what counts as plain text.
+ */
+const PLAINTEXT_NAMES: readonly string[] = [...new Set(PLAINTEXT_ROWS.flatMap(row => row.filenames))];
+
+/** Priority of the plaintext renderer: below the readers that name a language, above the catch-all. */
+const PLAINTEXT_RENDERER_PRIORITY = -100;
 
 /**
  * Priority of the built-in source viewer.
@@ -211,6 +255,15 @@ const MARKDOWN_EXTENSIONS = [".md", ".mdx", ".markdown", ".mdown"] as const;
  * and a plugin that wants to take a format over declares a positive priority.
  */
 const SOURCE_RENDERER_PRIORITY = -1000;
+
+/**
+ * The built-in source renderer's id.
+ *
+ * Named once because the pane compares against it: the language-chunk branch
+ * replaces this renderer and only this one, so a plugin's claim or the markdown
+ * reader is never overruled by it.
+ */
+const SOURCE_RENDERER_ID = "builtin.source";
 
 /** The block every path paints when the reader for that path cannot read it. */
 function UnavailableBody({ t, revision }: { readonly t: Translate; readonly revision?: string }) {
@@ -223,12 +276,33 @@ function UnavailableBody({ t, revision }: { readonly t: Translate; readonly revi
 }
 
 /**
+ * The first line of the page on screen, for the first-line tier.
+ *
+ * Only the first page answers: a shebang is evidence about the file, while the
+ * first line of page two is just the next line of the same file. Returning
+ * undefined past page one keeps the tier from guessing.
+ * @param snapshot - the held page.
+ * @returns the page's first line, or undefined when this is not the first page.
+ */
+function snapshotFirstLine(snapshot: { readonly offset: number; readonly text: string }): string | undefined {
+  if (snapshot.offset !== 1) return undefined;
+  return snapshot.text.split(/\r?\n/u, 1)[0];
+}
+
+/**
  * Mount one read-only editor and keep it across page changes.
  *
- * The editor is created once per (chunk, path, language); a page change is a
- * document replacement plus a gutter renumber, not a destroy/rebuild. If the
- * editor throws (an embedding without a measurable viewport, a DOM the host
- * replaced under us), the same page stays readable as plain text.
+ * The editor is created once per (chunk, path); a page change is a document
+ * replacement plus a gutter renumber, not a destroy/rebuild. If the editor
+ * throws (an embedding without a measurable viewport, a DOM the host replaced
+ * under us), the same page stays readable as plain text.
+ *
+ * Two editors can end up here, and only one of them is ever fetched. A file
+ * whose language ships its own chunk is drawn by that chunk, which carries the
+ * grammar and the editor together; everything else uses the monochrome editor
+ * from the preview chunk. The language chunk is preferred because a grammar
+ * cannot cross a bundle boundary: each chunk inlines its own CodeMirror core, so
+ * an extension built in one chunk is rejected by an editor built in another.
  */
 function CodeSurface({
   chunk,
@@ -237,6 +311,7 @@ function CodeSurface({
   offset,
   find,
 }: {
+  /** The monochrome editor, or null while it is still loading. */
   readonly chunk: PreviewChunkModule | null;
   readonly text: string;
   readonly path: string;
@@ -247,22 +322,41 @@ function CodeSurface({
   const handle = useRef<CodePreviewHandle | null>(null);
   const pageText = useRef(text);
   pageText.current = text;
+  // The page on screen right now, for the language chunk to catch up to when it
+  // finally arrives. A ref rather than a dependency: re-running the fetch effect
+  // on every page turn would refetch a chunk that is already in flight.
+  const pageOffset = useRef(offset);
+  pageOffset.current = offset;
   const [failed, setFailed] = useState(false);
-  const language = languageFor(path);
+  // A language chunk may be the only editor this file ever gets, so the surface
+  // must be able to draw without the preview chunk having arrived.
+  //
+  // The first line is only offered on the first page: it is how a suffixless file
+  // says what it is (a shebang), and page two's first line is just the next line
+  // of the same file, which would be a guess rather than evidence.
+  const firstLine = offset === 1 ? text.split(/\r?\n/u, 1)[0] : undefined;
+  const descriptor = matchLanguage(path, firstLine);
+  const languageId = descriptor?.id ?? null;
+  const languageChunked = languageId !== null && hasLanguageChunk(languageId);
 
   useEffect(() => {
     setFailed(false);
   }, [chunk, path]);
 
+  // The monochrome editor, mounted only when no language chunk will draw this
+  // file. Mounting it first and replacing it later would flash an unstyled
+  // document over a styled one.
   useEffect(() => {
     const element = host.current;
-    if (chunk === null || element === null) return;
+    if (chunk === null || element === null || languageChunked) return;
     try {
-      const created = chunk.mountCodePreview(element, { text, language, path, offset });
+      const created = chunk.mountCodePreview(element, { text, path, offset });
       handle.current = created;
       return () => {
         created.destroy();
-        handle.current = null;
+        // Only drop the handle if it is still this editor: a language chunk may
+        // have replaced it already, and clearing it here would orphan that one.
+        if (handle.current === created) handle.current = null;
       };
     } catch {
       setFailed(true);
@@ -271,7 +365,62 @@ function CodeSurface({
     // Page text and offset are applied by the update effect below; rebuilding
     // the editor on every page would drop its scroll and selection state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chunk, path, language]);
+  }, [chunk, path, languageChunked]);
+
+  // The language chunk, which mounts its own editor. The token makes a late
+  // arrival harmless: a reader who switched files mid-fetch must not get the
+  // previous file drawn here, and the language is re-derived on arrival rather
+  // than trusted from the fetch start.
+  useEffect(() => {
+    const element = host.current;
+    if (element === null || !languageChunked) return;
+    let live = true;
+    /** The editor this effect mounted, so cleanup only destroys its own. */
+    let mine: CodePreviewHandle | null = null;
+    loadLanguageChunk(languageId).then(
+      module => {
+        if (!live) return;
+        // Re-derive rather than trust the id captured above: the path or the
+        // first line can change between the fetch starting and the module
+        // landing, and the answer must describe the file on screen.
+        const current = matchLanguage(path, pageOffset.current === 1 ? pageText.current.split(/\r?\n/u, 1)[0] : undefined);
+        if (current?.id !== languageId) return;
+        try {
+          // Read the page from the refs, not from the closure: the reader may have
+          // turned the page while the chunk was in flight, and mounting the page
+          // that was showing when the fetch started would show stale text.
+          const created = module.mount(
+            element,
+            { text: pageText.current, path, offset: pageOffset.current },
+            languageId,
+          );
+          mine = created;
+          handle.current?.destroy();
+          handle.current = created;
+        } catch {
+          // A chunk that cannot mount leaves the page to the plain-text fallback,
+          // which is a readable page; the reader is not told about a failure that
+          // costs them nothing.
+          setFailed(true);
+        }
+      },
+      // A chunk that never arrives falls back the same way. Reporting it would
+      // put an error over text that is fine. Nothing is mounted here, so the
+      // plain-text branch below is what the reader gets.
+      () => {
+        if (live) setFailed(true);
+      },
+    );
+    return () => {
+      live = false;
+      // Destroy what this effect created: switching to a file with no chunk
+      // mounts a monochrome editor into the same host, and leaving this one alive
+      // would stack two editors and orphan this handle.
+      mine?.destroy();
+      if (handle.current === mine) handle.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [languageChunked, languageId, path]);
 
   useEffect(() => {
     handle.current?.update(text, offset);
@@ -282,7 +431,7 @@ function CodeSurface({
   // bodies another plugin contributes. The scope says so, so the counter names
   // the page instead of promising the whole file.
   useEffect(() => {
-    if (find === undefined || chunk === null || failed) return;
+    if (find === undefined || failed) return;
     find.register({
       scope: "page",
       text: () => pageText.current,
@@ -290,16 +439,29 @@ function CodeSurface({
       clear: () => handle.current?.clearSelection(),
     });
     return () => find.register(null);
-  }, [find, chunk, failed]);
+  }, [find, failed]);
 
-  if (chunk === null || failed) {
+  // No editor and no pending fetch means nothing would ever mount, so the page
+  // itself is the body. This is the state the surface used to render as an empty
+  // host: a file whose renderer was pinned to the monochrome module but whose own
+  // language has no block, and a first-line-routed file turned past page one where
+  // the evidence disappears and the language editor is torn down.
+  const editorPossible = !failed && (languageChunked || chunk !== null);
+  if (!editorPossible) {
     return (
       <pre className="fx-pre" data-testid="fs-preview-plain">
         {text}
       </pre>
     );
   }
-  return <div className="fx-code-host" ref={host} data-testid="fs-preview-code" data-renderer={chunk.renderer} />;
+  return (
+    <div
+      className="fx-code-host"
+      ref={host}
+      data-testid="fs-preview-code"
+      data-renderer={languageChunked ? languageId : (chunk?.renderer ?? "plain")}
+    />
+  );
 }
 
 /**
@@ -340,6 +502,59 @@ function createMarkdownRenderer(chunk: PreviewChunkModule): RendererModule {
   return { Body: MarkdownBody, renderer: chunk.renderer };
 }
 
+/**
+ * The plaintext body: the page as text, with a line-number gutter.
+ *
+ * No editor and no chunk. A file that is only ever plain text does not need a
+ * parser, and the monochrome editor costs 132 KB of preview chunk to draw it. The
+ * gutter carries the page's absolute line numbers, the same contract the editor's
+ * gutter keeps, so page two starts at 201 rather than at 1.
+ */
+function PlainTextBody({ page, find }: RendererBodyProps) {
+  const text = page?.text ?? "";
+  const offset = page?.offset ?? 1;
+  // `split` on a trailing newline yields a final empty string; dropping it keeps
+  // the gutter from numbering a line that does not exist.
+  const lines = text === "" ? [] : text.replace(/\n$/u, "").split("\n");
+  const pageText = useRef(text);
+  pageText.current = text;
+
+  // The find bar counts against this page's text. There is no selection to drive
+  // here, so `select` and `clear` are no-ops: the bar still counts and highlights
+  // through its own layer, which is what the plain-text fallback has always done.
+  useEffect(() => {
+    if (find === undefined) return;
+    find.register({
+      scope: "page",
+      text: () => pageText.current,
+      select: () => undefined,
+      clear: () => undefined,
+    });
+    return () => find.register(null);
+  }, [find]);
+
+  return (
+    <div className="fx-plaintext" data-testid="fs-preview-plaintext">
+      <div className="fx-plaintext-gutter" data-testid="fs-preview-plaintext-gutter" aria-hidden="true">
+        {lines.map((_line, index) => (
+          <span key={index}>{offset + index}</span>
+        ))}
+      </div>
+      <pre className="fx-plaintext-body">{text}</pre>
+    </div>
+  );
+}
+
+/**
+ * The plaintext renderer module.
+ *
+ * Returned synchronously by the contribution's `load`, which is the point: this
+ * renderer must never reach a chunk loader.
+ */
+function createPlaintextRenderer(): RendererModule {
+  return { renderer: "plaintext", Body: PlainTextBody };
+}
+
 /** The built-in source body: read-only CodeMirror over the held page. */
 function createSourceRenderer(chunk: PreviewChunkModule): RendererModule {
   function SourceBody({ page, path, find }: RendererBodyProps) {
@@ -347,6 +562,24 @@ function createSourceRenderer(chunk: PreviewChunkModule): RendererModule {
   }
   return { Body: SourceBody, renderer: chunk.renderer };
 }
+
+/**
+ * The source body for a file whose language chunk draws it.
+ *
+ * It exists so the pane can name a renderer without fetching the preview chunk:
+ * `loadRenderer` needs a module to resolve to, and the language chunk is the one
+ * that will actually mount. `chunk` is null because there is no monochrome
+ * editor to hand over; `CodeSurface` takes the language branch from the path.
+ */
+const MONOCHROME_MODULE: RendererModule = {
+  Body: ({ page, path, find }: RendererBodyProps) => (
+    <CodeSurface chunk={null} text={page?.text ?? ""} path={path} offset={page?.offset ?? 1} find={find} />
+  ),
+  // Named for what it is rather than for the engine: the entry bundle must not
+  // contain the string "codemirror" at all, because that is how the build proves
+  // no editor leaked into it.
+  renderer: "plain",
+};
 
 /**
  * One binary family's body.
@@ -403,7 +636,16 @@ export function createBuiltinRenderers(): readonly RendererContribution[] {
       load: () => loadPreviewChunk().then(createMarkdownRenderer),
     },
     {
-      id: "builtin.source",
+      id: "builtin.plaintext",
+      label: "纯文本",
+      match: { extensions: [...PLAINTEXT_EXTENSIONS], names: [...PLAINTEXT_NAMES] },
+      priority: PLAINTEXT_RENDERER_PRIORITY,
+      // Synchronous on purpose: this renderer draws text and needs no chunk, so
+      // it must not touch a loader even to resolve an already-cached module.
+      load: () => Promise.resolve(createPlaintextRenderer()),
+    },
+    {
+      id: SOURCE_RENDERER_ID,
       label: "源码",
       match: {},
       priority: SOURCE_RENDERER_PRIORITY,
@@ -581,11 +823,62 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
 
   // The renderer is fetched only for the winner of the synchronous match; a
   // losing contribution is never downloaded, whatever its priority.
+  // The first-line evidence for this file, as a dependency rather than a value
+  // read inside the effect: the page arrives asynchronously, and the effect has to
+  // run again when it does or the first-line tier answers against an idle page.
+  const firstLine = snapshot.path === path ? snapshotFirstLine(snapshot) : undefined;
+  // An empty first line is not evidence: the loading snapshot carries the path but
+  // no text yet, and answering the tier against "" would send the file to the
+  // preview chunk before its own page lands.
+  const evidence = firstLine === undefined || firstLine === "" ? undefined : firstLine;
+  // Whether this file's page has landed, which is what the effect actually waits
+  // for. It is a separate dependency because a blank first line leaves `evidence`
+  // undefined both before and after the page arrives, so an evidence-only
+  // dependency would never re-run and the renderer would stay idle.
+  const pageSettled = snapshot.path === path && (snapshot.status === "ready" || snapshot.status === "failed");
+
   useEffect(() => {
     // A commit version has no byte reader. Loading its family renderer would
     // ask the working tree for the file and paint the wrong revision.
     if (path === undefined || revision !== undefined) {
       setRendererState(IDLE_RENDERER);
+      return;
+    }
+    // A file with no suffix can only be routed by its first line, and that
+    // evidence arrives with the page. Loading the preview chunk before then would
+    // download it for a file that turns out to have a block of its own, so the
+    // effect waits for this file's page rather than guessing.
+    //
+    // What it waits for is the page, not the evidence: a file whose first line is
+    // blank has no evidence and never will, so waiting on evidence would leave the
+    // renderer idle for good. A failed page counts as settled too, or the wait
+    // would never end.
+    const suffixless = !/[^/]\.[^/]+$/u.test(path);
+    if (suffixless && !pageSettled) return;
+    const winner = registry.resolve({ path });
+    // A text file whose language ships its own chunk is drawn by that chunk, and
+    // that chunk carries its own editor. Fetching the preview chunk as well
+    // would download a second CodeMirror core whose extensions the language
+    // chunk cannot accept, so the branch happens before `load()` is reached.
+    //
+    // Only the built-in source renderer is replaced. A plugin that claimed the
+    // file keeps its claim, and markdown keeps the GFM reader, because both are
+    // decisions the registry already made and this branch is not entitled to
+    // overrule them.
+    // The same three-tier question the surface asks, so the two agree on which
+    // files are drawn by a block. Asking by suffix here would miss `Dockerfile`
+    // and send it through the preview chunk first.
+    // The evidence has to describe this file: a snapshot still holding the
+    // previous file's page would answer the first-line tier for the wrong path,
+    // and an idle snapshot would answer it for no path at all.
+    const routed = matchLanguage(path, evidence);
+    if (
+      winner !== undefined &&
+      winner.id === SOURCE_RENDERER_ID &&
+      routed !== null &&
+      hasLanguageChunk(routed.id)
+    ) {
+      setRendererState({ status: "ready", contribution: winner, module: MONOCHROME_MODULE });
       return;
     }
     const selection = loadRenderer(registry, { path });
@@ -611,7 +904,11 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
     return () => {
       alive = false;
     };
-  }, [registry, path, revision, rendererRevision, rendererAttempt]);
+    // `evidence` is the dependency that makes the first-line tier re-run when the
+    // page lands: without it the effect answered once against an idle snapshot,
+    // fetched the preview chunk, and only then discovered the file routes to a
+    // block.
+  }, [registry, path, revision, rendererRevision, rendererAttempt, evidence, pageSettled]);
 
   if (path === undefined) {
     return (

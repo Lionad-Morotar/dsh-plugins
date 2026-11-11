@@ -1,0 +1,28 @@
+{
+  "name": "dsh-text-languages",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Language catalogue for DeepSeek Harness text surfaces: the VS Code builtin language set as the single source of truth for suffix, filename and first-line matching",
+  "license": "MIT",
+  "author": "Lionad <1806234223@qq.com>",
+  "exports": {
+    "./catalog.ts": "./src/catalog.ts",
+    "./snapshot.ts": "./src/snapshot.ts",
+    "./glob.ts": "./src/glob.ts",
+    "./types.ts": "./src/types.ts",
+    "./index.ts": "./src/index.ts",
+    "./build/lang-chunks.mjs": "./build/lang-chunks.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.0"
+  }
+}

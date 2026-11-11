@@ -15,6 +15,7 @@ Lionad 的 [DeepSeek Harness](https://github.com/deepseek-ai) 插件集合。
 | [`dsh-slash-commands`](packages/dsh-slash-commands) | 三端 slash 命令：tui 的 `/copy` 把最近 n 轮最终回复放进系统剪贴板（`--all` 连你的发言一起带），web 与 desktop 的 `/rename` 改当前会话标题、`/resume` 切换到另一个会话 |
 | [`dsh-preview-more`](packages/dsh-preview-more) | 右侧栏文件预览补全：3D 模型、CAD 图纸与高位深图片，宿主内置预览管不了的那几类 |
 | [`dsh-preview-viewers`](packages/dsh-preview-viewers) | 上面那个预览包与工作台文件面板共用的渲染器源码包：格式目录唯一事实源、地址解析、3D / CAD / 高位深图片三个引擎与三个同时导出 `Body` 与 `Viewer` 的 React 预览面。内部源码包，无 `lib`、不挂 Loader、不发行 |
+| [`dsh-text-languages`](packages/dsh-text-languages) | 文本高亮的语言目录：VS Code 内置语言全集的唯一事实源，74 行上游快照加仓内覆盖层与派生后缀索引，给出三态匹配与块归属；14 个块（10 单语言加 4 批量）覆盖 64 行，12 行诚实单色。内部源码包，无 `lib`、不挂 Loader、不进市场索引 |
 | [`dsh-session-timing`](packages/dsh-session-timing) | 会话统计的计时口径修正：模型用时只计最后成功的那次尝试，重试用时单独成行，TTFT 与 TPS 随之回到真实值 |
 | [`dsh-turn-clock`](packages/dsh-turn-clock) | 对话计时修正：Turn 的两处时长（运行中的「深度求索中，用时 X」与结束后的「已完成，用时 X」）扣除 `ask_user_question` 的前台等待，只报模型真正工作的时间；等待期间读数冻结，回答后从冻结处继续 |
 | [`dsh-better`](packages/dsh-better) | 原生能力增强：`/model` 选择器支持按供应商搜索（模型名搜索语义不变），输入框的模型触发器接到同一个选择器并在模型名左侧带 provider 名，推理等级也在那里选；`⌘Space` 聚焦输入框；附件全选与剪贴板往返；上下文占用环右边一个「压缩 N 次」读数（宿主半 `sessionCompaction` 投影折叠会话日志）；宿主半还注册模型可自行调用的 `set_reasoning_effort` 工具，无参读取当前推理档位、给 id 才切换，切换会让 provider 的 prompt cache 整段失效、下一次请求按全量上下文计费，所以工具描述压到 97 字符，只写明代价与「只在用户要求时才用」 |
