@@ -4,9 +4,14 @@
  * A workspace file can be arbitrarily large, so the preview never asks for the
  * whole file. It asks for one page of at most {@link PREVIEW_MAX_LINES} lines,
  * keeps the 1-based offset of the page it holds, and moves that offset forward
- * on `next()`. The same module owns the only mapping from a file name to a
- * language id, so the chunk's highlighter and the toolbar agree without either
- * importing the other.
+ * on `next()`.
+ *
+ * The language mapping is not defined here. It lives in `dsh-text-languages`,
+ * which is the single source of truth for every text surface in this repo, and
+ * this module re-exports it so the existing call sites and their types keep
+ * working. Re-exporting rather than re-implementing is what makes the two
+ * surfaces agree: a second table here would drift from the catalogue the moment
+ * either side learned a new suffix.
  *
  * It also owns the split between the two preview paths: a name the shared
  * format catalogue claims is a binary family file and never reaches the pager,
@@ -16,60 +21,28 @@
 import type { ReactElement } from "react";
 
 import { extensionsOf, familyOf, type PreviewFamily } from "dsh-preview-viewers/formats.ts";
+import { languageFor, matchLanguage } from "dsh-text-languages/index.ts";
 
 /** Default page size; the host accepts at most its configured `maxLines`. */
 export const PREVIEW_MAX_LINES = 200;
 
-/** Language ids the preview can highlight. */
-export type LanguageId = "javascript" | "json" | "markdown" | "css" | "html" | "yaml" | "plaintext";
-
-const LANGUAGE_BY_EXTENSION: Readonly<Record<string, LanguageId>> = {
-  ts: "javascript",
-  tsx: "javascript",
-  mts: "javascript",
-  cts: "javascript",
-  js: "javascript",
-  jsx: "javascript",
-  mjs: "javascript",
-  cjs: "javascript",
-  json: "json",
-  jsonc: "json",
-  json5: "json",
-  md: "markdown",
-  mdx: "markdown",
-  markdown: "markdown",
-  mdown: "markdown",
-  css: "css",
-  scss: "css",
-  sass: "css",
-  less: "css",
-  pcss: "css",
-  postcss: "css",
-  html: "html",
-  htm: "html",
-  xhtml: "html",
-  vue: "html",
-  svelte: "html",
-  yml: "yaml",
-  yaml: "yaml",
-};
+/**
+ * A language id as the preview sees it.
+ *
+ * Kept as an alias rather than a union: the catalogue decides which ids exist,
+ * and a union here would have to be edited every time it learns a language. The
+ * value is opaque to this package — it is a key into the chunk route table.
+ */
+export type LanguageId = string;
 
 /**
- * Map a file name to the preview's language id.
+ * Map a file name to a language id.
  *
- * The id is not a MIME type and not a CodeMirror extension: the chunk owns that
- * translation. Keeping this table pure is what lets the acceptance probe assert
- * the mapping without loading the 600 KB editor.
- * @param name - a basename or a workspace path.
- * @returns the language id, or `plaintext` when nothing claims the suffix.
+ * The catalogue's own function, re-exported unchanged: the identity matters,
+ * because a caller comparing the two surfaces must get the same answer and the
+ * same instance.
  */
-export function languageFor(name: string): LanguageId {
-  const lower = name.toLowerCase();
-  const base = lower.slice(lower.lastIndexOf("/") + 1);
-  const dot = base.lastIndexOf(".");
-  if (dot <= 0) return "plaintext";
-  return LANGUAGE_BY_EXTENSION[base.slice(dot + 1)] ?? "plaintext";
-}
+export { languageFor, matchLanguage };
 
 /** Whether a file should open in the Markdown reading mode. */
 export function isMarkdownFile(name: string): boolean {

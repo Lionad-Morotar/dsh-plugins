@@ -19,10 +19,12 @@
  */
 import type { ComponentType } from "react";
 
+import type { Extension } from "@codemirror/state";
 import type { ReadFile } from "dsh-preview-viewers/contracts.ts";
+import { LANGUAGE_CHUNKS } from "dsh-text-languages/index.ts";
 
 import type { Translate } from "./copy.ts";
-import type { LanguageId, PreviewFamily } from "./preview.ts";
+import type { PreviewFamily } from "./preview.ts";
 import { FAMILY_CHUNKS, PACKAGE_NAME, PREVIEW_CHUNK } from "../shared.ts";
 
 /** The `require` the ModuleLoader factory receives. */
@@ -35,7 +37,6 @@ export interface LoaderRequire {
 /** What the chunk needs to mount one read-only editor over one page. */
 export interface CodePreviewOptions {
   readonly text: string;
-  readonly language: LanguageId;
   readonly path: string;
   /** First line of the page; the gutter starts numbering here. */
   readonly offset: number;
@@ -44,6 +45,14 @@ export interface CodePreviewOptions {
 /** The handle the pane keeps while one editor is mounted. */
 export interface CodePreviewHandle {
   update(text: string, offset: number): void;
+  /**
+   * Swap the grammar in place, once its chunk has arrived.
+   *
+   * A reconfigure rather than a remount: the document, the scroll position and
+   * the reader's selection all have to survive the upgrade, and rebuilding the
+   * view would lose every one of them.
+   */
+  setLanguage(extension: Extension): void;
   /**
    * Select one half-open interval of the current page and bring it into view.
    *
@@ -96,6 +105,20 @@ export interface FamilyChunkModule {
   readonly FamilyView: ComponentType<FamilyViewProps>;
 }
 
+/**
+ * Everything one language chunk exports.
+ *
+ * The marker is checked against the id that was requested, not merely read: a
+ * chunk fetched under the wrong name would otherwise colour a Python file with
+ * the JSON grammar and nothing would report it. `language` is a factory rather
+ * than a ready extension because the extension has to be built inside the chunk
+ * that owns the grammar.
+ */
+export interface LanguageChunkModule {
+  readonly renderer: string;
+  language(): Extension;
+}
+
 /** One package-local chunk, named once. */
 export interface PreviewChunkRoute {
   readonly chunk: string;
@@ -110,6 +133,15 @@ const ROUTE: PreviewChunkRoute = Object.freeze({
 let loaderRequire: LoaderRequire | null = null;
 let pending: Promise<PreviewChunkModule> | null = null;
 const familyPending = new Map<PreviewFamily, Promise<FamilyChunkModule>>();
+const languagePending = new Map<string, Promise<LanguageChunkModule>>();
+
+/**
+ * The language ids that have a chunk, taken from the catalogue.
+ *
+ * Derived rather than listed: the catalogue is what decides which languages
+ * ship a chunk, and a copy here would silently disagree the day it changes.
+ */
+export const LANGUAGE_CHUNK_IDS: readonly string[] = Object.freeze(Object.keys(LANGUAGE_CHUNKS));
 
 /**
  * Take the loader require from the factory.
@@ -135,6 +167,73 @@ export function previewChunkRoute(): PreviewChunkRoute {
 export function familyChunkRoute(family: PreviewFamily): PreviewChunkRoute {
   const chunk = FAMILY_CHUNKS[family];
   return { chunk, id: `${PACKAGE_NAME}/${chunk}` };
+}
+
+/**
+ * The chunk one language's grammar lives in, or null when it has none.
+ *
+ * Null is the answer for most languages: the catalogue covers 74 of them and
+ * only ten ship a grammar chunk. The caller uses null to skip the fetch
+ * entirely, which is what keeps a `.rs` file at zero requests.
+ * @param id - language id from the catalogue.
+ * @returns the file name and module-table id, or null when there is no chunk.
+ */
+export function languageChunkRoute(id: string): PreviewChunkRoute | null {
+  const chunk = LANGUAGE_CHUNKS[id];
+  return chunk === undefined ? null : { chunk, id: `${PACKAGE_NAME}/${chunk}` };
+}
+
+/**
+ * Whether a language has a grammar chunk to fetch.
+ *
+ * The pane asks this before calling the loader, because most catalogue ids have
+ * no chunk: plaintext, the 64 approximated and backlog languages, and every
+ * unknown file. Calling the loader for those would be a rejection per mount for
+ * an answer already known, and the contract is that such a file costs zero
+ * requests rather than a request that fails.
+ * @param id - language id from the catalogue.
+ * @returns true when a chunk exists for it.
+ */
+export function hasLanguageChunk(id: string): boolean {
+  return LANGUAGE_CHUNKS[id] !== undefined;
+}
+
+/**
+ * Resolve one language's grammar chunk.
+ *
+ * Three refusals, all of them synchronous or immediate: an id with no chunk, a
+ * missing loader hand-over, and a chunk whose marker names another language.
+ * The last one is the reason the marker exists at all.
+ *
+ * Rejections are dropped from the cache. A grammar that failed once (a chunk
+ * racing the boot hand-over, a transient 404) must be retryable, because the
+ * alternative is a file type that stays monochrome for the life of the page.
+ * @param id - language id from the catalogue.
+ * @returns the chunk module.
+ */
+export function loadLanguageChunk(id: string): Promise<LanguageChunkModule> {
+  const route = languageChunkRoute(id);
+  if (route === null) {
+    return Promise.reject(new Error(`${PACKAGE_NAME}: no language chunk for ${id}`));
+  }
+  const cached = languagePending.get(id);
+  if (cached !== undefined) return cached;
+  const active = loaderRequire;
+  if (active === null || typeof active.async !== "function") {
+    return Promise.reject(new Error(`${PACKAGE_NAME}: the loader require was not handed over`));
+  }
+  const request = active.async(`./${route.chunk}`).then(module => {
+    const chunk = module as Partial<LanguageChunkModule> | null;
+    if (chunk === null || typeof chunk.language !== "function" || chunk.renderer !== id) {
+      throw new Error(`${PACKAGE_NAME}: chunk ${route.id} is not the ${id} grammar`);
+    }
+    return chunk as LanguageChunkModule;
+  });
+  languagePending.set(id, request);
+  request.catch(() => {
+    if (languagePending.get(id) === request) languagePending.delete(id);
+  });
+  return request;
 }
 
 /**

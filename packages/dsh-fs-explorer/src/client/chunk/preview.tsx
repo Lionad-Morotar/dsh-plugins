@@ -3,23 +3,20 @@
  *
  * Two renderers share this chunk because they share the same trigger: a reader
  * who opens a source file needs CodeMirror, a reader who opens a README needs
- * the GFM renderer, and either way the fetch is one page-lifetime decision. The
- * entry image stays free of both.
+ * the GFM renderer, and either way the fetch is one page-lifetime decision.
+ *
+ * No grammar lives here. Each language is its own chunk fetched after this one,
+ * so a reader who opens a `.py` file never downloads the json, css, html,
+ * markdown or yaml grammars. The editor therefore mounts monochrome and is
+ * upgraded in place through a compartment once the grammar arrives.
  */
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { javascript } from "@codemirror/lang-javascript";
-import { json } from "@codemirror/lang-json";
-import { markdown as markdownLanguage } from "@codemirror/lang-markdown";
-import { css } from "@codemirror/lang-css";
-import { html } from "@codemirror/lang-html";
-import { yaml } from "@codemirror/lang-yaml";
 import { tags } from "@lezer/highlight";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import type { LanguageId } from "../preview.ts";
 import type { CodePreviewHandle, CodePreviewOptions, PreviewChunkModule } from "../preview-chunk.ts";
 
 /** Marker the build asserts and the pane exposes as `data-renderer`. */
@@ -72,46 +69,19 @@ const editorTheme = EditorView.theme(
 );
 
 /**
- * Resolve the language extension for one file.
- *
- * TypeScript is a parser flag rather than a separate package, so the path is
- * consulted for the two boolean options; the language id alone cannot tell a
- * `.tsx` from a `.js`.
- * @param language - the id from {@link languageFor}.
- * @param path - the file's workspace path.
- * @returns the extension, or an empty list for plaintext.
- */
-function languageExtension(language: LanguageId, path: string): Extension {
-  switch (language) {
-    case "javascript":
-      return javascript({
-        jsx: /\.(jsx|tsx)$/iu.test(path),
-        typescript: /\.(ts|tsx|mts|cts)$/iu.test(path),
-      });
-    case "json":
-      return json();
-    case "markdown":
-      return markdownLanguage();
-    case "css":
-      return css();
-    case "html":
-      return html();
-    case "yaml":
-      return yaml();
-    default:
-      return [];
-  }
-}
-
-/**
  * Mount one read-only editor over one page.
  *
  * Line numbers carry the page's absolute offset, so page two starts at 201
  * rather than at 1. The gutter sits in a compartment because the page can move
- * without the document identity changing; language is compartmented for the
- * same reason when a selection switches between files of the same page size.
+ * without the document identity changing.
+ *
+ * The language compartment starts empty, which is what makes the editor usable
+ * before any grammar has been fetched: the text is there and readable, just
+ * monochrome. `setLanguage` fills that compartment later, and because it is a
+ * reconfigure rather than a rebuild, the document, the scroll position and the
+ * reader's selection all survive the upgrade.
  * @param host - the element the editor fills.
- * @param options - page text, language, path and first line.
+ * @param options - page text, path and first line.
  * @returns the update/destroy handle.
  */
 export function mountCodePreview(host: HTMLElement, options: CodePreviewOptions): CodePreviewHandle {
@@ -125,7 +95,7 @@ export function mountCodePreview(host: HTMLElement, options: CodePreviewOptions)
         EditorState.readOnly.of(true),
         EditorView.editable.of(false),
         gutter.of(lineNumbers({ formatNumber: line => String(line + options.offset - 1) })),
-        language.of(languageExtension(options.language, options.path)),
+        language.of([]),
         syntaxHighlighting(highlightStyle),
         editorTheme,
       ],
@@ -138,6 +108,9 @@ export function mountCodePreview(host: HTMLElement, options: CodePreviewOptions)
         effects: gutter.reconfigure(lineNumbers({ formatNumber: line => String(line + offset - 1) })),
       });
       view.scrollDOM.scrollTop = 0;
+    },
+    setLanguage(extension) {
+      view.dispatch({ effects: language.reconfigure(extension) });
     },
     revealRange(from, to) {
       const length = view.state.doc.length;

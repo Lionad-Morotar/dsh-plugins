@@ -19,6 +19,8 @@
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from "react";
 
+import { BY_ID } from "dsh-text-languages/catalog.ts";
+
 import { FAMILY_CHUNKS } from "../shared.ts";
 import { writeClipboard } from "./clipboard.ts";
 import type { Translate } from "./copy.ts";
@@ -31,7 +33,7 @@ import {
   familyOf,
   IDLE_PREVIEW,
   isMarkdownFile,
-  languageFor,
+  matchLanguage,
   PREVIEW_MAX_LINES,
   type PreviewFailure,
   type PreviewFamily,
@@ -40,7 +42,9 @@ import {
   type SymlinkLocator,
 } from "./preview.ts";
 import {
+  hasLanguageChunk,
   loadFamilyChunk,
+  loadLanguageChunk,
   loadPreviewChunk,
   type CodePreviewHandle,
   type FamilyChunkModule,
@@ -200,8 +204,16 @@ type RendererState =
 
 const IDLE_RENDERER: RendererState = { status: "idle" };
 
-/** Suffixes the built-in Markdown reader owns; mirrors `languageFor`'s table. */
-const MARKDOWN_EXTENSIONS = [".md", ".mdx", ".markdown", ".mdown"] as const;
+/**
+ * Suffixes the built-in Markdown reader claims.
+ *
+ * Derived from the catalogue rather than listed: this was the third copy of the
+ * same list, and a copy is what let the reader and the highlighter disagree
+ * about whether `.mdx` is markdown.
+ */
+const MARKDOWN_EXTENSIONS: readonly string[] = (BY_ID.get("markdown")?.extensions ?? []).filter(
+  extension => extension.startsWith(".") && !/[*?[\]]/u.test(extension),
+);
 
 /**
  * Priority of the built-in source viewer.
@@ -225,10 +237,16 @@ function UnavailableBody({ t, revision }: { readonly t: Translate; readonly revi
 /**
  * Mount one read-only editor and keep it across page changes.
  *
- * The editor is created once per (chunk, path, language); a page change is a
- * document replacement plus a gutter renumber, not a destroy/rebuild. If the
- * editor throws (an embedding without a measurable viewport, a DOM the host
- * replaced under us), the same page stays readable as plain text.
+ * The editor is created once per (chunk, path); a page change is a document
+ * replacement plus a gutter renumber, not a destroy/rebuild. If the editor
+ * throws (an embedding without a measurable viewport, a DOM the host replaced
+ * under us), the same page stays readable as plain text.
+ *
+ * The grammar is fetched here rather than inside the chunk, and it is fetched
+ * alongside the editor rather than after it: the reader gets a usable page as
+ * soon as the editor mounts, and the colours arrive when the grammar does. A
+ * language with no chunk (most of the catalogue) never reaches the loader at
+ * all, so opening a `.rs` file costs exactly zero extra requests.
  */
 function CodeSurface({
   chunk,
@@ -248,7 +266,6 @@ function CodeSurface({
   const pageText = useRef(text);
   pageText.current = text;
   const [failed, setFailed] = useState(false);
-  const language = languageFor(path);
 
   useEffect(() => {
     setFailed(false);
@@ -258,7 +275,7 @@ function CodeSurface({
     const element = host.current;
     if (chunk === null || element === null) return;
     try {
-      const created = chunk.mountCodePreview(element, { text, language, path, offset });
+      const created = chunk.mountCodePreview(element, { text, path, offset });
       handle.current = created;
       return () => {
         created.destroy();
@@ -271,7 +288,36 @@ function CodeSurface({
     // Page text and offset are applied by the update effect below; rebuilding
     // the editor on every page would drop its scroll and selection state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chunk, path, language]);
+  }, [chunk, path]);
+
+  // The grammar arrives after the editor does. The token makes a late arrival
+  // harmless: a reader who switched files mid-fetch would otherwise get the
+  // previous file's grammar applied to this one's document.
+  useEffect(() => {
+    if (chunk === null) return;
+    let live = true;
+    const descriptor = matchLanguage(path);
+    // Unknown files and decided-monochrome files have no grammar to wait for, so
+    // they never reach the loader: the contract is zero requests, not a request
+    // that fails.
+    if (descriptor === null || !hasLanguageChunk(descriptor.id)) return;
+    loadLanguageChunk(descriptor.id).then(
+      module => {
+        if (!live) return;
+        // Re-derive rather than trust the descriptor captured above: the path
+        // can change between the fetch starting and the grammar landing.
+        const current = matchLanguage(path);
+        if (current === null || current.id !== descriptor.id) return;
+        handle.current?.setLanguage(module.language());
+      },
+      // A grammar that never arrives leaves the page monochrome, which is a
+      // usable page. Reporting it would put an error over text that is fine.
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [chunk, path]);
 
   useEffect(() => {
     handle.current?.update(text, offset);
