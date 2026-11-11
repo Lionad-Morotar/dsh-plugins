@@ -64,7 +64,7 @@ const MAP_STYLESHEET = `/* The directory map's own stylesheet, injected by the c
   font-size: max(9px, var(--dsh-code-font-size, 11px));
 }
 
-[data-rm="map-crumb"] {
+[data-rm="map-breadcrumb-crumb"] {
   font: inherit;
   padding: 1px 6px;
   color: var(--rm-map-secondary);
@@ -74,17 +74,17 @@ const MAP_STYLESHEET = `/* The directory map's own stylesheet, injected by the c
   cursor: pointer;
 }
 
-[data-rm="map-crumb"]:hover {
+[data-rm="map-breadcrumb-crumb"]:hover {
   background: var(--rm-map-surface);
 }
 
-[data-rm="map-crumb"][data-current="true"] {
+[data-rm="map-breadcrumb-crumb"][data-current="true"] {
   color: var(--dsw-alias-label-primary, #14110d);
   font-weight: 600;
 }
 
 /* The crumb that holds a highlighted target the map has not drilled into. */
-[data-rm="map-crumb"][data-breadcrumb-target="true"] {
+[data-rm="map-breadcrumb-crumb"][data-breadcrumb-target="true"] {
   border-color: var(--rm-map-warn);
   color: var(--dsw-alias-label-primary, #14110d);
 }
@@ -123,6 +123,71 @@ const MAP_STYLESHEET = `/* The directory map's own stylesheet, injected by the c
 [data-rm="map-tile"][data-highlighted="true"] [data-rm="map-tile-rect"] {
   stroke: var(--dsw-alias-label-primary, #14110d);
   stroke-width: 2;
+}
+
+/* A directory's in-tile preview: one level of its direct children, laid out with
+   the same treemap. The crumbs are texture, not targets, so they are drawn
+   without strokes at rest and only pick one up when they carry a change. */
+[data-rm="map-crumb"] {
+  fill: var(--rm-map-surface-strong);
+  stroke: none;
+}
+
+[data-rm="map-crumb"][data-kind="dir"] {
+  fill: var(--rm-map-surface);
+}
+
+/* A changed crumb uses the same colour and shape vocabulary as the cards: the
+   preview is a miniature of the folder, so it must not invent a second one. */
+[data-rm="map-crumb"][data-changed="true"] {
+  stroke: var(--rm-map-secondary);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+
+[data-rm="map-crumb"][data-status="added"] {
+  fill: color-mix(in srgb, var(--rm-map-add) 45%, transparent);
+  stroke: var(--rm-map-add);
+}
+
+[data-rm="map-crumb"][data-status="modified"] {
+  fill: color-mix(in srgb, var(--rm-map-warn) 40%, transparent);
+  stroke: var(--rm-map-warn);
+}
+
+[data-rm="map-crumb"][data-status="deleted"] {
+  fill: color-mix(in srgb, var(--rm-map-del) 45%, transparent);
+  stroke: var(--rm-map-del);
+  stroke-dasharray: 2 1;
+}
+
+[data-rm="map-crumb"][data-status="untracked"] {
+  fill: color-mix(in srgb, var(--rm-map-add) 25%, transparent);
+  stroke: var(--rm-map-add);
+  stroke-dasharray: 1 1;
+}
+
+[data-rm="map-crumb"][data-status="conflicted"] {
+  fill: color-mix(in srgb, var(--rm-map-del) 30%, transparent);
+  stroke: var(--rm-map-warn);
+  stroke-dasharray: 2 1 3 1;
+}
+
+/* The aggregate block a capped preview shows instead of silently dropping the
+   children it left out. */
+[data-rm="map-crumb-overflow"] {
+  fill: var(--rm-map-muted);
+  opacity: 0.5;
+}
+
+/* The hovered directory's reading: the linkage's visible end. */
+[data-rm="map-tile"][data-hovered="true"] [data-rm="map-dir-reading"] {
+  fill: var(--dsw-alias-label-primary, #14110d);
+  font-weight: 600;
+}
+
+[data-rm="map-tile"][data-hovered="true"] [data-rm="map-dir-name"] {
+  fill: var(--dsw-alias-label-primary, #14110d);
 }
 
 /* Dependency edges. Colour is the first channel and the dash pattern is the

@@ -24,7 +24,8 @@
  *   were given; the level is `index.ts`'s business. A renderer that called back
  *   into navigation would make the two files mutually dependent.
  */
-import type { MapDirInput, MapEdgeInput, MapFileInput, MapHunk, MapStatus, Rect, Tile } from "./contract.ts";
+import type { MapCrumb, MapDirInput, MapEdgeInput, MapFileInput, MapHunk, MapStatus, Rect, Tile } from "./contract.ts";
+import { layoutLevel } from "./layout.ts";
 
 /** The SVG namespace; a plain `createElement` would produce an inert element. */
 export const SVG_NS = "http://www.w3.org/2000/svg";
@@ -245,6 +246,14 @@ export interface CardContext {
   readonly onDrill?: (path: string) => void;
   /** The pointer entered or left a file card; `null` means it left. */
   readonly onHover?: (path: string | null) => void;
+  /**
+   * The children of one directory, for its in-tile preview.
+   *
+   * A lookup rather than a pre-built list per tile: the renderer asks for the
+   * directory it is about to draw, and a level the caller did not supply simply
+   * gets no preview. That keeps the map mountable from levels alone.
+   */
+  readonly childrenOf?: (path: string) => readonly MapCrumb[];
 }
 
 /**
@@ -307,6 +316,28 @@ export function dirCard(context: CardContext, tile: Tile, dir: MapDirInput): SVG
         ),
       );
     }
+  }
+
+  // The preview goes inside the tile, after the header text so it paints over
+  // nothing that matters: the header is above the crumb area by construction.
+  if (context.childrenOf !== undefined) {
+    const children = context.childrenOf(tile.path);
+    const capped = capCrumbs(children);
+    const preview = crumbLayer(context, tile, capped.crumbs, capped.hidden);
+    if (preview !== null) group.append(preview);
+  }
+
+  // The header reading lights up when the pointer is anywhere in the tile —
+  // over a crumb, over the block, over the label. It is one attribute switch on
+  // the tile, so nothing moves.
+  if (context.onHover !== undefined) {
+    const hover = context.onHover;
+    group.addEventListener("pointerenter", () => {
+      hover(tile.path);
+    });
+    group.addEventListener("pointerleave", () => {
+      hover(null);
+    });
   }
 
   if (context.onDrill !== undefined) {
@@ -867,4 +898,186 @@ export function partialMarker(
     { x: String(at.x), y: String(at.y), "data-rm": "map-partial", "data-parsed": String(parsed), "data-total": String(total) },
     template.replace("{parsed}", String(parsed)).replace("{total}", String(total)),
   );
+}
+
+/**
+ * How many crumbs one level may draw before the rest are aggregated.
+ *
+ * A directory with thousands of direct children would otherwise build thousands
+ * of nodes inside one tile, which is the one thing that can make the map slower
+ * than the `git diff` it exists to beat. Past this cap the level draws its
+ * largest children and says how many it left out.
+ */
+export const MAX_CRUMBS = 600;
+
+/**
+ * The padding a directory tile keeps around its crumb area.
+ *
+ * Proportional rather than fixed so a small tile does not lose its whole
+ * interior to a constant: at 6% of the short side, a 40px tile keeps 2.4px and a
+ * 300px tile keeps 8px, which is the same visual weight at both sizes.
+ * @param tile - the directory tile.
+ * @returns the padding in map units.
+ */
+export function crumbPadding(tile: Rect): number {
+  return Math.min(8, Math.min(tile.width, tile.height) * 0.06);
+}
+
+/**
+ * The header height a directory tile spends before its crumb area starts.
+ *
+ * Only spent when there is room for a label; a tile too small for text gives the
+ * whole interior to the preview, because a preview is more informative than a
+ * clipped name.
+ * @param tile - the directory tile.
+ * @returns the header height in map units.
+ */
+function headerHeight(tile: Rect): number {
+  if (tile.width < TEXT_MIN_WIDTH || tile.height < TEXT_MIN_HEIGHT) return 0;
+  return tile.height >= TEXT_MIN_HEIGHT * 2 ? 26 : 14;
+}
+
+/**
+ * Cap a directory's children to the ones its preview will draw.
+ *
+ * Largest first, then back into path order: with a cap, the children that
+ * survive should be the ones carrying the most lines, because those are the ones
+ * whose area the reader is being shown. Restoring path order afterwards keeps the
+ * layout deterministic.
+ * @param crumbs - the directory's children.
+ * @returns the crumbs to draw and how many were left out.
+ */
+export function capCrumbs(crumbs: readonly MapCrumb[]): { crumbs: MapCrumb[]; hidden: number } {
+  if (crumbs.length <= MAX_CRUMBS) return { crumbs: [...crumbs], hidden: 0 };
+  const ranked = [...crumbs].sort((left, right) => {
+    if (left.lines !== right.lines) return right.lines - left.lines;
+    return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
+  });
+  const kept = ranked
+    .slice(0, MAX_CRUMBS)
+    .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
+  return { crumbs: kept, hidden: crumbs.length - kept.length };
+}
+
+/**
+ * Draw one directory's in-tile preview.
+ *
+ * The children are laid out with the same treemap the map itself uses, inside
+ * the tile's interior box: area still means line count, so a folder's preview
+ * reads as a miniature of the folder. One level only — nothing here recurses,
+ * because a crumb of a crumb would be a few pixels of nothing.
+ *
+ * Each crumb carries its identity and its change state as attributes, and a
+ * changed file also carries its status, so the preview uses the same colour and
+ * shape vocabulary as the cards. A crumb reports hover upward so the directory's
+ * own header can light up: that is the reading linkage, and it is a pure
+ * attribute switch with no re-layout.
+ * @param context - the document and the hover handler.
+ * @param tile - the directory tile.
+ * @param crumbs - the directory's children, already capped.
+ * @param hidden - how many children the cap left out.
+ * @returns the group holding the preview, or null when there is nothing to draw.
+ */
+export function crumbLayer(
+  context: CardContext,
+  tile: Tile,
+  crumbs: readonly MapCrumb[],
+  hidden: number,
+): SVGGElement | null {
+  const { document } = context;
+  const pad = crumbPadding(tile);
+  const top = tile.y + headerHeight(tile) + pad;
+  const inner: Rect = {
+    x: tile.x + pad,
+    y: top,
+    width: Math.max(tile.width - pad * 2, 0),
+    height: Math.max(tile.y + tile.height - pad - top, 0),
+  };
+  // A preview needs room to be a preview: below this the crumbs would be
+  // sub-pixel slivers that claim a precision the tile does not have.
+  if (inner.width < 6 || inner.height < 6) return null;
+  if (crumbs.length === 0 && hidden === 0) return null;
+
+  const group = svgEl(document, "g", { "data-rm": "map-crumbs", "data-path": tile.path }) as SVGGElement;
+
+  // The overflow block takes a slice off the bottom so it cannot be mistaken for
+  // a child; the crumbs above it are laid out in what is left.
+  const overflowHeight = hidden > 0 ? Math.min(10, inner.height * 0.2) : 0;
+  const area: Rect = { ...inner, height: Math.max(inner.height - overflowHeight, 0) };
+
+  if (crumbs.length > 0 && area.height >= 4) {
+    const layout = layoutLevel(
+      {
+        path: tile.path,
+        dirs: crumbs
+          .filter(crumb => crumb.kind === "dir")
+          .map(crumb => ({ path: crumb.path, lines: crumb.lines, changed: crumb.changed })),
+        files: crumbs
+          .filter(crumb => crumb.kind === "file")
+          .map(crumb => ({ path: crumb.path, lines: crumb.lines, changed: crumb.changed })),
+      },
+      // No minimum side: a crumb is a texture, not a target, and forcing a
+      // clickable floor here would make every preview a uniform grid.
+      { width: area.width, height: area.height, minSide: 0.5 },
+    );
+    const byPath = new Map(crumbs.map(crumb => [crumb.path, crumb]));
+    for (const placed of layout.tiles) {
+      const crumb = byPath.get(placed.path);
+      if (crumb === undefined) continue;
+      const attributes: Record<string, string> = {
+        x: String(round2(area.x + placed.x)),
+        y: String(round2(area.y + placed.y)),
+        width: String(round2(placed.width)),
+        height: String(round2(placed.height)),
+        "data-rm": "map-crumb",
+        "data-kind": crumb.kind,
+        "data-path": crumb.path,
+        "data-lines": String(crumb.lines),
+        "data-changed": crumb.changed ? "true" : "false",
+      };
+      if (crumb.status !== undefined) {
+        attributes["data-status"] = crumb.status;
+        attributes["data-shape"] = shapeOf(crumb.status);
+      }
+      const rect = svgEl(document, "rect", attributes);
+      if (context.onHover !== undefined) {
+        const hover = context.onHover;
+        // The hover is reported as the *directory's* path, not the crumb's: the
+        // linkage it drives is the folder header's reading, and a crumb is too
+        // small to be a target of its own.
+        rect.addEventListener("pointerenter", () => {
+          hover(tile.path);
+        });
+        rect.addEventListener("pointerleave", () => {
+          hover(null);
+        });
+      }
+      group.append(rect);
+    }
+  }
+
+  if (hidden > 0) {
+    const marker = svgEl(document, "rect", {
+      x: String(round2(inner.x)),
+      y: String(round2(inner.y + inner.height - overflowHeight)),
+      width: String(round2(inner.width)),
+      height: String(round2(overflowHeight)),
+      "data-rm": "map-crumb-overflow",
+      "data-count": String(hidden),
+      "data-path": tile.path,
+    });
+    group.append(marker);
+  }
+
+  return group.childElementCount === 0 ? null : group;
+}
+
+/**
+ * Round to the reported precision.
+ * @param value - the raw coordinate.
+ * @returns the value at two decimals.
+ */
+function round2(value: number): number {
+  const factor = 100;
+  return Math.round(value * factor) / factor;
 }

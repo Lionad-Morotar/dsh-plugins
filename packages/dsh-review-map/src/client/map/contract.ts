@@ -98,6 +98,24 @@ export interface MapLevelInput {
   readonly files: readonly MapFileInput[];
 }
 
+/**
+ * One child of a directory, drawn as a small block inside the directory's tile.
+ *
+ * A crumb is a preview, not a card: it carries identity and change state so the
+ * reader can see *where* the changes are inside a folder without drilling, and
+ * it deliberately carries no text of its own. One level only — a crumb never
+ * contains crumbs, because at that size the picture stops being a map and
+ * becomes noise.
+ */
+export interface MapCrumb {
+  readonly path: string;
+  readonly kind: "dir" | "file";
+  readonly lines: number;
+  readonly changed: boolean;
+  /** Present for a changed file: the same vocabulary the cards use. */
+  readonly status?: MapStatus;
+}
+
 /** An axis-aligned rectangle in the map's coordinate space. */
 export interface Rect {
   readonly x: number;

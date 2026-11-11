@@ -32,6 +32,7 @@ import type {
   MapHandle,
   MapHandlers,
   MapLevelInput,
+  MapCrumb,
   MapOptions,
   MapStrings,
   Rect,
@@ -214,7 +215,7 @@ export function createMap(
     for (const segment of pathSegments(path)) {
       const crumb = document.createElement("button");
       crumb.type = "button";
-      crumb.setAttribute("data-rm", "map-crumb");
+      crumb.setAttribute("data-rm", "map-breadcrumb-crumb");
       crumb.setAttribute("data-path", segment);
       crumb.setAttribute("data-current", segment === path ? "true" : "false");
       crumb.textContent = segment === "" ? title : segment.slice(segment.lastIndexOf("/") + 1);
@@ -223,6 +224,36 @@ export function createMap(
       });
       crumbs.append(crumb);
     }
+  };
+
+  /**
+   * The direct children of one directory, as preview crumbs.
+   *
+   * A directory's children are the level keyed by its own path, which is the
+   * same structure the drill uses. A level the caller did not supply yields no
+   * crumbs, so a map mounted from levels alone still draws its tiles.
+   * @param path - the directory whose children are wanted.
+   * @returns its direct children, in path order.
+   */
+  const childrenOf = (path: string): MapCrumb[] => {
+    const level = data.levels.get(path);
+    if (level === undefined) return [];
+    const crumbs: MapCrumb[] = [
+      ...level.dirs.map(dir => ({
+        path: dir.path,
+        kind: "dir" as const,
+        lines: dir.lines,
+        changed: dir.changed,
+      })),
+      ...level.files.map(file => ({
+        path: file.path,
+        kind: "file" as const,
+        lines: file.lines ?? 1,
+        changed: file.changed,
+        ...(file.status === undefined ? {} : { status: file.status }),
+      })),
+    ];
+    return crumbs.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
   };
 
   /**
@@ -295,6 +326,15 @@ export function createMap(
     for (const node of svg.querySelectorAll('[data-rm="map-edges"], [data-rm="map-legend"], [data-rm="map-unresolved"]')) {
       node.remove();
     }
+    // The hovered directory's header reading lights up. It is the same
+    // `highlighted` state the cards use, so a crumb hover and a list hover reach
+    // the same place; the difference is that a directory has no card to outline,
+    // so the reading is what changes.
+    for (const node of svg.querySelectorAll('[data-hovered="true"]')) node.removeAttribute("data-hovered");
+    if (highlighted !== null) {
+      const hoveredTile = svg.querySelector(`[data-rm="map-tile"][data-kind="dir"][data-path="${cssEscape(highlighted)}"]`);
+      hoveredTile?.setAttribute("data-hovered", "true");
+    }
     if (highlighted === null) return;
     const direct = svg.querySelector(`[data-rm="map-tile"][data-path="${cssEscape(highlighted)}"]`);
     if (direct !== null) {
@@ -306,7 +346,7 @@ export function createMap(
     if (ancestor === null) return;
     const tile = svg.querySelector(`[data-rm="map-tile"][data-path="${cssEscape(ancestor)}"]`);
     if (tile !== null) tile.setAttribute("data-highlighted", "true");
-    const crumb = crumbs.querySelector(`[data-rm="map-crumb"][data-path="${cssEscape(current)}"]`);
+    const crumb = crumbs.querySelector(`[data-rm="map-breadcrumb-crumb"][data-path="${cssEscape(current)}"]`);
     if (crumb !== null) crumb.setAttribute("data-breadcrumb-target", "true");
   };
 
@@ -365,6 +405,10 @@ export function createMap(
         go(path);
       },
       ...(handlers.onHover === undefined ? {} : { onHover: handlers.onHover }),
+      // The preview reads the directory's own level out of the same data the
+      // map is drawing from: a folder's children are the level keyed by its
+      // path, so there is no second source to keep in step.
+      childrenOf: (path: string) => childrenOf(path),
     };
 
     rects = new Map<string, Rect>();

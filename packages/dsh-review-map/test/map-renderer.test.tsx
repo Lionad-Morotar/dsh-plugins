@@ -16,7 +16,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createMap, nearestVisibleAncestor, pathSegments } from "../src/client/map/index.ts";
-import { MAX_FILES_PER_LEVEL, barSegments, capFiles, churnOf, glyphOf, shapeOf } from "../src/client/map/render.ts";
+import { MAX_CRUMBS, MAX_FILES_PER_LEVEL, barSegments, capFiles, churnOf, glyphOf, shapeOf } from "../src/client/map/render.ts";
 import type { MapData, MapEdgeInput, MapFileInput, MapLevelInput, MapStatus } from "../src/client/map/contract.ts";
 
 /** The host element a map mounts into. */
@@ -55,7 +55,7 @@ function tileAt(element: HTMLElement, path: string): Element | null {
 
 /** The breadcrumb labels, in order. */
 function crumbs(element: HTMLElement): string[] {
-  return [...element.querySelectorAll('[data-rm="map-crumb"]')].map(node => node.textContent ?? "");
+  return [...element.querySelectorAll('[data-rm="map-breadcrumb-crumb"]')].map(node => node.textContent ?? "");
 }
 
 afterEach(() => {
@@ -343,7 +343,7 @@ describe("drilling down", () => {
     tileAt(element, "src")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     expect(crumbs(element)).toEqual(["dsh-plugins", "src"]);
-    expect(element.querySelector('[data-rm="map-crumb"][data-current="true"]')?.textContent).toBe("src");
+    expect(element.querySelector('[data-rm="map-breadcrumb-crumb"][data-current="true"]')?.textContent).toBe("src");
     map.destroy();
   });
 
@@ -352,7 +352,7 @@ describe("drilling down", () => {
     const map = createMap(element, twoLevels(), {}, { width: 900, height: 520, title: "dsh-plugins" });
     tileAt(element, "src")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
-    element.querySelector('[data-rm="map-crumb"][data-path=""]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    element.querySelector('[data-rm="map-breadcrumb-crumb"][data-path=""]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     expect(map.path()).toBe("");
     expect(tileAt(element, "src")).not.toBeNull();
@@ -474,7 +474,7 @@ describe("highlighting", () => {
     // Restraint: the reader pointed at something, they did not ask to be moved.
     expect(map.path()).toBe("");
     expect(tileAt(element, "src")?.getAttribute("data-highlighted")).toBe("true");
-    expect(element.querySelector('[data-rm="map-crumb"][data-breadcrumb-target="true"]')).not.toBeNull();
+    expect(element.querySelector('[data-rm="map-breadcrumb-crumb"][data-breadcrumb-target="true"]')).not.toBeNull();
     map.destroy();
   });
 
@@ -618,7 +618,7 @@ describe("hover reporting", () => {
     map.destroy();
   });
 
-  it("does not report a directory as a hovered file", () => {
+  it("reports a directory's own path when its block is hovered", () => {
     const element = host();
     const onHover = vi.fn();
     const map = createMap(
@@ -630,9 +630,10 @@ describe("hover reporting", () => {
 
     tileAt(element, "src")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
 
-    // A folder is a place to go, not a file to look at; lighting a list row for
-    // it would point at nothing.
-    expect(onHover).not.toHaveBeenCalled();
+    // R3.5: hovering a folder's block — or any of its crumbs — lights that
+    // folder's header reading. The path reported is the folder's, not a file's:
+    // a crumb is too small to be a target of its own.
+    expect(onHover).toHaveBeenCalledWith("src");
     map.destroy();
   });
 
@@ -1024,6 +1025,242 @@ describe("edge aggregation", () => {
     map.setHighlight("hub.ts");
 
     expect(element.querySelectorAll('[data-rm="map-edge"]').length).toBeLessThanOrEqual(12);
+    map.destroy();
+  });
+});
+
+describe("the in-tile preview", () => {
+  /** A root level with one directory plus whatever files it is given. */
+  function rootWith(files: ReadonlyArray<{ path: string; lines: number; changed?: boolean }>): MapLevelInput {
+    return {
+      path: "",
+      dirs: [{ path: "src", lines: 900, changed: true, files: 3, changedFiles: 1, additions: 5, deletions: 1 }],
+      files: files.map(file => ({ path: file.path, lines: file.lines, changed: file.changed ?? false })),
+    };
+  }
+
+  /** A map whose `src` level holds the given children. */
+  function withChildren(children: MapLevelInput, root = rootWith([])): MapData {
+    return { levels: new Map([[root.path, root], [children.path, children]]), rootPath: root.path };
+  }
+
+  /** Every crumb inside one directory tile. */
+  function crumbsIn(element: HTMLElement, dir: string): Element[] {
+    return [...element.querySelectorAll(`[data-rm="map-crumbs"][data-path="${dir}"] [data-rm="map-crumb"]`)];
+  }
+
+  it("draws a directory's direct children inside its tile", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [{ path: "src/deep", lines: 300, changed: false }],
+        files: [
+          { path: "src/a.ts", lines: 400, changed: true, status: "modified" },
+          { path: "src/b.ts", lines: 200, changed: false },
+        ],
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    const paths = crumbsIn(element, "src").map(crumb => crumb.getAttribute("data-path"));
+    // The direct children, and only those: a grandchild would be a crumb of a
+    // crumb, which this slice does not draw.
+    expect(paths.sort()).toEqual(["src/a.ts", "src/b.ts", "src/deep"]);
+    map.destroy();
+  });
+
+  it("marks a changed file's crumb with its status", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [],
+        files: [
+          { path: "src/a.ts", lines: 400, changed: true, status: "deleted" },
+          { path: "src/b.ts", lines: 200, changed: false },
+        ],
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    const changed = element.querySelector('[data-rm="map-crumb"][data-path="src/a.ts"]');
+    expect(changed?.getAttribute("data-changed")).toBe("true");
+    expect(changed?.getAttribute("data-status")).toBe("deleted");
+    // The shape channel comes along with the colour, same as on the cards.
+    expect(changed?.getAttribute("data-shape")).toBe(shapeOf("deleted"));
+    const quiet = element.querySelector('[data-rm="map-crumb"][data-path="src/b.ts"]');
+    expect(quiet?.getAttribute("data-changed")).toBe("false");
+    expect(quiet?.getAttribute("data-status")).toBeNull();
+    map.destroy();
+  });
+
+  it("marks a subdirectory crumb that contains changes", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [
+          { path: "src/hot", lines: 100, changed: true },
+          { path: "src/cold", lines: 100, changed: false },
+        ],
+        files: [],
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    expect(element.querySelector('[data-rm="map-crumb"][data-path="src/hot"]')?.getAttribute("data-changed")).toBe("true");
+    expect(element.querySelector('[data-rm="map-crumb"][data-path="src/cold"]')?.getAttribute("data-changed")).toBe("false");
+    map.destroy();
+  });
+
+  it("keeps every crumb inside its directory's rect", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [],
+        files: Array.from({ length: 8 }, (_, index) => ({
+          path: `src/f${String(index)}.ts`,
+          lines: 100 + index,
+          changed: index === 0,
+        })),
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    const tile = tileAt(element, "src");
+    const rect = tile?.querySelector('[data-rm="map-tile-rect"]');
+    const bounds = {
+      x: Number(rect?.getAttribute("x") ?? 0),
+      y: Number(rect?.getAttribute("y") ?? 0),
+      width: Number(rect?.getAttribute("width") ?? 0),
+      height: Number(rect?.getAttribute("height") ?? 0),
+    };
+    for (const crumb of crumbsIn(element, "src")) {
+      const x = Number(crumb.getAttribute("x"));
+      const y = Number(crumb.getAttribute("y"));
+      const width = Number(crumb.getAttribute("width"));
+      const height = Number(crumb.getAttribute("height"));
+      // jsdom has no layout, so the only honest assertion is containment.
+      expect(x).toBeGreaterThanOrEqual(bounds.x - 0.01);
+      expect(y).toBeGreaterThanOrEqual(bounds.y - 0.01);
+      expect(x + width).toBeLessThanOrEqual(bounds.x + bounds.width + 0.01);
+      expect(y + height).toBeLessThanOrEqual(bounds.y + bounds.height + 0.01);
+    }
+    map.destroy();
+  });
+
+  it("lights the directory header when a crumb is hovered, and clears it", () => {
+    const element = host();
+    const onHover = vi.fn();
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [],
+        files: [{ path: "src/a.ts", lines: 400, changed: true, status: "modified" }],
+      }),
+      { onHover },
+      { width: 900, height: 520 },
+    );
+
+    const crumb = element.querySelector('[data-rm="map-crumb"][data-path="src/a.ts"]');
+    crumb?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+    // The crumb reports the *directory*: the linkage it drives is the folder
+    // header's reading, and a crumb is too small to be a target of its own.
+    expect(onHover).toHaveBeenCalledWith("src");
+
+    map.setHighlight("src");
+    expect(tileAt(element, "src")?.getAttribute("data-hovered")).toBe("true");
+
+    crumb?.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
+    expect(onHover).toHaveBeenLastCalledWith(null);
+    map.setHighlight(null);
+    expect(tileAt(element, "src")?.getAttribute("data-hovered")).toBeNull();
+    map.destroy();
+  });
+
+  it("caps the preview and reports how many children it left out", () => {
+    const element = host();
+    const total = MAX_CRUMBS + 40;
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [],
+        files: Array.from({ length: total }, (_, index) => ({
+          path: `src/f${String(index).padStart(4, "0")}.ts`,
+          lines: index + 1,
+          changed: false,
+        })),
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    const crumbs = crumbsIn(element, "src");
+    const overflow = element.querySelector('[data-rm="map-crumb-overflow"][data-path="src"]');
+    expect(crumbs).toHaveLength(MAX_CRUMBS);
+    expect(overflow?.getAttribute("data-count")).toBe("40");
+    // Drawn plus left out is the whole level: nothing vanishes silently.
+    expect(crumbs.length + Number(overflow?.getAttribute("data-count"))).toBe(total);
+    map.destroy();
+  });
+
+  it("shows no overflow block when nothing was left out", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [],
+        files: [{ path: "src/a.ts", lines: 100, changed: false }],
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    expect(element.querySelector('[data-rm="map-crumb-overflow"]')).toBeNull();
+    map.destroy();
+  });
+
+  it("draws no preview for a directory whose level was not supplied", () => {
+    const element = host();
+    const map = createMap(element, data(rootWith([])), {}, { width: 900, height: 520 });
+
+    // A map mounted from levels alone still draws its tiles; it just has no
+    // preview to draw inside them.
+    expect(tileAt(element, "src")).not.toBeNull();
+    expect(crumbsIn(element, "src")).toHaveLength(0);
+    map.destroy();
+  });
+
+  it("puts no text inside a crumb", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [],
+        files: [{ path: "src/a.ts", lines: 400, changed: true, status: "modified" }],
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    // A crumb is a texture: at that size a label would be a smudge, and the
+    // requirement is that text never overflows a card.
+    const group = element.querySelector('[data-rm="map-crumbs"][data-path="src"]');
+    expect(group?.querySelectorAll("text")).toHaveLength(0);
     map.destroy();
   });
 });
