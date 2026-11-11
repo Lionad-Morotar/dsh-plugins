@@ -119,7 +119,9 @@ describe("lib/client.js", () => {
     const { plugin } = mount();
 
     expect(plugin.name).toBe(PACKAGE_NAME);
-    expect(plugin.inject).toEqual([]);
+    // apply 里读 ctx.slots，宿主对未 inject 的服务属性读取直接抛错，
+    // 所以 slots 必须出现在 inject 里。
+    expect(plugin.inject).toEqual(["slots"]);
     expect(typeof plugin.apply).toBe("function");
   });
 
