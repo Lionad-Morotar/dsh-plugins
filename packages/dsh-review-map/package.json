@@ -36,6 +36,7 @@
     }
   },
   "scripts": {
+    "bench": "node scripts/bench-index.mjs --json",
     "build": "node scripts/build.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"
