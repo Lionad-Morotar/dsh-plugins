@@ -21,6 +21,7 @@ import { html } from "@codemirror/lang-html";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
+import { python } from "@codemirror/lang-python";
 import { yaml } from "@codemirror/lang-yaml";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { Annotation, Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
@@ -60,16 +61,29 @@ const highlightStyle = HighlightStyle.define([
 /**
  * The parser for one language id.
  *
- * `plaintext` is an empty extension rather than a null language: the file stays
- * editable, it just gets no parser, which is the honest answer for a suffix this
- * editor has no grammar for.
- * @param language - id resolved from the path.
+ * Keyed by the catalogue's descriptor id, so the dialect a file gets is decided
+ * by the same data the read-only pane uses. The four javascript dialects are one
+ * package with different flags, and the flags are the whole difference: `.js`
+ * used to be parsed with both JSX and TypeScript on, which made type annotations
+ * look valid in a plain script and accepted JSX in a file that has none. VS Code
+ * parses `.js` as plain JavaScript, and so does this.
+ *
+ * An id outside the table gets an empty extension rather than a null language:
+ * the file stays editable, it just gets no parser, which is the honest answer for
+ * a suffix this editor has no grammar for.
+ * @param id - language id resolved from the path.
  * @returns the extension to install in the language compartment.
  */
-function languageExtension(language: EditorLanguage): Extension {
-  switch (language) {
+export function grammarFor(id: EditorLanguage): Extension {
+  switch (id) {
     case "javascript":
-      return javascript({ jsx: true, typescript: true });
+      return javascript({});
+    case "typescript":
+      return javascript({ typescript: true });
+    case "typescriptreact":
+      return javascript({ typescript: true, jsx: true });
+    case "javascriptreact":
+      return javascript({ jsx: true });
     case "json":
       return json();
     case "markdown":
@@ -80,6 +94,8 @@ function languageExtension(language: EditorLanguage): Extension {
       return html();
     case "yaml":
       return yaml();
+    case "python":
+      return python();
     default:
       return [];
   }
@@ -241,7 +257,7 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
           keymap.of(defaultKeymap),
           drawSelection(),
           EditorView.lineWrapping,
-          languageCompartment.current.of(languageExtension(language)),
+          languageCompartment.current.of(grammarFor(language)),
           syntaxHighlighting(highlightStyle),
           decorationCompartment.current.of(decorationExtension(decorate && mode === "reading")),
           EditorView.updateListener.of(update => {
@@ -328,7 +344,7 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
     const current = view.current;
     if (current === null) return;
     current.dispatch({
-      effects: languageCompartment.current.reconfigure(languageExtension(language)),
+      effects: languageCompartment.current.reconfigure(grammarFor(language)),
     });
   }, [language]);
 
