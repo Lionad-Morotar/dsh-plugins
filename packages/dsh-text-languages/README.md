@@ -73,11 +73,12 @@
 
 覆盖层要改判既有后缀时，加一条 `SUFFIX_MOVES` 或 `SUFFIX_ADDITIONS` 并写明理由，不要直接改快照。
 
+两个消费面都按块加载：只读面取 `client.lang-<block>.js` 共 14 块，编辑面取 `client.editor-langs-<block>.js` 共 4 块，块名与语言 id 的对应都来自本包的两张派生表。
+
 ## 后续切片
 
 以下能力尚未落地，不要按已支持来用：
 
-- 编辑面按批量块懒加载（编辑面目前仍是单块静态持有语法，扩面会让 `.md` 首开成本翻倍）；
 - backlog 8 条升级到真实语法（等待 TextMate 转换层）；
 - 全集外语言扩面（toml、kt、graphql 等没有 VS Code 基准字段可对齐）。
 
