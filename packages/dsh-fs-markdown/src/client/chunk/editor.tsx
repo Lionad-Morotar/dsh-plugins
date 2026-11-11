@@ -23,10 +23,9 @@ import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import { python } from "@codemirror/lang-python";
 import { yaml } from "@codemirror/lang-yaml";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { Annotation, Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
+import { syntaxHighlighting } from "@codemirror/language";
+import { Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, drawSelection, keymap, type KeyBinding } from "@codemirror/view";
-import { tags } from "@lezer/highlight";
 import { useEffect, useRef, type ReactElement } from "react";
 
 import { CLASS_NAMES } from "../classes.ts";
@@ -34,31 +33,20 @@ import type { EditorBodyProps } from "../contracts.ts";
 import { planDecorations } from "../decorations.ts";
 import { BLOCK_ASSIGNMENT } from "dsh-text-languages/catalog.ts";
 
+import { ExternalChange, EDITOR_HIGHLIGHT_STYLE } from "./editor-kit.tsx";
 import { languageOf, type EditorLanguage } from "../language.ts";
 import { TableWidget } from "../table-widget.ts";
 import { planTables, tableIntersects } from "../tables.ts";
 
-/** Marks a document replacement this component made itself, not the reader. */
-const ExternalChange = Annotation.define<boolean>();
-
 /**
- * Colours come from the shell's tokens so the editor follows the theme.
+ * The colour table and the external-write annotation come from the editor kit.
  *
- * `defaultHighlightStyle` is tuned for one background; this table resolves
- * through the same `--dsw-alias-*` variables as the rest of the panel.
+ * Both are shared with the four editable language blocks. A second colour table
+ * here would drift from the blocks and paint the same token two ways; a second
+ * annotation would carry a different identity, so a write marked by one would
+ * echo back as a user edit through the other.
  */
-const highlightStyle = HighlightStyle.define([
-  { tag: [tags.keyword, tags.modifier, tags.operatorKeyword], color: "var(--fmd-syn-keyword)" },
-  { tag: [tags.string, tags.special(tags.string), tags.regexp], color: "var(--fmd-syn-string)" },
-  { tag: [tags.number, tags.bool, tags.null, tags.atom], color: "var(--fmd-syn-number)" },
-  { tag: [tags.comment, tags.lineComment, tags.blockComment], color: "var(--fmd-syn-comment)", fontStyle: "italic" },
-  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: "var(--fmd-syn-function)" },
-  { tag: [tags.typeName, tags.className, tags.namespace, tags.tagName], color: "var(--fmd-syn-type)" },
-  { tag: [tags.propertyName, tags.attributeName], color: "var(--fmd-syn-property)" },
-  { tag: [tags.heading, tags.strong], color: "var(--fmd-syn-heading)", fontWeight: "600" },
-  { tag: [tags.link, tags.url], color: "var(--fmd-syn-link)", textDecoration: "underline" },
-  { tag: tags.invalid, color: "var(--fmd-syn-invalid)" },
-]);
+const highlightStyle = EDITOR_HIGHLIGHT_STYLE;
 
 /**
  * One grammar per block.

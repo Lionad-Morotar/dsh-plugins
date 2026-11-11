@@ -12,8 +12,8 @@
  */
 import type { ComponentType } from "react";
 
-import { EDITOR_CHUNK, PACKAGE_NAME } from "../shared.ts";
-import type { EditorBodyProps } from "./contracts.ts";
+import { EDITABLE_LANG_CHUNKS, EDITOR_CHUNK, PACKAGE_NAME } from "../shared.ts";
+import type { EditableChunkModule, EditorBodyProps } from "./contracts.ts";
 
 /** The `require` the ModuleLoader factory receives. */
 export interface LoaderRequire {
@@ -70,6 +70,66 @@ export function loadEditorChunk(): Promise<EditorChunkModule> {
   pending = request;
   request.catch(() => {
     if (pending === request) pending = null;
+  });
+  return request;
+}
+
+/** One editable language block's route. */
+export interface EditableLangRoute {
+  readonly block: string;
+  readonly chunk: string;
+  readonly id: string;
+}
+
+/**
+ * The route to one editable language block, or null when this package ships none
+ * for that block.
+ *
+ * Null is the answer for the ten in-service blocks and for everything with no
+ * block at all: their grammars are already in the editor chunk, so there is
+ * nothing to fetch.
+ * @param block - block name from the catalogue.
+ * @returns the file name and module-table id, or null.
+ */
+export function editableLangChunkRoute(block: string): EditableLangRoute | null {
+  const chunk = EDITABLE_LANG_CHUNKS[block];
+  return chunk === undefined ? null : { block, chunk, id: `${PACKAGE_NAME}/${chunk}` };
+}
+
+/** Resolved blocks, keyed by artifact so two languages of one batch share it. */
+const editablePending = new Map<string, Promise<EditableChunkModule>>();
+
+/**
+ * Resolve one editable language block.
+ *
+ * Three refusals: a block this package does not ship, a missing loader hand-over,
+ * and a chunk whose marker names another block. Rejections are dropped from the
+ * cache, because a chunk that failed once must be retryable rather than leaving a
+ * file type uneditable for the life of the page.
+ * @param block - block name from the catalogue.
+ * @returns the block module.
+ */
+export function loadEditableLangChunk(block: string): Promise<EditableChunkModule> {
+  const route = editableLangChunkRoute(block);
+  if (route === null) {
+    return Promise.reject(new Error(`${PACKAGE_NAME}: no editable language chunk for ${block}`));
+  }
+  const cached = editablePending.get(route.chunk);
+  if (cached !== undefined) return cached;
+  const active = loaderRequire;
+  if (active === null || typeof active.async !== "function") {
+    return Promise.reject(new Error(`${PACKAGE_NAME}: the loader require was not handed over`));
+  }
+  const request = active.async(`./${route.chunk}`).then(module => {
+    const chunk = module as Partial<EditableChunkModule> | null;
+    if (chunk === null || typeof chunk.mount !== "function" || chunk.renderer !== block) {
+      throw new Error(`${PACKAGE_NAME}: chunk ${route.id} is not the ${block} block`);
+    }
+    return chunk as EditableChunkModule;
+  });
+  editablePending.set(route.chunk, request);
+  request.catch(() => {
+    if (editablePending.get(route.chunk) === request) editablePending.delete(route.chunk);
   });
   return request;
 }

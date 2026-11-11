@@ -94,6 +94,52 @@ export interface EditorBodyProps extends RendererBodyProps {
   readonly decorate?: boolean;
 }
 
+/**
+ * What one editable language block needs to mount its editor.
+ *
+ * The block owns the editor and the grammar; the shell owns the document, the
+ * draft and the find bar. These callbacks are the whole contract between them,
+ * and they are the same ones the shell's own editor uses, so a `.rs` file and a
+ * `.md` file behave identically.
+ */
+export interface EditableMountOptions {
+  readonly text: string;
+  readonly path: string;
+  /**
+   * Which language this document is.
+   *
+   * A block carries several grammars, so it cannot pick one from the path alone:
+   * the caller resolves the language once (through the catalogue) and hands the
+   * id down, which keeps the block free of any matching logic.
+   */
+  readonly language: string;
+  /** One user edit, never an external `setText`. */
+  onChange(text: string): void;
+  /** Any document change; the find bar recounts against it. */
+  onFindInvalidate(): void;
+  /** The save chord. */
+  onSave(): void;
+}
+
+/** The handle a mounted editable block exposes. */
+export interface EditableHandle {
+  /** Replace the document from outside; must not echo back through `onChange`. */
+  setText(text: string): void;
+  /** Select one `[from, to)` interval of the document and scroll to it. */
+  revealRange(from: number, to: number): void;
+  /** Drop the selection the last `revealRange` made. */
+  clearSelection(): void;
+  focus(): void;
+  destroy(): void;
+}
+
+/** Everything one editable language block exports. */
+export interface EditableChunkModule {
+  /** Diagnostic marker: the block name. Asserted by the build and the loader. */
+  readonly renderer: string;
+  mount(host: HTMLElement, options: EditableMountOptions): EditableHandle;
+}
+
 /** One rendered failure, after transport envelopes are folded away. */
 export interface DocumentErrorFace {
   readonly code: string;
