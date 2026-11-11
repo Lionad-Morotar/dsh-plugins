@@ -441,7 +441,13 @@ function CodeSurface({
     return () => find.register(null);
   }, [find, failed]);
 
-  if (failed) {
+  // No editor and no pending fetch means nothing would ever mount, so the page
+  // itself is the body. This is the state the surface used to render as an empty
+  // host: a file whose renderer was pinned to the monochrome module but whose own
+  // language has no block, and a first-line-routed file turned past page one where
+  // the evidence disappears and the language editor is torn down.
+  const editorPossible = !failed && (languageChunked || chunk !== null);
+  if (!editorPossible) {
     return (
       <pre className="fx-pre" data-testid="fs-preview-plain">
         {text}
@@ -817,6 +823,15 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
 
   // The renderer is fetched only for the winner of the synchronous match; a
   // losing contribution is never downloaded, whatever its priority.
+  // The first-line evidence for this file, as a dependency rather than a value
+  // read inside the effect: the page arrives asynchronously, and the effect has to
+  // run again when it does or the first-line tier answers against an idle page.
+  const firstLine = snapshot.path === path ? snapshotFirstLine(snapshot) : undefined;
+  // An empty first line is not evidence: the loading snapshot carries the path but
+  // no text yet, and answering the tier against "" would send the file to the
+  // preview chunk before its own page lands.
+  const evidence = firstLine === undefined || firstLine === "" ? undefined : firstLine;
+
   useEffect(() => {
     // A commit version has no byte reader. Loading its family renderer would
     // ask the working tree for the file and paint the wrong revision.
@@ -824,6 +839,15 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
       setRendererState(IDLE_RENDERER);
       return;
     }
+    // A file with no suffix can only be routed by its first line, and that
+    // evidence arrives with the page. Loading the preview chunk before then would
+    // download it for a file that turns out to have a block of its own, so the
+    // effect waits for this file's page instead of guessing.
+    // A file with no suffix can only be routed by its first line, so the effect
+    // waits until this file's page brings that evidence: loading the preview chunk
+    // first would download it for a file that turns out to have a block.
+    const suffixless = !/[^/]\.[^/]+$/u.test(path);
+    if (suffixless && evidence === undefined) return;
     const winner = registry.resolve({ path });
     // A text file whose language ships its own chunk is drawn by that chunk, and
     // that chunk carries its own editor. Fetching the preview chunk as well
@@ -837,7 +861,10 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
     // The same three-tier question the surface asks, so the two agree on which
     // files are drawn by a block. Asking by suffix here would miss `Dockerfile`
     // and send it through the preview chunk first.
-    const routed = matchLanguage(path, snapshotFirstLine(snapshot));
+    // The evidence has to describe this file: a snapshot still holding the
+    // previous file's page would answer the first-line tier for the wrong path,
+    // and an idle snapshot would answer it for no path at all.
+    const routed = matchLanguage(path, evidence);
     if (
       winner !== undefined &&
       winner.id === SOURCE_RENDERER_ID &&
@@ -870,7 +897,11 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
     return () => {
       alive = false;
     };
-  }, [registry, path, revision, rendererRevision, rendererAttempt]);
+    // `evidence` is the dependency that makes the first-line tier re-run when the
+    // page lands: without it the effect answered once against an idle snapshot,
+    // fetched the preview chunk, and only then discovered the file routes to a
+    // block.
+  }, [registry, path, revision, rendererRevision, rendererAttempt, evidence]);
 
   if (path === undefined) {
     return (

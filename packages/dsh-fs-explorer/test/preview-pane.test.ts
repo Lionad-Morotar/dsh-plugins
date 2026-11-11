@@ -885,3 +885,224 @@ describe("preview pane plaintext renderer", () => {
     expect(host.querySelector('[data-testid="fs-preview-plaintext"]')).toBeNull();
   });
 });
+
+/**
+ * The surface must never paint an empty page.
+ *
+ * Two states used to leave `CodeSurface` with nothing to draw: a file whose
+ * renderer was pinned to the monochrome module (its body passes `chunk: null`)
+ * and whose own language has no block, and a first-line-routed file turned to
+ * page two, where the first-line evidence disappears and the language editor is
+ * torn down. Both rendered an empty host div with no text at all.
+ */
+describe("preview pane never paints an empty page", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let Pane: typeof PreviewPane;
+  let calls: string[];
+
+  beforeEach(async () => {
+    vi.resetModules();
+    calls = [];
+    const loader = await import("../src/client/preview-chunk.ts");
+    const require = ((specifier: string): unknown => {
+      throw new Error(`unexpected platform require: ${specifier}`);
+    }) as { (specifier: string): unknown; async(specifier: string): Promise<unknown> };
+    require.async = async (specifier: string): Promise<unknown> => {
+      calls.push(specifier);
+      if (specifier === "./client.preview.js") {
+        return {
+          renderer: "codemirror",
+          mountCodePreview: (element: HTMLElement, options: { text: string }) => {
+            element.textContent = options.text;
+            return {
+              update(next: string) {
+                element.textContent = next;
+              },
+              revealRange() {},
+              clearSelection() {},
+              destroy() {
+                element.textContent = "";
+              },
+            };
+          },
+          MarkdownView: () => null,
+        };
+      }
+      const block = /^\.\/client\.lang-(.+)\.js$/u.exec(specifier)?.[1] ?? "";
+      return {
+        renderer: block,
+        mount: (element: HTMLElement, options: { text: string }) => {
+          element.textContent = options.text;
+          return {
+            update(next: string) {
+              element.textContent = next;
+            },
+            revealRange() {},
+            clearSelection() {},
+            destroy() {
+              element.textContent = "";
+            },
+          };
+        },
+      };
+    };
+    loader.boot(require);
+    Pane = (await import("../src/client/preview-pane.tsx")).PreviewPane;
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  /** Render one file and let its page land. */
+  async function show(path: string, text: string): Promise<void> {
+    const files = {
+      list: async () => ({ entries: [] }),
+      read: async () => ({ ok: true, value: { text, offset: 1, lines: 1, eof: true } }),
+    };
+    await act(async () => {
+      root.render(createElement(Pane, { sessionId: "s1", files, path, t }));
+    });
+    await act(async () => {
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+  }
+
+  it("keeps the second file readable after a shebang file pinned the renderer", async () => {
+    // The first file is routed by its shebang, so the pane pins the monochrome
+    // module for it. The second has no language at all, and used to inherit that
+    // pin with no editor to mount.
+    await show("deploy", "#!/usr/bin/env python3\nprint(1)\n");
+    await show("notes", "just some notes\n");
+    expect(host.textContent).toContain("just some notes");
+  });
+
+  it("keeps page two readable when the first-line evidence goes away", async () => {
+    const files = {
+      list: async () => ({ entries: [] }),
+      read: async (_session: string, _path: string, range?: { offset?: number }) =>
+        (range?.offset ?? 1) > 1
+          ? { ok: true, value: { text: "second page body\n", offset: 2, lines: 1, totalLines: 2, eof: true } }
+          : { ok: true, value: { text: "#!/usr/bin/env python3\nprint(1)\n", offset: 1, lines: 2, totalLines: 3, eof: false } },
+    };
+    await act(async () => {
+      root.render(createElement(Pane, { sessionId: "s1", files, path: "script", t }));
+    });
+    await act(async () => {
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="fs-preview-next"]')?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await act(async () => {
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+    expect(host.textContent).toContain("second page body");
+  });
+});
+
+/**
+ * The renderer is resolved from this file's own evidence, not the last file's.
+ *
+ * The effect that picks a renderer reads the page's first line to answer the
+ * first-line tier, but the page arrives asynchronously. Without the snapshot in
+ * its dependencies it ran once against whatever page was still held, which meant
+ * a shebang file's evidence could be applied to the next file, and a shebang file
+ * opened fresh could fetch the preview chunk before its own first line landed.
+ */
+describe("preview pane renderer resolution evidence", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let Pane: typeof PreviewPane;
+  let calls: string[];
+
+  beforeEach(async () => {
+    vi.resetModules();
+    calls = [];
+    const loader = await import("../src/client/preview-chunk.ts");
+    const require = ((specifier: string): unknown => {
+      throw new Error(`unexpected platform require: ${specifier}`);
+    }) as { (specifier: string): unknown; async(specifier: string): Promise<unknown> };
+    require.async = async (specifier: string): Promise<unknown> => {
+      calls.push(specifier);
+      if (specifier === "./client.preview.js") {
+        return {
+          renderer: "codemirror",
+          mountCodePreview: () => ({ update() {}, revealRange() {}, clearSelection() {}, destroy() {} }),
+          MarkdownView: () => null,
+        };
+      }
+      const block = /^\.\/client\.lang-(.+)\.js$/u.exec(specifier)?.[1] ?? "";
+      return { renderer: block, mount: () => ({ update() {}, revealRange() {}, clearSelection() {}, destroy() {} }) };
+    };
+    loader.boot(require);
+    Pane = (await import("../src/client/preview-pane.tsx")).PreviewPane;
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("never fetches the preview chunk for a file its own first line routes to a block", async () => {
+    const files = {
+      list: async () => ({ entries: [] }),
+      read: async () => ({
+        ok: true,
+        value: { text: "#!/usr/bin/env python3\nprint(1)\n", offset: 1, lines: 2, eof: true },
+      }),
+    };
+    await act(async () => {
+      root.render(createElement(Pane, { sessionId: "s1", files, path: "script", t }));
+    });
+    await act(async () => {
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+    // The block is the only thing this file needs; the preview chunk would be
+    // 132 KB downloaded and never used.
+    expect(calls).toContain("./client.lang-python.js");
+    expect(calls).not.toContain("./client.preview.js");
+  });
+
+  it("does not apply the previous file's first line to the next file", async () => {
+    const files = {
+      list: async () => ({ entries: [] }),
+      read: async (_session: string, target: string) => ({
+        ok: true,
+        value:
+          target === "deploy"
+            ? { text: "#!/usr/bin/env python3\nprint(1)\n", offset: 1, lines: 2, eof: true }
+            : { text: "just some notes\n", offset: 1, lines: 1, eof: true },
+      }),
+    };
+    await act(async () => {
+      root.render(createElement(Pane, { sessionId: "s1", files, path: "deploy", t }));
+    });
+    await act(async () => {
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+    const afterFirst = calls.slice();
+    await act(async () => {
+      root.render(createElement(Pane, { sessionId: "s1", files, path: "notes", t }));
+    });
+    await act(async () => {
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+    // `notes` has no language at all, so it must not be treated as python.
+    expect(calls.slice(afterFirst.length)).not.toContain("./client.lang-python.js");
+  });
+});
