@@ -6,7 +6,9 @@ import {
   languageFor,
   matchLanguage,
   PLAINTEXT_ID,
+  SUFFIX_INDEX,
 } from "../src/index.ts";
+import { SNAPSHOT } from "../src/snapshot.ts";
 
 describe("tier order", () => {
   it("matches an exact filename before any suffix or pattern", () => {
@@ -128,6 +130,29 @@ describe("override layer", () => {
     const matched = matchLanguage("a.cfg");
     expect(matched?.id).toBe(PLAINTEXT_ID);
     expect(matched).not.toBeNull();
+  });
+
+  it("adds .mdx to the markdown row", () => {
+    // The read-only surface already treats .mdx as markdown, so the catalogue
+    // has to agree or markdown reading mode silently degrades to plaintext.
+    expect(matchLanguage("a.mdx")?.id).toBe("markdown");
+    expect(languageFor("a.mdx")).toBe("markdown");
+  });
+
+  it("leaves the markdown row's upstream suffixes untouched", () => {
+    expect(matchLanguage("a.md")?.id).toBe("markdown");
+    expect(matchLanguage("a.markdown")?.id).toBe("markdown");
+    expect(matchLanguage("a.mkd")?.id).toBe("markdown");
+  });
+
+  it("does not take .mdx away from another language", () => {
+    // .mdx is an addition, not a reassignment: nothing upstream claimed it.
+    expect(SNAPSHOT.some((row) => row.extensions.includes(".mdx"))).toBe(false);
+    expect(SUFFIX_INDEX.bySuffix.get(".mdx")).toBe("markdown");
+  });
+
+  it("keeps the markdown row's own glob pattern working", () => {
+    expect(matchLanguage("a/b/.cursor/rules/x.mdc")?.id).toBe("markdown");
   });
 
   it("keeps the rest of the properties row intact after the move", () => {

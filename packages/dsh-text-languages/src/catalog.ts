@@ -47,6 +47,33 @@ const SUFFIX_MOVES: readonly SuffixMove[] = [
 ];
 
 /**
+ * A suffix this repo adds where upstream claims none. Kept apart from
+ * `SUFFIX_MOVES` because the two are different claims: a move says upstream is
+ * wrong about the owner, an addition says upstream simply has no row for it.
+ * Conflating them would make "who did we take this from" unanswerable.
+ */
+interface SuffixAddition {
+  readonly suffix: string;
+  readonly to: string;
+  readonly reason: string;
+}
+
+/**
+ * `.mdx` is markdown with embedded JSX. Upstream ships no row for it, but the
+ * read-only surface already treats it as markdown, and a file that falls to
+ * unknown loses markdown reading mode entirely. Markdown is the honest grammar
+ * here: the prose and the fenced blocks colour correctly, and the JSX islands
+ * are the part that stays plain.
+ */
+const SUFFIX_ADDITIONS: readonly SuffixAddition[] = [
+  {
+    suffix: ".mdx",
+    to: "markdown",
+    reason: "upstream has no row for .mdx; the read-only surface already reads it as markdown, and unknown would drop markdown reading mode",
+  },
+];
+
+/**
  * Rows this repo keeps without upstream backing. Both are single-file component
  * formats whose official VS Code grammars are html-based, and both surfaces
  * already mapped them to html before the catalogue existed; dropping them to
@@ -83,6 +110,11 @@ const EXTRA_ROWS: readonly LanguageDescriptor[] = [
  * The explicit plaintext row. It is a real row rather than a fallback so that
  * "this file is deliberately monochrome" stays distinguishable from "nothing
  * matched", which is the difference between a decision and a gap.
+ *
+ * It is flagged `nonBuiltin` because it is repo-owned in the same sense vue and
+ * svelte are: upstream contributes no such row, and its suffixes and filenames
+ * are this repo's decisions. Without the flag a consumer splitting on ownership
+ * would count it as a 75th builtin.
  */
 const PLAINTEXT_ROW: LanguageDescriptor = {
   id: "plaintext",
@@ -93,7 +125,8 @@ const PLAINTEXT_ROW: LanguageDescriptor = {
   firstLine: null,
   disposition: "exact",
   chunk: false,
-  nonBuiltin: false,
+  nonBuiltin: true,
+  reason: "repo-owned row: upstream has no plaintext language, and this row carries the suffixes and filenames this repo decided are monochrome",
 };
 
 /** Languages whose grammar ships as its own lazy chunk. Ten, and the count is
@@ -230,8 +263,26 @@ function applyMoves(rows: readonly LanguageDescriptor[]): LanguageDescriptor[] {
     }
   }
 
-  return stripped.map((row) => {
+  const withMoves = stripped.map((row) => {
     const gained = SUFFIX_MOVES.filter((move) => move.to === row.id).map((move) => move.suffix);
+    return gained.length === 0 ? row : { ...row, extensions: [...row.extensions, ...gained] };
+  });
+
+  // Additions run after moves so a suffix cannot be both reassigned and added,
+  // and so the conflict check below sees the final owner of every suffix.
+  for (const addition of SUFFIX_ADDITIONS) {
+    const owner = withMoves.find((row) =>
+      row.extensions.some((ext) => ext.toLowerCase() === addition.suffix),
+    );
+    if (owner !== undefined) {
+      throw new Error(`suffix addition ${addition.suffix} is already owned by ${owner.id}`);
+    }
+  }
+
+  return withMoves.map((row) => {
+    const gained = SUFFIX_ADDITIONS.filter((addition) => addition.to === row.id).map(
+      (addition) => addition.suffix,
+    );
     return gained.length === 0 ? row : { ...row, extensions: [...row.extensions, ...gained] };
   });
 }

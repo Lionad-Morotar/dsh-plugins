@@ -22,7 +22,13 @@ export interface LanguageDescriptor {
   readonly disposition: LanguageDisposition;
   /** True when this language ships as its own lazily loaded syntax chunk. */
   readonly chunk: boolean;
-  /** True for rows this repo keeps without upstream backing (vue, svelte). */
+  /**
+   * True for a row this repo owns rather than upstream: vue and svelte (formats
+   * upstream has no builtin for) and the explicit plaintext row (a row upstream
+   * has no equivalent of at all). Consumers that need "the 74 builtins" filter on
+   * this flag; it is the only ownership marker, so a repo-owned row that leaves
+   * it false is counted as a builtin by everyone who splits on it.
+   */
   readonly nonBuiltin: boolean;
   /** What colours an approximated language, named without its package scope. */
   readonly grammar?: string;

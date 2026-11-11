@@ -36,10 +36,23 @@ describe("builtin closed set", () => {
     expect(ids).not.toContain("svelte");
   });
 
-  it("marks vue and svelte as non-builtin rows", () => {
+  it("marks every repo-owned row as non-builtin", () => {
+    // The explicit plaintext row is repo-owned too: it carries suffixes and
+    // filenames upstream never contributed, so a consumer splitting on this flag
+    // must not count it as a builtin.
     const extras = ALL_LANGUAGES.filter((row) => row.nonBuiltin);
-    expect(extras.map((row) => row.id).sort()).toEqual(["svelte", "vue"]);
+    expect(extras.map((row) => row.id).sort()).toEqual(["plaintext", "svelte", "vue"]);
     for (const row of extras) expect(row.reason).toBeTruthy();
+  });
+
+  it("leaves exactly the 74 builtin rows when the flag is applied", () => {
+    const builtin = ALL_LANGUAGES.filter((row) => !row.nonBuiltin);
+    expect(builtin).toHaveLength(74);
+    expect(builtin.map((row) => row.id).sort()).toEqual([...BUILTIN_IDS].sort());
+  });
+
+  it("keeps the plaintext row out of the builtin snapshot", () => {
+    expect(SNAPSHOT.map((row) => row.id)).not.toContain("plaintext");
   });
 
   it("maps vue and svelte through the html grammar", () => {
