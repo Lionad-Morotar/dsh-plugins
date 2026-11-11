@@ -57,6 +57,16 @@
 
 正文铺满预览面板的可用宽度，不再在面板内部限一道固定阅读宽度：工作台的文件区域本来就可拖拽分栏，面板宽度是读者自己定的，正文再收一道上限等于替读者把宽度退回去。左右各留 24px 内边距，阅读态、源码态与非 Markdown 文本共用同一条宽度规则；表格按内容取自然宽度，超出面板时在表格块内部横向滚动，不撑宽正文。
 
+## 语法高亮
+
+语言与只读面同源：`languageOf` 是 `dsh-text-languages` 目录包 `languageFor` 的薄 re-export（同一函数实例），所以同一份文件在预览面板与编辑器里解析成同一个语言 id。编辑器按 descriptor id 选方言，十个激活 id 各有工厂：`javascript` 是纯 JavaScript（不带 JSX 与 TypeScript），`typescript` 只开 TypeScript，`typescriptreact` 两个都开，`javascriptreact` 只开 JSX，其余 `json` / `css` / `html` / `markdown` / `yaml` / `python` 各用自己的语法包。名表外的 id 得到空扩展，文件照样可编辑，只是不着色。
+
+`.js` 从「JSX 与 TypeScript 全开」收敛为纯 javascript，与 VS Code 一致：旧配置让普通脚本里的类型标注看起来合法，也让没有 JSX 的文件接受 JSX。`.mdx` 由目录包归到 markdown，这里不再另写后缀判断。
+
+十个语法色变量 `--fmd-syn-*`（keyword / string / number / comment / function / type / property / heading / link / invalid）逐条镜像只读面的 `--fx-syn-*`，这是两面同色的前提。这组变量与整套 `--fmd-*` 版式变量一起定义在 `.fmd-read, .fmd-source-editor` 上，所以编辑器根节点按模式穿上对应的类；没有这个类，所有 `var(--fmd-syn-*)` 会回落到 `currentColor`，整篇渲染成一片正文字色。
+
+编辑面**不拆**语言懒 chunk：宿主 chunk 契约下每个 chunk 是独立 bundle，`require` 不解析 `@codemirror/*`，跨 bundle 传扩展会在运行期抛 `multiple instances of @codemirror/state`。十个语法因此静态留在 `client.editor.js` 一个块里。
+
 ## 第一期的呈现边界
 
 - 数学公式不做渲染：行内 `$…$` 与块级 `$$…$$` 都按普通文本保留，没有等宽或公式样式。
