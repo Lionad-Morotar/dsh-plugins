@@ -24,6 +24,16 @@
 - **运行反馈**：还没出任何结果的首轮显示居中 `运行中` 加转圈与取消按钮，不是停在「尚未运行」；已有看板在跑时，面板顶边一条 2px 不定进度条持续扫过，配合计数与竖条动画。`prefers-reduced-motion: reduce` 下转圈与扫光都停住，只留静止的弱化标记。
 - **结果缓存**：每轮跑完把这一轮的 run 与 snapshot 写到工作区 `<workspace>/logs/testboard/<YYMMDD>/<HHmmss>/result.json`（本地时间，同秒重名自动加 `-2` 后缀）。宿主进程里没有该工作区的状态时（重启、新会话、重载页面），`/state` 自动回退到最新一份可读结果，页头 meta 前缀「上次运行」。写盘是 best-effort：只读 checkout 或磁盘满不会把已完成的运行判失败；坏文件或旧版本 schema 会被跳过，而不是清空看板。缓存不自动清理，删 `logs/testboard` 即重置。
 
+### monorepo 内的目录树分组
+
+左栏在 package 之上不再平铺：一个 package 的测试文件按路径分段递归成目录树，目录标题只出现一次，文件挂在叶子目录下。树由 `groupFileRowsIntoTree` 从 `listFileRows` 的输出派生，纯函数，不碰 DOM。
+
+- **单目录抑制**：一个 package 只有一个目录、且该目录没有子目录时返回 `grouped:false`，行原样平铺。dsh-plugins 的 26 个包里 25 个走这条，只有 `dsh-arch` 有 `test` 与 `test/integration` 两层。
+- **单链压缩**：某目录没有直属文件且只有一个子目录时，把子目录名并进自己的标题（`test/unit`），子目录的文件与子目录提升上来，递归到不再满足。压缩后的节点保留外层目录的 key 与 depth，所以折叠 key 与缩进仍描述分支起点。压缩后若整包只剩一个无子目录的标题，同样落回抑制平铺。
+- **根组 `.`**：根组用完整目录路径（如 `tests/server/api`）而不是去掉 `packages/./` 前缀，它的 package 标题不渲染，目录树直接升到顶层，`data-package="."` 的 section 仍在。
+- **顺序**：目录按段名字典序，package 按 packageName 字典序；叶子目录内的文件顺序沿用输入行的顺序，树构建不二次排序，所以工具栏的「失败优先 / 耗时优先」仍然生效。
+- **统计**：每个目录节点带 `stats.files / failed / durationMs`，自底向上聚合，标题右侧只在有失败时显示 `<n> 个失败`。
+
 ## 交互
 
 - **运行全部 / 取消**：工具栏右侧一个运行位，运行中变成取消。做成一个位而不是两个按钮，免得读者去找哪个能用。
@@ -33,6 +43,7 @@
 - **分隔条**：拖拽改左栏宽度（clamp 260–760px），双击回到 42% 流式默认；聚焦后左右方向键 ±16px、Home/End 到两端、Backspace/Delete 重置。
 - **右键引用**：文件行与展开后的用例行右键出菜单，三项：引用、运行此文件、复制路径。引用走宿主 `inputTriggers`，source 名 `lionad.testboard`：文件引用拼成 `@<path>`（复用宿主文件气泡规则），用例引用带文件和用例名、外观为 session chip。引用通道未就绪时该行灰显并给出原因，不会让点击落空。点引用 chip 回到看板并选中对应行：优先走 workbench 的会话级 `openView`，没有时先排队 focus 再切视图，切换失败撤回 focus。
 - **源码**：按需取并缓存，选中文件才请求，取不到显示「该文件的源码不在快照里」。编辑器 chunk 懒加载，第一次选中文件才拉。
+- **目录折叠**：目录标题是唯一的折叠入口，指针点击切换该分支，默认全展开，折叠状态只在组件内、不落 localStorage，切 session 时清空。折叠后该分支的标题与其整棵子树都不渲染，导航、选中归一与半屏步长都只按可见行计算。搜索框有内容或失败筛选打开时忽略折叠集合（否则会用一个折叠挡住刚搜到的文件），清空后恢复读者原来的折叠状态。chip 或 `viewRequest` 指向折叠分支里的文件时先展开其祖先目录再选中。折叠把当前选中文件藏起来时，选中迁移到其后最近可见行，没有则前一行，都没有则清空并让右栏回到提示态。
 - **主题**：底色、正文与分割线取宿主语义 token（`--dsw-alias-bg-base` / `--dsw-alias-label-*` / `--dsw-alias-border-*`），字号跟 `--dsh-content-font-size` 与 `--dsh-code-font-size`。通过 / 失败 / 未跑三个语义色由看板自己定义，暗亮两套各自调过。
 
 ## 动效
@@ -59,7 +70,7 @@
 | `lib/client.js` | 浏览器半，CJS 包在 ModuleLoader factory 里 |
 | `lib/client.editor.js` | 懒 chunk：CodeMirror 与高亮代码视图 |
 
-启动包有 76KB 预算（gzip 后约 20.8KB，实测 75,573 B）。这条线抬过四次，都是因为面板不再是原型：40KB 时是分栏、键盘与拖拽落地，64KB 时是运行头、面积图与动效层成为启动代码，72KB 时是右键菜单与引用通道（输入框可能在首帧就持有 chip，source 必须从首帧注册），76KB 时是目录折叠（折叠集合、可见行推导与选中迁移都在首帧）。真正要守的是 CodeMirror 不进启动包，那条断言还在。
+启动包有 76KB 预算（gzip 后约 20.9KB，实测 75,960 B）。这条线抬过四次，都是因为面板不再是原型：40KB 时是分栏、键盘与拖拽落地，64KB 时是运行头、面积图与动效层成为启动代码，72KB 时是右键菜单与引用通道（输入框可能在首帧就持有 chip，source 必须从首帧注册），76KB 时是目录折叠（折叠集合、可见行推导与选中迁移都在首帧）。真正要守的是 CodeMirror 不进启动包，那条断言还在。
 
 `src/client/data/snapshot.json` 与 `sources.json` 由 `scripts/snapshot.mjs` 扫描本仓 `packages/*/test/**/*.test.{ts,tsx}` 生成。它们现在只服务两处：预览页的 fixture runtime，以及测试语料。线上看板不读它们。
 
@@ -105,9 +116,9 @@ cd packages/dsh-testboard
 node scripts/preview.mjs --out ../../temp/testboard-preview
 ```
 
-产出 `index.html` 与 `assets.js`，React 已内联，页面不引用外链，`file://` 直接打开或起静态服务器都能看。`?theme=dark|light` 选主题（缺省暗色），`?state=empty` 渲染首次打开时的等待态，`?state=loading` 渲染首轮运行中的等待态，`?state=cached` 渲染从磁盘缓存载入后的上一次结果。空态与 dsh-arch 的空界面同一套版式：内容区居中、文字弱化，只留一个动作入口。
+产出 `index.html` 与 `assets.js`，React 已内联，页面不引用外链，`file://` 直接打开或起静态服务器都能看。`?theme=dark|light` 选主题（缺省暗色），`?state=empty` 渲染首次打开时的等待态，`?state=loading` 渲染首轮运行中的等待态，`?state=cached` 渲染从磁盘缓存载入后的上一次结果，`?state=tree` 渲染一棵多级目录树供折叠演示。空态与 dsh-arch 的空界面同一套版式：内容区居中、文字弱化，只留一个动作入口。
 
-预览页用 fixture runtime，与线上走同一个 `TestboardRuntime` 接口，所以渲染的是真实 tab 的代码路径。它自动循环演示一遍完整叙事：`running`（竖条逐格点亮、计数增长、图表生长）→ `fixing`（标题 `正在修复 N 个失败`，图表右下浮层卡 `Fixing <file>` / `<model> · Ns` / `+2 −2`）→ `rerunning`（失败用例先扫灰再重亮，元信息 `重跑 · Xs`）→ `finished`（`测试完成`，全绿）→ 循环。
+预览页用 fixture runtime，与线上走同一个 `TestboardRuntime` 接口，所以渲染的是真实 tab 的代码路径。`?state=tree` 在已提交快照之外另加一个只用于演示的 `demo-tree` 包（`test/unit`、`test/unit/nested`、`test/integration` 三层，六个文件、通过失败混合），因为真实快照里只有 `dsh-arch` 一棵两层树，看不出多级折叠。这份演示数据只存在于 `preview.tsx`，不写进 `src/client/data/`，线上看板拿不到它。它自动循环演示一遍完整叙事：`running`（竖条逐格点亮、计数增长、图表生长）→ `fixing`（标题 `正在修复 N 个失败`，图表右下浮层卡 `Fixing <file>` / `<model> · Ns` / `+2 −2`）→ `rerunning`（失败用例先扫灰再重亮，元信息 `重跑 · Xs`）→ `finished`（`测试完成`，全绿）→ 循环。
 
 `fixing` 只是预览的演示阶段，不进 wire 的 phase：宿主拿不到 agent 修复事件，线上伪造就是假信息。
 
@@ -118,6 +129,7 @@ node scripts/preview.mjs --out ../../temp/testboard-preview
 - **无 fixing 事件**：线上只有 `running` / `N 个失败` / `重跑中` / `测试完成` 四种叙事，`fixing` 仅存在于预览 demo。
 - **语法高亮只覆盖 JavaScript/TypeScript 家族**（`.ts`/`.tsx`/`.js`/`.jsx`）。
 - **单文件运行是文件级**：用例级需要 reporter 不提供的名称过滤，本轮不做。
+- **目录树不是标准 ARIA tree**：目录标题是 listbox 里的普通 `div` 加一个非 option 的 `button`，`aria-expanded` 落在 toggle 上，listbox 本身仍只认文件行与用例行。折叠目前只支持指针，键盘不参与：toggle 不设 `tabIndex`，因为焦点归 listbox，一个可聚焦的标题会把方向键从列表手里抢走。升级成 `role="tree"` / `treeitem` 并给折叠配键盘入口留待后续，那会同时改动导航模型与 listbox 的角色契约。
 - `pnpm-lock.yaml` 只手工补了本包的 importer（最小差集）：`@codemirror/*` 是构建期 devDependencies，已打进 `lib/`，宿主安装不需要它们；workspace 里 `dsh-jump` submodule 的 importer 本就缺失，`pnpm install --frozen-lockfile` 目前会因它报错，与本包无关。
 
 ## 样式表

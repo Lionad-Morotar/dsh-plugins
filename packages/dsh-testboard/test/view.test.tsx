@@ -435,25 +435,42 @@ describe("testboard view", () => {
 
     it("renders one header per directory, in tree order, with its depth", async () => {
       await mountTree();
+      // `tests/server` holds only `api`, so the pair is one header keyed by the
+      // outer directory; the depth is the level the branch starts at.
       expect(directories(host).map(node => node.getAttribute("data-dir"))).toEqual([
         ".:tests",
         ".:tests/client",
         ".:tests/server",
-        ".:tests/server/api",
         "tree:test",
         "tree:test/integration",
         "tree:test/unit",
         "tree:test/unit/nested",
       ]);
       expect(directories(host).map(node => node.getAttribute("data-depth"))).toEqual([
-        "0", "1", "1", "2", "0", "1", "1", "2",
+        "0", "1", "1", "0", "1", "1", "2",
       ]);
     });
 
-    it("names a directory by its own segment, not by its path", async () => {
+    it("names a directory by its own segment, joining a single-child chain", async () => {
       await mountTree();
       const labels = directories(host).map(node => node.querySelector('[data-tst="directory-name"]')?.textContent);
-      expect(labels).toEqual(["tests", "client", "server", "api", "test", "integration", "unit", "nested"]);
+      // A chain is one address, so it reads as one label: `server/api` rather
+      // than two headers that each say half of it.
+      expect(labels).toEqual(["tests", "client", "server/api", "test", "integration", "unit", "nested"]);
+    });
+
+    it("keeps a compressed header's fold key at the outer directory", async () => {
+      await mountTree();
+      // The label grew but the branch still starts at `tests/server`, so a fold
+      // keyed by the outer path takes the whole chain with it.
+      const header = host.querySelector<HTMLElement>('[data-dir=".:tests/server"]');
+      expect(header?.querySelector('[data-tst="directory-name"]')?.textContent).toBe("server/api");
+      expect(header?.getAttribute("data-depth")).toBe("1");
+
+      const toggle = header?.querySelector<HTMLElement>('[data-testid="directory-toggle"]');
+      if (toggle === null || toggle === undefined) throw new Error("no toggle");
+      await act(async () => toggle.click());
+      expect(rows(host).some(row => row.getAttribute("data-path") === "tests/server/api/x.test.ts")).toBe(false);
     });
 
     it("hangs each file under its own directory", async () => {

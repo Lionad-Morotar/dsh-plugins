@@ -444,6 +444,57 @@ function finishDirectory(draft: DraftDirectory): DirectoryNode {
 }
 
 /**
+ * Renumber a subtree's depths from one level.
+ *
+ * A compressed chain lifts its child's children up by however many links were
+ * joined, so their old depths no longer describe where they are drawn. The
+ * indent is the only thing depth drives, and a stale one would leave a branch
+ * hanging under a header it no longer belongs to.
+ * @param node - the node to renumber.
+ * @param depth - the level this node now sits at.
+ * @returns the node with its subtree renumbered.
+ */
+function withDepth(node: DirectoryNode, depth: number): DirectoryNode {
+  return {
+    ...node,
+    depth,
+    directories: node.directories.map(child => withDepth(child, depth + 1)),
+  };
+}
+
+/**
+ * Join a directory that holds nothing but one child into that child.
+ *
+ * A monorepo's test trees are mostly chains: `test` holds only `unit`, which
+ * holds only `nested`. A header per link is three lines that each say one word
+ * of the same address, and the reader has to read all three to learn where the
+ * files are. Collapsing the chain into `test/unit/nested` says it once.
+ *
+ * Only a link in a chain is joined: a directory with its own files is a place
+ * the reader can stop at, and one with two children is a fork worth seeing. The
+ * compressed node keeps the outer directory's key and depth, so a fold key and
+ * the indent still describe where the branch starts rather than where it ends.
+ * @param node - the finished node.
+ * @returns the node with every single-child chain joined into one title.
+ */
+function compressChain(node: DirectoryNode): DirectoryNode {
+  const directories = node.directories.map(child => compressChain(child));
+  if (node.files.length > 0 || directories.length !== 1) {
+    return { ...node, directories };
+  }
+  const only = directories[0];
+  if (only === undefined) return { ...node, directories };
+  return {
+    key: node.key,
+    name: `${node.name}/${only.name}`,
+    depth: node.depth,
+    files: only.files,
+    directories: only.directories.map(child => withDepth(child, node.depth + 1)),
+    stats: only.stats,
+  };
+}
+
+/**
  * Group file rows into one directory tree per package.
  *
  * The board used to list a package's files flat, with the directory repeated on
@@ -491,7 +542,8 @@ export function groupFileRowsIntoTree(rows: readonly TestFileRow[]): PackageTree
 
       const directories = [...roots.values()]
         .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
-        .map(draft => finishDirectory(draft));
+        .map(draft => finishDirectory(draft))
+        .map(node => compressChain(node));
 
       // One directory, no nesting: the header would name the only place the rows
       // could be. A row at the package root also lands here, since it has no
