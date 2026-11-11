@@ -37,6 +37,7 @@ import type {
 } from "./contract.ts";
 import { layoutLevel } from "./layout.ts";
 import { SVG_NS, capFiles, dirCard, fileCard, overflowMarker } from "./render.ts";
+import { ensureMapStyles } from "./styles.ts";
 
 /**
  * The fallback drawing size, in the map's own coordinate space.
@@ -144,6 +145,10 @@ export function createMap(
   options: MapOptions = {},
 ): MapHandle {
   const document = host.ownerDocument;
+  // The map's rules travel with the map: they are injected here rather than
+  // shipped in the startup bundle, and the guard inside makes a second mount a
+  // lookup rather than a duplicate stylesheet.
+  ensureMapStyles(document);
   const title = options.title ?? "repo";
 
   const root = document.createElement("div");
@@ -266,6 +271,7 @@ export function createMap(
       onDrill: (path: string) => {
         go(path);
       },
+      ...(handlers.onHover === undefined ? {} : { onHover: handlers.onHover }),
     };
 
     for (const tile of layout.tiles) {
@@ -328,6 +334,15 @@ export function createMap(
     reveal(path) {
       highlighted = path;
       paintHighlight();
+    },
+    up() {
+      if (current === "") return false;
+      // The parent of `a/b` is `a`; the parent of `a` is the root, `""`. Taking
+      // `max(lastIndexOf("/"), 0)` is what turns a top-level directory into the
+      // root rather than into an empty string with a leading slash.
+      const parent = current.slice(0, Math.max(current.lastIndexOf("/"), 0));
+      go(parent, false);
+      return true;
     },
   };
 }

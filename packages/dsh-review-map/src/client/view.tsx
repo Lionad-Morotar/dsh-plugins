@@ -49,6 +49,7 @@ import {
   formatBytes,
   indexReadings,
   shortRef,
+  signedCount,
   sortFiles,
   splitPath,
   statusMark,
@@ -90,6 +91,7 @@ export interface ReviewMapViewStrings {
   readonly statDroppedImports?: string;
   readonly indexPartial?: string;
   readonly unresolved?: string;
+  readonly unresolvedHint?: string;
   readonly mapTitle?: string;
   readonly mapLoading?: string;
   readonly mapEmpty?: string;
@@ -285,8 +287,10 @@ interface RowProps {
   readonly file: ChangedFile;
   readonly strings: ReviewMapViewStrings;
   readonly selected: boolean;
+  readonly hovered: boolean;
   readonly onSelect: (path: string) => void;
   readonly onOpen: (path: string) => void;
+  readonly onHover: (path: string | null) => void;
   readonly onKey: (event: KeyboardEvent<HTMLElement>, path: string) => void;
 }
 
@@ -299,7 +303,7 @@ interface RowProps {
  * @param props - the file, its strings, its selection and the handlers.
  * @returns the row.
  */
-function ReviewRow({ file, strings, selected, onSelect, onOpen, onKey }: RowProps): ReactElement {
+function ReviewRow({ file, strings, selected, hovered, onSelect, onOpen, onHover, onKey }: RowProps): ReactElement {
   const parts = splitPath(file.path);
   const churn = churnOf(file);
   const note = noteText(churn.note, strings);
@@ -314,6 +318,7 @@ function ReviewRow({ file, strings, selected, onSelect, onOpen, onKey }: RowProp
       data-status={file.status}
       data-deleted={deleted ? "true" : undefined}
       data-selected={selected ? "true" : "false"}
+      data-hovered={hovered ? "true" : undefined}
       role="option"
       aria-selected={selected}
       // Roving tabindex: the list is one tab stop, and the arrow keys move
@@ -327,6 +332,11 @@ function ReviewRow({ file, strings, selected, onSelect, onOpen, onKey }: RowProp
         onOpen(file.path);
       }}
       onKeyDown={event => onKey(event, file.path)}
+      // `pointerenter`/`pointerleave` rather than `mouseover`/`mouseout`: the
+      // latter bubble again for every child the pointer crosses, so a row with
+      // three spans would report four entries for one visit.
+      onPointerEnter={() => onHover(file.path)}
+      onPointerLeave={() => onHover(null)}
     >
       <span data-rm="mark" data-status={file.status} title={statusWord(file.status, strings)}>
         {statusMark(file.status)}
@@ -436,6 +446,10 @@ export function createReviewMapView({
     const [openPath, setOpenPath] = useState<string | undefined>(undefined);
     const [detailPhase, setDetailPhase] = useState<DetailPhase | undefined>(undefined);
     const [indexPhase, setIndexPhase] = useState<IndexPhase>({ kind: "idle" });
+    // The path the pointer is over, from either side of the linkage. One state
+    // for both directions: a row hovered in the list and a card hovered on the
+    // map are the same fact, and two states would let them disagree.
+    const [hoveredPath, setHoveredPath] = useState<string | null>(null);
     // The identity of the newest list request. A response whose id is not this
     // one is an answer to a question the reader has already moved on from.
     const listRequest = useRef(0);
@@ -590,6 +604,17 @@ export function createReviewMapView({
       [sessionId, scopeKind, openDetail],
     );
 
+    /**
+     * The pointer entered or left a card on the map.
+     *
+     * Only the hover state moves: no level change, no re-layout, no scroll. The
+     * list row is lit by a render, and the scroll is handled separately below so
+     * a hover over a visible row costs nothing.
+     */
+    const hoverFromMap = useCallback((path: string | null): void => {
+      setHoveredPath(path);
+    }, []);
+
     useEffect(() => {
       const host = mapHost.current;
       if (host === null || readyIndex === undefined) return;
@@ -604,7 +629,10 @@ export function createReviewMapView({
           // component unmounted) must not paint: the host may already hold a
           // newer map.
           if (cancelled) return;
-          handle = chunk.createMap(host, buildMapData(readyIndex, repoName), { onOpenFile: openFromMap });
+          handle = chunk.createMap(host, buildMapData(readyIndex, repoName), {
+            onOpenFile: openFromMap,
+            onHover: hoverFromMap,
+          });
           mapHandle.current = handle;
         },
         () => {
@@ -617,7 +645,39 @@ export function createReviewMapView({
         handle?.destroy();
         if (mapHandle.current === handle) mapHandle.current = null;
       };
-    }, [readyIndex, repoName, mapLoader, openFromMap]);
+    }, [readyIndex, repoName, mapLoader, openFromMap, hoverFromMap]);
+
+    /**
+     * The pointer entered or left a list row.
+     *
+     * Synchronous: the handle is called in the event, not from an effect, so the
+     * map lights up in the same frame as the row. The handle's own contract
+     * decides what a target outside the current level means — it highlights the
+     * nearest visible ancestor and flags the breadcrumb rather than drilling.
+     */
+    const hoverRow = useCallback((path: string | null): void => {
+      setHoveredPath(path);
+      mapHandle.current?.setHighlight(path);
+    }, []);
+
+    // A map hover can point at a row that is scrolled out of the list. Only then
+    // does the list move, and only as far as it must: `block: "nearest"` leaves a
+    // row that is already visible exactly where it is, which is what keeps the
+    // reader's place while they sweep the map.
+    useEffect(() => {
+      if (hoveredPath === null) return;
+      const row = document.querySelector<HTMLElement>(
+        `[data-testid="review-row"][data-path="${CSS.escape(hoveredPath)}"]`,
+      );
+      if (row === null) return;
+      const list = row.closest<HTMLElement>('[data-rm="list"]');
+      if (list === null) return;
+      const rowBox = row.getBoundingClientRect();
+      const listBox = list.getBoundingClientRect();
+      const visible = rowBox.top >= listBox.top && rowBox.bottom <= listBox.bottom;
+      if (visible) return;
+      row.scrollIntoView({ block: "nearest" });
+    }, [hoveredPath]);
 
     const selectScope = (kind: ScopeKind): void => {
       if (kind === scopeKind) return;
@@ -647,7 +707,10 @@ export function createReviewMapView({
       statNewImports: strings.statNewImports ?? "New imports",
       statDroppedImports: strings.statDroppedImports ?? "Dropped imports",
       indexPartial: strings.indexPartial ?? "indexed {parsed}/{total}",
-      unresolved: strings.unresolved ?? "≥{count} unresolved",
+      unresolved: strings.unresolved ?? "≥{count} unresolved (incl. external)",
+      unresolvedHint:
+        strings.unresolvedHint ??
+        "External packages and dynamic imports are counted here and are not drawn as edges.",
       mapTitle: strings.mapTitle ?? "Directory map",
       mapLoading: strings.mapLoading ?? "Indexing the map",
       mapEmpty: strings.mapEmpty ?? "No structure to lay out",
@@ -705,12 +768,19 @@ export function createReviewMapView({
         return;
       }
       if (event.key === "Escape") {
-        // Escape closes the panel and leaves the row selected, so the reader's
-        // place in the list survives.
-        if (openPath === undefined) return;
-        event.preventDefault();
-        setOpenPath(undefined);
-        setDetailPhase(undefined);
+        // Escape is layered, and the layers are in the order a reader would undo
+        // them: the panel first, then the map's level. Closing the panel leaves
+        // the row selected, so the reader's place in the list survives.
+        if (openPath !== undefined) {
+          event.preventDefault();
+          setOpenPath(undefined);
+          setDetailPhase(undefined);
+          return;
+        }
+        // No panel: the map goes up one level, and only if it actually moved is
+        // the key consumed. At the root `up()` returns false and Escape is left
+        // alone for whatever else might want it.
+        if (mapHandle.current?.up() === true) event.preventDefault();
         return;
       }
       if (event.key === "ArrowDown") {
@@ -778,8 +848,8 @@ export function createReviewMapView({
                       for every reading on this row, so the four cards cannot
                       disagree with each other. Before that the snapshot's own
                       summary is the only answer there is. */}
-                  <span data-rm="stat-add">+{readings?.additions ?? summary.additions}</span>{" "}
-                  <span data-rm="stat-del">−{readings?.deletions ?? summary.deletions}</span>
+                  <span data-rm="stat-add">{signedCount("+", readings?.additions ?? summary.additions)}</span>{" "}
+                  <span data-rm="stat-del">{signedCount("-", readings?.deletions ?? summary.deletions)}</span>
                 </span>
               </div>
               <div data-rm="stat" data-stat="files">
@@ -795,16 +865,23 @@ export function createReviewMapView({
                   <div data-rm="stat" data-stat="new-imports">
                     <span data-rm="stat-label">{mapCopy.statNewImports}</span>
                     <span data-rm="stat-value" data-rm-value="new-imports">
-                      +{readings.newImports}
+                      {signedCount("+", readings.newImports)}
                     </span>
                   </div>
                   <div data-rm="stat" data-stat="dropped-imports">
                     <span data-rm="stat-label">{mapCopy.statDroppedImports}</span>
                     <span data-rm="stat-value" data-rm-value="dropped-imports">
-                      −{readings.droppedImports}
+                      {signedCount("-", readings.droppedImports)}
                     </span>
                     {readings.unresolved > 0 ? (
-                      <span data-rm="unresolved" data-count={readings.unresolved}>
+                      <span
+                        data-rm="unresolved"
+                        data-count={readings.unresolved}
+                        // The count is a lower bound and includes external
+                        // packages, so the tooltip states the rule rather than
+                        // leaving the reader to guess what was counted.
+                        title={mapCopy.unresolvedHint}
+                      >
                         {fill(mapCopy.unresolved, { count: String(readings.unresolved) })}
                       </span>
                     ) : null}
@@ -841,8 +918,10 @@ export function createReviewMapView({
                       file={file}
                       strings={strings}
                       selected={file.path === selected}
+                      hovered={file.path === hoveredPath}
                       onSelect={setSelectedPath}
                       onOpen={open}
+                      onHover={hoverRow}
                       onKey={onKey}
                     />
                   ))
@@ -854,6 +933,13 @@ export function createReviewMapView({
                 aria-label={mapCopy.mapTitle}
                 role="group"
               >
+                {/* The title names the repository, not the word "repo": the map
+                    is a picture of one tree, and the reader needs to know which
+                    one without looking back at the header. */}
+                <p data-rm="map-title">
+                  <span data-rm="map-title-label">{mapCopy.mapTitle}</span>{" "}
+                  <span data-rm="map-title-repo">{repoName}</span>
+                </p>
                 {indexPhase.kind === "loading" ? (
                   <p data-rm="map-loading">{mapCopy.mapLoading}</p>
                 ) : null}

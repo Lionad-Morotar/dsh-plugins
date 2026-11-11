@@ -649,6 +649,7 @@ function fakeMapLoader() {
           path: () => "",
           setHighlight: () => {},
           reveal: () => {},
+          up: () => false,
         };
       },
     };

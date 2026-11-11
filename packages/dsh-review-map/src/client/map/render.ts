@@ -243,6 +243,8 @@ export interface CardContext {
    * map mounted without handlers would be a map that cannot be navigated.
    */
   readonly onDrill?: (path: string) => void;
+  /** The pointer entered or left a file card; `null` means it left. */
+  readonly onHover?: (path: string | null) => void;
 }
 
 /**
@@ -436,6 +438,19 @@ export function fileCard(context: CardContext, tile: Tile, file: MapFileInput): 
     const open = context.onOpenFile;
     group.addEventListener("click", () => {
       open(tile.path);
+    });
+  }
+
+  if (context.onHover !== undefined) {
+    const hover = context.onHover;
+    // `pointerenter`/`pointerleave` rather than `pointerover`/`pointerout`: the
+    // latter fire again for every child the pointer crosses, so a card with a
+    // label and a bar would report four entries for one visit.
+    group.addEventListener("pointerenter", () => {
+      hover(tile.path);
+    });
+    group.addEventListener("pointerleave", () => {
+      hover(null);
     });
   }
   return group;

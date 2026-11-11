@@ -697,6 +697,7 @@ describe("the three-column layout", () => {
             path: () => "",
             setHighlight: () => {},
             reveal: () => {},
+            up: () => false,
           };
         },
       };

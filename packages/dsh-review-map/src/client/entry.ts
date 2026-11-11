@@ -103,6 +103,7 @@ export function apply(ctx: ReviewMapClientContext): () => void {
       statDroppedImports: t("review-map.statDroppedImports"),
       indexPartial: t("review-map.indexPartial"),
       unresolved: t("review-map.unresolved"),
+      unresolvedHint: t("review-map.unresolvedHint"),
       mapTitle: t("review-map.mapTitle"),
       mapLoading: t("review-map.mapLoading"),
       mapEmpty: t("review-map.mapEmpty"),

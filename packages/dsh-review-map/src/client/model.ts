@@ -113,6 +113,22 @@ export function churnOf(file: ChangedFile): Churn {
  * @param churn - the projection.
  * @returns the column's text, or "" when there is nothing to say.
  */
+/**
+ * One side of a churn reading, with the zero case spelled out.
+ *
+ * `+0` and `−0` are the failure this exists to prevent: a sign in front of a zero
+ * reads as "a tiny amount of something" when the truth is "none", and a reader
+ * scanning a row of numbers takes the sign as the fact. A zero side prints as a
+ * bare `0` instead, and the other side keeps its sign.
+ * @param sign - the side's sign, `+` or `−`.
+ * @param value - the count.
+ * @returns the label for that side.
+ */
+export function signedCount(sign: "+" | "-", value: number): string {
+  if (value === 0) return "0";
+  return `${sign === "+" ? PLUS : MINUS}${String(value)}`;
+}
+
 export function churnText(churn: Churn): string {
   const parts: string[] = [];
   if (churn.additions !== null) parts.push(`${PLUS}${String(churn.additions)}`);

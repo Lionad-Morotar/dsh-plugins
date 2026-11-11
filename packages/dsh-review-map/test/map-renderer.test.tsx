@@ -594,3 +594,117 @@ describe("sizing and teardown", () => {
     map.destroy();
   });
 });
+
+describe("hover reporting", () => {
+  it("reports the path when the pointer enters a file card", () => {
+    const element = host();
+    const onHover = vi.fn();
+    const map = createMap(element, data(level([], [{ path: "a.ts", lines: 10, changed: false }])), { onHover }, { width: 900, height: 520 });
+
+    tileAt(element, "a.ts")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+
+    expect(onHover).toHaveBeenCalledWith("a.ts");
+    map.destroy();
+  });
+
+  it("reports null when the pointer leaves", () => {
+    const element = host();
+    const onHover = vi.fn();
+    const map = createMap(element, data(level([], [{ path: "a.ts", lines: 10, changed: false }])), { onHover }, { width: 900, height: 520 });
+
+    tileAt(element, "a.ts")?.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
+
+    expect(onHover).toHaveBeenCalledWith(null);
+    map.destroy();
+  });
+
+  it("does not report a directory as a hovered file", () => {
+    const element = host();
+    const onHover = vi.fn();
+    const map = createMap(
+      element,
+      data({ path: "", dirs: [{ path: "src", lines: 10, changed: false }], files: [] }),
+      { onHover },
+      { width: 900, height: 520 },
+    );
+
+    tileAt(element, "src")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+
+    // A folder is a place to go, not a file to look at; lighting a list row for
+    // it would point at nothing.
+    expect(onHover).not.toHaveBeenCalled();
+    map.destroy();
+  });
+
+  it("mounts without a hover handler", () => {
+    const element = host();
+    const map = createMap(element, data(level([], [{ path: "a.ts", lines: 10, changed: false }])), {}, { width: 900, height: 520 });
+
+    expect(() => {
+      tileAt(element, "a.ts")?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+    }).not.toThrow();
+    map.destroy();
+  });
+});
+
+describe("going up a level", () => {
+  /** A root with one directory and a level inside it. */
+  function twoLevels(): MapData {
+    return data(level([{ path: "src", lines: 900, changed: true }], []), [
+      level([], [{ path: "src/a.ts", lines: 10, changed: false }], "src"),
+    ]);
+  }
+
+  it("returns false at the root and does not move", () => {
+    const element = host();
+    const map = createMap(element, twoLevels(), {}, { width: 900, height: 520 });
+
+    expect(map.up()).toBe(false);
+    expect(map.path()).toBe("");
+    map.destroy();
+  });
+
+  it("returns true and moves to the parent from a nested level", () => {
+    const element = host();
+    const map = createMap(element, twoLevels(), {}, { width: 900, height: 520 });
+    tileAt(element, "src")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(map.path()).toBe("src");
+
+    expect(map.up()).toBe(true);
+
+    expect(map.path()).toBe("");
+    expect(tileAt(element, "src")).not.toBeNull();
+    map.destroy();
+  });
+
+  it("walks a deep path up one segment at a time", () => {
+    const element = host();
+    const levels = new Map<string, MapLevelInput>([
+      ["", level([{ path: "a", lines: 10, changed: false }], [])],
+      ["a", { path: "a", dirs: [{ path: "a/b", lines: 10, changed: false }], files: [] }],
+      ["a/b", { path: "a/b", dirs: [], files: [{ path: "a/b/c.ts", lines: 10, changed: false }] }],
+    ]);
+    const map = createMap(element, { levels, rootPath: "a/b" }, {}, { width: 900, height: 520 });
+
+    expect(map.up()).toBe(true);
+    expect(map.path()).toBe("a");
+    expect(map.up()).toBe(true);
+    expect(map.path()).toBe("");
+    expect(map.up()).toBe(false);
+    map.destroy();
+  });
+});
+
+describe("the map stylesheet", () => {
+  it("injects its own rules once, into the document it draws in", () => {
+    const element = host();
+    const first = createMap(element, data(level([], [{ path: "a.ts", lines: 10, changed: false }])), {}, { width: 900, height: 520 });
+    const second = createMap(element, data(level([], [{ path: "b.ts", lines: 10, changed: false }])), {}, { width: 900, height: 520 });
+
+    // The rules travel with the chunk rather than the startup bundle, and a
+    // second mount must find the first one instead of appending a duplicate.
+    expect(document.querySelectorAll("style[data-rm-map]")).toHaveLength(1);
+    first.destroy();
+    second.destroy();
+  });
+});

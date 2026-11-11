@@ -4,7 +4,226 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
-"use strict";var F=Object.defineProperty;var K=Object.getOwnPropertyDescriptor;var P=Object.getOwnPropertyNames;var Y=Object.prototype.hasOwnProperty;var j=(e,t)=>{for(var n in t)F(e,n,{get:t[n],enumerable:!0})},z=(e,t,n,r)=>{if(t&&typeof t=="object"||typeof t=="function")for(let i of P(t))!Y.call(e,i)&&i!==n&&F(e,i,{get:()=>t[i],enumerable:!(r=K(t,i))||r.enumerable});return e};var J=e=>z(F({},"__esModule",{value:!0}),e);var pt={};j(pt,{createMap:()=>lt,nearestVisibleAncestor:()=>U,pathSegments:()=>q});module.exports=J(pt);function v(e){return Math.round(e*100)/100}function D(e){return e===null||!Number.isFinite(e)?1:Math.max(e,1)}function Q(e){let t=[];for(let n of e.dirs)t.push({path:n.path,kind:"dir",lines:D(n.lines),weight:D(n.lines)});for(let n of e.files){let r=D(n.lines);t.push({path:n.path,kind:"file",lines:r,weight:r})}return t.sort((n,r)=>n.path<r.path?-1:n.path>r.path?1:0)}function C(e,t,n){if(t<=0||n<=0)return Number.POSITIVE_INFINITY;let r=t/n,i=1;for(let s of e){if(s<=0)continue;let a=s/r,d=Math.max(r/a,a/r);d>i&&(i=d)}return i}function Z(e,t){let n=e.reduce((a,d)=>a+d,0),r=[];if(n<=0)return{rects:e.map(()=>({x:t.x,y:t.y,width:0,height:0})),rest:t};if(t.width>=t.height){let a=Math.min(n/t.height,t.width),d=t.y;for(let c of e){let f=t.height>0?c/n*t.height:0;r.push({x:t.x,y:d,width:a,height:f}),d+=f}return{rects:r,rest:{x:t.x+a,y:t.y,width:t.width-a,height:t.height}}}let i=Math.min(n/t.width,t.height),s=t.x;for(let a of e){let d=t.width>0?a/n*t.width:0;r.push({x:s,y:t.y,width:d,height:i}),s+=d}return{rects:r,rest:{x:t.x,y:t.y+i,width:t.width,height:t.height-i}}}function tt(e,t,n){let r=e.reduce((w,p)=>w+p,0),i=n*n;if(r<=0||t<=0||i<=0)return{weights:[...e],floored:!1};let s=e.filter(w=>t*w/r<i);if(s.length===0)return{weights:[...e],floored:!1};let a=s.length,d=s.reduce((w,p)=>w+p,0),c=t-i*a;if(c<=0)return{weights:[...e],floored:!1};let f=i*(r-d)/c;return!Number.isFinite(f)||f<=0?{weights:[...e],floored:!1}:{weights:e.map(w=>Math.max(w,f)),floored:!0}}function W(e,t){let n=Number.isFinite(t.width)?Math.max(t.width,0):0,r=Number.isFinite(t.height)?Math.max(t.height,0):0,i=t.minSide!==void 0&&t.minSide>0?t.minSide:4,s=Q(e);if(s.length===0)return{tiles:[]};if(n<=0||r<=0)return{tiles:s.map(m=>({path:m.path,kind:m.kind,lines:m.lines,x:0,y:0,width:0,height:0}))};let a=n*r,c=tt(s.map(m=>m.weight),a,i).weights,f=c.reduce((m,h)=>m+h,0),w=f>0?a/f:0,p=c.map(m=>m*w),T=[],l={x:0,y:0,width:n,height:r},S=0;for(;S<p.length;){let m=Math.min(l.width,l.height),h=p[S]??0,o=S+1,u=h,y=C([h],u,m);for(;o<p.length;){let b=p[o]??0,E=u+b,x=C(p.slice(S,o+1),E,m);if(x>y)break;y=x,u=E,o+=1}if(o>=p.length){let b=p.slice(S,o),E=b.reduce((x,g)=>x+g,0);if(l.width>=l.height){let x=l.y;for(let g of b){let L=E>0?g/E:1/b.length,_=l.height*L;T.push({x:l.x,y:x,width:l.width,height:_}),x+=_}}else{let x=l.x;for(let g of b){let L=E>0?g/E:1/b.length,_=l.width*L;T.push({x,y:l.y,width:_,height:l.height}),x+=_}}l={x:l.x,y:l.y,width:0,height:0},S=o;continue}let k=Z(p.slice(S,o),l);T.push(...k.rects),l=k.rest,S=o}return{tiles:s.map((m,h)=>{let o=T[h]??{x:0,y:0,width:0,height:0},u=v(o.x),y=v(o.y);return{path:m.path,kind:m.kind,lines:m.lines,x:u,y,width:v(v(o.x+o.width)-u),height:v(v(o.y+o.height)-y)}})}}var R="http://www.w3.org/2000/svg";var et={added:"+",modified:"~",deleted:"\xD7",renamed:"\u2192",copied:"\u29C9","type-changed":"\u21C4",untracked:"?",conflicted:"!",unknown:"\xB7"},nt={added:"solid",modified:"dash-dot",deleted:"dashed",renamed:"double",copied:"double-dot","type-changed":"dotted",untracked:"sparse",conflicted:"hatched",unknown:"none"};function rt(e){return e.changed?e.status??"modified":null}function it(e){return et[e]}function G(e){return nt[e]}function at(e){if(!e.changed)return null;if(e.binary===!0)return"bin";if(e.status==="conflicted")return"conflict";if(e.status==="untracked")return"new";let t=e.additions??null,n=e.deletions??null;if(t===null&&n===null)return null;let r=[];return t!==null&&r.push(`+${String(t)}`),n!==null&&r.push(`\u2212${String(n)}`),r.join(" ")}function N(e){let t=e.lastIndexOf("/");return t<0?e:e.slice(t+1)}function ot(e,t){let n=e.hunks??[];if(n.length===0)return[];let r=t!==null&&t>0?t:null;if(r===null)return[{kind:"add",start:0,width:1}];let i=[];for(let s of n){let a=Math.min(Math.max((s.newStart-1)/r,0),1),d=s.newLines>0?s.newLines/r:0,c=Math.min(Math.max(d,s.newLines>0?.01:.02),1-a);i.push({kind:s.newLines>0?"add":"del",start:a,width:Math.max(c,.01)})}return i}function I(e,t,n){let r=e.createElementNS(R,t);for(let[i,s]of Object.entries(n))r.setAttribute(i,s);return r}function A(e,t,n){let r=I(e,"text",t);return r.textContent=n,r}function $(e,t,n){let{document:r}=e,i=I(r,"g",{"data-rm":"map-tile","data-kind":"dir","data-path":t.path,"data-lines":String(t.lines),"data-changed":n.changed?"true":"false"});if(i.append(I(r,"rect",{x:String(t.x),y:String(t.y),width:String(t.width),height:String(t.height),"data-rm":"map-tile-rect","data-changed":n.changed?"true":"false"})),t.width>=34&&t.height>=18){let s=N(t.path)===""?t.path:N(t.path);i.append(A(r,{x:String(t.x+4),y:String(t.y+12),"data-rm":"map-dir-name"},s));let a=n.changedFiles??0,d=n.pending===!0,c=d?`${String(t.lines)} lines \xB7 pending`:n.changed?`${String(t.lines)} lines \xB7 ${String(a)} changed \xB7 +${String(n.additions??0)} \u2212${String(n.deletions??0)}`:`${String(t.lines)} lines`;t.height>=36&&i.append(A(r,{x:String(t.x+4),y:String(t.y+24),"data-rm":"map-dir-reading","data-pending":d?"true":"false"},c))}if(e.onDrill!==void 0){let s=e.onDrill;i.addEventListener("click",()=>{s(t.path)})}return i}function V(e,t,n){let{document:r}=e,i=rt(n),s=i==="deleted",a={"data-rm":"map-tile","data-kind":"file","data-path":t.path,"data-lines":String(t.lines),"data-changed":n.changed?"true":"false"};i!==null&&(a["data-status"]=i,a["data-shape"]=G(i)),n.additions!==void 0&&n.additions!==null&&(a["data-additions"]=String(n.additions)),n.deletions!==void 0&&n.deletions!==null&&(a["data-deletions"]=String(n.deletions)),s&&(a["data-deleted"]="true"),n.binary===!0&&(a["data-binary"]="true");let d=I(r,"g",a),c={x:String(t.x),y:String(t.y),width:String(t.width),height:String(t.height),"data-rm":"map-tile-rect","data-changed":n.changed?"true":"false"};if(i!==null&&(c["data-status"]=i,c["data-shape"]=G(i)),s&&(c["data-deleted"]="true"),d.append(I(r,"rect",c)),t.width>=34&&t.height>=18&&n.changed){d.append(A(r,{x:String(t.x+4),y:String(t.y+12),"data-rm":"map-file-name"},N(t.path)));let p=at(n);p!==null&&t.height>=36&&d.append(A(r,{x:String(t.x+4),y:String(t.y+24),"data-rm":"map-file-churn"},p)),i!==null&&t.width>=34*1.6&&d.append(A(r,{x:String(t.x+t.width-4),y:String(t.y+12),"text-anchor":"end","data-rm":"map-file-mark","data-status":i,"data-shape":G(i)},it(i)))}let w=n.changed?ot(n,n.lines):[];if(w.length>0&&t.width>=48&&t.height>=18){let p=Math.min(3,Math.max(2,t.height/12)),T=t.y+t.height-p-1,l=t.width-4,S=I(r,"g",{"data-rm":"map-bar","data-path":t.path});for(let M of w)S.append(I(r,"rect",{x:String(t.x+2+M.start*l),y:String(T),width:String(Math.max(M.width*l,.5)),height:String(p),"data-rm":"map-bar-seg","data-kind":M.kind,"data-start":M.start.toFixed(4),"data-width":M.width.toFixed(4)}));d.append(S)}if(e.onOpenFile!==void 0){let p=e.onOpenFile;d.addEventListener("click",()=>{p(t.path)})}return d}function X(e,t,n){let r=I(e,"g",{"data-rm":"map-overflow","data-hidden":String(t)});return r.append(I(e,"rect",{x:String(n.x),y:String(n.y),width:String(n.width),height:String(n.height),"data-rm":"map-overflow-rect"})),n.width>=34&&n.height>=18&&r.append(A(e,{x:String(n.x+4),y:String(n.y+12),"data-rm":"map-overflow-text"},`${String(t)} more files`)),r}function B(e){if(e.length<=400)return{files:[...e],hidden:0};let n=[...e].sort((r,i)=>{let s=r.lines??0,a=i.lines??0;return s!==a?a-s:r.path<i.path?-1:r.path>i.path?1:0}).slice(0,400).sort((r,i)=>r.path<i.path?-1:r.path>i.path?1:0);return{files:n,hidden:e.length-n.length}}var st=900,dt=520,ct=26,ht=20;function ut(e,t){let n=t.width??(e.clientWidth>0?e.clientWidth:st),r=t.height??(e.clientHeight>0?e.clientHeight:dt);return{width:n,height:Math.max(r-ct,0)}}function q(e){let t=[""];if(e==="")return t;let n="";for(let r of e.split("/"))r!==""&&(n=n===""?r:`${n}/${r}`,t.push(n));return t}function U(e,t){if(t!==""&&e!==t&&!e.startsWith(`${t}/`))return null;let n=t===""?e:e.slice(t.length+1);if(n==="")return null;let r=n.indexOf("/"),i=r<0?n:n.slice(0,r);return t===""?i:`${t}/${i}`}function lt(e,t,n={},r={}){let i=e.ownerDocument,s=r.title??"repo",a=i.createElement("div");a.setAttribute("data-rm","map-root");let d=i.createElement("nav");d.setAttribute("data-rm","map-breadcrumb"),a.append(d);let c=i.createElementNS(R,"svg");c.setAttribute("data-review-map","map"),c.setAttribute("preserveAspectRatio","none"),a.append(c),e.append(a);let f=t.rootPath,w=null,p=h=>{let o=t.levels.get(h);if(o===void 0)return{level:{path:h,dirs:[],files:[]},hidden:0};let u=B(o.files);return{level:{path:o.path,dirs:o.dirs,files:u.files},hidden:u.hidden}},T=h=>{d.replaceChildren();for(let o of q(h)){let u=i.createElement("button");u.type="button",u.setAttribute("data-rm","map-crumb"),u.setAttribute("data-path",o),u.setAttribute("data-current",o===h?"true":"false"),u.textContent=o===""?s:o.slice(o.lastIndexOf("/")+1),u.addEventListener("click",()=>{S(o)}),d.append(u)}},l=()=>{for(let H of c.querySelectorAll("[data-highlighted]"))H.removeAttribute("data-highlighted");for(let H of d.querySelectorAll("[data-breadcrumb-target]"))H.removeAttribute("data-breadcrumb-target");if(w===null)return;let h=c.querySelector(`[data-rm="map-tile"][data-path="${O(w)}"]`);if(h!==null){h.setAttribute("data-highlighted","true");return}let o=U(w,f);if(o===null)return;let u=c.querySelector(`[data-rm="map-tile"][data-path="${O(o)}"]`);u!==null&&u.setAttribute("data-highlighted","true");let y=d.querySelector(`[data-rm="map-crumb"][data-path="${O(f)}"]`);y!==null&&y.setAttribute("data-breadcrumb-target","true")},S=(h,o=!0)=>{h!==f&&(M(h),o&&n.onDrill?.(h))},M=h=>{f=h;let{width:o,height:u}=ut(e,r);c.setAttribute("viewBox",`0 0 ${String(o)} ${String(u)}`),c.setAttribute("width","100%"),c.setAttribute("height",String(u)),c.replaceChildren();let{level:y,hidden:H}=p(h);T(h);let k=new Map(y.dirs.map(g=>[g.path,g])),b=new Map(y.files.map(g=>[g.path,g])),E=W({path:y.path,dirs:y.dirs,files:y.files},{width:o,height:u}),x={document:i,...n.onOpenFile===void 0?{}:{onOpenFile:n.onOpenFile},onDrill:g=>{S(g)}};for(let g of E.tiles){let L=k.get(g.path);if(L!==void 0){c.append($(x,g,L));continue}let _=b.get(g.path);_!==void 0&&c.append(V(x,g,_))}if(H>0){let g=Math.min(ht,u);c.append(X(i,H,{x:0,y:Math.max(u-g,0),width:o,height:g}))}l()},m=h=>{h.key==="Escape"&&f!==""&&S(f.slice(0,Math.max(f.lastIndexOf("/"),0)))};return e.addEventListener("keydown",m),M(f),{destroy(){e.removeEventListener("keydown",m),a.remove()},path(){return f},setHighlight(h){w=h,l()},reveal(h){w=h,l()}}}function O(e){return e.replace(/["\\]/gu,"\\$&")}
+"use strict";var F=Object.defineProperty;var Y=Object.getOwnPropertyDescriptor;var K=Object.getOwnPropertyNames;var j=Object.prototype.hasOwnProperty;var J=(e,t)=>{for(var a in t)F(e,a,{get:t[a],enumerable:!0})},Q=(e,t,a,r)=>{if(t&&typeof t=="object"||typeof t=="function")for(let n of K(t))!j.call(e,n)&&n!==a&&F(e,n,{get:()=>t[n],enumerable:!(r=Y(t,n))||r.enumerable});return e};var Z=e=>Q(F({},"__esModule",{value:!0}),e);var ft={};J(ft,{createMap:()=>gt,nearestVisibleAncestor:()=>z,pathSegments:()=>U});module.exports=Z(ft);function _(e){return Math.round(e*100)/100}function R(e){return e===null||!Number.isFinite(e)?1:Math.max(e,1)}function tt(e){let t=[];for(let a of e.dirs)t.push({path:a.path,kind:"dir",lines:R(a.lines),weight:R(a.lines)});for(let a of e.files){let r=R(a.lines);t.push({path:a.path,kind:"file",lines:r,weight:r})}return t.sort((a,r)=>a.path<r.path?-1:a.path>r.path?1:0)}function C(e,t,a){if(t<=0||a<=0)return Number.POSITIVE_INFINITY;let r=t/a,n=1;for(let d of e){if(d<=0)continue;let i=d/r,o=Math.max(r/i,i/r);o>n&&(n=o)}return n}function et(e,t){let a=e.reduce((i,o)=>i+o,0),r=[];if(a<=0)return{rects:e.map(()=>({x:t.x,y:t.y,width:0,height:0})),rest:t};if(t.width>=t.height){let i=Math.min(a/t.height,t.width),o=t.y;for(let h of e){let m=t.height>0?h/a*t.height:0;r.push({x:t.x,y:o,width:i,height:m}),o+=m}return{rects:r,rest:{x:t.x+i,y:t.y,width:t.width-i,height:t.height}}}let n=Math.min(a/t.width,t.height),d=t.x;for(let i of e){let o=t.width>0?i/a*t.width:0;r.push({x:d,y:t.y,width:o,height:n}),d+=o}return{rects:r,rest:{x:t.x,y:t.y+n,width:t.width,height:t.height-n}}}function at(e,t,a){let r=e.reduce((w,p)=>w+p,0),n=a*a;if(r<=0||t<=0||n<=0)return{weights:[...e],floored:!1};let d=e.filter(w=>t*w/r<n);if(d.length===0)return{weights:[...e],floored:!1};let i=d.length,o=d.reduce((w,p)=>w+p,0),h=t-n*i;if(h<=0)return{weights:[...e],floored:!1};let m=n*(r-o)/h;return!Number.isFinite(m)||m<=0?{weights:[...e],floored:!1}:{weights:e.map(w=>Math.max(w,m)),floored:!0}}function $(e,t){let a=Number.isFinite(t.width)?Math.max(t.width,0):0,r=Number.isFinite(t.height)?Math.max(t.height,0):0,n=t.minSide!==void 0&&t.minSide>0?t.minSide:4,d=tt(e);if(d.length===0)return{tiles:[]};if(a<=0||r<=0)return{tiles:d.map(f=>({path:f.path,kind:f.kind,lines:f.lines,x:0,y:0,width:0,height:0}))};let i=a*r,h=at(d.map(f=>f.weight),i,n).weights,m=h.reduce((f,l)=>f+l,0),w=m>0?i/m:0,p=h.map(f=>f*w),k=[],u={x:0,y:0,width:a,height:r},b=0;for(;b<p.length;){let f=Math.min(u.width,u.height),l=p[b]??0,s=b+1,c=l,y=C([l],c,f);for(;s<p.length;){let S=p[s]??0,M=c+S,x=C(p.slice(b,s+1),M,f);if(x>y)break;y=x,c=M,s+=1}if(s>=p.length){let S=p.slice(b,s),M=S.reduce((x,g)=>x+g,0);if(u.width>=u.height){let x=u.y;for(let g of S){let H=M>0?g/M:1/S.length,T=u.height*H;k.push({x:u.x,y:x,width:u.width,height:T}),x+=T}}else{let x=u.x;for(let g of S){let H=M>0?g/M:1/S.length,T=u.width*H;k.push({x,y:u.y,width:T,height:u.height}),x+=T}}u={x:u.x,y:u.y,width:0,height:0},b=s;continue}let A=et(p.slice(b,s),u);k.push(...A.rects),u=A.rest,b=s}return{tiles:d.map((f,l)=>{let s=k[l]??{x:0,y:0,width:0,height:0},c=_(s.x),y=_(s.y);return{path:f.path,kind:f.kind,lines:f.lines,x:c,y,width:_(_(s.x+s.width)-c),height:_(_(s.y+s.height)-y)}})}}var N="http://www.w3.org/2000/svg";var rt={added:"+",modified:"~",deleted:"\xD7",renamed:"\u2192",copied:"\u29C9","type-changed":"\u21C4",untracked:"?",conflicted:"!",unknown:"\xB7"},nt={added:"solid",modified:"dash-dot",deleted:"dashed",renamed:"double",copied:"double-dot","type-changed":"dotted",untracked:"sparse",conflicted:"hatched",unknown:"none"};function it(e){return e.changed?e.status??"modified":null}function st(e){return rt[e]}function D(e){return nt[e]}function ot(e){if(!e.changed)return null;if(e.binary===!0)return"bin";if(e.status==="conflicted")return"conflict";if(e.status==="untracked")return"new";let t=e.additions??null,a=e.deletions??null;if(t===null&&a===null)return null;let r=[];return t!==null&&r.push(`+${String(t)}`),a!==null&&r.push(`\u2212${String(a)}`),r.join(" ")}function G(e){let t=e.lastIndexOf("/");return t<0?e:e.slice(t+1)}function dt(e,t){let a=e.hunks??[];if(a.length===0)return[];let r=t!==null&&t>0?t:null;if(r===null)return[{kind:"add",start:0,width:1}];let n=[];for(let d of a){let i=Math.min(Math.max((d.newStart-1)/r,0),1),o=d.newLines>0?d.newLines/r:0,h=Math.min(Math.max(o,d.newLines>0?.01:.02),1-i);n.push({kind:d.newLines>0?"add":"del",start:i,width:Math.max(h,.01)})}return n}function E(e,t,a){let r=e.createElementNS(N,t);for(let[n,d]of Object.entries(a))r.setAttribute(n,d);return r}function L(e,t,a){let r=E(e,"text",t);return r.textContent=a,r}function W(e,t,a){let{document:r}=e,n=E(r,"g",{"data-rm":"map-tile","data-kind":"dir","data-path":t.path,"data-lines":String(t.lines),"data-changed":a.changed?"true":"false"});if(n.append(E(r,"rect",{x:String(t.x),y:String(t.y),width:String(t.width),height:String(t.height),"data-rm":"map-tile-rect","data-changed":a.changed?"true":"false"})),t.width>=34&&t.height>=18){let d=G(t.path)===""?t.path:G(t.path);n.append(L(r,{x:String(t.x+4),y:String(t.y+12),"data-rm":"map-dir-name"},d));let i=a.changedFiles??0,o=a.pending===!0,h=o?`${String(t.lines)} lines \xB7 pending`:a.changed?`${String(t.lines)} lines \xB7 ${String(i)} changed \xB7 +${String(a.additions??0)} \u2212${String(a.deletions??0)}`:`${String(t.lines)} lines`;t.height>=36&&n.append(L(r,{x:String(t.x+4),y:String(t.y+24),"data-rm":"map-dir-reading","data-pending":o?"true":"false"},h))}if(e.onDrill!==void 0){let d=e.onDrill;n.addEventListener("click",()=>{d(t.path)})}return n}function V(e,t,a){let{document:r}=e,n=it(a),d=n==="deleted",i={"data-rm":"map-tile","data-kind":"file","data-path":t.path,"data-lines":String(t.lines),"data-changed":a.changed?"true":"false"};n!==null&&(i["data-status"]=n,i["data-shape"]=D(n)),a.additions!==void 0&&a.additions!==null&&(i["data-additions"]=String(a.additions)),a.deletions!==void 0&&a.deletions!==null&&(i["data-deletions"]=String(a.deletions)),d&&(i["data-deleted"]="true"),a.binary===!0&&(i["data-binary"]="true");let o=E(r,"g",i),h={x:String(t.x),y:String(t.y),width:String(t.width),height:String(t.height),"data-rm":"map-tile-rect","data-changed":a.changed?"true":"false"};if(n!==null&&(h["data-status"]=n,h["data-shape"]=D(n)),d&&(h["data-deleted"]="true"),o.append(E(r,"rect",h)),t.width>=34&&t.height>=18&&a.changed){o.append(L(r,{x:String(t.x+4),y:String(t.y+12),"data-rm":"map-file-name"},G(t.path)));let p=ot(a);p!==null&&t.height>=36&&o.append(L(r,{x:String(t.x+4),y:String(t.y+24),"data-rm":"map-file-churn"},p)),n!==null&&t.width>=34*1.6&&o.append(L(r,{x:String(t.x+t.width-4),y:String(t.y+12),"text-anchor":"end","data-rm":"map-file-mark","data-status":n,"data-shape":D(n)},st(n)))}let w=a.changed?dt(a,a.lines):[];if(w.length>0&&t.width>=48&&t.height>=18){let p=Math.min(3,Math.max(2,t.height/12)),k=t.y+t.height-p-1,u=t.width-4,b=E(r,"g",{"data-rm":"map-bar","data-path":t.path});for(let v of w)b.append(E(r,"rect",{x:String(t.x+2+v.start*u),y:String(k),width:String(Math.max(v.width*u,.5)),height:String(p),"data-rm":"map-bar-seg","data-kind":v.kind,"data-start":v.start.toFixed(4),"data-width":v.width.toFixed(4)}));o.append(b)}if(e.onOpenFile!==void 0){let p=e.onOpenFile;o.addEventListener("click",()=>{p(t.path)})}if(e.onHover!==void 0){let p=e.onHover;o.addEventListener("pointerenter",()=>{p(t.path)}),o.addEventListener("pointerleave",()=>{p(null)})}return o}function X(e,t,a){let r=E(e,"g",{"data-rm":"map-overflow","data-hidden":String(t)});return r.append(E(e,"rect",{x:String(a.x),y:String(a.y),width:String(a.width),height:String(a.height),"data-rm":"map-overflow-rect"})),a.width>=34&&a.height>=18&&r.append(L(e,{x:String(a.x+4),y:String(a.y+12),"data-rm":"map-overflow-text"},`${String(t)} more files`)),r}function B(e){if(e.length<=400)return{files:[...e],hidden:0};let a=[...e].sort((r,n)=>{let d=r.lines??0,i=n.lines??0;return d!==i?i-d:r.path<n.path?-1:r.path>n.path?1:0}).slice(0,400).sort((r,n)=>r.path<n.path?-1:r.path>n.path?1:0);return{files:a,hidden:e.length-a.length}}var q="data-rm-map",lt=`/* The directory map's own stylesheet, injected by the chunk that draws it.
+   Scoped to the map's data-rm namespace rather than to the tab, because the map
+   is mounted into a host the view owns and must not need the tab's wrapper to be
+   styled. Colours are host tokens with a hex fallback: the map has to survive a
+   host that ships no palette at all. */
+[data-rm="map-root"] {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  color: var(--dsw-alias-label-primary, #14110d);
+  font-family: var(--dsh-font-sans, ui-sans-serif, system-ui, sans-serif);
+
+  /* The map's own state colours, derived from host tokens so a theme switch
+     moves them without a second block of rules. */
+  --rm-map-add: var(--dsw-alias-state-success-primary, #1a7f37);
+  --rm-map-del: var(--dsw-alias-state-error-primary, #cf222e);
+  --rm-map-warn: var(--dsw-alias-state-warning-primary, #bf8700);
+  --rm-map-surface: var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.03));
+  --rm-map-surface-strong: var(--dsw-alias-bg-layer-3, rgba(0, 0, 0, 0.07));
+  --rm-map-border: var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.12));
+  --rm-map-muted: var(--dsw-alias-label-tertiary, #a39c91);
+  --rm-map-secondary: var(--dsw-alias-label-secondary, #6b655c);
+}
+
+/* Breadcrumb: one button per level, root first. */
+[data-rm="map-breadcrumb"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 26px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--dsh-font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: max(9px, var(--dsh-code-font-size, 11px));
+}
+
+[data-rm="map-crumb"] {
+  font: inherit;
+  padding: 1px 6px;
+  color: var(--rm-map-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+[data-rm="map-crumb"]:hover {
+  background: var(--rm-map-surface);
+}
+
+[data-rm="map-crumb"][data-current="true"] {
+  color: var(--dsw-alias-label-primary, #14110d);
+  font-weight: 600;
+}
+
+/* The crumb that holds a highlighted target the map has not drilled into. */
+[data-rm="map-crumb"][data-breadcrumb-target="true"] {
+  border-color: var(--rm-map-warn);
+  color: var(--dsw-alias-label-primary, #14110d);
+}
+
+[data-rm="map-root"] svg {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: block;
+  width: 100%;
+}
+
+/* Cards. The rect carries the surface; the group carries the identity. */
+[data-rm="map-tile"] {
+  cursor: pointer;
+}
+
+[data-rm="map-tile-rect"] {
+  fill: var(--rm-map-surface);
+  stroke: var(--rm-map-border);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* A changed card is drawn on a stronger surface and a heavier border: the map
+   must show what changed before it shows what did not. */
+[data-rm="map-tile-rect"][data-changed="true"] {
+  fill: var(--rm-map-surface-strong);
+  stroke: var(--rm-map-secondary);
+  stroke-width: 1;
+}
+
+[data-rm="map-tile"]:hover [data-rm="map-tile-rect"] {
+  stroke: var(--dsw-alias-label-primary, #14110d);
+}
+
+[data-rm="map-tile"][data-highlighted="true"] [data-rm="map-tile-rect"] {
+  stroke: var(--dsw-alias-label-primary, #14110d);
+  stroke-width: 2;
+}
+
+/* Status: colour and shape, both. The dash patterns are the shape channel, so a
+   greyscale render still separates the states; the fills are the colour one. */
+[data-rm="map-tile-rect"][data-status="added"] {
+  fill: color-mix(in srgb, var(--rm-map-add) 16%, transparent);
+  stroke: var(--rm-map-add);
+}
+
+[data-rm="map-tile-rect"][data-status="modified"] {
+  fill: color-mix(in srgb, var(--rm-map-warn) 14%, transparent);
+  stroke: var(--rm-map-warn);
+}
+
+[data-rm="map-tile-rect"][data-status="deleted"] {
+  fill: color-mix(in srgb, var(--rm-map-del) 16%, transparent);
+  stroke: var(--rm-map-del);
+  stroke-dasharray: 4 2;
+}
+
+[data-rm="map-tile-rect"][data-status="untracked"] {
+  fill: color-mix(in srgb, var(--rm-map-add) 8%, transparent);
+  stroke: var(--rm-map-add);
+  stroke-dasharray: 1 2;
+}
+
+[data-rm="map-tile-rect"][data-status="conflicted"] {
+  fill: color-mix(in srgb, var(--rm-map-del) 10%, transparent);
+  stroke: var(--rm-map-warn);
+  stroke-dasharray: 2 1 4 1;
+}
+
+[data-rm="map-tile-rect"][data-status="renamed"],
+[data-rm="map-tile-rect"][data-status="copied"] {
+  fill: color-mix(in srgb, var(--rm-map-secondary) 10%, transparent);
+  stroke: var(--rm-map-secondary);
+  stroke-dasharray: 6 2;
+}
+
+[data-rm="map-tile-rect"][data-status="type-changed"] {
+  fill: color-mix(in srgb, var(--rm-map-warn) 8%, transparent);
+  stroke: var(--rm-map-warn);
+  stroke-dasharray: 1 3;
+}
+
+/* A deleted card is struck through as well as dashed: the dash says "gone" at a
+   glance, the strike says it again on the label, and neither depends on colour. */
+[data-rm="map-tile"][data-deleted="true"] [data-rm="map-file-name"] {
+  text-decoration: line-through;
+  fill: var(--rm-map-muted);
+}
+
+/* Text. 9px is the floor: below it a label is a smudge, and the renderer drops
+   the text entirely rather than drawing something unreadable. */
+[data-rm="map-root"] text {
+  font-family: var(--dsh-font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 9px;
+  fill: var(--dsw-alias-label-primary, #14110d);
+  pointer-events: none;
+}
+
+[data-rm="map-dir-name"] {
+  font-weight: 600;
+}
+
+[data-rm="map-dir-reading"],
+[data-rm="map-file-churn"] {
+  fill: var(--rm-map-secondary);
+}
+
+[data-rm="map-dir-reading"][data-pending="true"] {
+  fill: var(--rm-map-muted);
+  font-style: italic;
+}
+
+[data-rm="map-file-mark"][data-status="added"] {
+  fill: var(--rm-map-add);
+}
+
+[data-rm="map-file-mark"][data-status="deleted"] {
+  fill: var(--rm-map-del);
+}
+
+[data-rm="map-file-mark"][data-status="conflicted"] {
+  fill: var(--rm-map-warn);
+}
+
+/* The distribution bar: where in the file the edits landed. */
+[data-rm="map-bar-seg"][data-kind="add"] {
+  fill: var(--rm-map-add);
+}
+
+[data-rm="map-bar-seg"][data-kind="del"] {
+  fill: var(--rm-map-del);
+}
+
+/* The aggregate marker a capped level shows instead of silently dropping files. */
+[data-rm="map-overflow-rect"] {
+  fill: var(--rm-map-surface);
+  stroke: var(--rm-map-border);
+  stroke-dasharray: 2 2;
+  stroke-width: 0.5;
+}
+
+[data-rm="map-overflow-text"] {
+  fill: var(--rm-map-muted);
+  font-style: italic;
+}
+/* Hover, from either side of the linkage. A hovered card and a highlighted card
+   are different states: hover is where the pointer is, highlight is what the
+   list is pointing at, and a reader can be doing both at once. */
+[data-rm="map-tile"][data-hovered="true"] [data-rm="map-tile-rect"] {
+  stroke: var(--dsw-alias-label-primary, #14110d);
+  stroke-width: 1.5;
+}
+
+[data-rm="map-tile"][data-highlighted="true"] [data-rm="map-tile-rect"] {
+  stroke: var(--dsw-alias-label-primary, #14110d);
+  stroke-width: 2;
+}
+`;function P(e){let t=e.querySelector(`style[${q}]`);if(t!==null)return t;let a=e.createElement("style");return a.setAttribute(q,""),a.textContent=lt,e.head.append(a),a}var ht=900,ct=520,pt=26,ut=20;function mt(e,t){let a=t.width??(e.clientWidth>0?e.clientWidth:ht),r=t.height??(e.clientHeight>0?e.clientHeight:ct);return{width:a,height:Math.max(r-pt,0)}}function U(e){let t=[""];if(e==="")return t;let a="";for(let r of e.split("/"))r!==""&&(a=a===""?r:`${a}/${r}`,t.push(a));return t}function z(e,t){if(t!==""&&e!==t&&!e.startsWith(`${t}/`))return null;let a=t===""?e:e.slice(t.length+1);if(a==="")return null;let r=a.indexOf("/"),n=r<0?a:a.slice(0,r);return t===""?n:`${t}/${n}`}function gt(e,t,a={},r={}){let n=e.ownerDocument;P(n);let d=r.title??"repo",i=n.createElement("div");i.setAttribute("data-rm","map-root");let o=n.createElement("nav");o.setAttribute("data-rm","map-breadcrumb"),i.append(o);let h=n.createElementNS(N,"svg");h.setAttribute("data-review-map","map"),h.setAttribute("preserveAspectRatio","none"),i.append(h),e.append(i);let m=t.rootPath,w=null,p=l=>{let s=t.levels.get(l);if(s===void 0)return{level:{path:l,dirs:[],files:[]},hidden:0};let c=B(s.files);return{level:{path:s.path,dirs:s.dirs,files:c.files},hidden:c.hidden}},k=l=>{o.replaceChildren();for(let s of U(l)){let c=n.createElement("button");c.type="button",c.setAttribute("data-rm","map-crumb"),c.setAttribute("data-path",s),c.setAttribute("data-current",s===l?"true":"false"),c.textContent=s===""?d:s.slice(s.lastIndexOf("/")+1),c.addEventListener("click",()=>{b(s)}),o.append(c)}},u=()=>{for(let I of h.querySelectorAll("[data-highlighted]"))I.removeAttribute("data-highlighted");for(let I of o.querySelectorAll("[data-breadcrumb-target]"))I.removeAttribute("data-breadcrumb-target");if(w===null)return;let l=h.querySelector(`[data-rm="map-tile"][data-path="${O(w)}"]`);if(l!==null){l.setAttribute("data-highlighted","true");return}let s=z(w,m);if(s===null)return;let c=h.querySelector(`[data-rm="map-tile"][data-path="${O(s)}"]`);c!==null&&c.setAttribute("data-highlighted","true");let y=o.querySelector(`[data-rm="map-crumb"][data-path="${O(m)}"]`);y!==null&&y.setAttribute("data-breadcrumb-target","true")},b=(l,s=!0)=>{l!==m&&(v(l),s&&a.onDrill?.(l))},v=l=>{m=l;let{width:s,height:c}=mt(e,r);h.setAttribute("viewBox",`0 0 ${String(s)} ${String(c)}`),h.setAttribute("width","100%"),h.setAttribute("height",String(c)),h.replaceChildren();let{level:y,hidden:I}=p(l);k(l);let A=new Map(y.dirs.map(g=>[g.path,g])),S=new Map(y.files.map(g=>[g.path,g])),M=$({path:y.path,dirs:y.dirs,files:y.files},{width:s,height:c}),x={document:n,...a.onOpenFile===void 0?{}:{onOpenFile:a.onOpenFile},onDrill:g=>{b(g)},...a.onHover===void 0?{}:{onHover:a.onHover}};for(let g of M.tiles){let H=A.get(g.path);if(H!==void 0){h.append(W(x,g,H));continue}let T=S.get(g.path);T!==void 0&&h.append(V(x,g,T))}if(I>0){let g=Math.min(ut,c);h.append(X(n,I,{x:0,y:Math.max(c-g,0),width:s,height:g}))}u()},f=l=>{l.key==="Escape"&&m!==""&&b(m.slice(0,Math.max(m.lastIndexOf("/"),0)))};return e.addEventListener("keydown",f),v(m),{destroy(){e.removeEventListener("keydown",f),i.remove()},path(){return m},setHighlight(l){w=l,u()},reveal(l){w=l,u()},up(){if(m==="")return!1;let l=m.slice(0,Math.max(m.lastIndexOf("/"),0));return b(l,!1),!0}}}function O(e){return e.replace(/["\\]/gu,"\\$&")}
 
     return module.exports.default ?? module.exports;
   }

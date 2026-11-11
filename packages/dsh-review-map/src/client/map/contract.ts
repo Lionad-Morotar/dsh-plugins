@@ -149,6 +149,18 @@ export interface MapData {
 export interface MapHandlers {
   readonly onOpenFile?: (path: string) => void;
   readonly onDrill?: (path: string) => void;
+  /**
+   * The pointer entered or left a file card.
+   *
+   * `null` means it left. Reported synchronously from `pointerenter` /
+   * `pointerleave` rather than through a timer: the requirement puts the
+   * linkage's latency at 100ms, and a debounce would spend most of that budget
+   * on a delay nobody asked for.
+   *
+   * Only file cards report: a directory is a place to go, not a file to look at,
+   * and highlighting a list row for a folder would point at nothing.
+   */
+  readonly onHover?: (path: string | null) => void;
 }
 
 /**
@@ -189,4 +201,12 @@ export interface MapHandle {
    * it, and it must never change the level either.
    */
   reveal(path: string): void;
+  /**
+   * Go up one level.
+   *
+   * Returns whether it actually moved: at the root there is nothing above, and
+   * the caller needs to know that so `Escape` can fall through to whatever else
+   * it might mean instead of being silently swallowed.
+   */
+  up(): boolean;
 }
