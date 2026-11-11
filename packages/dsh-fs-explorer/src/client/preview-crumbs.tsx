@@ -263,6 +263,11 @@ export function PreviewCrumbs(props: PreviewCrumbsProps): ReactElement {
   return (
     <div
       className="fx-preview-crumbs"
+      // The breadcrumb is a control, not chat prose: every crumb carries the
+      // path in `title`, which the command panel's reference links would read
+      // as a document reference and claim the click for. Opting the widget out
+      // keeps the click on the crumb, where it opens the sibling panel.
+      data-dcp-ref-skip=""
       title={interactive ? undefined : unavailableReason}
       data-interactive={interactive ? "true" : "false"}
     >

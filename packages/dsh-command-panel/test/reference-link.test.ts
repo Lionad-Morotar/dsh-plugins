@@ -18,6 +18,7 @@ import {
   installReferenceLinks,
   normalizeReferenceTarget,
   referenceCandidates,
+  REF_LINK_SKIP_ATTR,
   REF_LINK_ATTR,
   type ReferenceLinkHost,
   type ReferenceProbe,
@@ -564,6 +565,32 @@ describe("installReferenceLinks", () => {
     expect(button.hasAttribute(REF_LINK_ATTR)).toBe(false);
     expect(click(window, button)).toBe(false);
     expect(hostClick).toHaveBeenCalled();
+    stop();
+  });
+
+  it("leaves a control inside a marked widget to its owner", async () => {
+    // A breadcrumb's label is a path in `title`, so without the opt-out the
+    // detector would take over its click and enter the directory instead of
+    // letting the breadcrumb open its own siblings panel.
+    const { window, doc } = page();
+    const widget = doc.createElement("div");
+    widget.setAttribute(REF_LINK_SKIP_ATTR, "");
+    const button = doc.createElement("button");
+    button.setAttribute("type", "button");
+    button.setAttribute("title", "docs/reports");
+    button.textContent = "reports";
+    widget.append(button);
+    doc.body.append(widget);
+    const hostClick = vi.fn();
+    doc.addEventListener("click", hostClick);
+    const face = host({ resolve: answers({ "docs/reports": { kind: "directory", path: "docs/reports" } }) });
+    const stop = installReferenceLinks(doc, face);
+
+    await hover(window, button);
+    expect(button.hasAttribute(REF_LINK_ATTR)).toBe(false);
+    expect(click(window, button)).toBe(false);
+    expect(hostClick).toHaveBeenCalledTimes(1);
+    expect(face.enterDirectory).not.toHaveBeenCalled();
     stop();
   });
 

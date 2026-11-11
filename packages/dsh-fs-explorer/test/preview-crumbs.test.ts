@@ -97,6 +97,14 @@ describe("PreviewCrumbs", () => {
     expect(host.querySelector(".fx-preview-crumbs")?.getAttribute("title")).toBe("提交版本");
   });
 
+  it("opts its controls out of the command panel's reference links", async () => {
+    // Every crumb carries the path in `title`, which the reference-link
+    // recogniser would otherwise claim as a document reference before the
+    // crumb's own click can open the sibling panel.
+    await mount();
+    expect(host.querySelector(".fx-preview-crumbs")?.getAttribute("data-dcp-ref-skip")).toBe("");
+  });
+
   it("lists the clicked crumb's siblings with the current one highlighted", async () => {
     const list = vi.fn(async () => ({
       entries: [entry("c.ts", "file"), entry("b", "directory")],
