@@ -38,11 +38,24 @@
 
 `languageFor(path)` 是只取 id 的视图，等价于 `matchLanguage(path)?.id ?? "plaintext"`。
 
-## chunk 标记与 LANGUAGE_CHUNKS
+## 块是 bundle，不是语言
 
-每行有 `chunk: boolean`。标 `true` 的十种语言各自有一个语法 chunk：`javascript`、`json`、`markdown`、`css`、`html`、`yaml`、`python`、`typescript`、`typescriptreact`、`javascriptreact`。
+每行的 `chunk` 字段是一个**块名**，不是布尔值。块是打包单位，不是语言单位：一个块里可以装好几门语言，因为每个块都内联一份 CodeMirror（约 86 KB gzip），一门语言一个块会把下载量推到没有意义的量级。
 
-`LANGUAGE_CHUNKS` 是从这十行派生的只读名表（id 到 `client.lang-<id>.js`），不是手写的第二份清单：改 `chunk` 标记，名表跟着变。
+当前 14 个块覆盖 64 行：
+
+- 10 个单语言块，块名等于语言 id：`css`、`html`、`javascript`、`javascriptreact`、`json`、`markdown`、`python`、`typescript`、`typescriptreact`、`yaml`。
+- 4 个批量块：`batch-systems`（C 家族与 .NET）、`batch-script`（脚本与通用语言）、`batch-webstyle`（标记、样式与配置）、`batch-datadoc`（查询、标记语言与文档）。
+- 9 行复用既有块，不新增产物：`vue` / `svelte` / `razor` 归 `html`，`juliamarkdown` / `prompt` / `instructions` / `chatagent` / `skill` 归 `markdown`，`dockercompose` 归 `yaml`。
+
+12 行没有块，保持单色：8 条 backlog（`bat`、`git-commit`、`git-rebase`、`log`、`bibtex`、`makefile`、`restructuredtext`、`search-result`）与 4 条 excluded（`jsx-tags`、`cpp_embedded_latex`、`markdown_latex_combined`、`markdown-math`）。显式 `plaintext` 行也没有块，它是仓内自建行而非语言。
+
+两张表都从行数据派生，不是手写的第二份清单：
+
+- `LANGUAGE_CHUNKS`：语言 id 到产物文件名（`client.lang-<块名>.js`）。
+- `LANGUAGE_CHUNK_LANGUAGES`：块名到该块负责的语言 id 列表，顺序即块归属表的顺序。批量块按这个列表分发语法，构建会断言它与块内 `ids` 导出逐条一致。
+
+读侧按四档判定语言（文件名、glob、后缀、首行），命中且有块才取那一块；纯文本文件（`.txt`、`LICENSE`、`Makefile` 等）由 `builtin.plaintext` 直出文本，一个块都不取。
 
 ## 为什么没有 lib/
 
@@ -56,7 +69,7 @@
 
 1. 在 `src/snapshot.ts` 加一行，五个字段照抄上游，`disposition` 取 `exact` / `approx` / `backlog` / `excluded` 之一；
 2. 若不是 `exact`，在 `src/catalog.ts` 的 `GRAMMARS` 里给它一个近似语法源，或在 `REASONS` 里写明为什么留单色；
-3. 若它要单独出一个语法 chunk，把 id 加进 `CHUNK_IDS`，并在消费包的 `chunk/lang/` 下补一个入口。
+3. 在 `src/catalog.ts` 的 `BLOCK_ASSIGNMENT` 里给它一个块名：复用既有块就写那个块名，需要新块则在消费包的 `chunk/lang/` 下补一个入口。
 
 覆盖层要改判既有后缀时，加一条 `SUFFIX_MOVES` 或 `SUFFIX_ADDITIONS` 并写明理由，不要直接改快照。
 
@@ -64,9 +77,9 @@
 
 以下能力尚未落地，不要按已支持来用：
 
-- legacy 近似语法源（20 个 mode）的 chunk 化；
-- 文件名档 / `firstLine` 档 / glob 档在读侧的完整路由（读侧目前只走后缀与名表）；
-- `builtin.plaintext` 直通绕过。
+- 编辑面按批量块懒加载（编辑面目前仍是单块静态持有语法，扩面会让 `.md` 首开成本翻倍）；
+- backlog 8 条升级到真实语法（等待 TextMate 转换层）；
+- 全集外语言扩面（toml、kt、graphql 等没有 VS Code 基准字段可对齐）。
 
 ## 验证
 

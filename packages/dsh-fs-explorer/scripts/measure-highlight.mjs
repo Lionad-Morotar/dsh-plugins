@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 /**
- * The first slice's three measurements, made re-runnable.
+ * The highlight expansion's measurements, made re-runnable.
  *
  * M1 asks whether the startup bundles stayed affordable, M1b whether the heavy
- * chunks actually got lighter, and M3 whether a language costs anything until a
- * file of that language is opened. M2 (both surfaces painting the same colours)
- * is a browser screenshot and is not measurable here.
+ * chunks actually got lighter, M3 whether the block set matches the catalogue,
+ * and M3b whether the startup bundles stayed free of grammar code. M4 (a
+ * plain-text file fetches nothing) is a rendering behaviour and is covered by
+ * vitest; M2 (both surfaces painting the same colours) is a browser screenshot.
+ * Neither is measurable from the artifacts alone, so this script prints where
+ * they are covered rather than inventing a second fixture for them.
  *
  * Everything is read from the committed `lib/` trees and gzipped with
  * `zlib.gzipSync`, the same call the build scripts use. A different gzip level
@@ -75,7 +78,14 @@ const BUDGET = {
  * editor's own vocabulary instead, and none of them has any business in a bundle
  * that never mounts an editor.
  */
-const GRAMMAR_SYMBOLS = ["@lezer/python", "lang-python", "EditorState", "EditorView", "@codemirror", "syntaxHighlighting"];
+const GRAMMAR_SYMBOLS = [
+  "@codemirror",
+  "@lezer",
+  "EditorState",
+  "EditorView",
+  "syntaxHighlighting",
+  "legacy-modes",
+];
 
 /**
  * Measure one artifact.
@@ -99,16 +109,23 @@ function languageChunks(lib) {
 }
 
 /**
- * The chunk names the catalogue promises.
+ * The catalogue's own view of the block set.
  *
  * Read from the catalogue rather than listed here: a copy would be the very drift
  * this check exists to catch. Node strips the TypeScript types on import, so the
  * source module loads directly.
- * @returns {Promise<string[]>} file names, sorted.
+ * @returns {Promise<object>} the two tables plus the rows that have no block.
  */
-async function catalogueChunks() {
+async function catalogueBlocks() {
   const catalogue = await import(join(repoRoot, "packages", "dsh-text-languages", "src", "index.ts"));
-  return Object.values(catalogue.LANGUAGE_CHUNKS).sort();
+  return {
+    /** language id -> artifact file name. */
+    files: catalogue.LANGUAGE_CHUNKS,
+    /** block name -> language ids, in the assignment table's order. */
+    languages: catalogue.LANGUAGE_CHUNK_LANGUAGES,
+    /** Rows with no block, which are the ones that stay monochrome. */
+    uncoloured: catalogue.ALL_LANGUAGES.filter(row => row.chunk === undefined).map(row => row.id),
+  };
 }
 
 /**
@@ -167,9 +184,19 @@ async function report() {
   const chunkTotal = chunkRows.reduce((sum, entry) => sum + entry.gzip, 0);
   const python = chunkRows.find(entry => entry.file === "client.lang-python.js");
 
-  const expected = await catalogueChunks();
-  const explorerNames = explorerChunks.slice().sort();
-  const namesMatch = explorerNames.length === expected.length && explorerNames.every((name, index) => name === expected[index]);
+  const catalogue = await catalogueBlocks();
+  // One artifact per block, so the expected file set is the catalogue's values
+  // deduplicated: several languages share a block.
+  const expectedFiles = [...new Set(Object.values(catalogue.files))].sort();
+  const emittedFiles = explorerChunks.slice().sort();
+  const filesMatch =
+    emittedFiles.length === expectedFiles.length && emittedFiles.every((name, index) => name === expectedFiles[index]);
+  const blockCount = Object.keys(catalogue.languages).length;
+  const coveredCount = Object.keys(catalogue.files).length;
+  // The explicit plaintext row is repo-owned rather than a language, so it is
+  // reported apart from the twelve language rows that stay monochrome.
+  const uncolouredLanguages = catalogue.uncoloured.filter(id => id !== "plaintext");
+  const uncolouredInBlocks = uncolouredLanguages.filter(id => catalogue.files[id] !== undefined);
 
   const startupSymbols = {
     "dsh-fs-explorer/lib/client.js": grammarSymbolsIn(join(explorerLib, "client.js")),
@@ -200,13 +227,22 @@ async function report() {
     },
     M3: {
       // The edit surface deliberately ships no language chunks: a grammar cannot
-      // cross a chunk boundary under the host contract, so its ten grammars stay
-      // in the one editor bundle. Asserting ten there would demand the very split
+      // cross a chunk boundary under the host contract, so its grammars stay in
+      // the one editor bundle. Asserting blocks there would demand the very split
       // that was ruled out, so the check pins the split that actually shipped.
-      status: explorerChunks.length === 10 && namesMatch && markdownChunks.length === 0 ? "pass" : "fail",
-      measured: { explorer: explorerChunks.length, markdown: markdownChunks.length, catalogue: expected.length },
+      status:
+        filesMatch && blockCount === 14 && coveredCount === 64 && uncolouredInBlocks.length === 0 && markdownChunks.length === 0
+          ? "pass"
+          : "fail",
+      measured: {
+        blocks: blockCount,
+        artifacts: emittedFiles.length,
+        coveredLanguages: coveredCount,
+        uncolouredLanguages: uncolouredLanguages.length,
+        editSurfaceBlocks: markdownChunks.length,
+      },
       detail:
-        "the read-only surface ships one chunk per catalogue language and the names match the catalogue; the edit surface ships none, by design",
+        "the read-only surface ships one artifact per catalogue block, the block set matches the catalogue, 64 languages are covered and the 12 uncoloured rows are in no block",
     },
     M3b: {
       status: Object.values(startupSymbols).every(found => found.length === 0) ? "pass" : "fail",
@@ -221,6 +257,13 @@ async function report() {
     heavy,
     languageChunks: { explorer: chunkRows, totalGzip: chunkTotal, markdown: markdownChunks },
     pythonChunkGzip: python?.gzip ?? null,
+    blocks: {
+      count: blockCount,
+      artifacts: emittedFiles,
+      coveredLanguages: coveredCount,
+      uncolouredLanguages,
+      languagesPerBlock: catalogue.languages,
+    },
     checks,
   };
 }
@@ -245,14 +288,25 @@ function printTable(data) {
   process.stdout.write(`${"artifact".padEnd(54)}${"gzip".padStart(9)}${"vs base".padStart(9)}\n`);
   for (const entry of data.heavy) line(entry.artifact, entry.gzip, entry.deltaGzip);
 
-  process.stdout.write(`\n=== language chunks (M3) ===\n`);
+  process.stdout.write(`\n=== language blocks (M3) ===\n`);
   process.stdout.write(`${"artifact".padEnd(54)}${"gzip".padStart(9)}${"vs base".padStart(9)}\n`);
   for (const entry of data.languageChunks.explorer) {
     line(`dsh-fs-explorer/lib/${entry.file}`, entry.gzip, null, entry.file === "client.lang-python.js" ? "budget anchor" : "");
   }
-  line("  total (10 chunks)", data.languageChunks.totalGzip, null);
+  line(`  total (${String(data.blocks.count)} blocks)`, data.languageChunks.totalGzip, null);
   process.stdout.write(
     `dsh-fs-markdown/lib/client.lang-*.js${String(data.languageChunks.markdown.length).padStart(9)}${"".padStart(9)}  by design: grammars stay in client.editor.js\n`,
+  );
+  process.stdout.write(
+    `\n  ${String(data.blocks.coveredLanguages)} languages are drawn by these ${String(data.blocks.count)} blocks; ` +
+      `${String(data.blocks.uncolouredLanguages.length)} stay monochrome:\n`,
+  );
+  process.stdout.write(`    ${data.blocks.uncolouredLanguages.join(", ")}\n`);
+
+  process.stdout.write(
+    `\n=== covered elsewhere ===\n` +
+      `M4   a plain-text file fetches no chunk: covered by vitest (test/preview-pane.test.ts)\n` +
+      `M2   both surfaces paint the same colours: covered by the browser evidence in docs/qa/261111\n`,
   );
 
   process.stdout.write(`\n=== checks ===\n`);
