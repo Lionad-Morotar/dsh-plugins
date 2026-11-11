@@ -4,14 +4,9 @@
     - id: better
       name: 'dsh-better'
 
-# ── Agent Teams 成员上限（261111）──────────────────────────────────────────
-# 随 dsh-better 分发，任何加载本 bundle 的 profile 都把 Team 上限从
-# @deepseek-ai/dsh-experimental-agent-team-profile 默认的 8 提到 32。
-# 非 insert 的 config 是「整键替换」，所以四个字段写全，避免其余字段退回插件默认值。
-# 不加载 agent-team 的 profile（如 model-verify）只会得到一条 patch not found 警告，不致命。
-- id: agent-team
-  config:
-    maxMembers: 32
-    maxTasks: 256
-    maxMessageBytes: 65536
-    disposalTimeoutMs: 5000
+# Team 配置不随本 bundle 覆盖。
+# 0.2.2-rc.2 起 AgentTeam 复用统一子代理，agent-team 行拒绝 maxMembers /
+# maxMessageBytes / disposalTimeoutMs（TeamService 构造时抛 TEAM_INVALID_CONFIG），
+# 旧宿主（0.2.2-rc.1 及更早）仍认这三个键。同一份 bundle patch 要同时兼容两种宿主，
+# 所以这里不写任何 Team 配置；需要旧宿主更大成员上限的 profile，请在该 profile 自己的
+# cordis.patch.yml 里写旧键，并在升级 0.2.2-rc.2 前删除。
