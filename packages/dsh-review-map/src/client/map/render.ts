@@ -111,6 +111,10 @@ const STATUS_SHAPE: Readonly<Record<MapStatus, string>> = {
  * @returns the status, or null for an unchanged file.
  */
 export function statusOf(file: MapFileInput): MapStatus | null {
+  // An unindexed file was never read, so nothing is known about its content —
+  // including whether the change list's status is supported by anything the map
+  // can draw. It gets the neutral unindexed treatment instead of a status.
+  if (file.unindexed === true) return null;
   if (!file.changed) return null;
   return file.status ?? "modified";
 }
@@ -136,15 +140,20 @@ export function shapeOf(status: MapStatus): string {
  */
 export function churnOf(file: MapFileInput): string | null {
   if (!file.changed) return null;
+  if (file.unindexed === true) return "unindexed";
   if (file.binary === true) return "bin";
   if (file.status === "conflicted") return "conflict";
   if (file.status === "untracked") return "new";
   const additions = file.additions ?? null;
   const deletions = file.deletions ?? null;
   if (additions === null && deletions === null) return null;
+  // A zero side is omitted rather than signed: `+4 −0` claims an amount where
+  // there is none, and the list's own `churnText` already reads this way. When
+  // both sides are zero the card says `0`, which is the fact.
   const parts: string[] = [];
-  if (additions !== null) parts.push(`+${String(additions)}`);
-  if (deletions !== null) parts.push(`−${String(deletions)}`);
+  if (additions !== null && additions > 0) parts.push(`+${String(additions)}`);
+  if (deletions !== null && deletions > 0) parts.push(`−${String(deletions)}`);
+  if (parts.length === 0) return "0";
   return parts.join(" ");
 }
 
@@ -375,7 +384,11 @@ export function fileCard(context: CardContext, tile: Tile, file: MapFileInput): 
   if (file.additions !== undefined && file.additions !== null) attributes["data-additions"] = String(file.additions);
   if (file.deletions !== undefined && file.deletions !== null) attributes["data-deletions"] = String(file.deletions);
   if (deleted) attributes["data-deleted"] = "true";
-  if (file.binary === true) attributes["data-binary"] = "true";
+  // An unindexed file is not binary: its content was never read, so nothing is
+  // known about it, and marking it binary would be a claim the index cannot
+  // support. It gets its own neutral treatment instead.
+  if (file.unindexed === true) attributes["data-unindexed"] = "true";
+  else if (file.binary === true) attributes["data-binary"] = "true";
 
   const group = svgEl(document, "g", attributes) as SVGGElement;
 
@@ -392,6 +405,7 @@ export function fileCard(context: CardContext, tile: Tile, file: MapFileInput): 
     rectAttributes["data-shape"] = shapeOf(status);
   }
   if (deleted) rectAttributes["data-deleted"] = "true";
+  if (file.unindexed === true) rectAttributes["data-unindexed"] = "true";
   group.append(svgEl(document, "rect", rectAttributes));
 
   const roomy = tile.width >= TEXT_MIN_WIDTH && tile.height >= TEXT_MIN_HEIGHT;
@@ -439,7 +453,9 @@ export function fileCard(context: CardContext, tile: Tile, file: MapFileInput): 
   // The bar sits at the card's bottom edge, inset so it reads as part of the
   // card rather than as a border. No hunks means no bar: an empty <g> would be
   // a bar that claims a distribution of nothing.
-  const segments = file.changed ? barSegments(file, file.lines) : [];
+  // No hunks were read for an unindexed file, so there is no distribution to
+  // show — and a bar over a file nobody read would be a fabricated reading.
+  const segments = file.changed && file.unindexed !== true ? barSegments(file, file.lines) : [];
   if (segments.length > 0 && tile.width >= BAR_MIN_WIDTH && tile.height >= TEXT_MIN_HEIGHT) {
     const barHeight = Math.min(3, Math.max(2, tile.height / 12));
     const barY = tile.y + tile.height - barHeight - 1;
@@ -911,6 +927,34 @@ export function partialMarker(
 export const MAX_CRUMBS = 600;
 
 /**
+ * The smallest crumb that can carry a label.
+ *
+ * Below this a name is a smudge that overflows its own block; the colour block
+ * alone still says "something is here", which is the honest minimum.
+ */
+const CRUMB_LABEL_MIN_WIDTH = 26;
+const CRUMB_LABEL_MIN_HEIGHT = 11;
+
+/**
+ * Truncate a name to what a crumb can show.
+ *
+ * SVG text does not wrap and does not ellipsize itself, so the cut happens here.
+ * The width estimate is deliberately conservative — 5.2 units per character at
+ * the 9px the stylesheet uses — because overrunning the block is worse than
+ * showing two fewer characters.
+ * @param name - the file or directory name.
+ * @param room - the width available, in map units.
+ * @returns the name, truncated with an ellipsis when it does not fit.
+ */
+function fitLabel(name: string, room: number): string {
+  const perCharacter = 5.2;
+  const fits = Math.max(1, Math.floor(room / perCharacter));
+  if (name.length <= fits) return name;
+  if (fits <= 1) return "\u2026";
+  return `${name.slice(0, fits - 1)}\u2026`;
+}
+
+/**
  * The padding a directory tile keeps around its crumb area.
  *
  * Proportional rather than fixed so a small tile does not lose its whole
@@ -920,7 +964,9 @@ export const MAX_CRUMBS = 600;
  * @returns the padding in map units.
  */
 export function crumbPadding(tile: Rect): number {
-  return Math.min(8, Math.min(tile.width, tile.height) * 0.06);
+  // Four map units is the floor the requirement names: below it the preview
+  // reads as a second border rather than as content inside the tile.
+  return Math.max(4, Math.min(8, Math.min(tile.width, tile.height) * 0.06));
 }
 
 /**
@@ -1024,16 +1070,25 @@ export function crumbLayer(
     for (const placed of layout.tiles) {
       const crumb = byPath.get(placed.path);
       if (crumb === undefined) continue;
+      const x = round2(area.x + placed.x);
+      const y = round2(area.y + placed.y);
+      const width = round2(placed.width);
+      const height = round2(placed.height);
       const attributes: Record<string, string> = {
-        x: String(round2(area.x + placed.x)),
-        y: String(round2(area.y + placed.y)),
-        width: String(round2(placed.width)),
-        height: String(round2(placed.height)),
+        x: String(x),
+        y: String(y),
+        width: String(width),
+        height: String(height),
         "data-rm": "map-crumb",
         "data-kind": crumb.kind,
         "data-path": crumb.path,
         "data-lines": String(crumb.lines),
         "data-changed": crumb.changed ? "true" : "false",
+        // The border weight is the second channel: a changed crumb is drawn as a
+        // card, an unchanged one as texture. The stylesheet keys off this rather
+        // than off `data-changed` alone so a changed *directory* and a changed
+        // *file* can differ in fill while sharing the emphasis.
+        "data-emphasis": crumb.changed ? "strong" : "quiet",
       };
       if (crumb.status !== undefined) {
         attributes["data-status"] = crumb.status;
@@ -1053,6 +1108,25 @@ export function crumbLayer(
         });
       }
       group.append(rect);
+      // A label is drawn only when the crumb can hold it: a name in a sliver
+      // would overflow its own block, which is the one thing the requirement
+      // forbids. The rect stays either way, so the child is never invisible.
+      if (width >= CRUMB_LABEL_MIN_WIDTH && height >= CRUMB_LABEL_MIN_HEIGHT) {
+        group.append(
+          svgText(
+            document,
+            {
+              x: String(x + 2),
+              y: String(y + Math.min(height - 2, 9)),
+              "data-rm": "map-crumb-label",
+              "data-path": crumb.path,
+            },
+            // The name, clipped to what the crumb can show: SVG text does not
+            // wrap, so the truncation happens here rather than in the stylesheet.
+            fitLabel(baseName(crumb.path), width - 4),
+          ),
+        );
+      }
     }
   }
 

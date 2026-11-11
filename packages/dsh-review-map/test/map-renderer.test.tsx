@@ -192,7 +192,8 @@ describe("status encoding", () => {
   });
 
   it("labels a deletion and a binary file instead of showing +0 −0", () => {
-    expect(churnOf(changedFile("a.ts", "deleted", 0, 12))).toBe("+0 −12");
+    // The zero side is omitted, so a pure deletion reads as its deletions only.
+    expect(churnOf(changedFile("a.ts", "deleted", 0, 12))).toBe("−12");
     expect(churnOf({ path: "b.png", lines: null, changed: true, status: "modified", binary: true })).toBe("bin");
     expect(churnOf(changedFile("c.ts", "conflicted", null, null))).toBe("conflict");
     expect(churnOf({ path: "d.ts", lines: 5, changed: false })).toBeNull();
@@ -1244,23 +1245,39 @@ describe("the in-tile preview", () => {
     map.destroy();
   });
 
-  it("puts no text inside a crumb", () => {
+  it("never lets a crumb's label overflow its own block", () => {
     const element = host();
     const map = createMap(
       element,
       withChildren({
         path: "src",
         dirs: [],
-        files: [{ path: "src/a.ts", lines: 400, changed: true, status: "modified" }],
+        // Forty long names in a small tile: each crumb is wide enough to hold
+        // some text but not the whole name, which is the case truncation exists
+        // for. Measured: ~28 units wide at this tile size.
+        files: Array.from({ length: 40 }, (_, index) => ({
+          path: `src/a-very-long-file-name-${String(index)}.ts`,
+          lines: 400,
+          changed: index === 0,
+          status: "modified" as const,
+        })),
       }),
       {},
-      { width: 900, height: 520 },
+      { width: 300, height: 200 },
     );
 
-    // A crumb is a texture: at that size a label would be a smudge, and the
-    // requirement is that text never overflows a card.
-    const group = element.querySelector('[data-rm="map-crumbs"][data-path="src"]');
-    expect(group?.querySelectorAll("text")).toHaveLength(0);
+    // A crumb labels itself when it has room, but the label is cut to fit: SVG
+    // text does not wrap, so an untruncated name would run out of its own block.
+    const labels = [...element.querySelectorAll('[data-rm="map-crumb-label"]')];
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) {
+      const crumb = label.previousElementSibling;
+      const room = Number(crumb?.getAttribute("width") ?? 0) - 4;
+      // 5.2 units per character is the conservative estimate the renderer uses;
+      // the assertion is that the text never claims more room than it has.
+      expect((label.textContent ?? "").length * 5.2).toBeLessThanOrEqual(room + 5.2);
+    }
+    expect(labels.some(label => label.textContent?.endsWith("\u2026"))).toBe(true);
     map.destroy();
   });
 });
@@ -1388,6 +1405,238 @@ describe("hovering a card on the map itself", () => {
     expect(element.querySelectorAll('[data-rm="map-edges"]')).toHaveLength(1);
     expect(element.querySelectorAll('[data-rm="map-legend"]')).toHaveLength(1);
     expect(before).not.toBeNull();
+    map.destroy();
+  });
+});
+
+describe("the preview's visual layering", () => {
+  /** A root level with one directory plus whatever files it is given. */
+  function rootWith(): MapLevelInput {
+    return {
+      path: "",
+      dirs: [{ path: "src", lines: 900, changed: true, files: 3, changedFiles: 1, additions: 5, deletions: 1 }],
+      files: [],
+    };
+  }
+
+  /** A map whose `src` level holds the given children. */
+  function withChildren(children: MapLevelInput): MapData {
+    const root = rootWith();
+    return { levels: new Map([[root.path, root], [children.path, children]]), rootPath: root.path };
+  }
+
+  /** One crumb by path. */
+  function crumbAt(element: HTMLElement, path: string): Element | null {
+    return element.querySelector(`[data-rm="map-crumb"][data-path="${path}"]`);
+  }
+
+  it("distinguishes a directory crumb from a file crumb by kind", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [{ path: "src/deep", lines: 300, changed: false }],
+        files: [{ path: "src/a.ts", lines: 400, changed: false }],
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    // The two kinds read as different materials: a folder is a container, a file
+    // is a leaf, and the stylesheet keys the two fills off this attribute.
+    expect(crumbAt(element, "src/deep")?.getAttribute("data-kind")).toBe("dir");
+    expect(crumbAt(element, "src/a.ts")?.getAttribute("data-kind")).toBe("file");
+    map.destroy();
+  });
+
+  it("gives a changed crumb its status and a heavier border than an unchanged one", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [],
+        files: [
+          { path: "src/hot.ts", lines: 400, changed: true, status: "modified" },
+          { path: "src/cold.ts", lines: 400, changed: false },
+        ],
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    const hot = crumbAt(element, "src/hot.ts");
+    const cold = crumbAt(element, "src/cold.ts");
+    expect(hot?.getAttribute("data-changed")).toBe("true");
+    expect(hot?.getAttribute("data-status")).toBe("modified");
+    // The border weight is the second channel: a changed crumb is drawn as a
+    // card, an unchanged one as texture.
+    expect(hot?.getAttribute("data-emphasis")).toBe("strong");
+    expect(cold?.getAttribute("data-emphasis")).toBe("quiet");
+    map.destroy();
+  });
+
+  it("draws a crumb's name when the crumb has room for it", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [],
+        files: [{ path: "src/rows.ts", lines: 400, changed: true, status: "modified" }],
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    // A single child fills the preview, so there is room for its name.
+    const label = crumbAt(element, "src/rows.ts")?.parentElement?.querySelector('[data-rm="map-crumb-label"]');
+    expect(label?.textContent).toBe("rows.ts");
+    map.destroy();
+  });
+
+  it("leaves a crumb unlabelled when it is too small for text", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [],
+        // Forty children in a small tile: each crumb is under 20 units wide,
+        // and a label there would be a smudge that overflows its own block.
+        files: Array.from({ length: 40 }, (_, index) => ({
+          path: `src/f${String(index).padStart(3, "0")}.ts`,
+          lines: 100,
+          changed: false,
+        })),
+      }),
+      {},
+      { width: 200, height: 140 },
+    );
+
+    const crumbs = [...element.querySelectorAll('[data-rm="map-crumb"]')];
+    expect(crumbs.length).toBe(40);
+    // Every crumb is still drawn — the block is never dropped — but none has the
+    // room a label needs, so no text is emitted at all.
+    expect(
+      crumbs.every(crumb => Number(crumb.getAttribute("width")) < 26 || Number(crumb.getAttribute("height")) < 11),
+    ).toBe(true);
+    expect(element.querySelectorAll('[data-rm="map-crumb-label"]')).toHaveLength(0);
+    map.destroy();
+  });
+
+  it("keeps the preview clear of the directory's own border", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withChildren({
+        path: "src",
+        dirs: [],
+        files: [{ path: "src/a.ts", lines: 400, changed: true, status: "modified" }],
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    const tile = tileAt(element, "src");
+    const rect = tile?.querySelector('[data-rm="map-tile-rect"]');
+    const bounds = {
+      x: Number(rect?.getAttribute("x") ?? 0),
+      y: Number(rect?.getAttribute("y") ?? 0),
+      width: Number(rect?.getAttribute("width") ?? 0),
+      height: Number(rect?.getAttribute("height") ?? 0),
+    };
+    const crumb = crumbAt(element, "src/a.ts");
+    // Four map units of breathing room, which is what the requirement asks for
+    // and what stops the preview from looking like a second border.
+    expect(Number(crumb?.getAttribute("x"))).toBeGreaterThanOrEqual(bounds.x + 4);
+    expect(Number(crumb?.getAttribute("y"))).toBeGreaterThanOrEqual(bounds.y + 4);
+    map.destroy();
+  });
+});
+
+describe("a card's churn reading", () => {
+  it("omits a zero side instead of printing it with a sign", () => {
+    // `+4 −0` reads as a bug: a sign in front of a zero claims an amount where
+    // there is none. The list already omits the zero side; the card must agree.
+    expect(churnOf(changedFile("a.ts", "modified", 4, 0))).toBe("+4");
+    expect(churnOf(changedFile("a.ts", "modified", 0, 3))).toBe("−3");
+  });
+
+  it("prints a bare zero when both sides are zero", () => {
+    expect(churnOf(changedFile("a.ts", "modified", 0, 0))).toBe("0");
+  });
+
+  it("renders the omitted form on the card", () => {
+    const element = host();
+    const map = createMap(element, data(level([], [changedFile("a.ts", "modified", 4, 0)])), {}, { width: 900, height: 520 });
+
+    const churn = tileAt(element, "a.ts")?.querySelector('[data-rm="map-file-churn"]');
+    expect(churn?.textContent).toBe("+4");
+    expect(churn?.textContent ?? "").not.toContain("−0");
+    map.destroy();
+  });
+});
+
+describe("an unindexed file", () => {
+  /** A file whose content was never read. */
+  function unindexedFile(path: string): MapFileInput {
+    return { path, lines: null, changed: false, unindexed: true };
+  }
+
+  it("is marked as unindexed rather than drawn as binary", () => {
+    const element = host();
+    const map = createMap(element, data(level([], [unindexedFile("a.ts")])), {}, { width: 900, height: 520 });
+
+    const tile = tileAt(element, "a.ts");
+    // Unknown is not a measurement: a binary file has no line count, an
+    // unindexed one has no reading at all.
+    expect(tile?.getAttribute("data-unindexed")).toBe("true");
+    expect(tile?.getAttribute("data-binary")).toBeNull();
+    map.destroy();
+  });
+
+  it("draws no distribution bar", () => {
+    const element = host();
+    const map = createMap(element, data(level([], [unindexedFile("a.ts")])), {}, { width: 900, height: 520 });
+
+    // There are no hunks to place: the file was never read.
+    expect(tileAt(element, "a.ts")?.querySelector('[data-rm="map-bar"]')).toBeNull();
+    map.destroy();
+  });
+
+  it("carries no change status even when the change list names it", () => {
+    const element = host();
+    const file: MapFileInput = { path: "a.ts", lines: null, changed: true, unindexed: true };
+    const map = createMap(element, data(level([], [file])), {}, { width: 900, height: 520 });
+
+    const tile = tileAt(element, "a.ts");
+    // Not reading a file's content says nothing about whether it changed, so it
+    // must not be painted with a change status it cannot support.
+    expect(tile?.getAttribute("data-unindexed")).toBe("true");
+    expect(tile?.getAttribute("data-status")).toBeNull();
+    expect(tile?.getAttribute("data-shape")).toBeNull();
+    map.destroy();
+  });
+
+  it("still draws an ordinary file's bar and status", () => {
+    const element = host();
+    const file: MapFileInput = {
+      path: "a.ts",
+      lines: 100,
+      changed: true,
+      status: "modified",
+      additions: 4,
+      deletions: 0,
+      hunks: [{ newStart: 1, newLines: 4, oldLines: 0 }],
+    };
+    const map = createMap(element, data(level([], [file])), {}, { width: 900, height: 520 });
+
+    const tile = tileAt(element, "a.ts");
+    expect(tile?.getAttribute("data-unindexed")).toBeNull();
+    expect(tile?.getAttribute("data-status")).toBe("modified");
+    expect(tile?.querySelector('[data-rm="map-bar"]')).not.toBeNull();
     map.destroy();
   });
 });

@@ -497,6 +497,8 @@ export function buildMapData(index: ReviewIndex, repoName: string): MapData {
       path: file.path,
       lines: file.lines,
       changed: entry !== undefined,
+      // Carried through so the map can tell "no reading" from "no lines".
+      ...(file.unindexed === true ? { unindexed: true as const } : {}),
       ...(entry === undefined
         ? {}
         : {

@@ -605,3 +605,24 @@ describe("buildMapData edges and unresolved", () => {
     expect(data.indexed?.complete).toBe(true);
   });
 });
+
+describe("buildMapData and unindexed files", () => {
+  it("passes the unindexed flag through to the map's file input", () => {
+    const data = buildMapData(
+      indexOf({ files: [structureFile({ path: "a.ts", lines: null, unindexed: true })] }),
+      "repo",
+    );
+
+    const file = data.levels.get("")?.files[0];
+    // The map needs to tell "no reading" from "no lines": a binary file has a
+    // measurement that says it has no line count, an unindexed one has none.
+    expect(file?.unindexed).toBe(true);
+    expect(file?.lines).toBeNull();
+  });
+
+  it("leaves an indexed file without the flag", () => {
+    const data = buildMapData(indexOf({ files: [structureFile({ path: "a.ts", lines: 12 })] }), "repo");
+
+    expect(data.levels.get("")?.files[0]?.unindexed).toBeUndefined();
+  });
+});

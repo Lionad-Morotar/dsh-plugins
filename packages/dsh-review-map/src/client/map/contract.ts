@@ -58,6 +58,16 @@ export interface MapFileInput {
   readonly binary?: boolean;
   /** Hunk positions for the distribution bar; absent means no bar. */
   readonly hunks?: readonly MapHunk[];
+  /**
+   * The file is in the tree but its content was never read.
+   *
+   * Distinct from a binary file, whose `lines: null` is a measurement saying it
+   * has no line count. An unindexed file has no reading at all, so the map must
+   * not compare its size against anything, must not draw a distribution bar for
+   * hunks nobody read, and must not paint it with a change status it cannot
+   * support.
+   */
+  readonly unindexed?: true;
 }
 
 /** One directory in a map level, already carrying its subtree's line total. */

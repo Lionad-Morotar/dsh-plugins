@@ -41,6 +41,13 @@ const MAP_STYLESHEET = `/* The directory map's own stylesheet, injected by the c
   --rm-map-del: var(--dsw-alias-state-error-primary, #cf222e);
   --rm-map-warn: var(--dsw-alias-state-warning-primary, #bf8700);
   --rm-map-surface: var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.03));
+  /* The preview's two materials. A folder is warm and light (it holds things);
+     a file is cool and slightly darker (it is a leaf). Both are host tokens with
+     a hex fallback, so the preview follows the theme like everything else. */
+  --rm-map-dir: var(--dsw-alias-bg-layer-2, #f4f1ec);
+  --rm-map-dir-border: var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.08));
+  --rm-map-file: var(--dsw-alias-bg-layer-1, #eceff3);
+  --rm-map-file-border: var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.12));
   --rm-map-surface-strong: var(--dsw-alias-bg-layer-3, rgba(0, 0, 0, 0.07));
   --rm-map-border: var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.12));
   --rm-map-muted: var(--dsw-alias-label-tertiary, #a39c91);
@@ -126,23 +133,33 @@ const MAP_STYLESHEET = `/* The directory map's own stylesheet, injected by the c
 }
 
 /* A directory's in-tile preview: one level of its direct children, laid out with
-   the same treemap. The crumbs are texture, not targets, so they are drawn
-   without strokes at rest and only pick one up when they carry a change. */
+   the same treemap. The two kinds read as different materials — a folder is a
+   container, a file is a leaf — so an unchanged preview still shows structure
+   instead of reading as an empty tile. */
 [data-rm="map-crumb"] {
-  fill: var(--rm-map-surface-strong);
-  stroke: none;
+  fill: var(--rm-map-file);
+  stroke: var(--rm-map-border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
+/* A folder's crumb is the warmer, lighter material: it holds things. */
 [data-rm="map-crumb"][data-kind="dir"] {
-  fill: var(--rm-map-surface);
+  fill: var(--rm-map-dir);
+  stroke: var(--rm-map-dir-border);
 }
 
 /* A changed crumb uses the same colour and shape vocabulary as the cards: the
-   preview is a miniature of the folder, so it must not invent a second one. */
-[data-rm="map-crumb"][data-changed="true"] {
+   preview is a miniature of the folder, so it must not invent a second one. The
+   border is what carries the emphasis, which is why it is keyed off the
+   emphasis attribute rather than off the status alone. */
+[data-rm="map-crumb"][data-emphasis="strong"] {
+  stroke-width: 1.5;
   stroke: var(--rm-map-secondary);
-  stroke-width: 0.5;
-  vector-effect: non-scaling-stroke;
+}
+
+[data-rm="map-crumb"][data-emphasis="quiet"] {
+  opacity: 0.85;
 }
 
 [data-rm="map-crumb"][data-status="added"] {
@@ -171,6 +188,32 @@ const MAP_STYLESHEET = `/* The directory map's own stylesheet, injected by the c
   fill: color-mix(in srgb, var(--rm-map-del) 30%, transparent);
   stroke: var(--rm-map-warn);
   stroke-dasharray: 2 1 3 1;
+}
+
+[data-rm="map-crumb"][data-status="renamed"],
+[data-rm="map-crumb"][data-status="copied"] {
+  fill: color-mix(in srgb, var(--rm-map-secondary) 30%, transparent);
+  stroke: var(--rm-map-secondary);
+  stroke-dasharray: 4 2;
+}
+
+/* A crumb's name. It is drawn only when the crumb has room, and the renderer
+   truncates it to fit: SVG text does not wrap, so overflow would be silent. */
+[data-rm="map-crumb-label"] {
+  font-size: 9px;
+  fill: var(--dsw-alias-label-primary, #14110d);
+  pointer-events: none;
+}
+
+/* An unindexed file: its content was never read, so it is drawn in neutral grey
+   with a dashed border. It is not binary — that would be a claim the index
+   cannot support — and it carries no change status. */
+[data-rm="map-tile-rect"][data-unindexed="true"] {
+  fill: var(--rm-map-muted);
+  fill-opacity: 0.18;
+  stroke: var(--rm-map-muted);
+  stroke-dasharray: 3 2;
+  stroke-width: 1;
 }
 
 /* The aggregate block a capped preview shows instead of silently dropping the
