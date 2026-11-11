@@ -8,7 +8,7 @@
  */
 import { act, createElement, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PreviewPane } from "../src/client/preview-pane.tsx";
 import { createRendererRegistry, type RendererBodyProps } from "../src/client/renderer-registry.ts";
@@ -327,4 +327,249 @@ describe("preview pane language chunk routing", () => {
     expect(calls).toContain("./client.preview.js");
     expect(calls.some(call => call.startsWith("./client.lang-"))).toBe(false);
   });
+});
+
+/**
+ * The three ways a language chunk can leave the surface wrong.
+ *
+ * All three are about the same thing: the language chunk is fetched
+ * asynchronously while the reader keeps using the pane, so the surface has to
+ * stay readable before it arrives, catch up when it does, and let go of the
+ * editor it replaced. Each test drives the chunk by hand so the ordering is the
+ * test's, not the machine's.
+ */
+describe("preview pane language chunk lifecycle", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  /** The pane from a fresh module graph, so no earlier suite's chunk cache leaks in. */
+  let Pane: typeof PreviewPane;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    Pane = (await import("../src/client/preview-pane.tsx")).PreviewPane;
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  /** A chunk request whose settlement the test controls. */
+  interface Deferred {
+    readonly calls: string[];
+    resolve(module: unknown): void;
+    reject(error: unknown): void;
+  }
+
+  /**
+   * Boot the loader with a require that hands back a deferred language chunk.
+   *
+   * The preview chunk is answered immediately with a monochrome editor whose
+   * content is readable, so a test can tell "fell back" from "drew nothing".
+   */
+  async function bootDeferred(): Promise<Deferred> {
+    const calls: string[] = [];
+    let settle: { resolve(value: unknown): void; reject(error: unknown): void } | null = null;
+    const previewChunk = await import("../src/client/preview-chunk.ts");
+    const require = ((specifier: string): unknown => {
+      throw new Error(`unexpected platform require: ${specifier}`);
+    }) as { (specifier: string): unknown; async(specifier: string): Promise<unknown> };
+    require.async = async (specifier: string): Promise<unknown> => {
+      calls.push(specifier);
+      if (specifier === "./client.preview.js") {
+        // The fake paints its text into the host, the way a real editor puts the
+        // document in the DOM. Without that, "no text on screen" could not be
+        // told apart from "the fake renders nothing".
+        return {
+          renderer: "codemirror",
+          mountCodePreview: (element: HTMLElement, options: { text: string }) => {
+            element.textContent = options.text;
+            return {
+              update(next: string) {
+                element.textContent = next;
+              },
+              revealRange() {},
+              clearSelection() {},
+              destroy() {
+                element.textContent = "";
+              },
+            };
+          },
+          MarkdownView: () => null,
+        };
+      }
+      return new Promise((resolve, reject) => {
+        settle = { resolve, reject };
+      });
+    };
+    previewChunk.boot(require);
+    return {
+      calls,
+      resolve: module => settle?.resolve(module),
+      reject: error => settle?.reject(error),
+    };
+  }
+
+  /**
+   * Render the pane over a paged file.
+   *
+   * Page one is `page one`, page two is `page two`, so a stale page is visible as
+   * the wrong words rather than as an equal-looking string.
+   */
+  async function showPaged(path: string): Promise<void> {
+    const files = {
+      list: async () => ({ entries: [] }),
+      read: async (_session: string, _path: string, range?: { offset?: number }) =>
+        (range?.offset ?? 1) > 1
+          ? { ok: true, value: { text: "page two\n", offset: 2, lines: 1, totalLines: 2, eof: true } }
+          : { ok: true, value: { text: "page one\n", offset: 1, lines: 1, totalLines: 2, eof: false } },
+    };
+    await act(async () => {
+      root.render(createElement(Pane, { sessionId: "s1", files, path, t }));
+    });
+    await flush();
+  }
+
+  /** Let the pane's promise chain and React's effects settle. */
+  async function flush(): Promise<void> {
+    await act(async () => {
+      for (let turn = 0; turn < 6; turn += 1) await Promise.resolve();
+    });
+  }
+
+  /** Every mounted editor's text, read out of the fake handles the tests record. */
+  function editorTexts(): string[] {
+    return mounted.map(entry => entry.text);
+  }
+
+  /** The fake handles created so far, in mount order. */
+  let mounted: { text: string; destroyed: boolean }[] = [];
+
+  beforeEach(() => {
+    mounted = [];
+  });
+
+  /**
+   * A language chunk whose mount records the text it was given and paints it.
+   *
+   * Painting matters: the assertions read the DOM, so a fake that only recorded
+   * its text would make "the editor shows the new page" unobservable.
+   */
+  function languageModule(id: string) {
+    return {
+      renderer: id,
+      mount: (element: HTMLElement, options: { text: string }) => {
+        const entry = { text: options.text, destroyed: false };
+        mounted.push(entry);
+        element.textContent = options.text;
+        return {
+          update(text: string) {
+            entry.text = text;
+            element.textContent = text;
+          },
+          revealRange() {},
+          clearSelection() {},
+          destroy() {
+            entry.destroyed = true;
+            element.textContent = "";
+          },
+        };
+      },
+    };
+  }
+
+  it("shows the page as plain text when the language chunk fails", async () => {
+    const deferred = await bootDeferred();
+    await showPaged("a.py");
+
+    await act(async () => {
+      deferred.reject(new Error("chunk 404"));
+    });
+    await flush();
+
+    // The reader must still see the page, word for word.
+    expect(host.textContent).toContain("page one");
+  });
+
+  it("retries the language chunk on the next open after a failure", async () => {
+    const deferred = await bootDeferred();
+    await showPaged("a.py");
+
+    await act(async () => {
+      deferred.reject(new Error("chunk 404"));
+    });
+    await flush();
+    const afterFirst = deferred.calls.filter(call => call === "./client.lang-python.js").length;
+    expect(afterFirst).toBe(1);
+
+    // Reopening the same file must ask again: a rejected chunk is not cached.
+    await act(async () => {
+      root.render(createElement(Pane, { sessionId: "s1", files: pagedFiles(), path: "a.py", t }));
+    });
+    await flush();
+    const afterSecond = deferred.calls.filter(call => call === "./client.lang-python.js").length;
+    expect(afterSecond).toBeGreaterThan(afterFirst);
+  });
+
+  it("catches up to the current page when the chunk arrives late", async () => {
+    const deferred = await bootDeferred();
+    await showPaged("a.py");
+
+    // Turn the page while the chunk is still in flight.
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-testid="fs-preview-next"]')?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await flush();
+
+    await act(async () => {
+      deferred.resolve(languageModule("python"));
+    });
+    await flush();
+
+    // The mount must carry the page on screen now, not the one that was showing
+    // when the fetch started. Asserted on the mount record rather than the DOM:
+    // the DOM alone cannot tell a correct initial mount from a stale one that a
+    // later update happened to fix.
+    expect(mounted).toHaveLength(1);
+    expect(mounted[0]?.text).toBe("page two\n");
+  });
+
+  it("destroys the language editor when the reader switches to a file with no chunk", async () => {
+    const deferred = await bootDeferred();
+    await showPaged("a.py");
+
+    await act(async () => {
+      deferred.resolve(languageModule("python"));
+    });
+    await flush();
+    expect(mounted).toHaveLength(1);
+    expect(mounted[0]?.destroyed).toBe(false);
+
+    // `.rs` has no chunk, so the monochrome path takes over this host.
+    await act(async () => {
+      root.render(createElement(Pane, { sessionId: "s1", files: pagedFiles(), path: "a.rs", t }));
+    });
+    await flush();
+
+    // The replaced editor must be gone, not stacked under the new one.
+    expect(mounted[0]?.destroyed).toBe(true);
+  });
+
+  /** The same paged reader, for tests that re-render without a new mount. */
+  function pagedFiles() {
+    return {
+      list: async () => ({ entries: [] }),
+      read: async (_session: string, _path: string, range?: { offset?: number }) =>
+        (range?.offset ?? 1) > 1
+          ? { ok: true, value: { text: "page two\n", offset: 2, lines: 1, totalLines: 2, eof: true } }
+          : { ok: true, value: { text: "page one\n", offset: 1, lines: 1, totalLines: 2, eof: false } },
+    };
+  }
 });

@@ -277,6 +277,11 @@ function CodeSurface({
   const handle = useRef<CodePreviewHandle | null>(null);
   const pageText = useRef(text);
   pageText.current = text;
+  // The page on screen right now, for the language chunk to catch up to when it
+  // finally arrives. A ref rather than a dependency: re-running the fetch effect
+  // on every page turn would refetch a chunk that is already in flight.
+  const pageOffset = useRef(offset);
+  pageOffset.current = offset;
   const [failed, setFailed] = useState(false);
   // A language chunk may be the only editor this file ever gets, so the surface
   // must be able to draw without the preview chunk having arrived.
@@ -298,7 +303,9 @@ function CodeSurface({
       handle.current = created;
       return () => {
         created.destroy();
-        handle.current = null;
+        // Only drop the handle if it is still this editor: a language chunk may
+        // have replaced it already, and clearing it here would orphan that one.
+        if (handle.current === created) handle.current = null;
       };
     } catch {
       setFailed(true);
@@ -317,27 +324,41 @@ function CodeSurface({
     const element = host.current;
     if (element === null || !languageChunked) return;
     let live = true;
+    /** The editor this effect mounted, so cleanup only destroys its own. */
+    let mine: CodePreviewHandle | null = null;
     loadLanguageChunk(languageId).then(
       module => {
         if (!live) return;
         if (languageFor(path) !== languageId) return;
         try {
-          const created = module.mount(element, { text, path, offset });
+          // Read the page from the refs, not from the closure: the reader may have
+          // turned the page while the chunk was in flight, and mounting the page
+          // that was showing when the fetch started would show stale text.
+          const created = module.mount(element, { text: pageText.current, path, offset: pageOffset.current });
+          mine = created;
           handle.current?.destroy();
           handle.current = created;
         } catch {
-          // A chunk that cannot mount leaves the page to the monochrome path,
-          // which is a readable page; the reader is not told about a failure
-          // that costs them nothing.
+          // A chunk that cannot mount leaves the page to the plain-text fallback,
+          // which is a readable page; the reader is not told about a failure that
+          // costs them nothing.
           setFailed(true);
         }
       },
       // A chunk that never arrives falls back the same way. Reporting it would
-      // put an error over text that is fine.
-      () => undefined,
+      // put an error over text that is fine. Nothing is mounted here, so the
+      // plain-text branch below is what the reader gets.
+      () => {
+        if (live) setFailed(true);
+      },
     );
     return () => {
       live = false;
+      // Destroy what this effect created: switching to a file with no chunk
+      // mounts a monochrome editor into the same host, and leaving this one alive
+      // would stack two editors and orphan this handle.
+      mine?.destroy();
+      if (handle.current === mine) handle.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [languageChunked, languageId, path]);
