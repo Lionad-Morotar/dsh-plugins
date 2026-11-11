@@ -78,6 +78,15 @@ const EDITABLE_LANG_BUDGET = {
 const EDITOR_GROWTH_ALLOWANCE = 4096;
 
 /**
+ * The editor chunk's gzipped size when this budget was written.
+ *
+ * Measured from the committed `lib/client.editor.js` at the time the four
+ * editable blocks landed, so the allowance above is a drift guard rather than a
+ * second, unrelated number.
+ */
+const EDITOR_BASELINE_GZIP = 213023;
+
+/**
  * Platform modules the host seeds for a third-party client bundle: React
  * itself and the shared primitive kit. Bundling either would ship a second
  * React and break every hook in the page.
@@ -256,6 +265,16 @@ async function main(checkOnly) {
   const chunkText = wrap(manifest.name, editor, { chunk: EDITOR_CHUNK });
   await emit(EDITOR_CHUNK, chunkText);
 
+  // The block set has to match the catalogue's batch blocks in both directions: a
+  // missing block leaves a language with nowhere to mount, and an extra one ships
+  // a file nothing claims. Checked before bundling so a wrong name is reported as
+  // a block-set mismatch rather than as a missing entry file.
+  const catalogue = await import(
+    new URL("../../dsh-text-languages/src/index.ts", import.meta.url).href
+  );
+  const batchBlocks = Object.keys(catalogue.LANGUAGE_CHUNK_LANGUAGES).filter(name => name.startsWith("batch-"));
+  assertBlockSet(EDITABLE_LANG_BLOCKS, batchBlocks);
+
   // The four editable language blocks. Each is its own bundle, so each carries a
   // copy of CodeMirror; that is the chunk contract's cost, not a mistake to
   // optimise away.
@@ -273,6 +292,20 @@ async function main(checkOnly) {
   }
 
   assertArtifacts(entryText, chunkText, langTexts);
+
+
+  // The editor chunk carries the ten in-service grammars plus the shared kit, and
+  // this slice only moved code around, so it is allowed a small drift and no more.
+  // Measured from the produced text, so the guard runs on the check path too.
+  const editorGzip = gzipSync(Buffer.from(chunkText, "utf8")).length;
+  const editorCeiling = EDITOR_BASELINE_GZIP + EDITOR_GROWTH_ALLOWANCE;
+  if (editorGzip > editorCeiling) {
+    process.stderr.write(
+      `${EDITOR_CHUNK}: ${String(editorGzip)} B gzipped, over ${String(editorCeiling)} B ` +
+        `(${String(EDITOR_BASELINE_GZIP)} B baseline plus ${String(EDITOR_GROWTH_ALLOWANCE)} B allowance)\n`,
+    );
+    process.exitCode = 1;
+  }
 
   const written = ["index.js", "client.js", EDITOR_CHUNK, ...EDITABLE_LANG_BLOCKS.map(editableLangChunk)];
 
@@ -326,6 +359,7 @@ async function main(checkOnly) {
     process.stderr.write(`over size budget:\n  ${over.join("\n  ")}\n`);
     process.exitCode = 1;
   }
+
 }
 
 await main(process.argv.includes("--check"));

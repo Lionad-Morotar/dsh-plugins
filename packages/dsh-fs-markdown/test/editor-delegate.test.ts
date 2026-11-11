@@ -306,3 +306,73 @@ describe("delegated find source", () => {
     expect(text.indexOf("let")).toBe("fn main() {\n    let x = 1;\n}\n".indexOf("let"));
   });
 });
+
+/**
+ * A failed block load must not poison the next file in the same panel.
+ *
+ * The pane keeps one body mounted while the reader switches files, so a single
+ * transient failure used to leave `failed` true for every later batch language:
+ * the body rendered the shell's monochrome editor without even trying, even
+ * though the loader had already dropped the rejection from its cache.
+ */
+describe("delegated failure resets on file change", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let Pane: (props: EditorBodyProps) => unknown;
+  let calls: string[];
+
+  beforeEach(async () => {
+    vi.resetModules();
+    calls = [];
+    const loader = await import("../src/client/chunk-loader.ts");
+    const require = ((specifier: string): unknown => {
+      throw new Error(`unexpected platform require: ${specifier}`);
+    }) as { (specifier: string): unknown; async(specifier: string): Promise<unknown> };
+    require.async = async (specifier: string): Promise<unknown> => {
+      calls.push(specifier);
+      throw new Error(`no chunk built for ${specifier}`);
+    };
+    loader.boot(require);
+    Pane = (await import("../src/client/chunk/editor.tsx")).EditorBody as never;
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  it("retries the block for the next file after a failure", async () => {
+    const render = async (path: string): Promise<void> => {
+      await act(async () => {
+        root.render(
+          createElement(Pane as never, {
+            path,
+            sessionId: "s1",
+            mode: "source",
+            text: "int main() {}\n",
+            t: (key: string) => key,
+            onChange: () => undefined,
+          } as never),
+        );
+      });
+      await act(async () => {
+        for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+      });
+    };
+
+    await render("a.rs");
+    const afterFirst = calls.filter(call => call === "./client.editor-langs-batch-script.js").length;
+    expect(afterFirst).toBe(1);
+
+    // A different file in the same batch: the body must try again rather than
+    // render the monochrome editor from the previous failure.
+    await render("b.rs");
+    const afterSecond = calls.filter(call => call === "./client.editor-langs-batch-script.js").length;
+    expect(afterSecond).toBeGreaterThan(afterFirst);
+  });
+});

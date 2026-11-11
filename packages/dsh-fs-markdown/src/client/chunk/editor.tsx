@@ -234,6 +234,7 @@ function DelegatedBody(props: EditorBodyProps & { readonly block: string }): Rea
   const [failed, setFailed] = useState(false);
   const [ready, setReady] = useState(false);
 
+
   // The sinks are read through refs so a re-render on every keystroke does not
   // remount the block: the block is created once per (block, path).
   const onChange = useRef(props.onChange);
@@ -354,7 +355,10 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
   // miss and then take the path below unchanged.
   const block = BLOCK_ASSIGNMENT[languageOf(props.path)];
   if (block !== undefined && EDITABLE_LANG_CHUNKS[block] !== undefined) {
-    return <DelegatedBody {...props} block={block} />;
+    // Keyed by file: the pane keeps one body mounted across file switches, so
+    // without this a failure on one file would leave the next one on the
+    // monochrome editor with a stale handle and no retry.
+    return <DelegatedBody key={`${block}\u0000${props.path}`} {...props} block={block} />;
   }
   return <ShellEditorBody {...props} />;
 }

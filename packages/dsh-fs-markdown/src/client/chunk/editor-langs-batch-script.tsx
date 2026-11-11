@@ -31,8 +31,8 @@ export const renderer = "batch-script" as const;
 /**
  * The languages this block draws, in the catalogue's order.
  *
- * The build asserts this list equals the catalogue's for this block, element for
- * element.
+ * `test/editor-langs.test.ts` asserts this list equals the catalogue's for this
+ * block, element for element; `scripts/build.mjs` guards the block set itself.
  */
 export const ids = [
   "go",
