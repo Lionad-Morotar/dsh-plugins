@@ -554,8 +554,14 @@ describe("degradation: a workspace with nothing changed", () => {
 
     expect(host.querySelector('[data-rm="list-empty"]')?.textContent).toBe("工作区没有变更");
     // A real zero is a fact, unlike an unknown count: the readings stay, and
-    // they say 0 rather than disappearing.
-    expect(host.querySelector('[data-stat="lines"]')?.textContent).toContain("+0");
+    // each zero side prints as a bare `0`. A sign in front of a zero reads as
+    // "a tiny amount of something" when the truth is "none", which is what the
+    // R2.2 rule forbids — so both sides are asserted exactly, not by substring.
+    const lines = host.querySelector('[data-stat="lines"]');
+    expect(lines?.querySelector('[data-rm="stat-add"]')?.textContent).toBe("0");
+    expect(lines?.querySelector('[data-rm="stat-del"]')?.textContent).toBe("0");
+    expect(lines?.textContent ?? "").not.toContain("+0");
+    expect(lines?.textContent ?? "").not.toContain("−0");
     expect(host.querySelector('[data-stat="files"]')?.textContent).toContain("0");
     expect(host.querySelectorAll('[data-testid="review-row"]')).toHaveLength(0);
   });
