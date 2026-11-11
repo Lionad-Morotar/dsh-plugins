@@ -208,6 +208,11 @@ function pathOfLine(line: string): string | undefined {
     return undefined;
   }
   if (/(?:^|\s)-{1,2}\S/u.test(candidate)) return undefined;
+  // A trailing `line:14` or `line:14-30` is a locator copied alongside a path,
+  // the same idea as the `:24` a file link carries. It is never part of the
+  // filename, so the line is prose and the paste keeps it as text instead of
+  // reporting a file that does not exist.
+  if (/ line:\d+(?:-\d+)?$/u.test(candidate)) return undefined;
   return candidate;
 }
 
