@@ -207,3 +207,63 @@ describe("language chunk replaces the preview chunk", () => {
     expect(calls).toEqual([]);
   });
 });
+
+/**
+ * The marker names the block, not the language.
+ *
+ * `vue` is drawn by the html block, so the chunk it receives has
+ * `renderer === "html"`. A loader comparing the marker against the language id
+ * would reject every shared block and silently leave those files monochrome,
+ * which is exactly the regression the first slice shipped.
+ */
+describe("loadLanguageChunk marker", () => {
+  it("accepts a shared block whose marker names the block", async () => {
+    const { require, calls } = fakeRequire({ "./client.lang-html.js": languageChunk("html") });
+    const module = await freshChunkModule();
+    module.boot(require);
+
+    const loaded = await module.loadLanguageChunk("vue");
+    expect(loaded.renderer).toBe("html");
+    expect(calls).toEqual(["./client.lang-html.js"]);
+  });
+
+  it("rejects a block whose marker names something else", async () => {
+    const { require } = fakeRequire({ "./client.lang-html.js": languageChunk("markdown") });
+    const module = await freshChunkModule();
+    module.boot(require);
+
+    await expect(module.loadLanguageChunk("vue")).rejects.toThrow(/html/u);
+  });
+
+  it("caches by artifact, so two languages on one block fetch once", async () => {
+    const { require, calls } = fakeRequire({ "./client.lang-html.js": languageChunk("html") });
+    const module = await freshChunkModule();
+    module.boot(require);
+
+    await module.loadLanguageChunk("vue");
+    await module.loadLanguageChunk("svelte");
+    await module.loadLanguageChunk("html");
+    expect(calls).toEqual(["./client.lang-html.js"]);
+  });
+
+  it("hands the module back unchanged, so the caller supplies the id", async () => {
+    // The loader does not call mount: the pane does, and it passes the language
+    // id. What matters here is that a batch block's module survives the marker
+    // check intact, since that module is the one whose mount dispatches on the id.
+    const mounted: string[] = [];
+    const batch = {
+      renderer: "batch-script",
+      mount: (_host: unknown, _options: unknown, id: string) => {
+        mounted.push(id);
+        return { update() {}, revealRange() {}, clearSelection() {}, destroy() {} };
+      },
+    };
+    const { require } = fakeRequire({ "./client.lang-batch-script.js": batch });
+    const module = await freshChunkModule();
+    module.boot(require);
+
+    const loaded = await module.loadLanguageChunk("rust");
+    expect(loaded).toBe(batch);
+    expect(typeof loaded.mount).toBe("function");
+  });
+});

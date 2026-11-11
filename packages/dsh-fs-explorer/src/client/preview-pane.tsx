@@ -33,7 +33,6 @@ import {
   familyOf,
   IDLE_PREVIEW,
   isMarkdownFile,
-  languageFor,
   matchLanguage,
   PREVIEW_MAX_LINES,
   type PreviewFailure,
@@ -245,6 +244,20 @@ function UnavailableBody({ t, revision }: { readonly t: Translate; readonly revi
 }
 
 /**
+ * The first line of the page on screen, for the first-line tier.
+ *
+ * Only the first page answers: a shebang is evidence about the file, while the
+ * first line of page two is just the next line of the same file. Returning
+ * undefined past page one keeps the tier from guessing.
+ * @param snapshot - the held page.
+ * @returns the page's first line, or undefined when this is not the first page.
+ */
+function snapshotFirstLine(snapshot: { readonly offset: number; readonly text: string }): string | undefined {
+  if (snapshot.offset !== 1) return undefined;
+  return snapshot.text.split(/\r?\n/u, 1)[0];
+}
+
+/**
  * Mount one read-only editor and keep it across page changes.
  *
  * The editor is created once per (chunk, path); a page change is a document
@@ -285,8 +298,14 @@ function CodeSurface({
   const [failed, setFailed] = useState(false);
   // A language chunk may be the only editor this file ever gets, so the surface
   // must be able to draw without the preview chunk having arrived.
-  const languageId = languageFor(path);
-  const languageChunked = hasLanguageChunk(languageId);
+  //
+  // The first line is only offered on the first page: it is how a suffixless file
+  // says what it is (a shebang), and page two's first line is just the next line
+  // of the same file, which would be a guess rather than evidence.
+  const firstLine = offset === 1 ? text.split(/\r?\n/u, 1)[0] : undefined;
+  const descriptor = matchLanguage(path, firstLine);
+  const languageId = descriptor?.id ?? null;
+  const languageChunked = languageId !== null && hasLanguageChunk(languageId);
 
   useEffect(() => {
     setFailed(false);
@@ -329,12 +348,20 @@ function CodeSurface({
     loadLanguageChunk(languageId).then(
       module => {
         if (!live) return;
-        if (languageFor(path) !== languageId) return;
+        // Re-derive rather than trust the id captured above: the path or the
+        // first line can change between the fetch starting and the module
+        // landing, and the answer must describe the file on screen.
+        const current = matchLanguage(path, pageOffset.current === 1 ? pageText.current.split(/\r?\n/u, 1)[0] : undefined);
+        if (current?.id !== languageId) return;
         try {
           // Read the page from the refs, not from the closure: the reader may have
           // turned the page while the chunk was in flight, and mounting the page
           // that was showing when the fetch started would show stale text.
-          const created = module.mount(element, { text: pageText.current, path, offset: pageOffset.current });
+          const created = module.mount(
+            element,
+            { text: pageText.current, path, offset: pageOffset.current },
+            languageId,
+          );
           mine = created;
           handle.current?.destroy();
           handle.current = created;
@@ -713,10 +740,15 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
     // file keeps its claim, and markdown keeps the GFM reader, because both are
     // decisions the registry already made and this branch is not entitled to
     // overrule them.
+    // The same three-tier question the surface asks, so the two agree on which
+    // files are drawn by a block. Asking by suffix here would miss `Dockerfile`
+    // and send it through the preview chunk first.
+    const routed = matchLanguage(path, snapshotFirstLine(snapshot));
     if (
       winner !== undefined &&
       winner.id === SOURCE_RENDERER_ID &&
-      hasLanguageChunk(languageFor(path))
+      routed !== null &&
+      hasLanguageChunk(routed.id)
     ) {
       setRendererState({ status: "ready", contribution: winner, module: MONOCHROME_MODULE });
       return;

@@ -574,3 +574,177 @@ describe("preview pane language chunk lifecycle", () => {
     };
   }
 });
+
+/**
+ * The three-tier routing the pane now uses.
+ *
+ * A file's language is not decided by its suffix alone any more: the catalogue
+ * checks exact filenames, then glob patterns, then suffixes, then the first line.
+ * Each tier exists because a real file needed it, so each one is asserted here
+ * with the file that motivated it.
+ *
+ * Every case also pins the cost: a file whose language has a block fetches that
+ * block and not the preview chunk, and a file with no block fetches nothing.
+ */
+describe("preview pane language routing", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let Pane: typeof PreviewPane;
+  let calls: string[];
+
+  beforeEach(async () => {
+    vi.resetModules();
+    Pane = (await import("../src/client/preview-pane.tsx")).PreviewPane;
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    calls = [];
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  /** Every block the pane may ask for, answered with a recording fake. */
+  async function boot(): Promise<void> {
+    const previewChunk = await import("../src/client/preview-chunk.ts");
+    const require = ((specifier: string): unknown => {
+      throw new Error(`unexpected platform require: ${specifier}`);
+    }) as { (specifier: string): unknown; async(specifier: string): Promise<unknown> };
+    require.async = async (specifier: string): Promise<unknown> => {
+      calls.push(specifier);
+      if (specifier === "./client.preview.js") {
+        return {
+          renderer: "codemirror",
+          mountCodePreview: (element: HTMLElement, options: { text: string }) => {
+            element.textContent = options.text;
+            return { update() {}, revealRange() {}, clearSelection() {}, destroy() {} };
+          },
+          MarkdownView: () => null,
+        };
+      }
+      // The marker is the block name, not the language id: `vue` is drawn by the
+      // html block, so a loader comparing against the id would reject it.
+      const block = /^\.\/client\.lang-(.+)\.js$/u.exec(specifier)?.[1] ?? "";
+      return {
+        renderer: block,
+        ids: [block],
+        mount: (element: HTMLElement, options: { text: string }) => {
+          element.textContent = options.text;
+          return { update() {}, revealRange() {}, clearSelection() {}, destroy() {} };
+        },
+      };
+    };
+    previewChunk.boot(require);
+  }
+
+  async function show(path: string, text = "print(1)\n"): Promise<void> {
+    const files = {
+      list: async () => ({ entries: [] }),
+      read: async () => ({ ok: true, value: { text, offset: 1, lines: 1, eof: true } }),
+    };
+    await act(async () => {
+      root.render(createElement(Pane, { sessionId: "s1", files, path, t }));
+    });
+    await act(async () => {
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+  }
+
+  it("colours .vue with the html block, the first slice's regression", async () => {
+    await boot();
+    await show("a.vue");
+    expect(calls).toContain("./client.lang-html.js");
+    expect(calls).not.toContain("./client.preview.js");
+  });
+
+  it("fetches the shared block once for .vue and .html", async () => {
+    await boot();
+    await show("a.vue");
+    await show("a.html");
+    // Both files are drawn by the same artifact, so the second open is a cache hit.
+    expect(calls.filter(call => call === "./client.lang-html.js")).toHaveLength(1);
+  });
+
+  it("routes Dockerfile by its exact filename", async () => {
+    await boot();
+    await show("Dockerfile");
+    // No suffix to match, so only the filename tier can reach it.
+    expect(calls).toContain("./client.lang-batch-datadoc.js");
+    expect(calls).not.toContain("./client.preview.js");
+  });
+
+  it("routes docker-compose.yml by its glob pattern", async () => {
+    await boot();
+    await show("docker-compose.yml");
+    expect(calls).toContain("./client.lang-yaml.js");
+  });
+
+  it("routes tsconfig.json by filename, not by its .json suffix", async () => {
+    await boot();
+    await show("tsconfig.json");
+    // The catalogue files `tsconfig.json` under jsonc, which is a filename-tier
+    // match that beats the plain `.json` suffix. Either way it must not fall
+    // through to the javascript grammar the way a suffix-only lookup would.
+    expect(calls).toContain("./client.lang-batch-datadoc.js");
+    expect(calls).not.toContain("./client.lang-javascript.js");
+    expect(calls).not.toContain("./client.lang-json.js");
+  });
+
+  it("routes a shebang file by its first line", async () => {
+    await boot();
+    await show("script", "#!/usr/bin/env python3\nprint(1)\n");
+    expect(calls).toContain("./client.lang-python.js");
+  });
+
+  it("routes the same file differently when the shebang changes", async () => {
+    await boot();
+    await show("script", "#!/bin/sh\necho hi\n");
+    expect(calls).toContain("./client.lang-batch-script.js");
+    expect(calls).not.toContain("./client.lang-python.js");
+  });
+
+  it("hands the block the language id, not the block name", async () => {
+    // A batch block dispatches on this id to pick a grammar. Passing the block
+    // name instead would leave every language in the block monochrome, and the
+    // fetch count would still look right, so this is asserted on the argument.
+    const seen: string[] = [];
+    const previewChunk = await import("../src/client/preview-chunk.ts");
+    const require = ((specifier: string): unknown => {
+      throw new Error(`unexpected platform require: ${specifier}`);
+    }) as { (specifier: string): unknown; async(specifier: string): Promise<unknown> };
+    require.async = async (specifier: string): Promise<unknown> => {
+      calls.push(specifier);
+      const block = /^\.\/client\.lang-(.+)\.js$/u.exec(specifier)?.[1] ?? "";
+      return {
+        renderer: block,
+        mount: (element: HTMLElement, options: { text: string }, id: string) => {
+          seen.push(id);
+          element.textContent = options.text;
+          return { update() {}, revealRange() {}, clearSelection() {}, destroy() {} };
+        },
+      };
+    };
+    previewChunk.boot(require);
+
+    await show("a.rs");
+    expect(calls).toContain("./client.lang-batch-script.js");
+    expect(seen).toEqual(["rust"]);
+  });
+
+  it("fetches nothing for a suffix the catalogue does not know", async () => {
+    await boot();
+    await show("a.xyz");
+    expect(calls.filter(call => call.startsWith("./client.lang-"))).toEqual([]);
+  });
+
+  it("fetches no language block for the explicit plaintext row", async () => {
+    await boot();
+    await show("a.txt");
+    // Plaintext is a decided answer, not a gap: it has no block to fetch.
+    expect(calls.filter(call => call.startsWith("./client.lang-"))).toEqual([]);
+  });
+});

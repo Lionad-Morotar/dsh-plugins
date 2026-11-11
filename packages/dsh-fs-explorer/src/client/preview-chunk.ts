@@ -109,7 +109,14 @@ export interface FamilyChunkModule {
  */
 export interface LanguageChunkModule {
   readonly renderer: string;
-  mount(host: HTMLElement, options: LanguageMountOptions): LanguageHandle;
+  /**
+   * Mount the editor for one language.
+   *
+   * The id is required because a block can carry several languages: the four
+   * batch blocks dispatch on it, and the single-language blocks ignore it. Passing
+   * it everywhere keeps one call shape rather than two.
+   */
+  mount(host: HTMLElement, options: LanguageMountOptions, id: string): LanguageHandle;
 }
 
 /** What a language chunk's mount needs: the page, its path and its first line. */
@@ -227,22 +234,28 @@ export function loadLanguageChunk(id: string): Promise<LanguageChunkModule> {
   if (route === null) {
     return Promise.reject(new Error(`${PACKAGE_NAME}: no language chunk for ${id}`));
   }
-  const cached = languagePending.get(id);
+  // Keyed by the artifact, not the language: `vue`, `svelte` and `razor` are all
+  // drawn by the html block, and opening two of them must cost one fetch.
+  const cached = languagePending.get(route.chunk);
   if (cached !== undefined) return cached;
   const active = loaderRequire;
   if (active === null || typeof active.async !== "function") {
     return Promise.reject(new Error(`${PACKAGE_NAME}: the loader require was not handed over`));
   }
+  // The marker names the block, so that is what it is compared against. Comparing
+  // it to the language id would reject every shared block: `vue` arrives from a
+  // chunk whose marker is `html`.
+  const block = route.chunk.replace(/^client\.lang-/u, "").replace(/\.js$/u, "");
   const request = active.async(`./${route.chunk}`).then(module => {
     const chunk = module as Partial<LanguageChunkModule> | null;
-    if (chunk === null || typeof chunk.mount !== "function" || chunk.renderer !== id) {
-      throw new Error(`${PACKAGE_NAME}: chunk ${route.id} is not the ${id} renderer`);
+    if (chunk === null || typeof chunk.mount !== "function" || chunk.renderer !== block) {
+      throw new Error(`${PACKAGE_NAME}: chunk ${route.id} is not the ${block} renderer`);
     }
     return chunk as LanguageChunkModule;
   });
-  languagePending.set(id, request);
+  languagePending.set(route.chunk, request);
   request.catch(() => {
-    if (languagePending.get(id) === request) languagePending.delete(id);
+    if (languagePending.get(route.chunk) === request) languagePending.delete(route.chunk);
   });
   return request;
 }
