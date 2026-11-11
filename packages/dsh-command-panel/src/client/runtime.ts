@@ -184,6 +184,17 @@ export interface PanelConfig {
   readonly seatSurfaces?: boolean;
 }
 
+/**
+ * Host commands the panel keeps answering even when no row shows their keycap.
+ *
+ * The switch mode's first level speaks for `session.new`; the second level's
+ * new-session row targets one workspace and stays bare. The chord is still a
+ * global host command though, and the host's modal gate would swallow it on web
+ * while the panel is open, so the panel forwards it: the native desktop path and
+ * the DOM path then behave the same.
+ */
+const FORWARDED_HOST_SHORTCUTS: readonly string[] = ["session.new"];
+
 export interface PanelRuntimeDeps {
   readonly ctx: ClientContext;
   readonly React: ReactSlice;
@@ -1133,9 +1144,10 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       composing,
     };
 
-    const declared = new Set(
-      rawRows.flatMap(row => (row.shortcutId === undefined ? [] : [row.shortcutId])),
-    );
+    const declared = new Set([
+      ...FORWARDED_HOST_SHORTCUTS,
+      ...rawRows.flatMap(row => (row.shortcutId === undefined ? [] : [row.shortcutId])),
+    ]);
     for (const id of declared) {
       const usable = usableShortcut(entries, id);
       if (usable === undefined) continue;

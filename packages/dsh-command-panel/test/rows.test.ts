@@ -287,14 +287,16 @@ describe("withShortcutHints", () => {
   const list = sessionList([SESSION_A, SESSION_B]);
   const snapshot = workspaceSnapshot();
 
-  it("puts the live keycap on the rows that declare a shortcut", () => {
+  it("puts the live keycap on the rows that speak for the host command", () => {
     const rows = withShortcutHints(workspaceRows(snapshot, list, copy, now), bound);
     expect(rows.at(-2)?.hint).toBe("⌘ N");
+    // The second level's row starts a session in the drilled workspace, while
+    // the chord starts one where the reader currently is: no keycap there.
     const scoped = withShortcutHints(
       sessionRows(list, snapshot, { kind: "workspace", workspaceId: "ws-one" }, copy, now),
       bound,
     );
-    expect(scoped.at(-2)?.hint).toBe("⌘ N");
+    expect(scoped.at(-2)?.hint).toBeUndefined();
   });
 
   it("leaves the row without a hint when the shortcut is not usable", () => {
@@ -432,9 +434,17 @@ describe("sessionRows", () => {
     expect(archiveRow?.action).toEqual({ kind: "drill-archived" });
   });
 
-  it("declares the host's new-session shortcut on the workspace-scoped row", () => {
+  it("leaves the host shortcut off the workspace-scoped row", () => {
+    // Enter starts a session in this workspace; `session.new` starts one in the
+    // current session's workspace. Advertising the chord here would promise the
+    // wrong destination.
     const scoped = sessionRows(list, snapshot, { kind: "workspace", workspaceId: "ws-one" }, copy, now);
-    expect(scoped.at(-2)?.shortcutId).toBe("session.new");
+    expect(scoped.at(-2)?.shortcutId).toBeUndefined();
+    expect(scoped.at(-2)?.action).toEqual({
+      kind: "create-session",
+      scope: "workspace",
+      workspaceId: "ws-one",
+    });
   });
 
   it("keeps the archived-sessions row out of the all scope", () => {

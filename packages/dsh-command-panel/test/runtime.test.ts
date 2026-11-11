@@ -557,6 +557,32 @@ describe("row shortcut keys", () => {
     h.runtime.dispose();
   });
 
+  it("keeps forwarding the new-session chord inside a workspace list", async () => {
+    const h = harness();
+    await openSwitch(h);
+
+    const workspaceRow = h.store.getSnapshot().rows.find(row => row.key === "workspace:ws-one");
+    expect(workspaceRow).toBeDefined();
+    h.verbs.accept(workspaceRow!);
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    // The scoped row starts a session in this workspace on Enter, which is not
+    // what the global chord does, so the row wears no keycap.
+    const scopedRow = h.store.getSnapshot().rows.find(row => row.key === "scope:new-session");
+    expect(scopedRow?.shortcutId).toBeUndefined();
+    expect(scopedRow?.hint).toBeUndefined();
+
+    // The chord itself is still a global host command: the panel forwards it so
+    // the host modal gate does not turn it into a dead key on web.
+    expect(h.verbs.shortcutKey(deadEvent(), false)).toBe(true);
+    expect(h.shortcuts.invoke).toHaveBeenCalledExactlyOnceWith("session.new", {
+      region: "page",
+      modal: null,
+      target: null,
+    });
+    h.runtime.dispose();
+  });
+
   it("answers the chord in the command mode too, where the rows are the catalogue", async () => {
     const h = harness();
     runCommand(h, "command-panel.commands");

@@ -482,6 +482,9 @@ export function workspaceRows(
   rows.push({
     key: "scope:new-session",
     label: copy.newSession,
+    // This row starts a session exactly where the host command does — the
+    // current session's workspace, else the most recent one — so the keycap it
+    // shows is a true promise.
     shortcutId: "session.new",
     action: { kind: "create-session", scope: "workspace" },
   });
@@ -544,7 +547,9 @@ export function sessionRows(
     rows.push({
       key: "scope:new-session",
       label: copy.newSession,
-      shortcutId: "session.new",
+      // No host shortcut on this row: Enter starts a session in the drilled
+      // workspace, while `session.new` starts one where the reader currently
+      // is. A keycap that would do something else is worse than none.
       action: { kind: "create-session", scope: "workspace", workspaceId: scope.workspaceId },
     });
     rows.push({
