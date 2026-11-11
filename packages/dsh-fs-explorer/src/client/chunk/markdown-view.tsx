@@ -171,6 +171,25 @@ interface MermaidDiagramProps {
 function MermaidDiagram({ code, t, loadChunk }: MermaidDiagramProps): ReactNode {
   const host = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<DiagramState>({ kind: "pending" });
+  /**
+   * The definition the current state was produced from.
+   *
+   * Held in state rather than in a ref because the comparison has to happen
+   * during render. An effect runs after the browser already has the old picture
+   * on screen, so resetting there would still commit one frame of the old
+   * diagram beside the new source, which is the frame this guards against.
+   */
+  const [stateCode, setStateCode] = useState(code);
+  if (stateCode !== code) {
+    // A fence whose text changed is a different diagram, so the picture on
+    // screen is not a stale copy of the new one, it is simply wrong. Going back
+    // to pending here shows the new source immediately; the effect below then
+    // draws it. A theme change is the other case and deliberately not handled
+    // here: the code is unchanged, so the old picture is still a correct
+    // drawing of the same diagram and stays up until the new one is ready.
+    setStateCode(code);
+    setState({ kind: "pending" });
+  }
   // Bumped by the theme observer; the render effect depends on it, so a theme
   // change re-samples the palette and draws again.
   const [themeVersion, setThemeVersion] = useState(0);

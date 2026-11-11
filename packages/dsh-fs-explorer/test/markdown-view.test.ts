@@ -58,6 +58,51 @@ function fakeLoader(options: { readonly fail?: boolean } = {}): {
   };
 }
 
+/**
+ * A loader whose renders are settled by the test.
+ *
+ * The plain fake resolves on the next microtask, which is too fast to observe the
+ * window this file needs: the moment between a new definition arriving and its
+ * picture existing. Each call parks a deferred here so the test can look at the
+ * DOM while the render is genuinely in flight.
+ * @returns the loader seam plus the pending renders, in call order.
+ */
+function deferredLoader(): {
+  load: () => Promise<MermaidChunkModule>;
+  pending: () => { resolve: (svg: string) => void; reject: (error: Error) => void }[];
+} {
+  const parked: { resolve: (svg: string) => void; reject: (error: Error) => void }[] = [];
+  const renderDiagram = vi.fn(
+    () =>
+      new Promise<{ svg: string }>((resolve, reject) => {
+        parked.push({
+          resolve: (svg: string) => resolve({ svg }),
+          reject: (error: Error) => reject(error),
+        });
+      }),
+  );
+  const module: MermaidChunkModule = { renderer: "mermaid", renderDiagram };
+  return {
+    load: async () => module,
+    pending: () => parked,
+  };
+}
+
+/**
+ * The render parked at one position, or a failure naming the position.
+ *
+ * Indexing the parked list directly would need a non-null assertion at every
+ * call site under `noUncheckedIndexedAccess`; this states the expectation once.
+ * @param parked - the deferred renders, in call order.
+ * @param index - which one the test expects.
+ * @returns that render's settle functions.
+ */
+function at(parked: readonly { resolve: (svg: string) => void; reject: (error: Error) => void }[], index: number) {
+  const entry = parked[index];
+  if (entry === undefined) throw new Error(`no render was parked at ${String(index)}`);
+  return entry;
+}
+
 describe("MarkdownView diagram fence", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -210,6 +255,74 @@ describe("MarkdownView diagram fence", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("drops the old picture as soon as the fence text changes", async () => {
+    // The regression this locks: a fence edited in place keeps its component, so
+    // without a reset the reader sees the previous diagram beside the new source
+    // until the new render lands. The old picture is not a stale copy of the new
+    // one, it is a drawing of a diagram the document no longer contains.
+    const deferred = deferredLoader();
+    const fenceA = "```mermaid\ngraph TD\nA-->B\n```";
+    const fenceB = "```mermaid\ngraph TD\nC-->D\n```";
+
+    await act(async () => {
+      root.render(createElement(MarkdownView, { text: fenceA, loadMermaid: deferred.load }));
+    });
+    await act(async () => {
+      at(deferred.pending(), 0).resolve('<svg data-fake-diagram="A"></svg>');
+    });
+    expect(host.querySelector("svg[data-fake-diagram='A']")).not.toBeNull();
+
+    // Rerender with the new definition while its render is still in flight.
+    await act(async () => {
+      root.render(createElement(MarkdownView, { text: fenceB, loadMermaid: deferred.load }));
+    });
+
+    expect(deferred.pending()).toHaveLength(2);
+    // No old picture, and the new source is what the reader sees.
+    expect(host.querySelector("svg[data-fake-diagram='A']")).toBeNull();
+    expect(host.querySelector("[data-testid='fs-preview-mermaid']")).toBeNull();
+    const pendingSource = host.querySelector(".fx-md-diagram-source");
+    expect(pendingSource?.textContent).toContain("C-->D");
+    expect(pendingSource?.textContent).not.toContain("A-->B");
+
+    await act(async () => {
+      at(deferred.pending(), 1).resolve('<svg data-fake-diagram="B"></svg>');
+    });
+    expect(host.querySelector("svg[data-fake-diagram='B']")).not.toBeNull();
+    expect(host.querySelector("svg[data-fake-diagram='A']")).toBeNull();
+  });
+
+  it("keeps the current picture up while a theme change redraws it", async () => {
+    // The other half of the same decision: a theme switch draws the same diagram
+    // again, so the picture already on screen is correct and replacing it with
+    // source for a frame would be a flicker with nothing to gain.
+    const deferred = deferredLoader();
+    await act(async () => {
+      root.render(createElement(MarkdownView, { text: FENCE, loadMermaid: deferred.load }));
+    });
+    await act(async () => {
+      at(deferred.pending(), 0).resolve('<svg data-fake-diagram="light"></svg>');
+    });
+    expect(host.querySelector("svg[data-fake-diagram='light']")).not.toBeNull();
+
+    await act(async () => {
+      document.documentElement.setAttribute("data-theme", "dark");
+      await new Promise(resolve => window.requestAnimationFrame(() => resolve(null)));
+    });
+    expect(deferred.pending()).toHaveLength(2);
+    // Still the old picture, not the source: the code did not change.
+    expect(host.querySelector("svg[data-fake-diagram='light']")).not.toBeNull();
+    expect(host.querySelector(".fx-md-diagram-source")).not.toBeNull();
+    expect(host.querySelector("[data-testid='fs-preview-mermaid']")).not.toBeNull();
+
+    await act(async () => {
+      at(deferred.pending(), 1).resolve('<svg data-fake-diagram="dark"></svg>');
+    });
+    expect(host.querySelector("svg[data-fake-diagram='dark']")).not.toBeNull();
+    expect(host.querySelector("svg[data-fake-diagram='light']")).toBeNull();
+    document.documentElement.removeAttribute("data-theme");
   });
 
   it("has readable labels when no translator was handed in", async () => {
