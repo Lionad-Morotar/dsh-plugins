@@ -985,7 +985,7 @@ async function readOneBlob(runner, cwd, rev, path, signal) {
   if (isRefused(result) || result.exitCode !== 0) return null;
   return result.stdout;
 }
-async function readBlobChunks(runner, cwd, rev, entries, limits, signal) {
+async function readBlobChunks(runner, cwd, rev, entries, limits, signal, expired) {
   const blobs = /* @__PURE__ */ new Map();
   const binary = /* @__PURE__ */ new Set();
   let chunk = [];
@@ -1006,10 +1006,16 @@ async function readBlobChunks(runner, cwd, rev, entries, limits, signal) {
     chunkBytes = 0;
   };
   for (const entry of entries) {
-    if (chunk.length > 0 && chunkBytes + entry.size > limits.maxChunkBytes) await flush();
+    if (chunk.length > 0 && chunkBytes + entry.size > limits.maxChunkBytes) {
+      await flush();
+      if (expired?.() === true) return { blobs, binary, lossy };
+    }
     chunk.push(entry);
     chunkBytes += entry.size;
-    if (chunkBytes >= limits.maxChunkBytes) await flush();
+    if (chunkBytes >= limits.maxChunkBytes) {
+      await flush();
+      if (expired?.() === true) return { blobs, binary, lossy };
+    }
   }
   await flush();
   return { blobs, binary, lossy };
@@ -1209,7 +1215,9 @@ async function runStructurePass(options, resolved, limits, signal) {
     return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
   });
   let readOrder = ordered;
+  let truncated = [];
   if (readOrder.length > limits.maxFiles) {
+    truncated = readOrder.slice(limits.maxFiles);
     readOrder = readOrder.slice(0, limits.maxFiles);
     complete = false;
     note = `file budget ${limits.maxFiles}`;
@@ -1235,7 +1243,7 @@ async function runStructurePass(options, resolved, limits, signal) {
   } else if (expired()) {
     stopped = true;
   } else {
-    const read = await readBlobChunks(runner, cwd, "HEAD", readOrder, limits, signal);
+    const read = await readBlobChunks(runner, cwd, "HEAD", readOrder, limits, signal, expired);
     for (const entry of readOrder) {
       if (expired()) {
         stopped = true;
@@ -1299,6 +1307,9 @@ async function runStructurePass(options, resolved, limits, signal) {
     }
     files.push({ path: entry.path, lines: content.lines, binary: content.binary, deleted: false });
   }
+  for (const entry of truncated) {
+    files.push({ path: entry.path, lines: null, binary: false, deleted: false, unindexed: true });
+  }
   for (const path of deletedPaths) {
     const content = contents.get(path);
     if (content === void 0) {
@@ -1312,13 +1323,16 @@ async function runStructurePass(options, resolved, limits, signal) {
   const changed = buildChanged(changedFiles.files, ranges, (path) => linesByPath.get(path) ?? null);
   const dirs = aggregateDirs(files, new Map(changed.map((entry) => [entry.path, entry])));
   const changedPaths = /* @__PURE__ */ new Set();
+  const renamedOldPaths = /* @__PURE__ */ new Set();
   for (const file of changedFiles.files) {
     changedPaths.add(file.path);
-    if (file.oldPath !== void 0) changedPaths.add(file.oldPath);
+    if (file.oldPath === void 0) continue;
+    changedPaths.add(file.oldPath);
+    renamedOldPaths.add(file.oldPath);
   }
   return {
     ok: true,
-    pass: { files, dirs, changed, newImports, oldImports, changedPaths, parsed, complete, note }
+    pass: { files, dirs, changed, newImports, oldImports, changedPaths, renamedOldPaths, parsed, complete, note }
   };
 }
 function buildEdges(imports, resolve) {
@@ -1360,7 +1374,11 @@ async function collectIndex(options, scope, limits = DEFAULT_INDEX_LIMITS, signa
   };
   const compilerPaths = await loadCompilerPaths(readText);
   const newPaths = new Set(pass.pass.files.filter((file) => !file.deleted).map((file) => file.path));
-  const oldPaths = /* @__PURE__ */ new Set([...newPaths, ...pass.pass.files.filter((file) => file.deleted).map((file) => file.path)]);
+  const oldPaths = /* @__PURE__ */ new Set([
+    ...newPaths,
+    ...pass.pass.files.filter((file) => file.deleted).map((file) => file.path),
+    ...pass.pass.renamedOldPaths
+  ]);
   for (const path of newPaths) {
     if (pass.pass.changed.some((entry) => entry.path === path && (entry.status === "added" || entry.status === "untracked"))) {
       oldPaths.delete(path);

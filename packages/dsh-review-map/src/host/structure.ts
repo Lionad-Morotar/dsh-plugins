@@ -122,6 +122,16 @@ interface StructurePass {
   readonly oldImports: ReadonlyMap<string, ExtractedImports>;
   /** Paths the change set touches, both sides. */
   readonly changedPaths: ReadonlySet<string>;
+  /**
+   * The old paths of renamed files.
+   *
+   * A rename leaves nothing at the old path on the new side, but the old side
+   * still has it — and an unchanged file that imports `./a` resolved against the
+   * old tree. Without these paths in the old-side file set, that import is
+   * reported as unresolvable and the edge it forms disappears from the
+   * comparison, which is a wrong answer about a dependency that really existed.
+   */
+  readonly renamedOldPaths: ReadonlySet<string>;
   /** Files whose imports were extracted on the new side. */
   readonly parsed: number;
   readonly complete: boolean;
@@ -408,6 +418,15 @@ async function readBlobChunks(
   entries: readonly SideEntry[],
   limits: IndexLimits,
   signal?: AbortSignal,
+  /**
+   * Whether the caller's deadline is spent.
+   *
+   * Checked before every batch: without it the whole tree was read and only
+   * afterwards did the caller notice the budget was gone, so a slow repository
+   * overran its deadline by however long the read took. Anything left unread is
+   * reported as unindexed by the caller, which is the honest outcome.
+   */
+  expired?: () => boolean,
 ): Promise<{ readonly blobs: Map<string, string | null>; readonly binary: ReadonlySet<string>; readonly lossy: boolean }> {
   const blobs = new Map<string, string | null>();
   const binary = new Set<string>();
@@ -437,10 +456,19 @@ async function readBlobChunks(
   for (const entry of entries) {
     // A file bigger than the budget gets a call of its own rather than being
     // dropped or dragging a whole chunk past the limit with it.
-    if (chunk.length > 0 && chunkBytes + entry.size > limits.maxChunkBytes) await flush();
+    if (chunk.length > 0 && chunkBytes + entry.size > limits.maxChunkBytes) {
+      await flush();
+      // The deadline is checked after each batch, not once at the end: a
+      // repository large enough to need many batches is exactly the one where
+      // finishing them all would blow the budget.
+      if (expired?.() === true) return { blobs, binary, lossy };
+    }
     chunk.push(entry);
     chunkBytes += entry.size;
-    if (chunkBytes >= limits.maxChunkBytes) await flush();
+    if (chunkBytes >= limits.maxChunkBytes) {
+      await flush();
+      if (expired?.() === true) return { blobs, binary, lossy };
+    }
   }
   await flush();
   return { blobs, binary, lossy };
@@ -800,7 +828,12 @@ async function runStructurePass(
     return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
   });
   let readOrder = ordered;
+  // The files the cap leaves out are not read, but they are still in the tree:
+  // they go into the list as unindexed rather than vanishing. A map that hides
+  // them would be claiming the repository is smaller than it is.
+  let truncated: readonly SideEntry[] = [];
   if (readOrder.length > limits.maxFiles) {
+    truncated = readOrder.slice(limits.maxFiles);
     readOrder = readOrder.slice(0, limits.maxFiles);
     complete = false;
     note = `file budget ${limits.maxFiles}`;
@@ -834,7 +867,7 @@ async function runStructurePass(
     // rather than the whole tree being dropped from the map.
     stopped = true;
   } else {
-    const read = await readBlobChunks(runner, cwd, "HEAD", readOrder, limits, signal);
+    const read = await readBlobChunks(runner, cwd, "HEAD", readOrder, limits, signal, expired);
     for (const entry of readOrder) {
       if (expired()) {
         stopped = true;
@@ -913,6 +946,11 @@ async function runStructurePass(
     }
     files.push({ path: entry.path, lines: content.lines, binary: content.binary, deleted: false });
   }
+  // The cap's leftovers: in the tree, never read, so unindexed rather than
+  // absent. Their line counts are unknown, which is not zero.
+  for (const entry of truncated) {
+    files.push({ path: entry.path, lines: null, binary: false, deleted: false, unindexed: true });
+  }
   // Deleted files come from the old side, under their old path.
   for (const path of deletedPaths) {
     const content = contents.get(path);
@@ -929,14 +967,21 @@ async function runStructurePass(
   const dirs = aggregateDirs(files, new Map(changed.map(entry => [entry.path, entry])));
 
   const changedPaths = new Set<string>();
+  // A rename's old path is a file that existed on the old side and does not on
+  // the new one. It is collected separately from `changedPaths` because the two
+  // answer different questions: `changedPaths` scopes the headline counts, this
+  // set completes the old side's file list.
+  const renamedOldPaths = new Set<string>();
   for (const file of changedFiles.files) {
     changedPaths.add(file.path);
-    if (file.oldPath !== undefined) changedPaths.add(file.oldPath);
+    if (file.oldPath === undefined) continue;
+    changedPaths.add(file.oldPath);
+    renamedOldPaths.add(file.oldPath);
   }
 
   return {
     ok: true,
-    pass: { files, dirs, changed, newImports, oldImports, changedPaths, parsed, complete, note },
+    pass: { files, dirs, changed, newImports, oldImports, changedPaths, renamedOldPaths, parsed, complete, note },
   };
 }
 
@@ -1015,7 +1060,15 @@ export async function collectIndex(
   const compilerPaths = await loadCompilerPaths(readText);
 
   const newPaths = new Set(pass.pass.files.filter(file => !file.deleted).map(file => file.path));
-  const oldPaths = new Set([...newPaths, ...pass.pass.files.filter(file => file.deleted).map(file => file.path)]);
+  // The old side is the new side plus everything that only existed before it:
+  // deletions, and the old path of every rename. Leaving the renames out made an
+  // unchanged file's import of `./a` unresolvable once `a.ts` became `b.ts`,
+  // which read as a dropped dependency that never dropped.
+  const oldPaths = new Set([
+    ...newPaths,
+    ...pass.pass.files.filter(file => file.deleted).map(file => file.path),
+    ...pass.pass.renamedOldPaths,
+  ]);
   for (const path of newPaths) {
     // A file that did not exist on the old side cannot be an old-side target.
     if (pass.pass.changed.some(entry => entry.path === path && (entry.status === "added" || entry.status === "untracked"))) {

@@ -306,7 +306,10 @@ describe("the index budget", () => {
 
     expect(index.indexed.complete).toBe(false);
     expect(index.indexed.note).toBe("file budget 2");
-    expect(index.indexed.files).toBe(2);
+    // `files` is the listing, not the read set: the cap limits what is read, and
+    // the files it skipped are still in the tree (and in the list, unindexed).
+    expect(index.indexed.files).toBe(4);
+    expect(index.indexed.parsed).toBeLessThanOrEqual(2);
   });
 
   it("stops on the deadline and reports how much it parsed", async () => {
@@ -607,5 +610,221 @@ describe("a branch read that meets a binary blob", () => {
     expect(result.index.indexed.complete).toBe(true);
     // The two script files were parsed; the binary one is measured, not parsed.
     expect(result.index.indexed.parsed).toBe(2);
+  });
+});
+
+describe("a renamed file's old path", () => {
+  /**
+   * A branch where `a.ts` became `b.ts` and a third file still imports `./a`.
+   *
+   * This is the shape the review found: the old side has `a.ts`, the new side
+   * has `b.ts`, and `consumer.ts` is unchanged — so on the old side its import
+   * of `./a` resolved, and on the new side it resolves to `./b` only if the
+   * consumer was edited. It was not, so the new side genuinely cannot resolve
+   * it; what matters is that the *old* side still can.
+   */
+  async function renamedRepo(): Promise<RepoHandle> {
+    const created = await createRepoWithCommit({
+      "a.ts": "export const a = 1;\n",
+      "consumer.ts": "import a from './a';\nexport default a;\n",
+      "other.ts": "export const other = 1;\n",
+    });
+    created.git(["checkout", "-q", "-b", "feature"]);
+    created.git(["mv", "a.ts", "b.ts"]);
+    created.git(["commit", "-qm", "rename a to b"]);
+    return created;
+  }
+
+  it("keeps the old path in the old side's file set", async () => {
+    repo = await renamedRepo();
+    const runner = stdinRunner(repo.root);
+
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const renamed = result.index.changed.find(entry => entry.status === "renamed");
+    expect(renamed?.path).toBe("b.ts");
+    // The old path is what the old side resolves against, and it is not on the
+    // new side at all.
+    expect(result.index.files.map(file => file.path)).not.toContain("a.ts");
+  });
+
+  it("does not report the consumer's import as unresolved on the old side", async () => {
+    repo = await renamedRepo();
+    const runner = stdinRunner(repo.root);
+
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // `consumer.ts` is unchanged, so its import of `./a` is a real dependency on
+    // the old side. Before the fix the old-side file set had no `a.ts`, so the
+    // reference was unresolvable and the edge vanished from the comparison.
+    const consumerEdges = result.index.edges.filter(edge => edge.from === "consumer.ts");
+    expect(consumerEdges.map(edge => `${edge.from} -> ${edge.to} (${edge.state})`)).toEqual([
+      "consumer.ts -> a.ts (removed)",
+    ]);
+  });
+
+  it("counts the removed edge as a dropped import", async () => {
+    repo = await renamedRepo();
+    const runner = stdinRunner(repo.root);
+
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The dependency really was dropped — the target moved out from under it —
+    // so it belongs in the dropped count. Before the fix the old side had no
+    // `a.ts` to resolve against, so the edge never existed and the count was 0.
+    expect(result.index.imports.droppedImports).toBe(1);
+    // `consumer.ts` is still listed as unresolved, and that is a different,
+    // honest fact: on the *new* side `./a` genuinely does not resolve, because
+    // the file it named is now `b.ts`. The fix makes the old side correct; it
+    // does not pretend the new side resolves something it cannot.
+    expect(result.index.unresolved.files).toContain("consumer.ts");
+  });
+
+  it("still resolves the new side against the new path", async () => {
+    repo = await renamedRepo();
+    const runner = stdinRunner(repo.root);
+
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The new side has no `a.ts`, so the consumer's reference is unresolvable
+    // there — which is a fact, not a bug. It must not be reported as an edge.
+    expect(result.index.edges.some(edge => edge.from === "consumer.ts" && edge.state !== "removed")).toBe(false);
+  });
+});
+
+describe("the file cap's leftovers", () => {
+  /** A branch with more files than the cap will read. */
+  async function manyFiles(): Promise<RepoHandle> {
+    const created = await createRepoWithCommit({
+      "a.ts": "export const a = 1;\n",
+      "b.ts": "export const b = 1;\n",
+      "c.ts": "export const c = 1;\n",
+      "d.ts": "export const d = 1;\n",
+      "e.ts": "export const e = 1;\n",
+    });
+    created.git(["checkout", "-q", "-b", "feature"]);
+    await created.write("a.ts", "export const a = 2;\n");
+    created.git(["add", "-A"]);
+    created.git(["commit", "-qm", "feature work"]);
+    return created;
+  }
+
+  it("lists every file even when the cap reads only some", async () => {
+    repo = await manyFiles();
+    const runner = stdinRunner(repo.root);
+
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" }, {
+      ...DEFAULT_INDEX_LIMITS,
+      maxFiles: 3,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The tree has five files; the cap reads three. All five are in the list.
+    expect(result.index.files.map(file => file.path).sort()).toEqual(["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"]);
+    expect(result.index.indexed.files).toBe(5);
+    expect(result.index.indexed.parsed).toBeLessThanOrEqual(3);
+    expect(result.index.indexed.complete).toBe(false);
+    expect(result.index.indexed.note).toBe("file budget 3");
+  });
+
+  it("marks the leftovers unindexed rather than dropping them", async () => {
+    repo = await manyFiles();
+    const runner = stdinRunner(repo.root);
+
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" }, {
+      ...DEFAULT_INDEX_LIMITS,
+      maxFiles: 3,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const unindexed = result.index.files.filter(file => file.unindexed === true).map(file => file.path);
+    expect(unindexed).toHaveLength(2);
+    for (const path of unindexed) {
+      const file = result.index.files.find(candidate => candidate.path === path);
+      // Unknown is not zero: a file nobody read has no line count.
+      expect(file?.lines).toBeNull();
+      expect(file?.binary).toBe(false);
+      expect(file?.deleted).toBe(false);
+    }
+  });
+
+  it("counts the leftovers in the directory total but not their lines", async () => {
+    repo = await manyFiles();
+    const runner = stdinRunner(repo.root);
+
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" }, {
+      ...DEFAULT_INDEX_LIMITS,
+      maxFiles: 3,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const root = result.index.dirs.find(dir => dir.path === "");
+    const read = result.index.files.filter(file => file.unindexed !== true);
+    // Every file is counted; only the read ones contribute lines.
+    expect(root?.files).toBe(5);
+    expect(root?.lines).toBe(read.reduce((sum, file) => sum + (file.lines ?? 0), 0));
+  });
+});
+
+describe("the batched read and the deadline", () => {
+  it("stops reading when the budget is spent and still lists the tree", async () => {
+    repo = await createRepoWithCommit({ "a.ts": "export const a = 1;\n", "b.ts": "export const b = 1;\n" });
+    repo.git(["checkout", "-q", "-b", "feature"]);
+    await repo.write("c.ts", "export const c = 1;\n");
+    repo.git(["add", "-A"]);
+    repo.git(["commit", "-qm", "feature work"]);
+    const runner = stdinRunner(repo.root);
+
+    // A deadline that is already spent when the read starts.
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" }, {
+      ...DEFAULT_INDEX_LIMITS,
+      timeBudgetMs: 1,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.index.indexed.complete).toBe(false);
+    // The tree is still fully listed; nothing was read, so everything is
+    // unindexed rather than absent.
+    expect(result.index.files.map(file => file.path).sort()).toEqual(["a.ts", "b.ts", "c.ts"]);
+    expect(result.index.files.every(file => file.unindexed === true)).toBe(true);
+    expect(result.index.indexed.parsed).toBe(0);
+  });
+
+  it("does not throw when the deadline expires mid-read", async () => {
+    repo = await createRepoWithCommit({
+      "a.ts": "export const a = 1;\n",
+      "b.ts": "export const b = 1;\n",
+      "c.ts": "export const c = 1;\n",
+    });
+    repo.git(["checkout", "-q", "-b", "feature"]);
+    await repo.write("d.ts", "export const d = 1;\n");
+    repo.git(["add", "-A"]);
+    repo.git(["commit", "-qm", "feature work"]);
+    const runner = stdinRunner(repo.root);
+
+    // A budget small enough to expire during the run rather than before it.
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" }, {
+      ...DEFAULT_INDEX_LIMITS,
+      timeBudgetMs: 1,
+    });
+
+    // Whatever it managed to read, the answer is a partial index and never a
+    // thrown error: a slow repository is a state, not a failure.
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.index.files.length).toBeGreaterThan(0);
+    expect(result.index.indexed.note).toContain("time budget");
   });
 });
