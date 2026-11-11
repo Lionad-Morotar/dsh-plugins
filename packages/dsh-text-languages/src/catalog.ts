@@ -88,7 +88,9 @@ const EXTRA_ROWS: readonly LanguageDescriptor[] = [
     aliases: ["Vue", "vue"],
     firstLine: null,
     disposition: "approx",
-    chunk: false,
+    // The html block, not a block of its own: the official grammar is html-based
+    // and both surfaces coloured these as html before the catalogue existed.
+    chunk: "html",
     nonBuiltin: true,
     reason: "not a VS Code builtin; the official Vue grammar is html-based and both surfaces already mapped it to html",
   },
@@ -100,7 +102,9 @@ const EXTRA_ROWS: readonly LanguageDescriptor[] = [
     aliases: ["Svelte", "svelte"],
     firstLine: null,
     disposition: "approx",
-    chunk: false,
+    // The html block, not a block of its own: the official grammar is html-based
+    // and both surfaces coloured these as html before the catalogue existed.
+    chunk: "html",
     nonBuiltin: true,
     reason: "not a VS Code builtin; the official Svelte grammar is html-based and both surfaces already mapped it to html",
   },
@@ -124,25 +128,100 @@ const PLAINTEXT_ROW: LanguageDescriptor = {
   aliases: ["Plain Text", "plaintext"],
   firstLine: null,
   disposition: "exact",
-  chunk: false,
   nonBuiltin: true,
   reason: "repo-owned row: upstream has no plaintext language, and this row carries the suffixes and filenames this repo decided are monochrome",
 };
 
-/** Languages whose grammar ships as its own lazy chunk. Ten, and the count is
- *  asserted: it is the budget the consuming bundles are measured against. */
-const CHUNK_IDS: readonly string[] = [
-  "javascript",
-  "json",
-  "markdown",
-  "css",
-  "html",
-  "yaml",
-  "python",
-  "typescript",
-  "typescriptreact",
-  "javascriptreact",
-];
+/**
+ * Which block colours each language.
+ *
+ * A block is a bundle, not a language. Ten languages have a block of their own,
+ * because they were the first slice's set and their artifacts are already named
+ * after themselves. Nine more reuse one of those blocks, which is why `.vue` is
+ * coloured by the html block rather than getting a bundle of its own. The
+ * remaining 45 share four batch blocks: every block inlines a copy of
+ * CodeMirror (about 86 KB gzipped), so one bundle per language would cost more
+ * than the feature is worth.
+ *
+ * The twelve rows absent from this table stay monochrome on purpose: eight are
+ * backlog (no grammar covers them, and a forced approximation would paint the
+ * wrong colours) and four are excluded (they exist only inside a host grammar,
+ * so there is no file that opens as them).
+ */
+export const BLOCK_ASSIGNMENT: Readonly<Record<string, string>> = {
+  // One block per language, named after the language.
+  css: "css",
+  html: "html",
+  javascript: "javascript",
+  javascriptreact: "javascriptreact",
+  json: "json",
+  markdown: "markdown",
+  python: "python",
+  typescript: "typescript",
+  typescriptreact: "typescriptreact",
+  yaml: "yaml",
+
+  // Reuse an existing block: these formats are a dialect of one already here.
+  vue: "html",
+  svelte: "html",
+  razor: "html",
+  juliamarkdown: "markdown",
+  prompt: "markdown",
+  instructions: "markdown",
+  chatagent: "markdown",
+  skill: "markdown",
+  dockercompose: "yaml",
+
+  // Batch blocks, grouped by what the grammar source is.
+  c: "batch-systems",
+  cpp: "batch-systems",
+  "objective-c": "batch-systems",
+  "objective-cpp": "batch-systems",
+  "cuda-cpp": "batch-systems",
+  hlsl: "batch-systems",
+  shaderlab: "batch-systems",
+  csharp: "batch-systems",
+  dart: "batch-systems",
+  fsharp: "batch-systems",
+  vb: "batch-systems",
+
+  go: "batch-script",
+  rust: "batch-script",
+  swift: "batch-script",
+  java: "batch-script",
+  groovy: "batch-script",
+  clojure: "batch-script",
+  ruby: "batch-script",
+  perl: "batch-script",
+  raku: "batch-script",
+  lua: "batch-script",
+  r: "batch-script",
+  julia: "batch-script",
+  powershell: "batch-script",
+  shellscript: "batch-script",
+  coffeescript: "batch-script",
+
+  php: "batch-webstyle",
+  handlebars: "batch-webstyle",
+  less: "batch-webstyle",
+  scss: "batch-webstyle",
+  properties: "batch-webstyle",
+  ini: "batch-webstyle",
+  ignore: "batch-webstyle",
+  dotenv: "batch-webstyle",
+  jade: "batch-webstyle",
+
+  sql: "batch-datadoc",
+  xml: "batch-datadoc",
+  xsl: "batch-datadoc",
+  jsonc: "batch-datadoc",
+  jsonl: "batch-datadoc",
+  snippets: "batch-datadoc",
+  diff: "batch-datadoc",
+  dockerfile: "batch-datadoc",
+  tex: "batch-datadoc",
+  latex: "batch-datadoc",
+};
 
 function toDescriptor(row: (typeof SNAPSHOT)[number]): LanguageDescriptor {
   const base: LanguageDescriptor = {
@@ -153,10 +232,11 @@ function toDescriptor(row: (typeof SNAPSHOT)[number]): LanguageDescriptor {
     aliases: row.aliases,
     firstLine: row.firstLine,
     disposition: row.disposition,
-    chunk: CHUNK_IDS.includes(row.id),
     nonBuiltin: false,
   };
-  if (row.disposition === "exact") return base;
+  const block = BLOCK_ASSIGNMENT[row.id];
+  const withBlock: LanguageDescriptor = block === undefined ? base : { ...base, chunk: block };
+  if (row.disposition === "exact") return withBlock;
 
   const grammar = GRAMMARS[row.id];
   const reason = REASONS[row.id];
@@ -164,7 +244,7 @@ function toDescriptor(row: (typeof SNAPSHOT)[number]): LanguageDescriptor {
     throw new Error(`non-exact row without a grammar or a reason: ${row.id}`);
   }
   return {
-    ...base,
+    ...withBlock,
     ...(grammar === undefined ? {} : { grammar }),
     reason: reason ?? `approximated by ${grammar}`,
   };

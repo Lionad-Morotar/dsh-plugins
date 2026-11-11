@@ -20,8 +20,15 @@ export interface LanguageDescriptor {
   readonly aliases: readonly string[];
   readonly firstLine: string | null;
   readonly disposition: LanguageDisposition;
-  /** True when this language ships as its own lazily loaded syntax chunk. */
-  readonly chunk: boolean;
+  /**
+   * The block that colours this language, named without the `client.lang-` prefix.
+   *
+   * A block is not the same thing as a language: ten languages have a block of
+   * their own, several reuse one of those blocks, and the rest share four batch
+   * blocks. Absent means the language is deliberately monochrome, which is the
+   * honest answer for a row no grammar covers.
+   */
+  readonly chunk?: string;
   /**
    * True for a row this repo owns rather than upstream: vue and svelte (formats
    * upstream has no builtin for) and the explicit plaintext row (a row upstream

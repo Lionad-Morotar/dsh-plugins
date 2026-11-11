@@ -15,6 +15,7 @@
  */
 import {
   ALL_LANGUAGES,
+  BLOCK_ASSIGNMENT,
   BY_ID,
   CATALOG,
   PLAINTEXT_ID,
@@ -146,12 +147,40 @@ export function languageFor(path: string): string {
 }
 
 /**
- * The lazy chunk name for every language that ships one. Derived from the
- * catalogue rather than written out twice, so a chunk cannot exist in the build
- * without a row that claims it.
+ * The artifact that colours each language, keyed by language id.
+ *
+ * Derived from the catalogue rather than written out twice, so a block cannot
+ * exist in the build without a row that claims it. The file is named after the
+ * block, not the language: several languages share one block, and the ten that
+ * have a block of their own happen to be named after themselves.
  */
 export const LANGUAGE_CHUNKS: Readonly<Record<string, string>> = Object.freeze(
   Object.fromEntries(
-    ALL_LANGUAGES.filter((row) => row.chunk).map((row) => [row.id, `client.lang-${row.id}.js`]),
+    ALL_LANGUAGES.filter((row) => row.chunk !== undefined).map((row) => [
+      row.id,
+      `client.lang-${row.chunk as string}.js`,
+    ]),
+  ),
+);
+
+/**
+ * The languages each block draws, in the order the assignment table declares.
+ *
+ * The batch entries dispatch on the id they are handed, so this list is the
+ * contract between the catalogue and those entries: the build asserts the two
+ * agree element for element, which is what stops a language from being listed
+ * here but missing from the block's grammar table.
+ *
+ * The order is the table's, not the snapshot's. The table groups languages by
+ * grammar source, which is the order a reader of the batch entry wants; the
+ * snapshot's order is the order VS Code happens to list its extensions in.
+ */
+export const LANGUAGE_CHUNK_LANGUAGES: Readonly<Record<string, readonly string[]>> = Object.freeze(
+  Object.fromEntries(
+    [...new Set(Object.values(BLOCK_ASSIGNMENT))]
+      .map((block) => [
+        block,
+        Object.freeze(Object.keys(BLOCK_ASSIGNMENT).filter((id) => BLOCK_ASSIGNMENT[id] === block)),
+      ]),
   ),
 );

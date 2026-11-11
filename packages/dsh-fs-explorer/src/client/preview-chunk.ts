@@ -146,10 +146,13 @@ const languagePending = new Map<string, Promise<LanguageChunkModule>>();
 /**
  * The language ids that have a chunk, taken from the catalogue.
  *
- * Derived rather than listed: the catalogue is what decides which languages
- * ship a chunk, and a copy here would silently disagree the day it changes.
+ * Derived rather than listed: the catalogue is what decides which blocks exist,
+ * and a copy here would silently disagree the day it changes. These are block
+ * names, not language ids: several languages share one block.
  */
-export const LANGUAGE_CHUNK_IDS: readonly string[] = Object.freeze(Object.keys(LANGUAGE_CHUNKS));
+export const LANGUAGE_CHUNK_IDS: readonly string[] = Object.freeze(
+  [...new Set(Object.values(LANGUAGE_CHUNKS))].map(file => file.replace(/^client\.lang-/u, "").replace(/\.js$/u, "")),
+);
 
 /**
  * Take the loader require from the factory.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ALL_LANGUAGES, buildSuffixIndex, CATALOG, isBareNameExtension, isSuffixExtension, isWildcardExtension, PLAINTEXT_ID } from "../src/catalog.ts";
-import { LANGUAGE_CHUNKS, languageFor, matchLanguage } from "../src/index.ts";
+import { LANGUAGE_CHUNK_LANGUAGES, LANGUAGE_CHUNKS, languageFor, matchLanguage } from "../src/index.ts";
 import { SNAPSHOT } from "../src/snapshot.ts";
 
 /**
@@ -224,30 +224,139 @@ describe("suffix index", () => {
   });
 });
 
-describe("language chunks", () => {
-  it("has exactly ten entries", () => {
-    expect(Object.keys(LANGUAGE_CHUNKS)).toHaveLength(10);
+/**
+ * The block each language is coloured by.
+ *
+ * A chunk name is not the same thing as a language id any more: ten languages
+ * have a block of their own, nine reuse one of those blocks, and the rest share
+ * four batch blocks. The table below is the DevGoal's assignment table, written
+ * out here so a row that drifts from it fails rather than silently losing its
+ * colours.
+ */
+const IN_SERVICE = [
+  "css", "html", "javascript", "javascriptreact", "json", "markdown", "python", "typescript", "typescriptreact", "yaml",
+] as const;
+
+const ALIASES: Readonly<Record<string, string>> = {
+  vue: "html",
+  svelte: "html",
+  razor: "html",
+  juliamarkdown: "markdown",
+  prompt: "markdown",
+  instructions: "markdown",
+  chatagent: "markdown",
+  skill: "markdown",
+  dockercompose: "yaml",
+};
+
+const BATCH: Readonly<Record<string, readonly string[]>> = {
+  "batch-systems": ["c", "cpp", "objective-c", "objective-cpp", "cuda-cpp", "hlsl", "shaderlab", "csharp", "dart", "fsharp", "vb"],
+  "batch-script": [
+    "go", "rust", "swift", "java", "groovy", "clojure", "ruby", "perl", "raku", "lua", "r", "julia",
+    "powershell", "shellscript", "coffeescript",
+  ],
+  "batch-webstyle": ["php", "handlebars", "less", "scss", "properties", "ini", "ignore", "dotenv", "jade"],
+  "batch-datadoc": ["sql", "xml", "xsl", "jsonc", "jsonl", "snippets", "diff", "dockerfile", "tex", "latex"],
+};
+
+/** Every language that should be coloured, and by which block. */
+const EXPECTED_CHUNK: Readonly<Record<string, string>> = Object.fromEntries([
+  ...IN_SERVICE.map(id => [id, id] as const),
+  ...Object.entries(ALIASES),
+  ...Object.entries(BATCH).flatMap(([chunk, ids]) => ids.map(id => [id, chunk] as const)),
+]);
+
+describe("chunk assignment", () => {
+  it("covers 64 languages, the DevGoal's coloured set", () => {
+    expect(Object.keys(EXPECTED_CHUNK)).toHaveLength(64);
   });
 
-  it("names the ten expected languages", () => {
-    expect(Object.keys(LANGUAGE_CHUNKS).sort()).toEqual(
-      ["css", "html", "javascript", "javascriptreact", "json", "markdown", "python", "typescript", "typescriptreact", "yaml"],
+  it("matches the table row for row", () => {
+    const actual = Object.fromEntries(
+      ALL_LANGUAGES.filter(row => row.chunk !== undefined).map(row => [row.id, row.chunk as string]),
     );
+    expect(actual).toEqual(EXPECTED_CHUNK);
   });
 
-  it("derives each chunk name from its id", () => {
-    for (const [id, file] of Object.entries(LANGUAGE_CHUNKS)) {
-      expect(file).toBe(`client.lang-${id}.js`);
+  it("leaves the twelve uncoloured rows without a chunk", () => {
+    // Eight backlog rows stay honestly monochrome, and four excluded rows have no
+    // file entry of their own. The explicit plaintext row is not a language at
+    // all, so it has no block either.
+    const uncoloured = ["bat", "git-commit", "git-rebase", "log", "bibtex", "makefile", "restructuredtext", "search-result",
+      "jsx-tags", "cpp_embedded_latex", "markdown_latex_combined", "markdown-math"];
+    for (const id of uncoloured) {
+      const row = ALL_LANGUAGES.find(entry => entry.id === id);
+      expect(row, id).toBeDefined();
+      expect(row?.chunk, id).toBeUndefined();
     }
   });
 
-  it("agrees with the catalogue's chunk flags", () => {
-    const flagged = ALL_LANGUAGES.filter((row) => row.chunk).map((row) => row.id).sort();
-    expect(flagged).toEqual(Object.keys(LANGUAGE_CHUNKS).sort());
+  it("keeps vue and svelte on the html block", () => {
+    // The first slice left them monochrome, which was a visible regression from
+    // the html colouring both surfaces had before the catalogue existed.
+    expect(ALL_LANGUAGES.find(row => row.id === "vue")?.chunk).toBe("html");
+    expect(ALL_LANGUAGES.find(row => row.id === "svelte")?.chunk).toBe("html");
+  });
+});
+
+describe("language chunks", () => {
+  it("names one artifact per block, fourteen in all", () => {
+    const files = new Set(Object.values(LANGUAGE_CHUNKS));
+    expect(files.size).toBe(14);
+  });
+
+  it("derives each file name from its block name", () => {
+    for (const [id, file] of Object.entries(LANGUAGE_CHUNKS)) {
+      const block = ALL_LANGUAGES.find(row => row.id === id)?.chunk;
+      expect(block, id).toBeDefined();
+      expect(file).toBe(`client.lang-${block as string}.js`);
+    }
+  });
+
+  it("lists every coloured language, and only those", () => {
+    expect(Object.keys(LANGUAGE_CHUNKS).sort()).toEqual(Object.keys(EXPECTED_CHUNK).sort());
   });
 
   it("is frozen", () => {
     expect(Object.isFrozen(LANGUAGE_CHUNKS)).toBe(true);
+  });
+});
+
+describe("language chunk languages", () => {
+  it("groups the fourteen blocks", () => {
+    expect(Object.keys(LANGUAGE_CHUNK_LANGUAGES).sort()).toEqual(
+      [...IN_SERVICE, ...Object.keys(BATCH)].sort(),
+    );
+  });
+
+  it("lists each block's languages in the assignment table's order", () => {
+    // The table groups by grammar source, which is the order the batch entries
+    // read in; the snapshot's order is whatever VS Code happened to list.
+    for (const [chunk, ids] of Object.entries(LANGUAGE_CHUNK_LANGUAGES)) {
+      const expected = Object.keys(EXPECTED_CHUNK).filter(id => EXPECTED_CHUNK[id] === chunk);
+      expect(ids, chunk).toEqual(expected);
+    }
+  });
+
+  it("agrees with the batch table, order included", () => {
+    // Order matters: the batch entry dispatches by id, and the build asserts the
+    // same sequence, so a reordering here is a real change to the contract.
+    for (const [chunk, ids] of Object.entries(BATCH)) {
+      expect(LANGUAGE_CHUNK_LANGUAGES[chunk], chunk).toEqual(ids);
+    }
+  });
+
+  it("gives the reused blocks their aliases too", () => {
+    expect(LANGUAGE_CHUNK_LANGUAGES.html).toContain("vue");
+    expect(LANGUAGE_CHUNK_LANGUAGES.html).toContain("svelte");
+    expect(LANGUAGE_CHUNK_LANGUAGES.html).toContain("razor");
+    expect(LANGUAGE_CHUNK_LANGUAGES.markdown).toContain("skill");
+    expect(LANGUAGE_CHUNK_LANGUAGES.yaml).toContain("dockercompose");
+  });
+
+  it("is frozen, and so is every list in it", () => {
+    expect(Object.isFrozen(LANGUAGE_CHUNK_LANGUAGES)).toBe(true);
+    for (const ids of Object.values(LANGUAGE_CHUNK_LANGUAGES)) expect(Object.isFrozen(ids)).toBe(true);
   });
 });
 

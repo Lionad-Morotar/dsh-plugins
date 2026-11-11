@@ -13,6 +13,6 @@ import { mountReadOnly, type ReadOnlyHandle, type ReadOnlyOptions } from "./read
 /** Diagnostic marker; the build asserts it survives minification. */
 export const renderer = "javascriptreact" as const;
 
-export function mount(host: HTMLElement, options: ReadOnlyOptions): ReadOnlyHandle {
+export function mount(host: HTMLElement, options: ReadOnlyOptions, _id?: string): ReadOnlyHandle {
   return mountReadOnly(host, options, javascript({ jsx: true }));
 }

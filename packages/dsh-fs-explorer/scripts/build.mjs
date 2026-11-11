@@ -48,11 +48,13 @@ import { fileURLToPath } from "node:url";
 import { dracoDefines, dracoPlugin, loadDracoPayloads } from "dsh-preview-viewers/build/draco-plugin.mjs";
 import { loadPdfWorkerPayload, pdfDefines, pdfWorkerPlugin } from "dsh-preview-viewers/build/pdf-worker-plugin.mjs";
 import {
+  assertBatchIds,
   assertLanguageChunkMarkers,
   assertLanguageChunkSet,
   buildLanguageChunks,
   chunkFileName,
   languageChunkIds,
+  languagesOfChunk,
 } from "dsh-text-languages/build/lang-chunks.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -478,6 +480,30 @@ async function main(checkOnly) {
   }
   assertLanguageChunkSet({ ids: languageIds, emitted: languages.written });
   assertLanguageChunkMarkers({ emitted: languages.written, texts: languages.texts });
+
+  // A batch entry carries a table keyed by language id, and the catalogue carries
+  // the same list. They have to agree element for element: a language listed in
+  // one and missing from the other mounts a monochrome editor with no error
+  // anywhere, which is exactly the kind of gap nobody reports.
+  for (const block of languageIds.filter(name => name.startsWith("batch-"))) {
+    const expected = await languagesOfChunk(block);
+    // Read the entry's source rather than importing it: this is a plain Node
+    // script and the entry is TSX, which Node cannot load. The `ids` export is a
+    // literal array, so parsing it here is exact rather than approximate.
+    const source = await readFile(join(LANG_ENTRY_DIR, `${block}.tsx`), "utf8");
+    const declared = /export const ids = \[([\s\S]*?)\] as const;/u.exec(source);
+    if (declared === null) throw new Error(`${block}.tsx does not export an ids array`);
+    const ids = [...declared[1].matchAll(/"([^"]+)"/gu)].map(match => match[1]);
+    assertBatchIds({ block, ids, expected });
+  }
+
+  // Printed rather than capped: a block inlines its own copy of CodeMirror, so
+  // its size is a structural cost, not a budget to police. Recording it keeps a
+  // sudden jump visible in the build log.
+  for (const file of languages.written) {
+    const bytes = Buffer.byteLength(languages.texts[file], "utf8");
+    process.stdout.write(`  ${file.padEnd(34)} ${String(bytes).padStart(9)} B raw\n`);
+  }
 
   /**
    * The bytes of one artifact: the built text, or the committed file when the

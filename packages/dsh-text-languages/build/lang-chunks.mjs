@@ -21,29 +21,45 @@ import { fileURLToPath } from "node:url";
 const CATALOG_URL = new URL("../src/index.ts", import.meta.url);
 
 /**
- * Every language the catalogue marks as shipping its own chunk, in catalogue
- * order.
- * @returns the language ids, e.g. `["javascript", "json", ...]`.
+ * Every block the catalogue assigns, in the order the assignment table declares.
+ *
+ * A block is not a language: ten languages have a block of their own, nine reuse
+ * one of those, and the rest share four batch blocks. The build emits one file
+ * per block, so this is the list of artifacts, not of languages.
+ * @returns the block names, e.g. `["css", "html", ..., "batch-systems"]`.
  */
 export async function languageChunkIds() {
   const catalogue = await import(CATALOG_URL.href);
-  const ids = catalogue.ALL_LANGUAGES.filter(row => row.chunk).map(row => row.id);
-  if (ids.length === 0) {
-    throw new Error("the catalogue marks no language as chunked; the build would emit nothing");
+  const blocks = Object.keys(catalogue.LANGUAGE_CHUNK_LANGUAGES);
+  if (blocks.length === 0) {
+    throw new Error("the catalogue assigns no block; the build would emit nothing");
   }
-  return ids;
+  return blocks;
 }
 
 /**
- * The artifact name for one language chunk.
+ * The languages one block draws, in the assignment table's order.
  *
- * The name is derived rather than configured so a chunk cannot be emitted under
+ * The batch entries dispatch on the id they are handed, so this is what the
+ * build compares their `ids` export against.
+ * @param block - block name.
+ * @returns the language ids, or an empty list for a block the catalogue lacks.
+ */
+export async function languagesOfChunk(block) {
+  const catalogue = await import(CATALOG_URL.href);
+  return catalogue.LANGUAGE_CHUNK_LANGUAGES[block] ?? [];
+}
+
+/**
+ * The artifact name for one block.
+ *
+ * The name is derived rather than configured so a block cannot be emitted under
  * a name the loader will never ask for.
- * @param id - language id.
+ * @param block - block name.
  * @returns the file name inside `lib/`.
  */
-export function chunkFileName(id) {
-  return `client.lang-${id}.js`;
+export function chunkFileName(block) {
+  return `client.lang-${block}.js`;
 }
 
 /**
@@ -169,6 +185,31 @@ export async function buildLanguageChunks({ ids, entryDir, bundle, wrap }) {
     written.push(file);
   }
   return { texts, written };
+}
+
+/**
+ * Check that a batch entry's `ids` export matches the catalogue, in order.
+ *
+ * The batch entries dispatch on the id they are handed, so a language listed in
+ * the catalogue but missing from an entry's table would mount a monochrome
+ * editor with no error anywhere. Comparing the two lists element for element is
+ * what turns that into a build failure.
+ * @param options - `block`, the entry's `ids`, and the catalogue's list.
+ * @throws when the two differ, naming the first difference.
+ */
+export function assertBatchIds({ block, ids, expected }) {
+  const same = ids.length === expected.length && ids.every((id, index) => id === expected[index]);
+  if (same) return;
+  const missing = expected.filter(id => !ids.includes(id));
+  const extra = ids.filter(id => !expected.includes(id));
+  const problems = [
+    ...missing.map(id => `${id} is in the catalogue but not in the ${block} entry`),
+    ...extra.map(id => `${id} is in the ${block} entry but not in the catalogue`),
+  ];
+  if (problems.length === 0) {
+    problems.push(`order differs: entry [${ids.join(", ")}] vs catalogue [${expected.join(", ")}]`);
+  }
+  throw new Error(`${block} ids and catalogue disagree:\n  ${problems.join("\n  ")}`);
 }
 
 /**

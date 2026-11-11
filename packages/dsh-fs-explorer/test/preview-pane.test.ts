@@ -319,10 +319,11 @@ describe("preview pane language chunk routing", () => {
     expect(calls).not.toContain("./client.preview.js");
   });
 
-  it("falls back to the preview chunk for a language with no chunk", async () => {
+  it("falls back to the preview chunk for a language with no block", async () => {
     const calls: string[] = [];
     await bootWith(calls);
-    await show("a.rs");
+    // `.bat` is a backlog row: no grammar covers it, so it stays monochrome.
+    await show("a.bat");
 
     expect(calls).toContain("./client.preview.js");
     expect(calls.some(call => call.startsWith("./client.lang-"))).toBe(false);
@@ -552,9 +553,9 @@ describe("preview pane language chunk lifecycle", () => {
     expect(mounted).toHaveLength(1);
     expect(mounted[0]?.destroyed).toBe(false);
 
-    // `.rs` has no chunk, so the monochrome path takes over this host.
+    // `.bat` has no block, so the monochrome path takes over this host.
     await act(async () => {
-      root.render(createElement(Pane, { sessionId: "s1", files: pagedFiles(), path: "a.rs", t }));
+      root.render(createElement(Pane, { sessionId: "s1", files: pagedFiles(), path: "a.bat", t }));
     });
     await flush();
 

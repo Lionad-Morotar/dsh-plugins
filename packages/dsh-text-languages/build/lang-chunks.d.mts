@@ -18,11 +18,21 @@ export interface BuiltLanguageChunks {
   readonly written: readonly string[];
 }
 
-/** Every language the catalogue marks as shipping its own chunk. */
+/** Every block the catalogue assigns, in the assignment table's order. */
 export function languageChunkIds(): Promise<string[]>;
 
-/** The artifact name for one language chunk. */
-export function chunkFileName(id: string): string;
+/** The languages one block draws, in the assignment table's order. */
+export function languagesOfChunk(block: string): Promise<string[]>;
+
+/** The artifact name for one block. */
+export function chunkFileName(block: string): string;
+
+/** Throws when a batch entry's ids and the catalogue disagree. */
+export function assertBatchIds(options: {
+  readonly block: string;
+  readonly ids: readonly string[];
+  readonly expected: readonly string[];
+}): void;
 
 /** Throws when the catalogue's chunk list and the emitted files disagree. */
 export function assertLanguageChunkSet(options: {

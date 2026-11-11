@@ -62,26 +62,44 @@ describe("language chunk routes", () => {
     }
   });
 
-  it("names exactly the ten catalogue languages", async () => {
+  it("names the fourteen blocks, ten single-language and four batch", async () => {
     const module = await freshChunkModule();
-    expect(module.LANGUAGE_CHUNK_IDS.slice().sort()).toEqual(
-      ["css", "html", "javascript", "javascriptreact", "json", "markdown", "python", "typescript", "typescriptreact", "yaml"],
-    );
+    const blocks = module.LANGUAGE_CHUNK_IDS.slice().sort();
+    expect(blocks).toHaveLength(14);
+    expect(blocks.filter(block => block.startsWith("batch-"))).toEqual([
+      "batch-datadoc",
+      "batch-script",
+      "batch-systems",
+      "batch-webstyle",
+    ]);
   });
 
-  it("reports no route for a language outside the table", async () => {
+  it("reports no route for a language with no block", async () => {
     const module = await freshChunkModule();
-    expect(module.languageChunkRoute("rust")).toBeNull();
+    // Backlog rows stay monochrome on purpose, so there is nothing to fetch.
+    expect(module.languageChunkRoute("bat")).toBeNull();
+    expect(module.languageChunkRoute("makefile")).toBeNull();
   });
 
-  it("knows which languages have a chunk, so a caller can skip the fetch", async () => {
+  it("knows which languages have a block, so a caller can skip the fetch", async () => {
     const module = await freshChunkModule();
     for (const id of Object.keys(LANGUAGE_CHUNKS)) expect(module.hasLanguageChunk(id)).toBe(true);
-    // The three cases the pane must not fetch for: plaintext, an approximated
-    // language with no chunk, and a language the catalogue does not know.
+    // The cases the pane must not fetch for: plaintext, a backlog language, an
+    // excluded injection-only language, and a suffix the catalogue does not know.
     expect(module.hasLanguageChunk("plaintext")).toBe(false);
-    expect(module.hasLanguageChunk("rust")).toBe(false);
-    expect(module.hasLanguageChunk("objective-c")).toBe(false);
+    expect(module.hasLanguageChunk("bat")).toBe(false);
+    expect(module.hasLanguageChunk("jsx-tags")).toBe(false);
+    expect(module.hasLanguageChunk("unknownext")).toBe(false);
+  });
+
+  it("routes a batch language to its batch block", async () => {
+    const module = await freshChunkModule();
+    // Rust shares a block with fourteen other languages rather than owning one.
+    expect(module.languageChunkRoute("rust")).toEqual({
+      chunk: "client.lang-batch-script.js",
+      id: `${PACKAGE_NAME}/client.lang-batch-script.js`,
+    });
+    expect(module.languageChunkRoute("vue")?.chunk).toBe("client.lang-html.js");
   });
 });
 
@@ -100,12 +118,12 @@ describe("loadLanguageChunk", () => {
     expect(calls).toEqual(["./client.lang-python.js"]);
   });
 
-  it("does not fetch at all for a language outside the table", async () => {
-    const { require, calls } = fakeRequire({ "./client.lang-rust.js": languageChunk("rust") });
+  it("does not fetch at all for a language with no block", async () => {
+    const { require, calls } = fakeRequire({ "./client.lang-bat.js": languageChunk("bat") });
     const module = await freshChunkModule();
     module.boot(require);
 
-    await expect(module.loadLanguageChunk("rust")).rejects.toThrow(/no language chunk/u);
+    await expect(module.loadLanguageChunk("bat")).rejects.toThrow(/no language chunk/u);
     expect(calls).toEqual([]);
   });
 
@@ -184,8 +202,8 @@ describe("language chunk replaces the preview chunk", () => {
     const module = await freshChunkModule();
     module.boot(require);
 
-    // `rust` has no chunk, so the pane must fall back rather than fetch nothing.
-    expect(module.hasLanguageChunk("rust")).toBe(false);
+    // `bat` has no block, so the pane must fall back rather than fetch nothing.
+    expect(module.hasLanguageChunk("bat")).toBe(false);
     expect(calls).toEqual([]);
   });
 });

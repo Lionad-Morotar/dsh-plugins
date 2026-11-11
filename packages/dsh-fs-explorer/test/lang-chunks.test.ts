@@ -5,6 +5,7 @@ import {
   assertLanguageChunkSet,
   chunkFileName,
   languageChunkIds,
+  languagesOfChunk,
 } from "dsh-text-languages/build/lang-chunks.mjs";
 
 /**
@@ -15,17 +16,27 @@ import {
  * they are checked here instead.
  */
 describe("language chunk ids", () => {
-  it("reads the ids from the catalogue rather than a copied list", async () => {
-    const ids = await languageChunkIds();
-    expect(ids).toHaveLength(10);
-    expect([...ids].sort()).toEqual(
-      ["css", "html", "javascript", "javascriptreact", "json", "markdown", "python", "typescript", "typescriptreact", "yaml"],
-    );
+  it("reads the blocks from the catalogue rather than a copied list", async () => {
+    const blocks = await languageChunkIds();
+    expect(blocks).toHaveLength(14);
+    expect(blocks.filter(block => block.startsWith("batch-")).sort()).toEqual([
+      "batch-datadoc",
+      "batch-script",
+      "batch-systems",
+      "batch-webstyle",
+    ]);
   });
 
-  it("names each chunk after its language", () => {
+  it("names each artifact after its block", () => {
     expect(chunkFileName("python")).toBe("client.lang-python.js");
-    expect(chunkFileName("typescriptreact")).toBe("client.lang-typescriptreact.js");
+    expect(chunkFileName("batch-script")).toBe("client.lang-batch-script.js");
+  });
+
+  it("knows which languages a block draws", async () => {
+    const languages = await languagesOfChunk("batch-systems");
+    expect(languages).toContain("cpp");
+    expect(languages).toContain("csharp");
+    expect(await languagesOfChunk("no-such-block")).toEqual([]);
   });
 });
 
