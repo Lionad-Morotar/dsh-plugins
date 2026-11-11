@@ -942,3 +942,76 @@ body.tst-pane-resizing {
     transform: none;
   }
 }
+
+/* Loading while a run is going.
+   The header already moves (counts, chart, ticks), but the panel needs one
+   unambiguous "working" signal that survives an idle second and a reader who
+   looked away: a thin indeterminate bar on the panel's top edge. The first-run
+   state also gets a spinner, because there it has no rows to animate at all. */
+[data-testid="board-loading"] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+}
+
+[data-testid="testboard"][data-loading="true"] [data-testid="board-loading"] {
+  opacity: 1;
+}
+
+[data-testid="board-loading"]::after {
+  content: "";
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: var(--tst-chart-line);
+  opacity: 0.5;
+  animation: tst-loading-sweep 1.15s ease-in-out infinite;
+}
+
+[data-tst="spinner"] {
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin-bottom: 10px;
+  border: 2px solid var(--tst-rule);
+  border-top-color: var(--tst-ink-dim);
+  border-radius: 50%;
+  animation: tst-spin 0.85s linear infinite;
+}
+
+@keyframes tst-loading-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%);
+  }
+}
+
+@keyframes tst-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Reduced motion keeps the signal and drops the movement: a static, dim fill
+   and a still ring say "working" without sweeping or spinning. */
+@media (prefers-reduced-motion: reduce) {
+  [data-testid="board-loading"]::after {
+    width: 100%;
+    opacity: 0.2;
+    animation: none;
+    transform: none;
+  }
+
+  [data-tst="spinner"] {
+    animation: none;
+    border-top-color: var(--tst-rule);
+    border-left-color: var(--tst-ink-faint);
+  }
+}

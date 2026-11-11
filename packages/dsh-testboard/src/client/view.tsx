@@ -887,28 +887,44 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       (snapshot === undefined ? strings.notRunYet : undefined);
 
     if (snapshot === undefined) {
+      // A first run has no snapshot to draw yet. The panel has to say it is
+      // working instead of sitting on "not run yet" while vitest starts: one
+      // spinner, the phase word, and the cancel action, which is the only thing
+      // a reader can usefully do until the first case lands.
+      const firstRun = run?.phase === "running";
       return (
         <div
           data-testid="testboard"
           data-tst="board"
           data-conversation-composer-overlay=""
+          data-loading={firstRun ? "true" : "false"}
           className={`tst-theme-${theme}`}
           data-theme={theme}
         >
+          <div data-testid="board-loading" data-tst="loading-bar" aria-hidden="true" />
           <div data-testid="testboard-status" data-tst="status-block">
-            <p data-tst="status">{statusText ?? "…"}</p>
-            {stateError === undefined && loadError === undefined ? (
-              <p data-tst="status-hint">{strings.notRunYetHint}</p>
+            {firstRun ? (
+              <span data-testid="board-spinner" data-tst="spinner" aria-hidden="true" />
             ) : null}
-            <button
-              type="button"
-              data-testid="run-all"
-              data-tst="run-control"
-              disabled={!canRun}
-              onClick={onRunAll}
-            >
-              {strings.runAll}
-            </button>
+            <p data-tst="status">{firstRun ? strings.running : statusText ?? "…"}</p>
+            {firstRun || stateError !== undefined || loadError !== undefined ? null : (
+              <p data-tst="status-hint">{strings.notRunYetHint}</p>
+            )}
+            {firstRun ? (
+              <button type="button" data-testid="cancel-run" data-tst="run-control" onClick={onCancel}>
+                {strings.cancel}
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-testid="run-all"
+                data-tst="run-control"
+                disabled={!canRun}
+                onClick={onRunAll}
+              >
+                {strings.runAll}
+              </button>
+            )}
           </div>
         </div>
       );
@@ -988,9 +1004,11 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
         data-testid="testboard"
         data-tst="board"
         data-conversation-composer-overlay=""
+        data-loading={run?.phase === "running" ? "true" : "false"}
         className={`tst-theme-${theme}`}
         data-theme={theme}
       >
+        <div data-testid="board-loading" data-tst="loading-bar" aria-hidden="true" />
         <RunHeader
           label={label}
           demoPhase={demo?.phase}

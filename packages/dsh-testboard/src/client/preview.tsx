@@ -94,7 +94,7 @@ const STRINGS: TestboardViewStrings = {
 };
 
 /** Which static state the page should show instead of the demoting demo loop. */
-type PreviewState = "demo" | "empty" | "cached";
+type PreviewState = "demo" | "empty" | "loading" | "cached";
 
 /**
  * Read the requested state from the query string.
@@ -108,7 +108,7 @@ type PreviewState = "demo" | "empty" | "cached";
  */
 function requestedState(search: string): PreviewState {
   const value = new URLSearchParams(search).get("state");
-  return value === "empty" || value === "cached" ? value : "demo";
+  return value === "empty" || value === "loading" || value === "cached" ? value : "demo";
 }
 
 /**
@@ -121,6 +121,33 @@ function requestedState(search: string): PreviewState {
  */
 function waitingRuntime(base: TestboardRuntime): TestboardRuntime {
   return { ...base, loadState: async () => ({}) };
+}
+
+/**
+ * A runtime whose first run has started but has not reported a result yet.
+ *
+ * This is the state the board used to leave blank: the reader pressed run and
+ * nothing on the panel moved until the first case landed.
+ * @param base - the fixture runtime.
+ * @returns the first-run loading runtime.
+ */
+function loadingRuntime(base: TestboardRuntime): TestboardRuntime {
+  const run: RunProgress = {
+    runId: "first-run",
+    scope: { kind: "all" },
+    status: "running",
+    phase: "running",
+    runNumber: 1,
+    startedAt: new Date().toISOString(),
+    elapsedMs: 0,
+    completedFiles: 0,
+    totalFiles: null,
+    counts: { passed: 0, failed: 0, skipped: 0, total: 0 },
+    series: [],
+    failures: [],
+    cases: [],
+  };
+  return { ...base, loadState: async () => ({ run }) };
 }
 
 /**
@@ -229,9 +256,11 @@ function mount(host: HTMLElement, snapshot: TestSnapshot, sources: SourceBundle,
   const runtime =
     state === "empty"
       ? waitingRuntime(fixture)
-      : state === "cached"
-        ? cachedRuntime(fixture, snapshot)
-        : fixture;
+      : state === "loading"
+        ? loadingRuntime(fixture)
+        : state === "cached"
+          ? cachedRuntime(fixture, snapshot)
+          : fixture;
   const View = createTestboardView({
     strings: STRINGS,
     runtime,
