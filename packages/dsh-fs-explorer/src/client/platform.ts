@@ -47,6 +47,7 @@ export interface HostMenuProps {
   readonly contextual?: boolean;
   readonly portal?: boolean;
   readonly getAnchorRect?: () => DOMRect | null;
+  readonly anchorPoint?: { readonly x: number; readonly y: number };
   readonly autoFocus?: boolean;
   readonly returnFocus?: () => HTMLElement | null;
   readonly listClassName?: string;

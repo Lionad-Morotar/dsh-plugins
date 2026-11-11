@@ -13,6 +13,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { WorkspaceCapabilities } from "../src/host/types.ts";
+import { setMenuKitForTest, type HostMenuProps } from "../src/client/platform.ts";
 import { createFsExplorerView, type WorkbenchFace } from "../src/client/view.tsx";
 import type { WorkspaceClient } from "../src/client/workspace-face.ts";
 
@@ -141,6 +142,29 @@ describe("file view context menu", () => {
     expect(host.querySelector('[data-testid="fx-menu"]')).not.toBeNull();
     expect(menuItem("reveal").textContent).toBe("menu.reveal.finder");
     expect(workspace.infos).toEqual(["a.md"]);
+  });
+
+  it("hands the host menu both anchor forms, whichever host version renders it", async () => {
+    const captured: HostMenuProps[] = [];
+    const Menu = (props: HostMenuProps): null => {
+      captured.push(props);
+      return null;
+    };
+    setMenuKitForTest({ Menu });
+    try {
+      await mount(fakeWorkspace().client);
+      await rightClick("a.md");
+    } finally {
+      setMenuKitForTest(null);
+    }
+
+    const props = captured.at(-1);
+    if (props === undefined) throw new Error("the host menu never rendered");
+    // The pointer position is passed both ways: 0.2.2-rc.2 reads `anchorPoint`,
+    // older hosts read only `getAnchorRect`.
+    expect(props.anchorPoint).toEqual({ x: 40, y: 60 });
+    expect(props.getAnchorRect).toBeTypeOf("function");
+    expect(props.getAnchorRect?.()).toMatchObject({ x: 40, y: 60 });
   });
 
   it("copies the absolute path the host reported", async () => {
