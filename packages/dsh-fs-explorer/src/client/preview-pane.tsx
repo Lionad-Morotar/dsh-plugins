@@ -54,6 +54,8 @@ import {
 } from "./find-surface.ts";
 import { PreviewFailureView, PreviewLoadingView } from "./preview-failure.tsx";
 import { PreviewFindBar } from "./preview-find.tsx";
+import { PREVIEW_CRUMBS_COPY, PreviewCrumbs } from "./preview-crumbs.tsx";
+import { isAbsolutePath } from "./model.ts";
 import {
   createRendererRegistry,
   loadRenderer,
@@ -106,11 +108,21 @@ export interface PreviewPaneProps {
   readonly documents?: DocumentStore;
   /** Follows a symbolic link the workspace service refused; absent keeps the refusal. */
   readonly locate?: SymlinkLocator;
+  /**
+   * Opens a file beside the one on screen.
+   *
+   * The sibling flyout is the caller's gesture, not this pane's: only the view
+   * owns the panel stack, so the pane asks rather than acting. Absent means the
+   * breadcrumb stays a label.
+   */
+  readonly onOpenPeer?: (path: string, kind: "file" | "directory") => void;
 }
 
 /** Copy this pane owns; the entry merges it into the package namespace. */
 export const PREVIEW_COPY = {
   zh: {
+    ...PREVIEW_CRUMBS_COPY.zh,
+    "preview.crumbs.unavailable": "提交版本与工作区外的路径没有同级面板",
     "preview.save": "保存",
     "preview.saving": "保存中…",
     "preview.saveFailed": "保存失败：{message}",
@@ -128,6 +140,8 @@ export const PREVIEW_COPY = {
     "preview.conflict.copied": "已复制",
   },
   en: {
+    ...PREVIEW_CRUMBS_COPY.en,
+    "preview.crumbs.unavailable": "Commit versions and paths outside the workspace expose no sibling panels",
     "preview.save": "Save",
     "preview.saving": "Saving…",
     "preview.saveFailed": "Save failed: {message}",
@@ -148,6 +162,8 @@ export const PREVIEW_COPY = {
 
 const NO_SUBSCRIBE = (): (() => void) => () => undefined;
 const NO_DRAFT = (): undefined => undefined;
+/** A pane mounted without a stack still renders the crumb row; it just cannot act. */
+const noopOpenPeer = (): void => undefined;
 
 /**
  * The human half of a refused save, without the sentence it is embedded in.
@@ -425,7 +441,7 @@ function fallbackRegistry(): RendererRegistry {
  * @param props - session, file face, selected path, translator and registry.
  * @returns the preview column.
  */
-export function PreviewPane({ sessionId, files, path, revision, git, t, visible = true, renderers, documents, locate }: PreviewPaneProps) {
+export function PreviewPane({ sessionId, files, path, revision, git, t, visible = true, renderers, documents, locate, onOpenPeer }: PreviewPaneProps) {
   const reader = useMemo(() => {
     const base =
       revision === undefined
@@ -612,6 +628,15 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
   const page = describePage(snapshot);
   const shownPath = snapshot.linkPath ?? path;
   const linkTarget = binary ? binaryLink : snapshot.linkTarget;
+  // A commit version lives in the object store and an absolute path has no
+  // workspace listing behind it, so neither can offer siblings; the crumb row
+  // stays a label there and the container carries the reason instead.
+  const crumbInteractive =
+    revision === undefined &&
+    sessionId !== undefined &&
+    files !== undefined &&
+    onOpenPeer !== undefined &&
+    !isAbsolutePath(shownPath);
   const markdown = !binary && isMarkdownFile(path);
   const busy = binary
     ? !commitBinary && byteSource !== null && rendererState.status !== "ready" && rendererState.status !== "failed"
@@ -768,20 +793,28 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
       data-renderer={engine}
     >
       <header className="fx-preview-bar">
-        <span
+        <div
           className="fx-preview-path"
           title={linkTarget === undefined ? shownPath : `${shownPath} \u2192 ${linkTarget}`}
           data-testid="fs-preview-path"
           {...(linkTarget === undefined ? {} : { "data-link": "followed" })}
         >
-          {shownPath}
+          <PreviewCrumbs
+            path={shownPath}
+            sessionId={sessionId}
+            files={files}
+            t={t}
+            interactive={crumbInteractive}
+            unavailableReason={t("preview.crumbs.unavailable")}
+            onOpenPeer={onOpenPeer ?? noopOpenPeer}
+          />
           {linkTarget === undefined ? null : (
             <span className="fx-preview-link" data-testid="fs-preview-link-target">
               {" \u2192 "}
               {linkTarget}
             </span>
           )}
-        </span>
+        </div>
         {binary ? null : (
           <span className="fx-preview-range" data-testid="fs-preview-range" title={t("preview.range")}>
             {page.range}

@@ -946,7 +946,13 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   border-bottom: 1px solid var(--fx-border-soft);
   min-width: 0;
 }
+/* The crumb row is a block element and the link arrow sits beside it, so this
+   container has to be flex: overflow: hidden does nothing on an inline box,
+   and the arrow would otherwise wrap onto its own line. */
 .fx-preview-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -957,6 +963,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   color: var(--fx-text-2);
 }
 .fx-preview-link {
+  flex: none;
   color: var(--fx-caption);
 }
 .fx-preview-range {
@@ -1187,6 +1194,109 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   .fx-chevron { transition: none; }
   .fx-spinner { animation-duration: 1.6s; }
 }
+
+/* The crumb row replaces one opaque path string, so it must never widen the
+   toolbar: every segment ellipsizes and only the file name keeps its width. */
+.fx-preview-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--fx-mono);
+  font-size: var(--fx-fs-code);
+}
+.fx-crumb-slot { display: inline-flex; align-items: center; min-width: 0; }
+.fx-crumb {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding: 1px 3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fx-text-2);
+  font: inherit;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fx-crumb[data-file="true"] { flex-shrink: 0; color: var(--fx-text); }
+.fx-crumb:hover { background: var(--fx-hover); color: var(--fx-text); }
+.fx-crumb:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -1px; }
+.fx-preview-crumbs[data-interactive="false"] .fx-crumb { cursor: default; }
+.fx-preview-crumbs[data-interactive="false"] .fx-crumb:hover { background: transparent; }
+.fx-crumb-sep {
+  flex: none;
+  padding: 0 2px;
+  color: var(--fx-caption);
+  user-select: none;
+}
+.fx-crumb-chevron { flex: none; margin-left: auto; color: var(--fx-caption); }
+
+/* Fixed, not absolute: .fx-root clips its overflow, so an anchored card would
+   be cut off at the toolbar's edge. Coordinates come from the crumb's own rect. */
+.fx-peers {
+  position: fixed;
+  z-index: 76;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--fx-border);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent);
+  font-family: var(--fx-font);
+  font-size: calc(var(--fx-fs) * 0.8571);
+}
+/* Every child of the flyout is flex: none. The card is a column flex box with
+   a max-height, so the default shrink factor would flatten the head and the
+   status line once the rows overflowed, clipping their own text. */
+.fx-peers-head {
+  /* Sticky with an opaque fill: the head names the directory being listed, so
+     it has to stay readable while the rows scroll under it. The -4px top
+     cancels the card's own padding, which the head would otherwise scroll
+     away from. */
+  position: sticky;
+  top: -4px;
+  z-index: 1;
+  flex: none;
+  padding: 4px 8px;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  color: var(--fx-caption);
+  font-family: var(--fx-mono);
+  font-size: var(--fx-fs-code);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fx-peers-row {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fx-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fx-peers-row:hover { background: var(--fx-hover); }
+.fx-peers-row:focus-visible { outline: 2px solid var(--fx-accent); outline-offset: -1px; }
+.fx-peers-row[data-current="true"] { background: var(--fx-hover); color: var(--fx-text); }
+.fx-peers-row[data-current="true"]::before { content: "✓"; flex: none; color: var(--fx-accent); }
+.fx-peers-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-peers-status { flex: none; padding: 5px 8px; color: var(--fx-caption); }
 `;
 
 /**
