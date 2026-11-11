@@ -556,6 +556,49 @@ describe("row shortcut keys", () => {
     expect(h.shortcuts.invoke).not.toHaveBeenCalled();
     h.runtime.dispose();
   });
+
+  it("answers the chord in the command mode too, where the rows are the catalogue", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.commands");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    // The keycap is on screen in this mode, so the key has to work here as well.
+    const row = h.store.getSnapshot().rows.find(entry => entry.shortcutId === "session.new");
+    expect(row).toBeDefined();
+    expect(h.verbs.shortcutKey(deadEvent(), false)).toBe(true);
+    expect(h.shortcuts.invoke).toHaveBeenCalledExactlyOnceWith("session.new", {
+      region: "page",
+      modal: null,
+      target: null,
+    });
+    h.runtime.dispose();
+  });
+
+  it("hides the keycap in the command mode when the chord is contested", async () => {
+    const h = harness({ sessionNewShortcut: { conflicts: ["command-panel.switch"] } });
+    runCommand(h, "command-panel.commands");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    const row = h.store.getSnapshot().rows.find(entry => entry.key === "catalog:session.newInWorkspace");
+    expect(row).toBeDefined();
+    expect(row?.hint).toBeUndefined();
+    h.runtime.dispose();
+  });
+
+  it("reports a command that throws instead of letting it escape the listener", async () => {
+    const h = harness();
+    await openSwitch(h);
+    h.shortcuts.invoke.mockImplementation(() => {
+      throw new Error("boom");
+    });
+
+    // The key is still consumed: the panel claimed it, so the host must not see it.
+    expect(h.verbs.shortcutKey(deadEvent(), false)).toBe(true);
+    const snapshot = h.store.getSnapshot();
+    expect(snapshot.notice).toContain("boom");
+    expect(snapshot.noticeTone).toBe("error");
+    h.runtime.dispose();
+  });
 });
 
 describe("screen session switching", () => {

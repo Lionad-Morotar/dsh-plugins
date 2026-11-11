@@ -199,6 +199,22 @@ describe("catalogRows", () => {
     const [row] = catalogRows(copy, CATALOG.filter(entry => entry.id === "view.theme"), new Map());
     expect(row?.hint).toBeUndefined();
   });
+
+  it("carries the shortcut id so the row can answer its own chord", () => {
+    // The keycap alone is display; the id is what lets the panel run the command
+    // when the reader presses it, which is why both travel on the row.
+    const rows = catalogRows(copy, entries, new Map());
+    expect(rows.map(row => row.shortcutId)).toEqual([
+      "command-panel.navigate",
+      "session.archive",
+      undefined,
+    ]);
+  });
+
+  it("leaves the shortcut id off an action that declares none", () => {
+    const [row] = catalogRows(copy, CATALOG.filter(entry => entry.id === "view.theme"), new Map());
+    expect(row?.shortcutId).toBeUndefined();
+  });
 });
 
 describe("shortcutRows", () => {

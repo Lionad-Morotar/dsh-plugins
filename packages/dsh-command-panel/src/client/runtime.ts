@@ -47,7 +47,7 @@ import type {
 } from "./dsh.ts";
 import { isGitExplorerFace, isHostShutdownFace, isNativeOpenFace, isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
 import { sessionFileAddress } from "dsh-preview-viewers/address.ts";
-import { runCatalogAction, type ActionDeps } from "./actions.ts";
+import { failureCode, runCatalogAction, type ActionDeps } from "./actions.ts";
 import { createBridgeView, type BridgeState } from "./bridge.ts";
 import { clientCommandRows, isClientCommandRow, runClientCommand } from "./client-commands.ts";
 import { createLinkBadge, LINK_BADGE_ID, LINK_BADGE_SLOT } from "./link-badge.ts";
@@ -535,8 +535,12 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     const hints = new Map<string, string>();
     const shortcuts = services.shortcuts();
     if (shortcuts === undefined) return hints;
-    for (const row of shortcuts.catalog.getSnapshot()) {
-      if (row.keys.length > 0) hints.set(row.id, row.keys.join(" "));
+    const entries = shortcuts.catalog.getSnapshot();
+    // A keycap that cannot be pressed is worse than none, so the same usability
+    // gate the rows use decides what this map offers.
+    for (const entry of entries) {
+      const usable = usableShortcut(entries, entry.id);
+      if (usable !== undefined) hints.set(entry.id, usable.keys.join(" "));
     }
     return hints;
   }
@@ -1138,7 +1142,17 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
       if (!matchesShortcut(facts, usable.binding, env)) continue;
       // A held key repeats the same chord; the command runs once, and every
       // repeat is still consumed so the host never sees it.
-      if (!event.repeat) runShortcut(id, shortcuts);
+      if (!event.repeat) {
+        // This runs inside a capture listener, so a throw would escape before
+        // the caller can preventDefault: the key would fall through to the
+        // host's modal gate and the reader would get nothing at all.
+        try {
+          runShortcut(id, shortcuts);
+        } catch (error) {
+          const label = entries.find(entry => entry.id === id)?.label ?? id;
+          notice(copy().actions.failed(label, failureCode(error)), "error");
+        }
+      }
       return true;
     }
     return false;

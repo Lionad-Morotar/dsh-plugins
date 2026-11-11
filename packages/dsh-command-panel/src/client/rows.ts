@@ -264,6 +264,9 @@ export function catalogRows(
     label: `${copy.categoryNames[entry.category]}：${copy.actionLabels[entry.id] ?? entry.id}`,
     alias: entry.aliases === undefined || entry.aliases.length === 0 ? undefined : entry.aliases.join(" "),
     hint: entry.shortcutId === undefined ? undefined : hints.get(entry.shortcutId),
+    // The keycap is display; the id is what lets the row answer its own chord.
+    // Without it the command mode would show a key that does nothing when pressed.
+    shortcutId: entry.shortcutId,
     action: entry.action,
   }));
 }
