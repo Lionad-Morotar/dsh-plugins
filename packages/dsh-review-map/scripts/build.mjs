@@ -26,8 +26,15 @@ const libRoot = join(packageRoot, "lib");
 const require = createRequire(join(packageRoot, "package.json"));
 const manifest = require(join(packageRoot, "package.json"));
 
-/** Host-half platform packages: the Harness install provides its own copies. */
-const HOST_EXTERNALS = ["@deepseek-ai/*"];
+/**
+ * Host-half platform packages: the Harness install provides its own copies.
+ *
+ * `typescript` is external for a different reason than the platform packages:
+ * it is a real dependency of this package, but inlining it would put a whole
+ * compiler into `lib/index.js` (tens of megabytes of committed build product).
+ * The import stays in the output and Node resolves it from the installed tree.
+ */
+const HOST_EXTERNALS = ["@deepseek-ai/*", "typescript"];
 
 /** Platform modules the host seeds for a third-party client bundle. */
 const CLIENT_EXTERNALS = ["react", "react/jsx-runtime", "react-dom", "@deepseek-ai/dsh-client-ui-primitives"];

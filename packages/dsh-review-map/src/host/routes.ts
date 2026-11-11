@@ -9,6 +9,7 @@
  * Route map (the host registers one prefix, so the suffix is dispatched here):
  *   GET /review-map/api/state?sessionId=&scope=worktree|branch&base=   the change list
  *   GET /review-map/api/diff?sessionId=&path=&scope=&base=             one file's detail
+ *   GET /review-map/api/index?sessionId=&scope=&base=                  structure and edges
  *
  * Two conventions run through both routes and are worth stating once.
  *
@@ -29,6 +30,7 @@ import {
   type FileDiffResult,
   type ReviewError,
   type ReviewErrorCode,
+  type ReviewIndexResult,
   type ReviewScope,
   type ReviewSnapshotResult,
 } from "../shared.ts";
@@ -50,6 +52,8 @@ export interface ReviewRouteDeps {
   loadSnapshot(workspace: string, scope: ReviewScope, signal?: AbortSignal): Promise<ReviewSnapshotResult>;
   /** One file's detail for one scope. */
   loadDiff(workspace: string, scope: ReviewScope, path: string, signal?: AbortSignal): Promise<FileDiffResult>;
+  /** The structure index and import edges for one scope. */
+  loadIndex(workspace: string, scope: ReviewScope, signal?: AbortSignal): Promise<ReviewIndexResult>;
 }
 
 /** One request, as the pure handler sees it. */
@@ -151,7 +155,9 @@ export async function handleReviewRequest(
 
   if (suffix === undefined) return fail("bad-request", `no review-map route for ${url.pathname}`, 404);
   if (method !== "GET") return fail("bad-request", `method ${method} is not allowed on ${suffix}`, 405);
-  if (suffix !== "state" && suffix !== "diff") return fail("bad-request", `no review-map route for ${suffix}`, 404);
+  if (suffix !== "state" && suffix !== "diff" && suffix !== "index") {
+    return fail("bad-request", `no review-map route for ${suffix}`, 404);
+  }
 
   const sessionId = sessionIdOf(url);
   if (sessionId === undefined) return fail("bad-request", "sessionId query parameter is required");
@@ -173,6 +179,12 @@ export async function handleReviewRequest(
     const workspace = await deps.resolveWorkspaceRoot(sessionId);
     if (workspace === undefined) return fail("no-session", `session ${sessionId} has no workspace`, 404);
 
+    if (suffix === "index") {
+      // Same convention as the other two: an index that could not be built is a
+      // state the client renders, not a broken request.
+      const result = await deps.loadIndex(workspace, scope);
+      return { status: 200, body: result };
+    }
     if (path === undefined) {
       const result = await deps.loadSnapshot(workspace, scope);
       // A domain failure is passed through verbatim: the client renders the code,

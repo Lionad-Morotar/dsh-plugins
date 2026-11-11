@@ -213,6 +213,11 @@ describe("the read-only whitelist", () => {
       ["status", "--porcelain=v2", "-z"],
       ["diff", "HEAD", "--numstat", "-z"],
       ["cat-file", "-p", "HEAD:a.txt"],
+      // The structure index reads the working tree's file list and a branch's
+      // tree listing; both are reads, and both are needed for the map.
+      ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+      ["ls-tree", "-r", "-z", "-l", "HEAD"],
+      ["cat-file", "--batch"],
     ]) {
       expect(readOnlyViolation(args)).toBeNull();
     }
@@ -251,5 +256,30 @@ describe("the read-only whitelist", () => {
     if (isRefused(result)) return;
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toBe(repo.root);
+  });
+
+  it("refuses --stdin even on a whitelisted subcommand", () => {
+    // `--stdin` turns a path argument into an arbitrary object read, which is
+    // why the batch protocol is driven through stdinData instead.
+    expect(readOnlyViolation(["cat-file", "--batch", "--stdin"])).not.toBeNull();
+  });
+
+  it("hands stdin to a whitelisted read", async () => {
+    repo = await createRepoWithCommit({ "a.txt": "one\ntwo\n" });
+    const { runner } = realRunner(repo.root);
+    const seen: (string | undefined)[] = [];
+    const recording: typeof runner = {
+      async run(args, options) {
+        seen.push(options?.stdinData);
+        return runner.run(args, options);
+      },
+    };
+
+    await runReadOnly(recording, ["cat-file", "--batch"], { cwd: repo.root, stdinData: "HEAD:a.txt\n" });
+
+    // The runner is the only place stdin can be handed over, so asserting the
+    // option reached it is the whole contract. The batch protocol itself is
+    // exercised against real stdin in the structure suite.
+    expect(seen).toEqual(["HEAD:a.txt\n"]);
   });
 });
