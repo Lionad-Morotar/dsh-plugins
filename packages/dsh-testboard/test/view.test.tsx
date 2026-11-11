@@ -1437,6 +1437,34 @@ describe("testboard motion", () => {
     expect(host.querySelector('[data-testid="chart-guide"]')).not.toBeNull();
   });
 
+  it("keeps the last full run's chart and line after a file-scoped rerun", async () => {
+    const fullRun: RunProgress = {
+      ...runningRun(),
+      runId: "full-1",
+      phase: "finished",
+      status: "failed",
+    };
+    const scopedRun: RunProgress = {
+      ...runningRun(),
+      runId: "patch-2",
+      runNumber: 2,
+      scope: { kind: "file", path: "test/a.test.ts" },
+      phase: "finished",
+      status: "passed",
+      counts: { passed: 1, failed: 0, skipped: 0, total: 1 },
+      series: [{ tMs: 0, finished: 1, passed: 1, failed: 0 }],
+    };
+    runtime.setState({ snapshot: SNAPSHOT, run: scopedRun, log: fullRun });
+    await mount();
+
+    // The rows and counts are the patched board, but the chart still speaks for
+    // the full run that produced it: a three-case rerun must not shrink the
+    // plot or rewrite the last-run line.
+    expect(host.querySelector('[data-testid="run-meta"]')?.textContent).toContain("Run 1");
+    expect(host.querySelector('[data-testid="run-meta"]')?.textContent).not.toContain("Rerun");
+    expect(host.querySelector('[data-testid="peak"]')?.textContent).toContain("2");
+  });
+
   it("prints the run's own line under the chart", async () => {
     await mount();
     runtime.setState({ snapshot: SNAPSHOT, run: runningRun() });

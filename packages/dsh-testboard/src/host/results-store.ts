@@ -37,16 +37,20 @@ const RESULT_VERSION = 1;
 export interface CachedResult {
   /** When the file was written. */
   readonly savedAt: string;
-  /** The run that produced the snapshot, as the board last rendered it. */
+  /** The latest run, as the board last rendered it (scoped reruns included). */
   readonly run: RunProgress;
-  /** The snapshot the run replaced the board with. */
+  /** The snapshot the run patched or replaced. */
   readonly snapshot: TestSnapshot;
+  /** The last all-scope run, which the chart and "last run" line speak for. */
+  readonly log?: RunProgress;
 }
 
 /** What {@link ResultsStore.save} writes. */
 export interface ResultRecord {
   readonly run: RunProgress;
   readonly snapshot: TestSnapshot;
+  /** The last all-scope run; absent on records written before scoped patches existed. */
+  readonly log?: RunProgress;
 }
 
 /** The two operations the host half needs. */
@@ -113,6 +117,7 @@ function readRecord(value: unknown): CachedResult | undefined {
     readonly savedAt?: unknown;
     readonly run?: unknown;
     readonly snapshot?: unknown;
+    readonly log?: unknown;
   };
   if (fields.version !== RESULT_VERSION) return undefined;
   if (fields.snapshot === null || typeof fields.snapshot !== "object") return undefined;
@@ -124,6 +129,9 @@ function readRecord(value: unknown): CachedResult | undefined {
     savedAt,
     run,
     snapshot: fields.snapshot as TestSnapshot,
+    // Older records predate the canonical log; the reader then falls back to
+    // `run`, which is all they had.
+    ...(fields.log === null || typeof fields.log !== "object" ? {} : { log: fields.log as RunProgress }),
   };
 }
 
@@ -198,6 +206,7 @@ export function createResultsStore(): ResultsStore {
         savedAt: now.toISOString(),
         run: result.run,
         snapshot: result.snapshot,
+        ...(result.log === undefined ? {} : { log: result.log }),
       });
       // Two runs can settle inside one second. The directory itself is the
       // claim: `mkdir` without `recursive` either creates this run's directory
@@ -231,6 +240,7 @@ export function createResultsStore(): ResultsStore {
           savedAt: now.toISOString(),
           run: result.run,
           snapshot: result.snapshot,
+          ...(result.log === undefined ? {} : { log: result.log }),
         });
         return absolute;
       }
