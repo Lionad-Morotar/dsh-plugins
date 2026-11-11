@@ -274,21 +274,31 @@ function createRunEngine(options) {
   function patchLog(log, incoming, scopePath) {
     const replacement = incoming.packages.flatMap((pkg) => pkg.files).find((file) => file.path === scopePath);
     if (replacement === void 0) return log;
-    const verdicts = new Map(replacement.cases.map((entry) => [entry.name, entry]));
-    const seen = /* @__PURE__ */ new Set();
+    const verdictQueues = /* @__PURE__ */ new Map();
+    for (const verdict of replacement.cases) {
+      const queue = verdictQueues.get(verdict.name);
+      const entry = { status: verdict.status, durationMs: verdict.durationMs };
+      if (queue === void 0) verdictQueues.set(verdict.name, [entry]);
+      else queue.push(entry);
+    }
+    const used = /* @__PURE__ */ new Map();
     const cases = [];
     for (const event of log.cases) {
       if (event.path !== scopePath) {
         cases.push(event);
         continue;
       }
-      const verdict = verdicts.get(event.name);
+      const verdict = verdictQueues.get(event.name)?.shift();
       if (verdict === void 0) continue;
-      seen.add(event.name);
+      used.set(event.name, (used.get(event.name) ?? 0) + 1);
       cases.push({ ...event, status: verdict.status, durationMs: verdict.durationMs });
     }
     for (const verdict of replacement.cases) {
-      if (seen.has(verdict.name)) continue;
+      const matched = used.get(verdict.name) ?? 0;
+      if (matched > 0) {
+        used.set(verdict.name, matched - 1);
+        continue;
+      }
       cases.push({
         path: scopePath,
         name: verdict.name,

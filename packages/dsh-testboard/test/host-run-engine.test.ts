@@ -571,6 +571,32 @@ describe("createRunEngine: single-file rerun", () => {
     ],
   };
 
+  /** One file with two cases sharing a title, as two describes can produce. */
+  const DUPLICATE_TITLES = {
+    testResults: [
+      {
+        name: "/ws/packages/beta/test/two.test.ts",
+        assertionResults: [
+          { title: "works", status: "passed", duration: 5 },
+          { title: "works", status: "failed", duration: 6, failureMessages: ["broke"] },
+        ],
+      },
+    ],
+  };
+
+  /** The same duplicate titles after the rerun flips both verdicts. */
+  const DUPLICATE_TITLES_FLIPPED = {
+    testResults: [
+      {
+        name: "/ws/packages/beta/test/two.test.ts",
+        assertionResults: [
+          { title: "works", status: "failed", duration: 5, failureMessages: ["broke again"] },
+          { title: "works", status: "passed", duration: 6 },
+        ],
+      },
+    ],
+  };
+
   /**
    * A subprocess that hands out a different report on each spawn.
    *
@@ -687,6 +713,23 @@ describe("createRunEngine: single-file rerun", () => {
     // The rest of the full run's shape survives: two files, both completed.
     expect(state.log?.counts.total).toBe(2);
     expect(state.snapshot?.packages.flatMap(pkg => pkg.files)).toHaveLength(2);
+  });
+
+  it("pairs duplicate case names one for one when patching the log", async () => {
+    const { subprocess } = makeSequence([DUPLICATE_TITLES, DUPLICATE_TITLES_FLIPPED], { verbose: true });
+    const engine = createRunEngine({ subprocess });
+
+    await startOk(engine, WORKSPACE, ALL).done;
+    expect(engine.getState(WORKSPACE).log?.counts.total).toBe(2);
+
+    await startOk(engine, WORKSPACE, { kind: "file", path: "packages/beta/test/two.test.ts" }).done;
+    const log = engine.getState(WORKSPACE).log;
+
+    // The two old completions take the two new verdicts in order. Collapsing the
+    // name to one verdict would either lose a case or mislabel both.
+    expect(log?.cases.map(event => event.status)).toEqual(["failed", "passed"]);
+    expect(log?.counts).toMatchObject({ passed: 1, failed: 1, total: 2 });
+    expect(log?.failures).toHaveLength(1);
   });
 
   it("uses the first scoped run as the log when no full run has happened", async () => {

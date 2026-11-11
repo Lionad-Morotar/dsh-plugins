@@ -437,23 +437,37 @@ export function createRunEngine(options: RunEngineOptions): RunEngine {
     const replacement = incoming.packages.flatMap(pkg => pkg.files).find(file => file.path === scopePath);
     if (replacement === undefined) return log;
 
-    const verdicts = new Map(replacement.cases.map(entry => [entry.name, entry]));
-    const seen = new Set<string>();
+    // Case names are not unique inside a file: two `it("works")` under
+    // different describes are two cases. Pair them by name in report order,
+    // one verdict per old completion, instead of collapsing the name to its
+    // last verdict.
+    const verdictQueues = new Map<string, { status: RunCaseEvent["status"]; durationMs: number }[]>();
+    for (const verdict of replacement.cases) {
+      const queue = verdictQueues.get(verdict.name);
+      const entry = { status: verdict.status, durationMs: verdict.durationMs };
+      if (queue === undefined) verdictQueues.set(verdict.name, [entry]);
+      else queue.push(entry);
+    }
+    const used = new Map<string, number>();
     const cases: RunCaseEvent[] = [];
     for (const event of log.cases) {
       if (event.path !== scopePath) {
         cases.push(event);
         continue;
       }
-      const verdict = verdicts.get(event.name);
+      const verdict = verdictQueues.get(event.name)?.shift();
       // A case the rerun no longer reports was removed from the file: its old
       // completion should not stay in a log that describes the current board.
       if (verdict === undefined) continue;
-      seen.add(event.name);
+      used.set(event.name, (used.get(event.name) ?? 0) + 1);
       cases.push({ ...event, status: verdict.status, durationMs: verdict.durationMs });
     }
     for (const verdict of replacement.cases) {
-      if (seen.has(verdict.name)) continue;
+      const matched = used.get(verdict.name) ?? 0;
+      if (matched > 0) {
+        used.set(verdict.name, matched - 1);
+        continue;
+      }
       cases.push({
         path: scopePath,
         name: verdict.name,

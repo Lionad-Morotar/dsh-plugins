@@ -2529,9 +2529,14 @@
         {
           "path": "packages/dsh-fs-explorer/test/build.test.ts",
           "cases": [
-            {"name":"names every lazy chunk it will fetch","line":73,"status":"passed","durationMs":141},
-            {"name":"carries no renderer engine or editor","line":80,"status":"passed","durationMs":269},
-            {"name":"keeps the language catalogue out of ${family}","line":106,"status":"passed","durationMs":1023}
+            {"name":"names every lazy chunk it will fetch","line":85,"status":"passed","durationMs":141},
+            {"name":"carries no renderer engine or editor","line":92,"status":"passed","durationMs":269},
+            {"name":"carries no mermaid","line":99,"status":"passed","durationMs":271},
+            {"name":"keeps the language catalogue out of ${family}","line":127,"status":"passed","durationMs":1023},
+            {"name":"emits 23 files: two host halves and 21 chunks","line":146,"status":"passed","durationMs":566},
+            {"name":"ships the diagram chunk as its own file","line":155,"status":"passed","durationMs":571},
+            {"name":"keeps mermaid out of the preview chunk","line":166,"status":"passed","durationMs":309},
+            {"name":"keeps the diagram chunk inside its size budget","line":176,"status":"passed","durationMs":1191}
           ]
         },
         {
@@ -2879,6 +2884,50 @@
             {"name":"rejects a block whose marker names something else","line":230,"status":"passed","durationMs":605},
             {"name":"caches by artifact, so two languages on one block fetch once","line":238,"status":"passed","durationMs":1050},
             {"name":"hands the module back unchanged, so the caller supplies the id","line":249,"status":"passed","durationMs":1133}
+          ]
+        },
+        {
+          "path": "packages/dsh-fs-explorer/test/markdown-view.test.ts",
+          "cases": [
+            {"name":"never asks for the renderer when the document has no fence","line":134,"status":"passed","durationMs":825},
+            {"name":"shows the source first, then the picture","line":145,"status":"passed","durationMs":1052},
+            {"name":"replaces the source with a figure once the render resolves","line":156,"status":"passed","durationMs":1196},
+            {"name":"fetches the renderer once for two fences and draws both","line":171,"status":"passed","durationMs":1134},
+            {"name":"keeps the source and reports the failure when a definition is broken","line":180,"status":"passed","durationMs":297},
+            {"name":"still tries the next fence after one fails","line":194,"status":"failed","durationMs":836},
+            {"name":"leaves a non-mermaid fence alone","line":204,"status":"passed","durationMs":567},
+            {"name":"redraws when the page's theme changes","line":215,"status":"passed","durationMs":1156},
+            {"name":"redraws when the system preference changes","line":233,"status":"passed","durationMs":441},
+            {"name":"drops the old picture as soon as the fence text changes","line":260,"status":"passed","durationMs":646},
+            {"name":"keeps the current picture up while a theme change redraws it","line":297,"status":"passed","durationMs":174},
+            {"name":"has readable labels when no translator was handed in","line":328,"status":"passed","durationMs":923},
+            {"name":"uses the translator when one is handed in","line":337,"status":"passed","durationMs":338}
+          ]
+        },
+        {
+          "path": "packages/dsh-fs-explorer/test/mermaid-chunk.test.ts",
+          "cases": [
+            {"name":"names the file the build emits","line":60,"status":"passed","durationMs":670},
+            {"name":"keeps the chunk in its own file, not in the preview chunk","line":68,"status":"passed","durationMs":1018},
+            {"name":"is reachable from the preview chunk's route table","line":74,"status":"passed","durationMs":1118},
+            {"name":"refuses to fetch before the loader handed its require over","line":85,"status":"passed","durationMs":283},
+            {"name":"fetches the chunk once and caches it by file","line":90,"status":"passed","durationMs":432},
+            {"name":"rejects a chunk whose marker names another renderer","line":103,"status":"passed","durationMs":994},
+            {"name":"rejects a chunk without a render function","line":110,"status":"passed","durationMs":568},
+            {"name":"does not cache a failed fetch","line":117,"status":"passed","durationMs":871},
+            {"name":"calls the chunk's own boot before resolving","line":144,"status":"passed","durationMs":359},
+            {"name":"still resolves a chunk that has no boot","line":160,"status":"passed","durationMs":704},
+            {"name":"exports boot from the preview chunk's module object","line":173,"status":"passed","durationMs":512}
+          ]
+        },
+        {
+          "path": "packages/dsh-fs-explorer/test/mermaid-render.test.ts",
+          "cases": [
+            {"name":"declares the marker the loader checks","line":31,"status":"passed","durationMs":868},
+            {"name":"rejects a definition it cannot parse, with mermaid's own message","line":35,"status":"passed","durationMs":251},
+            {"name":"keeps serving later renders after one fails","line":50,"status":"passed","durationMs":316},
+            {"name":"leaves no temporary container in the body","line":57,"status":"passed","durationMs":197},
+            {"name":"gives each render its own id, so two diagrams cannot collide","line":65,"status":"passed","durationMs":925}
           ]
         },
         {
@@ -6874,18 +6923,19 @@
             {"name":"keeps the finished phase when cases failed, leaving the verdict to status","line":466,"status":"passed","durationMs":1005},
             {"name":"numbers each run in a workspace, and keeps workspaces separate","line":480,"status":"passed","durationMs":667},
             {"name":"keeps the partial events and the previous snapshot when cancelled","line":493,"status":"passed","durationMs":685},
-            {"name":"replaces only the rerun file's result and keeps the rest","line":630,"status":"passed","durationMs":483},
-            {"name":"keeps the full run's log while patching its snapshot","line":648,"status":"passed","durationMs":1169},
-            {"name":"clears a fixed failure from the chart's log while the other rows stay","line":671,"status":"passed","durationMs":163},
-            {"name":"uses the first scoped run as the log when no full run has happened","line":692,"status":"passed","durationMs":1043},
-            {"name":"records the scope and bumps the run number on a rerun","line":703,"status":"passed","durationMs":940},
-            {"name":"replaces the whole snapshot on a full run after a rerun","line":716,"status":"passed","durationMs":398},
-            {"name":"keeps the previous snapshot when a rerun produced no report","line":730,"status":"passed","durationMs":920},
-            {"name":"publishes cases before the child exits, growing as the stream grows","line":786,"status":"passed","durationMs":792},
-            {"name":"does not lose a line that arrives split across two reads","line":830,"status":"passed","durationMs":954},
-            {"name":"keeps every case when the output holds multi-byte characters","line":903,"status":"passed","durationMs":1060},
-            {"name":"flushes a last line that has no trailing newline","line":940,"status":"passed","durationMs":1050},
-            {"name":"does not corrupt a multi-byte character that spans two polls","line":966,"status":"passed","durationMs":446}
+            {"name":"replaces only the rerun file's result and keeps the rest","line":656,"status":"passed","durationMs":483},
+            {"name":"keeps the full run's log while patching its snapshot","line":674,"status":"passed","durationMs":1169},
+            {"name":"clears a fixed failure from the chart's log while the other rows stay","line":697,"status":"passed","durationMs":163},
+            {"name":"pairs duplicate case names one for one when patching the log","line":718,"status":"passed","durationMs":1082},
+            {"name":"uses the first scoped run as the log when no full run has happened","line":735,"status":"passed","durationMs":1043},
+            {"name":"records the scope and bumps the run number on a rerun","line":746,"status":"passed","durationMs":940},
+            {"name":"replaces the whole snapshot on a full run after a rerun","line":759,"status":"passed","durationMs":398},
+            {"name":"keeps the previous snapshot when a rerun produced no report","line":773,"status":"passed","durationMs":920},
+            {"name":"publishes cases before the child exits, growing as the stream grows","line":829,"status":"passed","durationMs":792},
+            {"name":"does not lose a line that arrives split across two reads","line":873,"status":"passed","durationMs":954},
+            {"name":"keeps every case when the output holds multi-byte characters","line":946,"status":"passed","durationMs":1060},
+            {"name":"flushes a last line that has no trailing newline","line":983,"status":"passed","durationMs":1050},
+            {"name":"does not corrupt a multi-byte character that spans two polls","line":1009,"status":"passed","durationMs":446}
           ]
         },
         {
