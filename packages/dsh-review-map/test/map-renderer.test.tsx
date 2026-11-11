@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createMap, nearestVisibleAncestor, pathSegments } from "../src/client/map/index.ts";
 import { MAX_FILES_PER_LEVEL, barSegments, capFiles, churnOf, glyphOf, shapeOf } from "../src/client/map/render.ts";
-import type { MapData, MapFileInput, MapLevelInput, MapStatus } from "../src/client/map/contract.ts";
+import type { MapData, MapEdgeInput, MapFileInput, MapLevelInput, MapStatus } from "../src/client/map/contract.ts";
 
 /** The host element a map mounts into. */
 function host(): HTMLElement {
@@ -706,5 +706,324 @@ describe("the map stylesheet", () => {
     expect(document.querySelectorAll("style[data-rm-map]")).toHaveLength(1);
     first.destroy();
     second.destroy();
+  });
+});
+
+describe("dependency edges", () => {
+  /** A level with the given files, all at the root. */
+  function flat(files: ReadonlyArray<{ path: string; lines: number; changed?: boolean }>): MapLevelInput {
+    return { path: "", dirs: [], files: files.map(file => ({ path: file.path, lines: file.lines, changed: file.changed ?? true })) };
+  }
+
+  /** A map over one level with edges. */
+  function withEdges(level: MapLevelInput, edges: MapEdgeInput[], extra: Partial<MapData> = {}): MapData {
+    return { levels: new Map([[level.path, level]]), rootPath: level.path, edges, unresolvedFiles: {}, ...extra };
+  }
+
+  /** Every drawn edge. */
+  function edgesOf(element: HTMLElement): Element[] {
+    return [...element.querySelectorAll('[data-rm="map-edge"]')];
+  }
+
+  it("draws both directions around a highlighted file", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withEdges(flat([{ path: "a.ts", lines: 10 }, { path: "b.ts", lines: 10 }, { path: "c.ts", lines: 10 }]), [
+        { from: "a.ts", to: "b.ts", state: "added" },
+        { from: "c.ts", to: "a.ts", state: "kept" },
+      ]),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    map.setHighlight("a.ts");
+
+    const edges = edgesOf(element);
+    expect(edges.filter(edge => edge.getAttribute("data-flow") === "imports")).toHaveLength(1);
+    expect(edges.filter(edge => edge.getAttribute("data-flow") === "imported-by")).toHaveLength(1);
+    map.destroy();
+  });
+
+  it("points each edge the way the dependency runs", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withEdges(flat([{ path: "a.ts", lines: 10 }, { path: "b.ts", lines: 10 }, { path: "c.ts", lines: 10 }]), [
+        { from: "a.ts", to: "b.ts", state: "kept" },
+        { from: "c.ts", to: "a.ts", state: "kept" },
+      ]),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    map.setHighlight("a.ts");
+
+    const outgoing = element.querySelector('[data-rm="map-edge"][data-flow="imports"]');
+    const incoming = element.querySelector('[data-rm="map-edge"][data-flow="imported-by"]');
+    // The endpoints are the real files, in the direction the host reported.
+    expect(outgoing?.getAttribute("data-from")).toBe("a.ts");
+    expect(outgoing?.getAttribute("data-to")).toBe("b.ts");
+    expect(incoming?.getAttribute("data-from")).toBe("c.ts");
+    expect(incoming?.getAttribute("data-to")).toBe("a.ts");
+    map.destroy();
+  });
+
+  it("gives each direction its own arrow marker and dash pattern", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withEdges(flat([{ path: "a.ts", lines: 10 }, { path: "b.ts", lines: 10 }, { path: "c.ts", lines: 10 }]), [
+        { from: "a.ts", to: "b.ts", state: "kept" },
+        { from: "c.ts", to: "a.ts", state: "kept" },
+      ]),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    map.setHighlight("a.ts");
+
+    const outgoing = element.querySelector('[data-rm="map-edge"][data-flow="imports"]');
+    const incoming = element.querySelector('[data-rm="map-edge"][data-flow="imported-by"]');
+    // Colour is one channel; the marker id and the dash pattern are the other,
+    // so a greyscale render still tells the two apart.
+    expect(outgoing?.getAttribute("marker-end")).toBe("url(#rm-arrow-imports)");
+    expect(incoming?.getAttribute("marker-end")).toBe("url(#rm-arrow-imported-by)");
+    expect(outgoing?.getAttribute("marker-end")).not.toBe(incoming?.getAttribute("marker-end"));
+    // Both markers exist in the document, and they are different shapes.
+    const markers = [...element.querySelectorAll('[data-rm="map-arrow"]')];
+    expect(markers).toHaveLength(2);
+    expect(new Set(markers.map(marker => marker.getAttribute("data-filled"))).size).toBe(2);
+    map.destroy();
+  });
+
+  it("anchors both ends on a card edge and gives the line a real length", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      // Three files, so the two ends are not neighbours sharing a border: two
+      // adjacent tiles touch, and an edge between them is legitimately zero
+      // length rather than a bug.
+      withEdges(flat([{ path: "a.ts", lines: 10 }, { path: "mid.ts", lines: 10 }, { path: "z.ts", lines: 10 }]), [
+        { from: "a.ts", to: "z.ts", state: "kept" },
+      ]),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    map.setHighlight("a.ts");
+
+    const edge = element.querySelector('[data-rm="map-edge"]');
+    const d = edge?.getAttribute("d") ?? "";
+    // `M x y Q cx cy x2 y2`: two endpoints and a control point.
+    expect(d).toMatch(/^M [\d.-]+ [\d.-]+ Q [\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+$/u);
+    const numbers = d.split(/[\s,]+/u).filter(part => part !== "" && part !== "M" && part !== "Q").map(Number);
+    expect(numbers.every(Number.isFinite)).toBe(true);
+    // A zero-length line would be an edge that points at nothing. The path is
+    // `M x1 y1 Q cx cy x2 y2`, so the endpoints are the first pair and the last.
+    const [x1, y1] = numbers;
+    const x2 = numbers[4];
+    const y2 = numbers[5];
+    expect(Math.hypot((x2 ?? 0) - (x1 ?? 0), (y2 ?? 0) - (y1 ?? 0))).toBeGreaterThan(1);
+    map.destroy();
+  });
+
+  it("draws no edge for a file with no dependencies", () => {
+    const element = host();
+    const map = createMap(element, withEdges(flat([{ path: "a.ts", lines: 10 }]), []), {}, { width: 900, height: 520 });
+
+    map.setHighlight("a.ts");
+
+    // No leftover line, and no empty group either.
+    expect(edgesOf(element)).toHaveLength(0);
+    expect(element.querySelector('[data-rm="map-edges"]')).toBeNull();
+    map.destroy();
+  });
+
+  it("removes the edges when the highlight is cleared", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withEdges(flat([{ path: "a.ts", lines: 10 }, { path: "b.ts", lines: 10 }]), [
+        { from: "a.ts", to: "b.ts", state: "kept" },
+      ]),
+      {},
+      { width: 900, height: 520 },
+    );
+    map.setHighlight("a.ts");
+    expect(edgesOf(element)).toHaveLength(1);
+
+    map.setHighlight(null);
+
+    expect(edgesOf(element)).toHaveLength(0);
+    expect(element.querySelector('[data-rm="map-legend"]')).toBeNull();
+    map.destroy();
+  });
+
+  it("shows the legend only while a file is highlighted", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withEdges(flat([{ path: "a.ts", lines: 10 }, { path: "b.ts", lines: 10 }]), [
+        { from: "a.ts", to: "b.ts", state: "kept" },
+      ]),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    expect(element.querySelector('[data-rm="map-legend"]')).toBeNull();
+    map.setHighlight("a.ts");
+
+    const legend = element.querySelector('[data-rm="map-legend"]');
+    expect(legend).not.toBeNull();
+    const rows = [...(legend?.querySelectorAll('[data-rm="map-legend-label"]') ?? [])];
+    expect(rows.map(row => row.getAttribute("data-flow"))).toEqual(["imports", "imported-by", "unresolved"]);
+    map.destroy();
+  });
+
+  it("marks a file's unresolved count instead of drawing an edge for it", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withEdges(flat([{ path: "a.ts", lines: 10 }]), [], { unresolvedFiles: { "a.ts": 3 } }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    map.setHighlight("a.ts");
+
+    const marker = element.querySelector('[data-rm="map-unresolved"]');
+    expect(marker?.getAttribute("data-count")).toBe("3");
+    expect(marker?.textContent).toBe("≥3 unresolved");
+    // An unresolved reference has no target, so there is nothing to draw.
+    expect(edgesOf(element)).toHaveLength(0);
+    map.destroy();
+  });
+
+  it("shows no unresolved marker for a file with none", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withEdges(flat([{ path: "a.ts", lines: 10 }]), [], { unresolvedFiles: { "a.ts": 0 } }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    map.setHighlight("a.ts");
+
+    // Zero is not a lower bound and must not be rendered as one.
+    expect(element.querySelector('[data-rm="map-unresolved"]')).toBeNull();
+    map.destroy();
+  });
+
+  it("marks a partial index and never claims a definite zero", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withEdges(flat([{ path: "a.ts", lines: 10 }]), [], {
+        indexed: { parsed: 320, total: 400, complete: false, note: "time budget" },
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    map.setHighlight("a.ts");
+
+    const marker = element.querySelector('[data-rm="map-partial"]');
+    expect(marker?.getAttribute("data-parsed")).toBe("320");
+    expect(marker?.getAttribute("data-total")).toBe("400");
+    expect(marker?.textContent).toBe("indexed 320/400");
+    map.destroy();
+  });
+
+  it("shows no partial marker when the index finished", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      withEdges(flat([{ path: "a.ts", lines: 10 }]), [], {
+        indexed: { parsed: 400, total: 400, complete: true, note: null },
+      }),
+      {},
+      { width: 900, height: 520 },
+    );
+
+    map.setHighlight("a.ts");
+
+    expect(element.querySelector('[data-rm="map-partial"]')).toBeNull();
+    map.destroy();
+  });
+});
+
+describe("edge aggregation", () => {
+  /**
+   * A root level holding `dirs` directories plus the hub file.
+   *
+   * The directories are tiles on this level, which is what an aggregated edge
+   * endpoint needs to be: aggregation collapses a file to its directory, and a
+   * directory that is not drawn cannot be pointed at.
+   * @param dirs - how many directories the level has.
+   * @returns the level.
+   */
+  function spread(dirs: number): MapLevelInput {
+    return {
+      path: "",
+      dirs: Array.from({ length: dirs }, (_, index) => ({ path: `d${String(index)}`, lines: 10, changed: true })),
+      files: [{ path: "hub.ts", lines: 10, changed: true }],
+    };
+  }
+
+  /** `count` edges from the hub into the directories, round-robin. */
+  function hubEdges(count: number, dirs: number): MapEdgeInput[] {
+    return Array.from({ length: count }, (_, index) => ({
+      from: "hub.ts",
+      to: `d${String(index % dirs)}/f${String(index)}.ts`,
+      state: "kept" as const,
+    }));
+  }
+
+  it("draws one edge per dependency when there are few of them", () => {
+    const element = host();
+    const level = spread(3);
+    const edges = hubEdges(10, 3);
+    const map = createMap(element, { levels: new Map([["", level]]), rootPath: "", edges, unresolvedFiles: {} }, {}, { width: 900, height: 520 });
+
+    map.setHighlight("hub.ts");
+
+    // Under the cap every edge is drawn on its own, at full identity.
+    const drawn = [...element.querySelectorAll('[data-rm="map-edge"]')];
+    expect(drawn).toHaveLength(10);
+    expect(drawn.every(edge => edge.getAttribute("data-aggregated") === "false")).toBe(true);
+    map.destroy();
+  });
+
+  it("aggregates by directory past the cap and keeps the total", () => {
+    const element = host();
+    const level = spread(4);
+    const edges = hubEdges(40, 4);
+    const map = createMap(element, { levels: new Map([["", level]]), rootPath: "", edges, unresolvedFiles: {} }, {}, { width: 900, height: 520 });
+
+    map.setHighlight("hub.ts");
+
+    const drawn = [...element.querySelectorAll('[data-rm="map-edge"]')];
+    // Four directories, so four aggregated edges rather than forty lines.
+    expect(drawn).toHaveLength(4);
+    const total = drawn.reduce((sum, edge) => sum + Number(edge.getAttribute("data-count")), 0);
+    // The count is preserved: the reader is told how many dependencies there
+    // are, not shown twelve lines and left to assume that is all.
+    expect(total).toBe(40);
+    expect(drawn.every(edge => edge.getAttribute("data-aggregated") === "true")).toBe(true);
+    map.destroy();
+  });
+
+  it("caps the aggregated edges at twelve", () => {
+    const element = host();
+    const level = spread(20);
+    const edges = hubEdges(60, 20);
+    const map = createMap(element, { levels: new Map([["", level]]), rootPath: "", edges, unresolvedFiles: {} }, {}, { width: 900, height: 520 });
+
+    map.setHighlight("hub.ts");
+
+    expect(element.querySelectorAll('[data-rm="map-edge"]').length).toBeLessThanOrEqual(12);
+    map.destroy();
   });
 });

@@ -24,7 +24,7 @@
  *   were given; the level is `index.ts`'s business. A renderer that called back
  *   into navigation would make the two files mutually dependent.
  */
-import type { MapDirInput, MapFileInput, MapHunk, MapStatus, Tile } from "./contract.ts";
+import type { MapDirInput, MapEdgeInput, MapFileInput, MapHunk, MapStatus, Rect, Tile } from "./contract.ts";
 
 /** The SVG namespace; a plain `createElement` would produce an inert element. */
 export const SVG_NS = "http://www.w3.org/2000/svg";
@@ -510,4 +510,361 @@ export function capFiles(files: readonly MapFileInput[]): { files: MapFileInput[
   });
   const kept = ranked.slice(0, MAX_FILES_PER_LEVEL).sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
   return { files: kept, hidden: files.length - kept.length };
+}
+
+/**
+ * How many edges one highlighted file may draw before they are aggregated.
+ *
+ * A shared module can be imported by hundreds of files. Drawing them all is not
+ * a picture, it is a texture, and the reader learns nothing from it. Past this
+ * count the edges collapse to their directories, which is the level of detail
+ * that still answers "what does this change touch".
+ */
+export const MAX_EDGES = 20;
+
+/** How many aggregated edges are drawn at most. */
+export const MAX_AGGREGATED_EDGES = 12;
+
+/** Which way an edge points, from the highlighted file's point of view. */
+export type FlowKind = "imports" | "imported-by";
+
+/** One edge ready to draw: both ends resolved to something on screen. */
+export interface DrawableEdge {
+  readonly from: string;
+  readonly to: string;
+  readonly flow: FlowKind;
+  readonly state: "added" | "removed" | "kept";
+  /** How many original edges this one stands for; 1 when not aggregated. */
+  readonly count: number;
+  /** True when at least one end was collapsed to a directory. */
+  readonly aggregated: boolean;
+}
+
+/** The edges around one highlighted file, before geometry. */
+export interface EdgePlan {
+  readonly edges: readonly DrawableEdge[];
+  /** True when the count crossed `MAX_EDGES` and directories were used. */
+  readonly aggregated: boolean;
+  /** How many raw edges the plan stands for, aggregated or not. */
+  readonly total: number;
+}
+
+/**
+ * The directory an edge endpoint collapses to.
+ *
+ * The endpoint itself when it is a directory, otherwise its parent. The root is
+ * the empty string, which is a real directory on this map and not a missing one.
+ * @param path - a file or directory path.
+ * @returns the directory to aggregate into.
+ */
+function directoryOf(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash);
+}
+
+/**
+ * Plan the edges to draw for one highlighted file.
+ *
+ * Two decisions worth naming:
+ *
+ * - **Both directions are drawn, and they are distinguished by more than
+ *   colour.** `imports` leaves the file, `imported-by` arrives at it; the arrow
+ *   marker points the way the dependency runs, and the two use different dash
+ *   patterns. A greyscale render still separates them.
+ * - **Aggregation is by directory, and it keeps the count.** Past `MAX_EDGES`
+ *   the endpoints collapse to their directories and duplicate pairs merge into
+ *   one edge carrying `count`. The total is preserved, so the reader is told
+ *   "these directories are connected 40 times" rather than shown twelve lines
+ *   and left to assume that is all there is.
+ *
+ * A file with no edges produces an empty plan, which is different from a plan
+ * with edges: the caller renders no lines at all rather than an empty group.
+ * @param edges - every edge in the review.
+ * @param path - the highlighted file.
+ * @param visible - the paths currently on screen, used to decide aggregation.
+ * @returns the plan.
+ */
+export function planEdges(
+  edges: readonly MapEdgeInput[],
+  path: string,
+  visible: ReadonlySet<string>,
+): EdgePlan {
+  const outgoing = edges.filter(edge => edge.from === path);
+  const incoming = edges.filter(edge => edge.to === path);
+  const total = outgoing.length + incoming.length;
+  if (total === 0) return { edges: [], aggregated: false, total: 0 };
+
+  const raw: DrawableEdge[] = [
+    ...outgoing.map(edge => ({ from: edge.from, to: edge.to, flow: "imports" as const, state: edge.state, count: 1, aggregated: false })),
+    ...incoming.map(edge => ({ from: edge.from, to: edge.to, flow: "imported-by" as const, state: edge.state, count: 1, aggregated: false })),
+  ];
+  if (total <= MAX_EDGES) return { edges: raw, aggregated: false, total };
+
+  // Past the cap, collapse each endpoint to its directory. The highlighted file
+  // itself stays a file: it is the thing the reader is looking at, and moving it
+  // to its parent would make the edges point at the folder it lives in.
+  const merged = new Map<string, DrawableEdge>();
+  for (const edge of raw) {
+    const from = edge.from === path ? path : directoryOf(edge.from);
+    const to = edge.to === path ? path : directoryOf(edge.to);
+    // An edge that collapses onto itself says nothing; a directory importing
+    // itself is not a dependency the reader can act on.
+    if (from === to) continue;
+    const key = `${from}\u0000${to}\u0000${edge.flow}`;
+    const existing = merged.get(key);
+    if (existing === undefined) {
+      merged.set(key, { ...edge, from, to, count: 1, aggregated: from !== edge.from || to !== edge.to });
+    } else {
+      merged.set(key, { ...existing, count: existing.count + edge.count, aggregated: true });
+    }
+  }
+  const planned = [...merged.values()]
+    // The heaviest connections first: with a cap on how many lines are drawn,
+    // the ones left out should be the ones that matter least.
+    .sort((left, right) => {
+      if (left.count !== right.count) return right.count - left.count;
+      if (left.from !== right.from) return left.from < right.from ? -1 : 1;
+      return left.to < right.to ? -1 : left.to > right.to ? 1 : 0;
+    })
+    .slice(0, MAX_AGGREGATED_EDGES);
+  return { edges: planned, aggregated: true, total };
+}
+
+/**
+ * The point on a tile's edge that an edge should start or end at.
+ *
+ * Endpoints sit on the border rather than the centre: a line into the middle of
+ * a card would cross its name and its churn reading, which is the one thing the
+ * requirement says an edge must not do. The side is chosen by where the other
+ * end is, so the line leaves toward its target instead of looping around.
+ * @param tile - the tile to attach to.
+ * @param toward - the other end's centre.
+ * @returns the attachment point.
+ */
+export function anchorOn(tile: Rect, toward: { x: number; y: number }): { x: number; y: number } {
+  const centre = { x: tile.x + tile.width / 2, y: tile.y + tile.height / 2 };
+  const dx = toward.x - centre.x;
+  const dy = toward.y - centre.y;
+  if (dx === 0 && dy === 0) return centre;
+  // Compare the slopes against the box's aspect so the exit side is the one the
+  // line actually crosses first.
+  const slope = Math.abs(dy / (dx === 0 ? Number.EPSILON : dx));
+  const boxSlope = tile.height / (tile.width === 0 ? Number.EPSILON : tile.width);
+  if (slope <= boxSlope) {
+    return { x: dx >= 0 ? tile.x + tile.width : tile.x, y: centre.y };
+  }
+  return { x: centre.x, y: dy >= 0 ? tile.y + tile.height : tile.y };
+}
+
+/**
+ * Draw the edges around one highlighted file.
+ *
+ * The group is appended after the cards so it paints over them, and each path
+ * carries its direction, its state and its weight as attributes: the stylesheet
+ * keys the colour and the dash pattern off them, and a test can assert the
+ * direction without reading pixels.
+ * @param document - the document to create in.
+ * @param plan - the edges to draw.
+ * @param rects - every tile on screen, keyed by path.
+ * @param highlighted - the file the edges belong to.
+ * @returns the group, or null when there is nothing to draw.
+ */
+export function edgeLayer(
+  document: Document,
+  plan: EdgePlan,
+  rects: ReadonlyMap<string, Rect>,
+  highlighted: string,
+  levelBox: Rect,
+): SVGGElement | null {
+  if (plan.edges.length === 0) return null;
+  const group = svgEl(document, "g", { "data-rm": "map-edges", "data-aggregated": plan.aggregated ? "true" : "false" }) as SVGGElement;
+
+  const centreOf = (rect: Rect): { x: number; y: number } => ({
+    x: rect.x + rect.width / 2,
+    y: rect.y + rect.height / 2,
+  });
+
+  /**
+   * The box an endpoint is drawn at.
+   *
+   * An endpoint is usually a tile on this level. When it is not — a file inside a
+   * directory that is drawn as a directory tile, or an aggregated endpoint naming
+   * a directory — it is anchored to the nearest visible ancestor, which is the
+   * same restraint the highlight uses: point at the thing the reader can see
+   * rather than inventing a position or dropping the edge.
+   * @param path - the endpoint's path.
+   * @returns its box, or undefined when nothing on this level contains it.
+   */
+  const boxOf = (path: string): Rect | undefined => {
+    const direct = rects.get(path);
+    if (direct !== undefined) return direct;
+    let cursor = path;
+    for (;;) {
+      const slash = cursor.lastIndexOf("/");
+      if (slash < 0) break;
+      cursor = cursor.slice(0, slash);
+      const ancestor = rects.get(cursor);
+      if (ancestor !== undefined) return ancestor;
+    }
+    // The level itself is the last resort: everything inside it lives here.
+    return rects.get("") ?? levelBox;
+  };
+
+  for (const edge of plan.edges) {
+    const fromRect = boxOf(edge.from);
+    const toRect = boxOf(edge.to);
+    // An edge whose ends collapse onto the same box says nothing: it would be a
+    // line from a tile to itself.
+    if (fromRect === undefined || toRect === undefined) continue;
+    if (fromRect === toRect) continue;
+    const start = anchorOn(fromRect, centreOf(toRect));
+    const end = anchorOn(toRect, centreOf(fromRect));
+    const path = svgEl(document, "path", {
+      // A slight curve rather than a straight line: two edges between the same
+      // pair of cards would otherwise lie exactly on top of each other, and a
+      // bidirectional dependency has to read as two.
+      d: `M ${String(start.x)} ${String(start.y)} Q ${String((start.x + end.x) / 2)} ${String((start.y + end.y) / 2 - 12)} ${String(end.x)} ${String(end.y)}`,
+      "data-rm": "map-edge",
+      "data-flow": edge.flow,
+      "data-state": edge.state,
+      "data-from": edge.from,
+      "data-to": edge.to,
+      "data-count": String(edge.count),
+      "data-aggregated": edge.aggregated ? "true" : "false",
+      "data-highlighted-from": highlighted,
+      "marker-end": edge.flow === "imports" ? "url(#rm-arrow-imports)" : "url(#rm-arrow-imported-by)",
+      fill: "none",
+    });
+    group.append(path);
+  }
+  return group.childElementCount === 0 ? null : group;
+}
+
+/**
+ * The arrow markers the edges point with.
+ *
+ * Two markers rather than one, because the two directions must differ in shape
+ * as well as colour: the imports arrow is an open chevron, the imported-by arrow
+ * a filled triangle. In greyscale they are still different marks.
+ * @param document - the document to create in.
+ * @returns the `<defs>` element.
+ */
+export function edgeDefs(document: Document): SVGDefsElement {
+  const defs = svgEl(document, "defs", {}) as SVGDefsElement;
+  for (const [id, filled] of [
+    ["rm-arrow-imports", false],
+    ["rm-arrow-imported-by", true],
+  ] as const) {
+    const marker = svgEl(document, "marker", {
+      id,
+      viewBox: "0 0 8 8",
+      refX: "7",
+      refY: "4",
+      markerWidth: "6",
+      markerHeight: "6",
+      orient: "auto-start-reverse",
+      "data-rm": "map-arrow",
+      "data-filled": filled ? "true" : "false",
+    });
+    marker.append(
+      svgEl(document, "path", {
+        d: filled ? "M 0 0 L 8 4 L 0 8 z" : "M 0 1 L 7 4 L 0 7",
+        "data-rm": "map-arrow-head",
+        fill: filled ? "currentColor" : "none",
+        stroke: "currentColor",
+        "stroke-width": "1.2",
+      }),
+    );
+    defs.append(marker);
+  }
+  return defs;
+}
+
+/**
+ * The legend: what the two directions and the unresolved marker mean.
+ *
+ * Shown only while a file is highlighted, because it explains lines that only
+ * exist then. A legend standing over an empty map is three words about nothing.
+ * @param document - the document to create in.
+ * @param strings - the three labels.
+ * @returns the legend element.
+ */
+export function legendLayer(
+  document: Document,
+  strings: { readonly imports: string; readonly importedBy: string; readonly unresolved: string },
+): SVGGElement {
+  const group = svgEl(document, "g", { "data-rm": "map-legend" }) as SVGGElement;
+  const rows: readonly { readonly key: string; readonly label: string; readonly flow: string }[] = [
+    { key: "imports", label: strings.imports, flow: "imports" },
+    { key: "imported-by", label: strings.importedBy, flow: "imported-by" },
+    { key: "unresolved", label: strings.unresolved, flow: "unresolved" },
+  ];
+  rows.forEach((row, index) => {
+    const y = 12 + index * 13;
+    group.append(
+      svgEl(document, "line", {
+        x1: "8",
+        y1: String(y - 3),
+        x2: "26",
+        y2: String(y - 3),
+        "data-rm": "map-legend-swatch",
+        "data-flow": row.flow,
+      }),
+    );
+    group.append(
+      svgText(document, { x: "30", y: String(y), "data-rm": "map-legend-label", "data-flow": row.flow }, row.label),
+    );
+  });
+  return group;
+}
+
+/**
+ * The unresolved marker for one file.
+ *
+ * A count, never an edge: the map cannot draw a line to a target it could not
+ * resolve, and drawing nothing without saying so would claim the file has no
+ * dependencies. `≥` because the index may not have looked at everything.
+ * @param document - the document to create in.
+ * @param count - how many references failed.
+ * @param at - where to place it.
+ * @param template - the sentence, with `{count}`.
+ * @returns the marker.
+ */
+export function unresolvedMarker(
+  document: Document,
+  count: number,
+  at: { x: number; y: number },
+  template: string,
+): SVGTextElement {
+  return svgText(
+    document,
+    { x: String(at.x), y: String(at.y), "data-rm": "map-unresolved", "data-count": String(count) },
+    template.replace("{count}", String(count)),
+  );
+}
+
+/**
+ * The partial-index marker.
+ *
+ * Says how much of the tree the index covered, so a reader looking at a sparse
+ * set of edges knows whether that is the truth or the budget.
+ * @param document - the document to create in.
+ * @param at - where to place it.
+ * @param template - the sentence, with `{parsed}` and `{total}`.
+ * @param parsed - files the index read.
+ * @param total - files it meant to read.
+ * @returns the marker.
+ */
+export function partialMarker(
+  document: Document,
+  at: { x: number; y: number },
+  template: string,
+  parsed: number,
+  total: number,
+): SVGTextElement {
+  return svgText(
+    document,
+    { x: String(at.x), y: String(at.y), "data-rm": "map-partial", "data-parsed": String(parsed), "data-total": String(total) },
+    template.replace("{parsed}", String(parsed)).replace("{total}", String(total)),
+  );
 }

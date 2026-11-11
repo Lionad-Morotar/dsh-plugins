@@ -270,6 +270,8 @@ function indexOf(parts: {
   newImports?: number;
   droppedImports?: number;
   unresolved?: number;
+  unresolvedFiles?: string[];
+  edges?: { from: string; to: string; state: "added" | "removed" | "kept" }[];
   complete?: boolean;
   parsed?: number;
   total?: number;
@@ -278,9 +280,9 @@ function indexOf(parts: {
     files: parts.files ?? [],
     dirs: parts.dirs ?? [],
     changed: parts.changed ?? [],
-    edges: [],
+    edges: parts.edges ?? [],
     imports: { newImports: parts.newImports ?? 0, droppedImports: parts.droppedImports ?? 0 },
-    unresolved: { count: parts.unresolved ?? 0, files: [] },
+    unresolved: { count: parts.unresolved ?? 0, files: parts.unresolvedFiles ?? [] },
     indexed: {
       files: parts.total ?? parts.files?.length ?? 0,
       parsed: parts.parsed ?? parts.files?.length ?? 0,
@@ -511,5 +513,95 @@ describe("indexReadings", () => {
     expect(readings.files).toBe(0);
     expect(readings.additions).toBe(0);
     expect(readings.partial).toBeNull();
+  });
+});
+
+describe("buildMapData edges and unresolved", () => {
+  it("carries an edge whose importing end changed", () => {
+    const data = buildMapData(
+      indexOf({
+        files: [structureFile({ path: "a.ts" }), structureFile({ path: "b.ts" })],
+        changed: [changedEntry({ path: "a.ts" })],
+        edges: [{ from: "a.ts", to: "b.ts", state: "added" }],
+      }),
+      "repo",
+    );
+
+    expect(data.edges ?? []).toEqual([{ from: "a.ts", to: "b.ts", state: "added" }]);
+  });
+
+  it("carries an edge whose imported end changed", () => {
+    const data = buildMapData(
+      indexOf({
+        files: [structureFile({ path: "a.ts" }), structureFile({ path: "b.ts" })],
+        changed: [changedEntry({ path: "b.ts" })],
+        edges: [{ from: "a.ts", to: "b.ts", state: "kept" }],
+      }),
+      "repo",
+    );
+
+    // The "imported by" direction is the whole point of the map: an unchanged
+    // file that depends on a changed one is exactly what a reviewer must see.
+    expect(data.edges ?? []).toEqual([{ from: "a.ts", to: "b.ts", state: "kept" }]);
+  });
+
+  it("drops an edge between two untouched files", () => {
+    const data = buildMapData(
+      indexOf({
+        files: [structureFile({ path: "a.ts" }), structureFile({ path: "b.ts" }), structureFile({ path: "c.ts" })],
+        changed: [changedEntry({ path: "c.ts" })],
+        edges: [
+          { from: "a.ts", to: "b.ts", state: "kept" },
+          { from: "c.ts", to: "a.ts", state: "kept" },
+        ],
+      }),
+      "repo",
+    );
+
+    // A fact about the repository, not about this review.
+    expect(data.edges ?? []).toEqual([{ from: "c.ts", to: "a.ts", state: "kept" }]);
+  });
+
+  it("keeps all three edge states", () => {
+    const data = buildMapData(
+      indexOf({
+        files: [structureFile({ path: "a.ts" }), structureFile({ path: "b.ts" }), structureFile({ path: "c.ts" })],
+        changed: [changedEntry({ path: "a.ts" })],
+        edges: [
+          { from: "a.ts", to: "b.ts", state: "added" },
+          { from: "a.ts", to: "c.ts", state: "removed" },
+        ],
+      }),
+      "repo",
+    );
+
+    expect((data.edges ?? []).map(edge => edge.state)).toEqual(["added", "removed"]);
+  });
+
+  it("passes the unresolved files through as per-file counts", () => {
+    const data = buildMapData(
+      indexOf({ files: [structureFile({ path: "a.ts" })], unresolvedFiles: ["a.ts", "b.ts"] }),
+      "repo",
+    );
+
+    expect(data.unresolvedFiles).toEqual({ "a.ts": 1, "b.ts": 1 });
+  });
+
+  it("reports no unresolved files when the host listed none", () => {
+    const data = buildMapData(indexOf({ files: [structureFile({ path: "a.ts" })] }), "repo");
+
+    expect(data.unresolvedFiles).toEqual({});
+  });
+
+  it("passes the index completeness through", () => {
+    const data = buildMapData(indexOf({ complete: false, parsed: 320, total: 400 }), "repo");
+
+    expect(data.indexed).toEqual({ parsed: 320, total: 400, complete: false, note: null });
+  });
+
+  it("reports a complete index as complete", () => {
+    const data = buildMapData(indexOf({ files: [structureFile({ path: "a.ts" })], complete: true }), "repo");
+
+    expect(data.indexed?.complete).toBe(true);
   });
 });

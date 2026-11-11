@@ -44,6 +44,10 @@ const MAP_STYLESHEET = `/* The directory map's own stylesheet, injected by the c
   --rm-map-surface-strong: var(--dsw-alias-bg-layer-3, rgba(0, 0, 0, 0.07));
   --rm-map-border: var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.12));
   --rm-map-muted: var(--dsw-alias-label-tertiary, #a39c91);
+  /* The two dependency directions. Blue and green are the requirement's own
+     choice; the dash patterns above are what carries the meaning without them. */
+  --rm-map-imports: var(--dsw-alias-state-info-primary, #2f6feb);
+  --rm-map-imported-by: var(--dsw-alias-state-success-primary, #1a7f37);
   --rm-map-secondary: var(--dsw-alias-label-secondary, #6b655c);
 }
 
@@ -119,6 +123,83 @@ const MAP_STYLESHEET = `/* The directory map's own stylesheet, injected by the c
 [data-rm="map-tile"][data-highlighted="true"] [data-rm="map-tile-rect"] {
   stroke: var(--dsw-alias-label-primary, #14110d);
   stroke-width: 2;
+}
+
+/* Dependency edges. Colour is the first channel and the dash pattern is the
+   second: imports is a solid blue line with an open chevron, imported-by a
+   dashed green line with a filled triangle. A greyscale render still separates
+   them by both the dash and the arrow shape. */
+[data-rm="map-edge"] {
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+[data-rm="map-edge"][data-flow="imports"] {
+  stroke: var(--rm-map-imports, #2f6feb);
+  stroke-dasharray: none;
+  color: var(--rm-map-imports, #2f6feb);
+}
+
+[data-rm="map-edge"][data-flow="imported-by"] {
+  stroke: var(--rm-map-imported-by, #1a7f37);
+  stroke-dasharray: 5 3;
+  color: var(--rm-map-imported-by, #1a7f37);
+}
+
+/* A removed edge is drawn faint and dotted: it is a dependency that no longer
+   exists, and it must be visible without competing with the live ones. */
+[data-rm="map-edge"][data-state="removed"] {
+  stroke-dasharray: 2 3;
+  opacity: 0.55;
+}
+
+[data-rm="map-edge"][data-aggregated="true"] {
+  stroke-width: 2.5;
+}
+
+[data-rm="map-arrow-head"] {
+  color: inherit;
+}
+
+/* The legend explains lines that only exist while a file is highlighted, so it
+   only exists then too. */
+[data-rm="map-legend"] {
+  pointer-events: none;
+}
+
+[data-rm="map-legend-swatch"] {
+  stroke-width: 2;
+}
+
+[data-rm="map-legend-swatch"][data-flow="imports"] {
+  stroke: var(--rm-map-imports, #2f6feb);
+}
+
+[data-rm="map-legend-swatch"][data-flow="imported-by"] {
+  stroke: var(--rm-map-imported-by, #1a7f37);
+  stroke-dasharray: 5 3;
+}
+
+[data-rm="map-legend-swatch"][data-flow="unresolved"] {
+  stroke: var(--rm-map-muted);
+  stroke-dasharray: 2 3;
+}
+
+[data-rm="map-legend-label"] {
+  font-size: 9px;
+  fill: var(--rm-map-secondary);
+}
+
+[data-rm="map-unresolved"] {
+  font-size: 9px;
+  fill: var(--rm-map-warn);
+}
+
+[data-rm="map-partial"] {
+  font-size: 9px;
+  fill: var(--rm-map-muted);
+  font-style: italic;
 }
 
 /* Status: colour and shape, both. The dash patterns are the shape channel, so a

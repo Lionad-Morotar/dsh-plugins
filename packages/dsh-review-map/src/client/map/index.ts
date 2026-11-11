@@ -33,10 +33,24 @@ import type {
   MapHandlers,
   MapLevelInput,
   MapOptions,
+  MapStrings,
+  Rect,
   Tile,
 } from "./contract.ts";
 import { layoutLevel } from "./layout.ts";
-import { SVG_NS, capFiles, dirCard, fileCard, overflowMarker } from "./render.ts";
+import {
+  SVG_NS,
+  capFiles,
+  dirCard,
+  edgeDefs,
+  edgeLayer,
+  fileCard,
+  legendLayer,
+  overflowMarker,
+  partialMarker,
+  planEdges,
+  unresolvedMarker,
+} from "./render.ts";
 import { ensureMapStyles } from "./styles.ts";
 
 /**
@@ -150,6 +164,13 @@ export function createMap(
   // lookup rather than a duplicate stylesheet.
   ensureMapStyles(document);
   const title = options.title ?? "repo";
+  const strings: MapStrings = options.strings ?? {
+    imports: "imports",
+    importedBy: "imported by",
+    unresolved: "unresolved",
+    unresolvedTemplate: "≥{count} unresolved",
+    partialTemplate: "indexed {parsed}/{total}",
+  };
 
   const root = document.createElement("div");
   root.setAttribute("data-rm", "map-root");
@@ -167,6 +188,11 @@ export function createMap(
 
   let current = data.rootPath;
   let highlighted: string | null = null;
+  // The geometry of the level on screen, keyed by path. Edges are anchored to
+  // these rects, and they are rebuilt with every draw because the layout is.
+  let rects = new Map<string, Rect>();
+  let width = 0;
+  let height = 0;
 
   /**
    * The level to draw, with its files capped.
@@ -200,6 +226,60 @@ export function createMap(
   };
 
   /**
+   * Draw the dependency edges around one highlighted file.
+   *
+   * Only a file gets edges: a directory is not a module, and a folder-level
+   * dependency is the aggregate the plan already produces when there are too
+   * many edges to draw one by one.
+   *
+   * The unresolved and partial markers are drawn here too, because they are the
+   * two things the map must say instead of drawing a line: a reference it could
+   * not resolve has no target, and an index that stopped early has not looked at
+   * everything. Drawing nothing without saying so would read as "no
+   * dependencies", which is the one claim the requirement forbids.
+   * @param path - the highlighted file.
+   */
+  const paintEdges = (path: string): void => {
+    const plan = planEdges(data.edges ?? [], path, new Set(rects.keys()));
+    const layer = edgeLayer(document, plan, rects, path, { x: 0, y: 0, width, height });
+    if (layer !== null) svg.append(layer);
+    svg.append(
+      legendLayer(document, {
+        imports: strings.imports,
+        importedBy: strings.importedBy,
+        unresolved: strings.unresolved,
+      }),
+    );
+
+    // The unresolved count sits beside the file it belongs to, not in a corner:
+    // a number in the corner makes the reader hunt for which file it is about.
+    const unresolved = data.unresolvedFiles?.[path] ?? 0;
+    if (unresolved > 0) {
+      const rect = rects.get(path);
+      if (rect !== undefined) {
+        svg.append(
+          unresolvedMarker(document, unresolved, { x: rect.x + 4, y: rect.y + rect.height - 4 }, strings.unresolvedTemplate),
+        );
+      }
+    }
+
+    // The partial marker is a fact about the whole index, so it goes in the
+    // corner where a map's scale would be.
+    const indexed = data.indexed;
+    if (indexed !== undefined && !indexed.complete) {
+      svg.append(
+        partialMarker(
+          document,
+          { x: 8, y: Math.max(height - 8, 12) },
+          strings.partialTemplate,
+          indexed.parsed,
+          indexed.total,
+        ),
+      );
+    }
+  };
+
+  /**
    * Apply the current highlight to whatever is on screen.
    *
    * A target on this level marks its own tile. A target below this level marks
@@ -209,10 +289,17 @@ export function createMap(
   const paintHighlight = (): void => {
     for (const node of svg.querySelectorAll("[data-highlighted]")) node.removeAttribute("data-highlighted");
     for (const node of crumbs.querySelectorAll("[data-breadcrumb-target]")) node.removeAttribute("data-breadcrumb-target");
+    // The edges and their legend are rebuilt from scratch on every highlight
+    // change: they are a function of the highlighted path, and patching them in
+    // place would be a second implementation of the same derivation.
+    for (const node of svg.querySelectorAll('[data-rm="map-edges"], [data-rm="map-legend"], [data-rm="map-unresolved"]')) {
+      node.remove();
+    }
     if (highlighted === null) return;
     const direct = svg.querySelector(`[data-rm="map-tile"][data-path="${cssEscape(highlighted)}"]`);
     if (direct !== null) {
       direct.setAttribute("data-highlighted", "true");
+      paintEdges(highlighted);
       return;
     }
     const ancestor = nearestVisibleAncestor(highlighted, current);
@@ -244,11 +331,17 @@ export function createMap(
    */
   const draw = (path: string): void => {
     current = path;
-    const { width, height } = resolveSize(host, options);
+    const size = resolveSize(host, options);
+    width = size.width;
+    height = size.height;
     svg.setAttribute("viewBox", `0 0 ${String(width)} ${String(height)}`);
     svg.setAttribute("width", "100%");
     svg.setAttribute("height", String(height));
     svg.replaceChildren();
+    // The markers are re-created with the level: `replaceChildren` took the old
+    // `<defs>` with it, and an edge pointing at a marker id that no longer
+    // exists renders as a line with no arrow.
+    svg.append(edgeDefs(document));
 
     const { level, hidden } = levelAt(path);
     drawCrumbs(path);
@@ -274,7 +367,9 @@ export function createMap(
       ...(handlers.onHover === undefined ? {} : { onHover: handlers.onHover }),
     };
 
+    rects = new Map<string, Rect>();
     for (const tile of layout.tiles) {
+      rects.set(tile.path, { x: tile.x, y: tile.y, width: tile.width, height: tile.height });
       const dir = dirsByPath.get(tile.path);
       if (dir !== undefined) {
         svg.append(dirCard(context, tile, dir));

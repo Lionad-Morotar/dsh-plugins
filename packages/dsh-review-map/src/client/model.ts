@@ -19,7 +19,7 @@ import type {
   ReviewIndex,
   ReviewSnapshot,
 } from "../shared.ts";
-import type { MapData, MapDirInput, MapFileInput, MapLevelInput } from "./map/contract.ts";
+import type { MapData, MapDirInput, MapEdgeInput, MapFileInput, MapLevelInput } from "./map/contract.ts";
 
 /** The minus sign for a deletion count. U+2212, not a hyphen. */
 const MINUS = "\u2212";
@@ -524,7 +524,34 @@ export function buildMapData(index: ReviewIndex, repoName: string): MapData {
     });
   }
 
-  return { levels, rootPath: "" };
+  // Only edges with an end in the change set are carried: the map draws
+  // dependencies of what changed, and an edge between two untouched files is a
+  // fact about the repository rather than about this review.
+  const changedPaths = new Set(index.changed.map(entry => entry.path));
+  const edges: MapEdgeInput[] = index.edges
+    .filter(edge => changedPaths.has(edge.from) || changedPaths.has(edge.to))
+    .map(edge => ({ from: edge.from, to: edge.to, state: edge.state }));
+
+  // Per-file unresolved counts. The host reports the files, not a per-file
+  // number, so each listed file counts as at least one: the list is the
+  // evidence, and a file on it has something the map could not draw.
+  const unresolvedFiles: Record<string, number> = {};
+  for (const path of index.unresolved.files) {
+    unresolvedFiles[path] = (unresolvedFiles[path] ?? 0) + 1;
+  }
+
+  return {
+    levels,
+    rootPath: "",
+    edges,
+    unresolvedFiles,
+    indexed: {
+      parsed: index.indexed.parsed,
+      total: index.indexed.files,
+      complete: index.indexed.complete,
+      note: index.indexed.note,
+    },
+  };
 }
 
 /**

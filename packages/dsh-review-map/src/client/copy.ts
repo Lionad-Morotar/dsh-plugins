@@ -34,6 +34,11 @@ export const ZH: Record<string, string> = {
   "review-map.mapLoading": "地图索引中",
   "review-map.mapEmpty": "没有可铺开的结构",
   "review-map.mapError": "地图索引失败",
+  "review-map.flowImports": "imports",
+  "review-map.flowImportedBy": "imported by",
+  "review-map.flowUnresolved": "未解析",
+  "review-map.mapUnresolved": "≥{count} 未解析",
+  "review-map.mapPartial": "索引 {parsed}/{total}",
   "review-map.uncommitted": "未提交 {count}",
 
   // List
@@ -107,6 +112,11 @@ export const EN: Record<string, string> = {
   "review-map.mapLoading": "Indexing the map",
   "review-map.mapEmpty": "No structure to lay out",
   "review-map.mapError": "The map index failed",
+  "review-map.flowImports": "imports",
+  "review-map.flowImportedBy": "imported by",
+  "review-map.flowUnresolved": "unresolved",
+  "review-map.mapUnresolved": "≥{count} unresolved",
+  "review-map.mapPartial": "indexed {parsed}/{total}",
   "review-map.uncommitted": "{count} uncommitted",
 
   // List

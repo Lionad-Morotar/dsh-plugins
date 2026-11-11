@@ -35,11 +35,11 @@
  * keys on to give the conversation view a definite height and to float the
  * composer over it. Without it the panel collapses to its content height.
  */
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 
 import { createHttpRuntime, type ReviewRuntime } from "./runtime.ts";
 import { loadMapChunk, type MapChunkModule } from "./chunk-loader.ts";
-import type { MapHandle } from "./map/contract.ts";
+import type { MapData, MapHandle, MapHandlers, MapOptions } from "./map/contract.ts";
 import {
   buildMapData,
   churnOf,
@@ -96,6 +96,11 @@ export interface ReviewMapViewStrings {
   readonly mapLoading?: string;
   readonly mapEmpty?: string;
   readonly mapError?: string;
+  readonly flowImports?: string;
+  readonly flowImportedBy?: string;
+  readonly flowUnresolved?: string;
+  readonly mapUnresolved?: string;
+  readonly mapPartial?: string;
   readonly uncommitted: string;
   readonly listMetaWorktree: string;
   readonly listMetaBranch: string;
@@ -590,6 +595,42 @@ export function createReviewMapView({
     // replaced. It is deliberately NOT re-mounted on selection or on opening a
     // detail: the map is a place, and rebuilding it would throw away the level
     // the reader had drilled into every time they clicked a card.
+    // The map's copy, with the dictionary's own wording as the fallback.
+    // Memoized because it is a dependency of the map's mount effect: a fresh
+    // object every render would remount the map on every hover.
+    const mapCopy = useMemo(() => ({
+      statNewImports: strings.statNewImports ?? "New imports",
+      statDroppedImports: strings.statDroppedImports ?? "Dropped imports",
+      indexPartial: strings.indexPartial ?? "indexed {parsed}/{total}",
+      unresolved: strings.unresolved ?? "≥{count} unresolved (incl. external)",
+      unresolvedHint:
+        strings.unresolvedHint ??
+        "External packages and dynamic imports are counted here and are not drawn as edges.",
+      mapTitle: strings.mapTitle ?? "Directory map",
+      mapLoading: strings.mapLoading ?? "Indexing the map",
+      mapEmpty: strings.mapEmpty ?? "No structure to lay out",
+      mapError: strings.mapError ?? "The map index failed",
+      flowImports: strings.flowImports ?? "imports",
+      flowImportedBy: strings.flowImportedBy ?? "imported by",
+      flowUnresolved: strings.flowUnresolved ?? "unresolved",
+      mapUnresolved: strings.mapUnresolved ?? "≥{count} unresolved",
+      mapPartial: strings.mapPartial ?? "indexed {parsed}/{total}",
+    }), [
+      strings.statNewImports,
+      strings.statDroppedImports,
+      strings.indexPartial,
+      strings.unresolved,
+      strings.mapTitle,
+      strings.mapLoading,
+      strings.mapEmpty,
+      strings.mapError,
+      strings.flowImports,
+      strings.flowImportedBy,
+      strings.flowUnresolved,
+      strings.mapUnresolved,
+      strings.mapPartial,
+    ]);
+
     const readyIndex = indexPhase.kind === "ready" ? indexPhase.index : undefined;
     // Read from the phase rather than from `snapshot`: that binding is derived
     // further down, and a hook dependency may not reach forward past its own
@@ -629,9 +670,24 @@ export function createReviewMapView({
           // component unmounted) must not paint: the host may already hold a
           // newer map.
           if (cancelled) return;
-          handle = chunk.createMap(host, buildMapData(readyIndex, repoName), {
+          const createMap = chunk.createMap as (
+            host: HTMLElement,
+            data: MapData,
+            handlers?: MapHandlers,
+            options?: MapOptions,
+          ) => MapHandle;
+          handle = createMap(host, buildMapData(readyIndex, repoName), {
             onOpenFile: openFromMap,
             onHover: hoverFromMap,
+          }, {
+            title: repoName,
+            strings: {
+              imports: mapCopy.flowImports,
+              importedBy: mapCopy.flowImportedBy,
+              unresolved: mapCopy.flowUnresolved,
+              unresolvedTemplate: mapCopy.mapUnresolved,
+              partialTemplate: mapCopy.mapPartial,
+            },
           });
           mapHandle.current = handle;
         },
@@ -645,7 +701,7 @@ export function createReviewMapView({
         handle?.destroy();
         if (mapHandle.current === handle) mapHandle.current = null;
       };
-    }, [readyIndex, repoName, mapLoader, openFromMap, hoverFromMap]);
+    }, [readyIndex, repoName, mapLoader, openFromMap, hoverFromMap, mapCopy]);
 
     /**
      * The pointer entered or left a list row.
@@ -702,20 +758,6 @@ export function createReviewMapView({
 
     const hasSession = sessionId !== undefined && sessionId !== "";
     const readings = readyIndex === undefined ? undefined : indexReadings(readyIndex);
-    // The map's copy, with the dictionary's own wording as the fallback.
-    const mapCopy = {
-      statNewImports: strings.statNewImports ?? "New imports",
-      statDroppedImports: strings.statDroppedImports ?? "Dropped imports",
-      indexPartial: strings.indexPartial ?? "indexed {parsed}/{total}",
-      unresolved: strings.unresolved ?? "≥{count} unresolved (incl. external)",
-      unresolvedHint:
-        strings.unresolvedHint ??
-        "External packages and dynamic imports are counted here and are not drawn as edges.",
-      mapTitle: strings.mapTitle ?? "Directory map",
-      mapLoading: strings.mapLoading ?? "Indexing the map",
-      mapEmpty: strings.mapEmpty ?? "No structure to lay out",
-      mapError: strings.mapError ?? "The map index failed",
-    };
     const snapshot = phase.kind === "ready" ? phase.snapshot : undefined;
     const summary = snapshot === undefined ? undefined : summaryOf(snapshot);
     const files = snapshot === undefined ? [] : sortFiles(snapshot.files);

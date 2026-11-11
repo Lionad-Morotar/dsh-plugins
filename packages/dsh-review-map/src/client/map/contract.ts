@@ -133,16 +133,66 @@ export interface LayoutOptions {
 }
 
 /**
+ * One import edge between two files, as the map draws it.
+ *
+ * `state` is the three-way comparison from the host: an edge that appeared, one
+ * that went away, one present on both sides. The map draws all three when a file
+ * is highlighted — a removed edge is exactly what a reviewer wants to see when
+ * judging whether a change broke a dependency.
+ */
+export interface MapEdgeInput {
+  readonly from: string;
+  readonly to: string;
+  readonly state: "added" | "removed" | "kept";
+}
+
+/**
  * Every level of the map, keyed by directory path.
  *
  * A map rather than a tree because drilling down is a lookup, not a walk: the
  * view knows the path it is showing and asks for that one level. The root level
  * is always present under `rootPath`, so a caller never has to special-case an
  * empty map.
+ *
+ * `edges` and `unresolvedFiles` are carried whole rather than pre-filtered per
+ * level: the map decides what it can draw from the level it is showing, and a
+ * per-level pre-split would have to be redone on every drill.
  */
 export interface MapData {
   readonly levels: ReadonlyMap<string, MapLevelInput>;
   readonly rootPath: string;
+  /**
+   * Import edges whose either end is in the change set.
+   *
+   * Optional, and absent means "the caller supplied no edge data" rather than
+   * "there are no dependencies": the map draws edges only while a file is
+   * highlighted, so a caller that omits them gets a map that makes no claim
+   * about dependencies at all. That is the honest reading, and it is what lets a
+   * preview harness mount the map with levels alone.
+   */
+  readonly edges?: readonly MapEdgeInput[];
+  /**
+   * How many references failed to resolve, per file.
+   *
+   * A file with a count above zero has dependencies the map cannot draw. It is
+   * reported per file so the card can say so, and it is never rendered as an
+   * edge: an unresolved reference has no target to point at. Absent is the same
+   * as an empty record — no file is claimed to have unresolved references.
+   */
+  readonly unresolvedFiles?: Readonly<Record<string, number>>;
+  /**
+   * How much of the tree the index covered.
+   *
+   * Absent means the caller did not say, which is not the same as "complete":
+   * the map shows the partial marker only when it is told the index stopped
+   * early, and never claims a definite zero for a range it did not read.
+   */
+  readonly indexed?: {
+    readonly parsed: number;
+    readonly total: number;
+    readonly complete: boolean;
+    readonly note: string | null;
+  };
 }
 
 /** What a click on a tile does; both are optional so a preview can pass none. */
@@ -177,6 +227,26 @@ export interface MapOptions {
   readonly height?: number;
   /** The root breadcrumb's label; the repository name, when the caller knows it. */
   readonly title?: string;
+  /**
+   * The legend's three labels and the two marker sentences.
+   *
+   * Passed in rather than baked into the chunk because the chunk has no locale
+   * seat: it is fetched at runtime, long after the entry resolved its strings,
+   * and a second dictionary inside it would be a second thing to translate.
+   * Defaults are the English words, so a preview that passes none still renders.
+   */
+  readonly strings?: MapStrings;
+}
+
+/** The copy the map itself renders. */
+export interface MapStrings {
+  readonly imports: string;
+  readonly importedBy: string;
+  readonly unresolved: string;
+  /** Sentence for a file's unresolved count; `{count}` is substituted. */
+  readonly unresolvedTemplate: string;
+  /** Sentence for the partial-index marker; `{parsed}` and `{total}`. */
+  readonly partialTemplate: string;
 }
 
 /** The handle a mounted map returns. */
