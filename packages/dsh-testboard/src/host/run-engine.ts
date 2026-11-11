@@ -103,6 +103,19 @@ export interface RunEngineOptions {
   /** Clock, injectable so a test can pin the wall clock. */
   readonly now?: () => number;
   /**
+   * Turn one run into the process that executes it.
+   *
+   * The default is a single vitest invocation at the workspace root. The host
+   * half replaces it when the workspace is a monorepo whose suite is only
+   * runnable through per-package configs; the engine itself only spawns what it
+   * is given.
+   */
+  readonly plan?: (input: { readonly workspace: string; readonly scope: RunScope; readonly outputFile: string }) => Promise<{
+    readonly argv: readonly string[];
+    readonly cwd: string;
+    readonly cleanup?: () => Promise<void>;
+  }>;
+  /**
    * Called once a run has settled with a snapshot to show.
    *
    * Separate from the engine's own state because persistence is a side effect
@@ -478,10 +491,15 @@ export function createRunEngine(options: RunEngineOptions): RunEngine {
       entry.controller = undefined;
     };
 
+    let planned: { argv: readonly string[]; cwd: string; cleanup?: () => Promise<void> } = {
+      argv: buildVitestArgv({ workspace, scope, outputFile }),
+      cwd: workspace,
+    };
     try {
+      if (options.plan !== undefined) planned = await options.plan({ workspace, scope, outputFile });
       const handle = options.subprocess.spawn({
-        argv: buildVitestArgv({ workspace, scope, outputFile }),
-        cwd: workspace,
+        argv: planned.argv,
+        cwd: planned.cwd,
         stdio: {
           // A test run must never wait on input: a prompt with no stdin is a
           // hang, and a hang is indistinguishable from a slow suite.
@@ -566,6 +584,7 @@ export function createRunEngine(options: RunEngineOptions): RunEngine {
       // The report is megabytes of JSON nobody reads twice, and a leaked file per
       // run would accumulate in the system temp directory forever.
       await rm(outputFile, { force: true });
+      await planned.cleanup?.();
     }
   }
 

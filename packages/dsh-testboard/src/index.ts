@@ -22,6 +22,7 @@ import type { Context } from "@deepseek-ai/cordis";
 
 import { createRunEngine, type SubprocessLike } from "./host/run-engine.ts";
 import { createResultsStore } from "./host/results-store.ts";
+import { planVitestRun } from "./host/run-plan.ts";
 import { createStateReader } from "./host/state-reader.ts";
 import { registerTestboardRoutes, type TestboardRouteDeps, type WebServerFace } from "./host/routes.ts";
 import {
@@ -213,6 +214,7 @@ export function apply(ctx: Context): void {
         spawn: () => ({ done: Promise.reject(new Error("no subprocess service")), collected: {} }),
       },
       fileTextOf: (workspace, path) => readWorkspaceFileSync(workspace, path),
+      plan: planVitestRun,
       onSettled: (workspace, result) => {
         // Best effort: a read-only checkout or a full disk must not turn a run
         // that produced a reading into a failed run.

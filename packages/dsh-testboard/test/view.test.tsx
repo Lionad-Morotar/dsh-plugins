@@ -210,6 +210,32 @@ function fileAt(path: string) {
   return SNAPSHOT.packages.flatMap(pkg => pkg.files).find(candidate => candidate.path === path);
 }
 
+/**
+ * Wait until the board has rendered a reading.
+ *
+ * The view loads state asynchronously. One macrotask is enough on an idle
+ * machine, but this suite also runs as part of a full monorepo run where the
+ * event loop is busy, so polls instead of guessing a sleep length.
+ * @param host - the mounted board.
+ * @param selector - what counts as rendered.
+ * @returns the first matching element.
+ */
+async function waitForBoard<T extends Element>(host: HTMLElement, selector: string): Promise<T> {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const found = host.querySelector<T>(selector);
+    if (found !== null) return found;
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    });
+  }
+  throw new Error(`board never rendered ${selector}`);
+}
+
+/** Wait until the board's first reading has landed. */
+async function settleBoard(host: HTMLElement): Promise<void> {
+  await waitForBoard(host, '[data-testid="file-row"], [data-testid="testboard-status"]');
+}
+
 describe("testboard view", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -236,9 +262,7 @@ describe("testboard view", () => {
     });
     // Let the first loadState settle: the board renders its rows only once the
     // host has answered.
-    await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    });
+    await settleBoard(host);
   }
 
   /** Press a key on the list the way a focused reader would. */
@@ -961,9 +985,7 @@ describe("testboard runtime wiring", () => {
     await act(async () => {
       root.render(createElement(makeView(), { sessionId }));
     });
-    await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    });
+    await settleBoard(host);
   }
 
   function runAll(host: HTMLElement): HTMLElement {
@@ -1158,6 +1180,64 @@ describe("testboard runtime wiring", () => {
     expect(meta?.textContent).toContain(STRINGS.fromCache);
   });
 
+  it("shows the loading state while a first run has no result yet", async () => {
+    const firstRun: RunProgress = {
+      runId: "first",
+      scope: { kind: "all" },
+      status: "running",
+      phase: "running",
+      runNumber: 1,
+      startedAt: new Date().toISOString(),
+      elapsedMs: 0,
+      completedFiles: 0,
+      totalFiles: null,
+      counts: { passed: 0, failed: 0, skipped: 0, total: 0 },
+      series: [],
+      failures: [],
+      cases: [],
+    };
+    runtime.setState({ run: firstRun });
+    await mount();
+    await waitForBoard<HTMLElement>(host, '[data-testid="board-spinner"]');
+    expect(host.querySelector('[data-testid="testboard"]')?.getAttribute("data-loading")).toBe("true");
+    // A first run has nothing to browse, so the only action is to stop it.
+    expect(host.querySelector('[data-testid="run-all"]')).toBeNull();
+    host.querySelector<HTMLElement>('[data-testid="cancel-run"]')?.click();
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(runtime.calls.some(call => call.kind === "cancelRun")).toBe(true);
+  });
+
+  it("marks the whole board as loading while a run is going", async () => {
+    runtime.setState({
+      snapshot: SNAPSHOT,
+      run: {
+        runId: "run-1",
+        scope: { kind: "all" },
+        status: "running",
+        phase: "running",
+        runNumber: 1,
+        startedAt: new Date().toISOString(),
+        elapsedMs: 1200,
+        completedFiles: 1,
+        totalFiles: null,
+        counts: { passed: 2, failed: 1, skipped: 0, total: 3 },
+        series: [
+          { tMs: 0, finished: 1, passed: 1, failed: 0 },
+          { tMs: 1000, finished: 3, passed: 2, failed: 1 },
+        ],
+        failures: [{ tMs: 1000, path: "test/a.test.ts", name: "b" }],
+        cases: [],
+      },
+    });
+    await mount();
+
+    await waitForBoard<HTMLElement>(host, '[data-testid="board-loading"]');
+    expect(host.querySelector('[data-testid="testboard"]')?.getAttribute("data-loading")).toBe("true");
+    expect(host.querySelector('[data-testid="run-phase"]')?.getAttribute("data-phase")).toBe("running");
+  });
+
   it("renders the no-session state when the tab has no session id", async () => {
     await act(async () => {
       root.render(createElement(makeView(), {}));
@@ -1221,9 +1301,7 @@ describe("testboard motion", () => {
     await act(async () => {
       root.render(createElement(makeView(), { sessionId: "session-1" }));
     });
-    await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    });
+    await settleBoard(host);
   }
 
   /** A run in flight with a couple of cases reported. */
@@ -1493,9 +1571,7 @@ describe("testboard references", () => {
       insertText: () => true,
     };
     await act(async () => root.render(createElement(view(options), { sessionId: "session-1", inputActions, ...props })));
-    await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    });
+    await settleBoard(host);
   }
 
   async function rightClick(element: Element): Promise<void> {

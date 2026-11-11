@@ -1,7 +1,7 @@
 // src/index.ts
-import { access, readFile as readFile3, realpath as realpath2, stat } from "node:fs/promises";
+import { access as access2, readFile as readFile4, realpath as realpath2, stat } from "node:fs/promises";
 import { readFileSync, realpathSync } from "node:fs";
-import { join as join3, sep } from "node:path";
+import { join as join4, sep } from "node:path";
 
 // src/host/run-engine.ts
 import { readFile, rm } from "node:fs/promises";
@@ -335,10 +335,15 @@ function createRunEngine(options) {
       };
       entry.controller = void 0;
     };
+    let planned = {
+      argv: buildVitestArgv({ workspace, scope, outputFile }),
+      cwd: workspace
+    };
     try {
+      if (options.plan !== void 0) planned = await options.plan({ workspace, scope, outputFile });
       const handle = options.subprocess.spawn({
-        argv: buildVitestArgv({ workspace, scope, outputFile }),
-        cwd: workspace,
+        argv: planned.argv,
+        cwd: planned.cwd,
         stdio: {
           // A test run must never wait on input: a prompt with no stdin is a
           // hang, and a hang is indistinguishable from a slow suite.
@@ -403,6 +408,7 @@ function createRunEngine(options) {
       settle("error", "error", error instanceof Error ? error.message : String(error));
     } finally {
       await rm(outputFile, { force: true });
+      await planned.cleanup?.();
     }
   }
   return {
@@ -545,6 +551,113 @@ function createResultsStore() {
       return record;
     }
   };
+}
+
+// src/host/run-plan.ts
+import { access, mkdtemp, readFile as readFile3, readdir as readdir2, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join3 } from "node:path";
+var CONFIG_NAMES = ["vitest.config.ts", "vitest.config.mts", "vitest.config.js", "vitest.config.mjs", "vitest.config.cts", "vitest.config.cjs"];
+async function hasConfig(directory) {
+  for (const name2 of CONFIG_NAMES) {
+    try {
+      await access(join3(directory, name2));
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+async function discoverProjects(workspace) {
+  const packages = join3(workspace, "packages");
+  let names;
+  try {
+    names = (await readdir2(packages, { withFileTypes: true })).filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules").map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+  names.sort();
+  const projects = [];
+  for (const name2 of names) {
+    const directory = join3(packages, name2);
+    try {
+      await access(join3(directory, "package.json"));
+    } catch {
+      continue;
+    }
+    if (await hasConfig(directory)) {
+      projects.push(directory);
+      continue;
+    }
+    try {
+      const manifest = JSON.parse(await readFile3(join3(directory, "package.json"), "utf8"));
+      const script = manifest.scripts?.test;
+      if (typeof script === "string" && script.includes("vitest")) projects.push(directory);
+    } catch {
+      continue;
+    }
+  }
+  return projects;
+}
+function packageOf(workspace, scope) {
+  if (scope.kind !== "file") return void 0;
+  const match = /^packages\/([^/]+)\//u.exec(scope.path);
+  return match?.[1] === void 0 ? void 0 : join3(workspace, "packages", match[1]);
+}
+async function writeProjectsConfig(workspace, projects) {
+  const directory = await mkdtemp(join3(tmpdir2(), "dsh-testboard-plan-"));
+  const file = join3(directory, "vitest.config.mjs");
+  const body = [
+    "export default {",
+    `  root: ${JSON.stringify(workspace)},`,
+    "  test: {",
+    "    projects: [",
+    ...projects.map((project) => `      ${JSON.stringify(project)},`),
+    "    ],",
+    "  },",
+    "};",
+    ""
+  ].join("\n");
+  await writeFile2(file, body, "utf8");
+  return { file, directory };
+}
+async function planVitestRun(input) {
+  const { workspace, scope, outputFile } = input;
+  const binary = join3(workspace, "node_modules", ".bin", "vitest");
+  const rootConfig = await hasConfig(workspace);
+  if (scope.kind === "file" && !rootConfig) {
+    const directory = packageOf(workspace, scope);
+    if (directory !== void 0 && await hasConfig(directory)) {
+      return {
+        argv: [binary, "run", scope.path, "--reporter=verbose", "--reporter=json", "--outputFile", outputFile],
+        cwd: directory
+      };
+    }
+  }
+  if (scope.kind === "all" && !rootConfig) {
+    const projects = await discoverProjects(workspace);
+    if (projects.length > 0) {
+      const generated = await writeProjectsConfig(workspace, projects);
+      return {
+        argv: [
+          binary,
+          "run",
+          "--config",
+          generated.file,
+          "--reporter=verbose",
+          "--reporter=json",
+          "--outputFile",
+          outputFile
+        ],
+        cwd: workspace,
+        cleanup: async () => {
+          await rm2(generated.directory, { recursive: true, force: true });
+        }
+      };
+    }
+  }
+  return { argv: buildVitestArgv({ workspace, scope, outputFile }), cwd: workspace };
 }
 
 // src/host/state-reader.ts
@@ -756,7 +869,7 @@ function whenWebServer(host, register) {
 }
 async function hasVitest(workspace) {
   try {
-    await access(join3(workspace, "node_modules", ".bin", "vitest"));
+    await access2(join4(workspace, "node_modules", ".bin", "vitest"));
     return true;
   } catch {
     return false;
@@ -775,7 +888,7 @@ function withinWorkspace(root, target) {
 function readWorkspaceFileSync(workspace, path) {
   try {
     const root = realpathSync(workspace);
-    const target = realpathSync(join3(root, path));
+    const target = realpathSync(join4(root, path));
     if (!withinWorkspace(root, target)) return void 0;
     return readFileSync(target, "utf8");
   } catch {
@@ -785,11 +898,11 @@ function readWorkspaceFileSync(workspace, path) {
 async function readWorkspaceFile(workspace, path) {
   try {
     const root = await realpath2(workspace);
-    const target = await realpath2(join3(root, path));
+    const target = await realpath2(join4(root, path));
     if (!withinWorkspace(root, target)) return void 0;
     const info = await stat(target);
     if (!info.isFile()) return void 0;
-    return await readFile3(target, "utf8");
+    return await readFile4(target, "utf8");
   } catch {
     return void 0;
   }
@@ -808,6 +921,7 @@ function apply(ctx) {
         spawn: () => ({ done: Promise.reject(new Error("no subprocess service")), collected: {} })
       },
       fileTextOf: (workspace, path) => readWorkspaceFileSync(workspace, path),
+      plan: planVitestRun,
       onSettled: (workspace, result) => {
         void results.save(workspace, result);
       }

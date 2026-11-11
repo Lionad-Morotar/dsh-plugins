@@ -17,9 +17,11 @@
 | `GET /source?sessionId=&path=` | 一个测试文件的全文（2MB 上限，路径必须落在工作区内） |
 
 - **会话 → 工作区**：先读 live session 的 `header.cwd`，再退回 `sessionPersistence.stat`，结果过一遍 `realpath`。两边都没有 cwd 时返回「未知工作区」，不回落到进程 cwd——否则看板会显示另一个项目的测试。
-- **跑测试**：走宿主的 `subprocess` 服务，argv 数组、无 shell、带 `AbortSignal` 与 `graceMs`。命令是 `<工作区>/node_modules/.bin/vitest run [file] --reporter=verbose --reporter=json --outputFile <tmp>`。用工作区自己的二进制，没装 vitest 就明确报 `no-vitest`，不会拿本仓的副本去跑别人的项目。
+- **跑测试**：走宿主的 `subprocess` 服务，argv 数组、无 shell、带 `AbortSignal` 与 `graceMs`。用工作区自己的二进制，没装 vitest 就明确报 `no-vitest`，不会拿本仓的副本去跑别人的项目。
+- **单仓与 monorepo**：工作区根有 vitest 配置时就是一条 `<工作区>/node_modules/.bin/vitest run [file] --reporter=verbose --reporter=json --outputFile <tmp>`。根没有配置、而 `packages/*` 里有声明 vitest 的包时（配置或 `test` 脚本），改用一个临时根配置 `test.projects` 指向这些包，让每个包在自己的配置与环境里跑，vitest 汇总成一份 JSON。不能在工作区根裸跑 `vitest run`：那会走进 `.claude/worktrees`、`zRefs` 这类目录，跑到的不是这个仓库的测试集。单文件落在某个包内时直接在该包的 cwd 下跑、由它自己的配置接管。
 - **逐用例增量**：`verbose` reporter 逐条打印，引擎按 200ms 轮询 `subprocess` 的 offset 读，把新增的 stdout 折进状态，所以轮询方在进程结束前就能看到用例一条条落地。`json` reporter 在结束时写文件，是最终快照的权威来源（它带状态与失败信息，人类可读行不带）。
 - **每工作区一轮**：第二次 `start` 返回 `busy`，不排队。取消走 `AbortSignal`，保留已收集的部分事件与既有快照。
+- **运行反馈**：还没出任何结果的首轮显示居中 `运行中` 加转圈与取消按钮，不是停在「尚未运行」；已有看板在跑时，面板顶边一条 2px 不定进度条持续扫过，配合计数与竖条动画。`prefers-reduced-motion: reduce` 下转圈与扫光都停住，只留静止的弱化标记。
 - **结果缓存**：每轮跑完把这一轮的 run 与 snapshot 写到工作区 `<workspace>/logs/testboard/<YYMMDD>/<HHmmss>/result.json`（本地时间，同秒重名自动加 `-2` 后缀）。宿主进程里没有该工作区的状态时（重启、新会话、重载页面），`/state` 自动回退到最新一份可读结果，页头 meta 前缀「上次运行」。写盘是 best-effort：只读 checkout 或磁盘满不会把已完成的运行判失败；坏文件或旧版本 schema 会被跳过，而不是清空看板。缓存不自动清理，删 `logs/testboard` 即重置。
 
 ## 交互
@@ -103,7 +105,7 @@ cd packages/dsh-testboard
 node scripts/preview.mjs --out ../../temp/testboard-preview
 ```
 
-产出 `index.html` 与 `assets.js`，React 已内联，页面不引用外链，`file://` 直接打开或起静态服务器都能看。`?theme=dark|light` 选主题（缺省暗色），`?state=empty` 渲染首次打开时的等待态，`?state=cached` 渲染从磁盘缓存载入后的上一次结果。空态与 dsh-arch 的空界面同一套版式：内容区居中、文字弱化，只留一个动作入口。
+产出 `index.html` 与 `assets.js`，React 已内联，页面不引用外链，`file://` 直接打开或起静态服务器都能看。`?theme=dark|light` 选主题（缺省暗色），`?state=empty` 渲染首次打开时的等待态，`?state=loading` 渲染首轮运行中的等待态，`?state=cached` 渲染从磁盘缓存载入后的上一次结果。空态与 dsh-arch 的空界面同一套版式：内容区居中、文字弱化，只留一个动作入口。
 
 预览页用 fixture runtime，与线上走同一个 `TestboardRuntime` 接口，所以渲染的是真实 tab 的代码路径。它自动循环演示一遍完整叙事：`running`（竖条逐格点亮、计数增长、图表生长）→ `fixing`（标题 `正在修复 N 个失败`，图表右下浮层卡 `Fixing <file>` / `<model> · Ns` / `+2 −2`）→ `rerunning`（失败用例先扫灰再重亮，元信息 `重跑 · Xs`）→ `finished`（`测试完成`，全绿）→ 循环。
 
