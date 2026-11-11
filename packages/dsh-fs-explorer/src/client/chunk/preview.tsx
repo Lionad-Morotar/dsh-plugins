@@ -5,10 +5,11 @@
  * who opens a source file needs CodeMirror, a reader who opens a README needs
  * the GFM renderer, and either way the fetch is one page-lifetime decision.
  *
- * No grammar lives here. Each language is its own chunk fetched after this one,
- * so a reader who opens a `.py` file never downloads the json, css, html,
- * markdown or yaml grammars. The editor therefore mounts monochrome and is
- * upgraded in place through a compartment once the grammar arrives.
+ * No grammar lives here. A file whose language has its own chunk is drawn by
+ * that chunk instead, which carries the grammar and the editor it needs in one
+ * bundle; this chunk draws the monochrome fallback for everything else, plus the
+ * GFM reader. The split is why a reader who opens a `.py` file never downloads
+ * the json, css, html, markdown or yaml grammars.
  */
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
@@ -75,18 +76,16 @@ const editorTheme = EditorView.theme(
  * rather than at 1. The gutter sits in a compartment because the page can move
  * without the document identity changing.
  *
- * The language compartment starts empty, which is what makes the editor usable
- * before any grammar has been fetched: the text is there and readable, just
- * monochrome. `setLanguage` fills that compartment later, and because it is a
- * reconfigure rather than a rebuild, the document, the scroll position and the
- * reader's selection all survive the upgrade.
+ * The editor is monochrome by construction: no grammar is passed and none can be
+ * added later, because a grammar built in another chunk cannot be accepted here
+ * (each chunk inlines its own CodeMirror core). A file that should be coloured
+ * is drawn by its language chunk, which mounts its own editor.
  * @param host - the element the editor fills.
  * @param options - page text, path and first line.
  * @returns the update/destroy handle.
  */
 export function mountCodePreview(host: HTMLElement, options: CodePreviewOptions): CodePreviewHandle {
   const gutter = new Compartment();
-  const language = new Compartment();
   const view = new EditorView({
     parent: host,
     state: EditorState.create({
@@ -95,7 +94,6 @@ export function mountCodePreview(host: HTMLElement, options: CodePreviewOptions)
         EditorState.readOnly.of(true),
         EditorView.editable.of(false),
         gutter.of(lineNumbers({ formatNumber: line => String(line + options.offset - 1) })),
-        language.of([]),
         syntaxHighlighting(highlightStyle),
         editorTheme,
       ],
@@ -108,9 +106,6 @@ export function mountCodePreview(host: HTMLElement, options: CodePreviewOptions)
         effects: gutter.reconfigure(lineNumbers({ formatNumber: line => String(line + offset - 1) })),
       });
       view.scrollDOM.scrollTop = 0;
-    },
-    setLanguage(extension) {
-      view.dispatch({ effects: language.reconfigure(extension) });
     },
     revealRange(from, to) {
       const length = view.state.doc.length;

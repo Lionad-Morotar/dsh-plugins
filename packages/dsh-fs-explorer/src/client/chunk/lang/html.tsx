@@ -1,15 +1,18 @@
 /**
  * The html language chunk.
  *
- * Also serves the catalogue's html-approximated rows (razor, vue, svelte) once
- * the read side routes them here; the chunk itself is only the grammar.
+ * HTML, which also backs the catalogue's html-approximated rows.
+ *
+ * The editor is mounted here, in this bundle, because a grammar cannot cross a
+ * chunk boundary: each chunk inlines its own CodeMirror core, so an extension
+ * built elsewhere fails the host's identity check. See read-only.tsx.
  */
 import { html } from "@codemirror/lang-html";
-import type { Extension } from "@codemirror/state";
+import { mountReadOnly, type ReadOnlyHandle, type ReadOnlyOptions } from "./read-only.tsx";
 
 /** Diagnostic marker; the build asserts it survives minification. */
 export const renderer = "html" as const;
 
-export function language(): Extension {
-  return html();
+export function mount(host: HTMLElement, options: ReadOnlyOptions): ReadOnlyHandle {
+  return mountReadOnly(host, options, html());
 }

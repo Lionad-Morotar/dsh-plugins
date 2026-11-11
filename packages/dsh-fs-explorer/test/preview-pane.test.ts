@@ -250,3 +250,81 @@ describe("preview pane find source", () => {
     expect(selections.at(-1)).toEqual([start, start + "needle".length]);
   });
 });
+
+/**
+ * The cost model, asserted at the pane rather than at the loader.
+ *
+ * Opening a file whose language has its own chunk must fetch that chunk and
+ * nothing else. The preview chunk carries a second CodeMirror core, so fetching
+ * it is not merely wasted bytes: its extensions cannot be accepted by the
+ * language chunk's editor, which is the whole reason the pivot exists.
+ */
+describe("preview pane language chunk routing", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  /** Boot the chunk loader with a fake require that records every request. */
+  async function bootWith(calls: string[]): Promise<void> {
+    const previewChunk = await import("../src/client/preview-chunk.ts");
+    const require = ((specifier: string): unknown => {
+      throw new Error(`unexpected platform require: ${specifier}`);
+    }) as { (specifier: string): unknown; async(specifier: string): Promise<unknown> };
+    require.async = async (specifier: string): Promise<unknown> => {
+      calls.push(specifier);
+      if (specifier === "./client.lang-python.js") {
+        return {
+          renderer: "python",
+          mount: () => ({ update() {}, revealRange() {}, clearSelection() {}, destroy() {} }),
+        };
+      }
+      throw new Error(`no chunk built for ${specifier}`);
+    };
+    previewChunk.boot(require);
+  }
+
+  async function show(path: string): Promise<void> {
+    const files = {
+      list: async () => ({ entries: [] }),
+      read: async () => ({ ok: true, value: { text: "print(1)\n", offset: 1, lines: 1, eof: true } }),
+    };
+    await act(async () => {
+      root.render(createElement(PreviewPane, { sessionId: "s1", files, path, t }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("fetches only the language chunk for a .py file", async () => {
+    const calls: string[] = [];
+    await bootWith(calls);
+    await show("a.py");
+
+    expect(calls).toContain("./client.lang-python.js");
+    expect(calls).not.toContain("./client.preview.js");
+  });
+
+  it("falls back to the preview chunk for a language with no chunk", async () => {
+    const calls: string[] = [];
+    await bootWith(calls);
+    await show("a.rs");
+
+    expect(calls).toContain("./client.preview.js");
+    expect(calls.some(call => call.startsWith("./client.lang-"))).toBe(false);
+  });
+});

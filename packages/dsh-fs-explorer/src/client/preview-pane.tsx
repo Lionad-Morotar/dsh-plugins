@@ -33,6 +33,7 @@ import {
   familyOf,
   IDLE_PREVIEW,
   isMarkdownFile,
+  languageFor,
   matchLanguage,
   PREVIEW_MAX_LINES,
   type PreviewFailure,
@@ -224,6 +225,15 @@ const MARKDOWN_EXTENSIONS: readonly string[] = (BY_ID.get("markdown")?.extension
  */
 const SOURCE_RENDERER_PRIORITY = -1000;
 
+/**
+ * The built-in source renderer's id.
+ *
+ * Named once because the pane compares against it: the language-chunk branch
+ * replaces this renderer and only this one, so a plugin's claim or the markdown
+ * reader is never overruled by it.
+ */
+const SOURCE_RENDERER_ID = "builtin.source";
+
 /** The block every path paints when the reader for that path cannot read it. */
 function UnavailableBody({ t, revision }: { readonly t: Translate; readonly revision?: string }) {
   return (
@@ -242,11 +252,12 @@ function UnavailableBody({ t, revision }: { readonly t: Translate; readonly revi
  * throws (an embedding without a measurable viewport, a DOM the host replaced
  * under us), the same page stays readable as plain text.
  *
- * The grammar is fetched here rather than inside the chunk, and it is fetched
- * alongside the editor rather than after it: the reader gets a usable page as
- * soon as the editor mounts, and the colours arrive when the grammar does. A
- * language with no chunk (most of the catalogue) never reaches the loader at
- * all, so opening a `.rs` file costs exactly zero extra requests.
+ * Two editors can end up here, and only one of them is ever fetched. A file
+ * whose language ships its own chunk is drawn by that chunk, which carries the
+ * grammar and the editor together; everything else uses the monochrome editor
+ * from the preview chunk. The language chunk is preferred because a grammar
+ * cannot cross a bundle boundary: each chunk inlines its own CodeMirror core, so
+ * an extension built in one chunk is rejected by an editor built in another.
  */
 function CodeSurface({
   chunk,
@@ -255,6 +266,7 @@ function CodeSurface({
   offset,
   find,
 }: {
+  /** The monochrome editor, or null while it is still loading. */
   readonly chunk: PreviewChunkModule | null;
   readonly text: string;
   readonly path: string;
@@ -266,14 +278,21 @@ function CodeSurface({
   const pageText = useRef(text);
   pageText.current = text;
   const [failed, setFailed] = useState(false);
+  // A language chunk may be the only editor this file ever gets, so the surface
+  // must be able to draw without the preview chunk having arrived.
+  const languageId = languageFor(path);
+  const languageChunked = hasLanguageChunk(languageId);
 
   useEffect(() => {
     setFailed(false);
   }, [chunk, path]);
 
+  // The monochrome editor, mounted only when no language chunk will draw this
+  // file. Mounting it first and replacing it later would flash an unstyled
+  // document over a styled one.
   useEffect(() => {
     const element = host.current;
-    if (chunk === null || element === null) return;
+    if (chunk === null || element === null || languageChunked) return;
     try {
       const created = chunk.mountCodePreview(element, { text, path, offset });
       handle.current = created;
@@ -288,36 +307,40 @@ function CodeSurface({
     // Page text and offset are applied by the update effect below; rebuilding
     // the editor on every page would drop its scroll and selection state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chunk, path]);
+  }, [chunk, path, languageChunked]);
 
-  // The grammar arrives after the editor does. The token makes a late arrival
-  // harmless: a reader who switched files mid-fetch would otherwise get the
-  // previous file's grammar applied to this one's document.
+  // The language chunk, which mounts its own editor. The token makes a late
+  // arrival harmless: a reader who switched files mid-fetch must not get the
+  // previous file drawn here, and the language is re-derived on arrival rather
+  // than trusted from the fetch start.
   useEffect(() => {
-    if (chunk === null) return;
+    const element = host.current;
+    if (element === null || !languageChunked) return;
     let live = true;
-    const descriptor = matchLanguage(path);
-    // Unknown files and decided-monochrome files have no grammar to wait for, so
-    // they never reach the loader: the contract is zero requests, not a request
-    // that fails.
-    if (descriptor === null || !hasLanguageChunk(descriptor.id)) return;
-    loadLanguageChunk(descriptor.id).then(
+    loadLanguageChunk(languageId).then(
       module => {
         if (!live) return;
-        // Re-derive rather than trust the descriptor captured above: the path
-        // can change between the fetch starting and the grammar landing.
-        const current = matchLanguage(path);
-        if (current === null || current.id !== descriptor.id) return;
-        handle.current?.setLanguage(module.language());
+        if (languageFor(path) !== languageId) return;
+        try {
+          const created = module.mount(element, { text, path, offset });
+          handle.current?.destroy();
+          handle.current = created;
+        } catch {
+          // A chunk that cannot mount leaves the page to the monochrome path,
+          // which is a readable page; the reader is not told about a failure
+          // that costs them nothing.
+          setFailed(true);
+        }
       },
-      // A grammar that never arrives leaves the page monochrome, which is a
-      // usable page. Reporting it would put an error over text that is fine.
+      // A chunk that never arrives falls back the same way. Reporting it would
+      // put an error over text that is fine.
       () => undefined,
     );
     return () => {
       live = false;
     };
-  }, [chunk, path]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [languageChunked, languageId, path]);
 
   useEffect(() => {
     handle.current?.update(text, offset);
@@ -328,7 +351,7 @@ function CodeSurface({
   // bodies another plugin contributes. The scope says so, so the counter names
   // the page instead of promising the whole file.
   useEffect(() => {
-    if (find === undefined || chunk === null || failed) return;
+    if (find === undefined || failed) return;
     find.register({
       scope: "page",
       text: () => pageText.current,
@@ -336,16 +359,23 @@ function CodeSurface({
       clear: () => handle.current?.clearSelection(),
     });
     return () => find.register(null);
-  }, [find, chunk, failed]);
+  }, [find, failed]);
 
-  if (chunk === null || failed) {
+  if (failed) {
     return (
       <pre className="fx-pre" data-testid="fs-preview-plain">
         {text}
       </pre>
     );
   }
-  return <div className="fx-code-host" ref={host} data-testid="fs-preview-code" data-renderer={chunk.renderer} />;
+  return (
+    <div
+      className="fx-code-host"
+      ref={host}
+      data-testid="fs-preview-code"
+      data-renderer={languageChunked ? languageId : (chunk?.renderer ?? "plain")}
+    />
+  );
 }
 
 /**
@@ -393,6 +423,24 @@ function createSourceRenderer(chunk: PreviewChunkModule): RendererModule {
   }
   return { Body: SourceBody, renderer: chunk.renderer };
 }
+
+/**
+ * The source body for a file whose language chunk draws it.
+ *
+ * It exists so the pane can name a renderer without fetching the preview chunk:
+ * `loadRenderer` needs a module to resolve to, and the language chunk is the one
+ * that will actually mount. `chunk` is null because there is no monochrome
+ * editor to hand over; `CodeSurface` takes the language branch from the path.
+ */
+const MONOCHROME_MODULE: RendererModule = {
+  Body: ({ page, path, find }: RendererBodyProps) => (
+    <CodeSurface chunk={null} text={page?.text ?? ""} path={path} offset={page?.offset ?? 1} find={find} />
+  ),
+  // Named for what it is rather than for the engine: the entry bundle must not
+  // contain the string "codemirror" at all, because that is how the build proves
+  // no editor leaked into it.
+  renderer: "plain",
+};
 
 /**
  * One binary family's body.
@@ -449,7 +497,7 @@ export function createBuiltinRenderers(): readonly RendererContribution[] {
       load: () => loadPreviewChunk().then(createMarkdownRenderer),
     },
     {
-      id: "builtin.source",
+      id: SOURCE_RENDERER_ID,
       label: "源码",
       match: {},
       priority: SOURCE_RENDERER_PRIORITY,
@@ -632,6 +680,24 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
     // ask the working tree for the file and paint the wrong revision.
     if (path === undefined || revision !== undefined) {
       setRendererState(IDLE_RENDERER);
+      return;
+    }
+    const winner = registry.resolve({ path });
+    // A text file whose language ships its own chunk is drawn by that chunk, and
+    // that chunk carries its own editor. Fetching the preview chunk as well
+    // would download a second CodeMirror core whose extensions the language
+    // chunk cannot accept, so the branch happens before `load()` is reached.
+    //
+    // Only the built-in source renderer is replaced. A plugin that claimed the
+    // file keeps its claim, and markdown keeps the GFM reader, because both are
+    // decisions the registry already made and this branch is not entitled to
+    // overrule them.
+    if (
+      winner !== undefined &&
+      winner.id === SOURCE_RENDERER_ID &&
+      hasLanguageChunk(languageFor(path))
+    ) {
+      setRendererState({ status: "ready", contribution: winner, module: MONOCHROME_MODULE });
       return;
     }
     const selection = loadRenderer(registry, { path });

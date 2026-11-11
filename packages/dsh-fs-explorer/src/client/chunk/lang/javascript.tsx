@@ -1,17 +1,18 @@
 /**
  * The javascript language chunk.
  *
- * One grammar per entry file, with no shared factory: a factory imported by all
- * ten entries would put every grammar in every chunk, which is the cost the
- * split exists to avoid. The dialect is fixed here rather than derived from the
- * path, because the catalogue already decided which language this chunk is.
+ * Plain JavaScript, no dialect flags.
+ *
+ * The editor is mounted here, in this bundle, because a grammar cannot cross a
+ * chunk boundary: each chunk inlines its own CodeMirror core, so an extension
+ * built elsewhere fails the host's identity check. See read-only.tsx.
  */
 import { javascript } from "@codemirror/lang-javascript";
-import type { Extension } from "@codemirror/state";
+import { mountReadOnly, type ReadOnlyHandle, type ReadOnlyOptions } from "./read-only.tsx";
 
 /** Diagnostic marker; the build asserts it survives minification. */
 export const renderer = "javascript" as const;
 
-export function language(): Extension {
-  return javascript({});
+export function mount(host: HTMLElement, options: ReadOnlyOptions): ReadOnlyHandle {
+  return mountReadOnly(host, options, javascript({}));
 }

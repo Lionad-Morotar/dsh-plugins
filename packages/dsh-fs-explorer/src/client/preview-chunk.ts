@@ -46,14 +46,6 @@ export interface CodePreviewOptions {
 export interface CodePreviewHandle {
   update(text: string, offset: number): void;
   /**
-   * Swap the grammar in place, once its chunk has arrived.
-   *
-   * A reconfigure rather than a remount: the document, the scroll position and
-   * the reader's selection all have to survive the upgrade, and rebuilding the
-   * view would lose every one of them.
-   */
-  setLanguage(extension: Extension): void;
-  /**
    * Select one half-open interval of the current page and bring it into view.
    *
    * `from` and `to` are page-text offsets, which the editor's document is a
@@ -108,15 +100,31 @@ export interface FamilyChunkModule {
 /**
  * Everything one language chunk exports.
  *
- * The marker is checked against the id that was requested, not merely read: a
- * chunk fetched under the wrong name would otherwise colour a Python file with
- * the JSON grammar and nothing would report it. `language` is a factory rather
- * than a ready extension because the extension has to be built inside the chunk
- * that owns the grammar.
+ * The chunk carries its own editor, so the contract is a mount function rather
+ * than a grammar factory. That is not a style choice: a chunk is its own bundle
+ * and the host's `require` resolves no `@codemirror/*`, so a grammar built in one
+ * chunk cannot be handed to an editor built in another. The marker is checked
+ * against the id that was requested, because a chunk fetched under the wrong
+ * name would otherwise colour a Python file with the JSON grammar.
  */
 export interface LanguageChunkModule {
   readonly renderer: string;
-  language(): Extension;
+  mount(host: HTMLElement, options: LanguageMountOptions): LanguageHandle;
+}
+
+/** What a language chunk's mount needs: the page, its path and its first line. */
+export interface LanguageMountOptions {
+  readonly text: string;
+  readonly path: string;
+  readonly offset: number;
+}
+
+/** The handle a language chunk's editor exposes. */
+export interface LanguageHandle {
+  update(text: string, offset: number): void;
+  revealRange(from: number, to: number): void;
+  clearSelection(): void;
+  destroy(): void;
 }
 
 /** One package-local chunk, named once. */
@@ -224,8 +232,8 @@ export function loadLanguageChunk(id: string): Promise<LanguageChunkModule> {
   }
   const request = active.async(`./${route.chunk}`).then(module => {
     const chunk = module as Partial<LanguageChunkModule> | null;
-    if (chunk === null || typeof chunk.language !== "function" || chunk.renderer !== id) {
-      throw new Error(`${PACKAGE_NAME}: chunk ${route.id} is not the ${id} grammar`);
+    if (chunk === null || typeof chunk.mount !== "function" || chunk.renderer !== id) {
+      throw new Error(`${PACKAGE_NAME}: chunk ${route.id} is not the ${id} renderer`);
     }
     return chunk as LanguageChunkModule;
   });

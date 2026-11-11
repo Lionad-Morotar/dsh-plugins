@@ -29,9 +29,14 @@ function fakeRequire(modules: Record<string, unknown>): { require: FakeRequire; 
   return { require, calls };
 }
 
-/** A language chunk that would pass the loader's checks. */
+/**
+ * A language chunk that would pass the loader's checks.
+ *
+ * The chunk carries its own editor now, so the contract is a mount function
+ * rather than a grammar factory: the grammar never crosses a bundle boundary.
+ */
 function languageChunk(id: string): Record<string, unknown> {
-  return { renderer: id, language: () => [] };
+  return { renderer: id, mount: () => ({ update() {}, revealRange() {}, clearSelection() {}, destroy() {} }) };
 }
 
 /**
@@ -112,7 +117,7 @@ describe("loadLanguageChunk", () => {
     await expect(module.loadLanguageChunk("python")).rejects.toThrow(/python/u);
   });
 
-  it("rejects a chunk with no language factory", async () => {
+  it("rejects a chunk with no mount function", async () => {
     const { require } = fakeRequire({ "./client.lang-python.js": { renderer: "python" } });
     const module = await freshChunkModule();
     module.boot(require);
@@ -149,5 +154,38 @@ describe("loadLanguageChunk", () => {
   it("rejects when the loader require was never handed over", async () => {
     const module = await freshChunkModule();
     await expect(module.loadLanguageChunk("python")).rejects.toThrow(/loader require/u);
+  });
+});
+
+/**
+ * The cost model: a file whose language has its own chunk must not also fetch
+ * the main preview chunk.
+ *
+ * This is the whole point of the pivot. The main chunk carries CodeMirror plus
+ * the GFM renderer; a `.py` file needs neither, and fetching it would both
+ * double the download and load a second copy of CodeMirror whose extensions the
+ * language chunk cannot accept.
+ */
+describe("language chunk replaces the preview chunk", () => {
+  it("does not touch the preview chunk when a language chunk exists", async () => {
+    const { require, calls } = fakeRequire({ "./client.lang-python.js": languageChunk("python") });
+    const module = await freshChunkModule();
+    module.boot(require);
+
+    const loaded = await module.loadLanguageChunk("python");
+    expect(loaded.renderer).toBe("python");
+    // Only the language chunk was requested; the preview chunk was never named.
+    expect(calls).toEqual(["./client.lang-python.js"]);
+    expect(calls).not.toContain("./client.preview.js");
+  });
+
+  it("still routes a language with no chunk through the preview chunk", async () => {
+    const { require, calls } = fakeRequire({});
+    const module = await freshChunkModule();
+    module.boot(require);
+
+    // `rust` has no chunk, so the pane must fall back rather than fetch nothing.
+    expect(module.hasLanguageChunk("rust")).toBe(false);
+    expect(calls).toEqual([]);
   });
 });
