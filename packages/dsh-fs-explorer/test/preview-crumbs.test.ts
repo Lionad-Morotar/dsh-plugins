@@ -8,8 +8,15 @@ import {
   PreviewCrumbs,
   type PreviewCrumbsProps,
 } from "../src/client/preview-crumbs.tsx";
+import { insertStyles } from "../src/client/styles.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// The flyout's layout rules live in the package stylesheet, so the geometry
+// assertions below only mean anything once that sheet is in the document. One
+// insertion for the whole file: `insertStyles` is idempotent per document, and
+// re-inserting per case would leave the sheet's disposer racing the assertions.
+insertStyles(document);
 
 const t = (key: string): string => key;
 
@@ -210,6 +217,25 @@ describe("PreviewCrumbs", () => {
       rows()[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
     });
     expect(document.activeElement).toBe(rows()[0]);
+  });
+
+  it("keeps the head and the rows at full height when the list overflows", async () => {
+    // Eleven peers push the card past its 300px max-height, which is the case
+    // that used to squeeze the head to 8px and clip its own text.
+    const entries = Array.from({ length: 11 }, (_unused, index) => entry(`f${index}.ts`, "file"));
+    const list = vi.fn(async () => ({ entries, path: "a" }));
+    await mount({ files: { list }, sessionId: "s1" });
+    await click(crumbs()[1] as HTMLElement);
+
+    const head = host.querySelector<HTMLElement>(".fx-peers-head");
+    const row = rows()[0];
+    expect(head).not.toBeNull();
+    expect(row).toBeDefined();
+    // A shrink factor above 0 is what let the column flex container flatten
+    // these children once the content exceeded max-height.
+    expect(getComputedStyle(head as HTMLElement).flexShrink).toBe("0");
+    expect(getComputedStyle(row as HTMLElement).flexShrink).toBe("0");
+    expect(getComputedStyle(head as HTMLElement).position).toBe("sticky");
   });
 
   it("carries both locales for every string it asks for", () => {

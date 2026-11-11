@@ -1255,9 +1255,21 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   font-family: var(--fx-font);
   font-size: calc(var(--fx-fs) * 0.8571);
 }
+/* Every child of the flyout is flex: none. The card is a column flex box with
+   a max-height, so the default shrink factor would flatten the head and the
+   status line once the rows overflowed, clipping their own text. */
 .fx-peers-head {
+  /* Sticky with an opaque fill: the head names the directory being listed, so
+     it has to stay readable while the rows scroll under it. The -4px top
+     cancels the card's own padding, which the head would otherwise scroll
+     away from. */
+  position: sticky;
+  top: -4px;
+  z-index: 1;
+  flex: none;
   padding: 4px 8px;
   overflow: hidden;
+  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
   color: var(--fx-caption);
   font-family: var(--fx-mono);
   font-size: var(--fx-fs-code);
@@ -1266,6 +1278,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 }
 .fx-peers-row {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -1283,7 +1296,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-peers-row[data-current="true"] { background: var(--fx-hover); color: var(--fx-text); }
 .fx-peers-row[data-current="true"]::before { content: "✓"; flex: none; color: var(--fx-accent); }
 .fx-peers-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fx-peers-status { padding: 5px 8px; color: var(--fx-caption); }
+.fx-peers-status { flex: none; padding: 5px 8px; color: var(--fx-caption); }
 `;
 
 /**
