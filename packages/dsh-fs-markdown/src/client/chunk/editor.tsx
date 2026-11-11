@@ -357,7 +357,13 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
 
   return (
     <div
-      className="fmd-editor"
+      // The scope class is not decoration: the whole `--fmd-*` set, including the
+      // ten syntax colours, is defined on `.fmd-read, .fmd-source-editor` in the
+      // stylesheet. Without one of them on an ancestor every `var(--fmd-syn-*)`
+      // falls back to `currentColor` and the editor paints one flat colour. The
+      // body wrapper carries it too, but a body mounted on its own does not, so
+      // the root has to carry it as well.
+      className={`fmd-editor ${mode === "source" ? "fmd-source-editor" : "fmd-read"}`}
       data-testid="fs-md-editor"
       data-mode={mode}
       data-renderer="codemirror"
