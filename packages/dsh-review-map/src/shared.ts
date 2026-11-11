@@ -237,6 +237,15 @@ export interface StructureFile {
   readonly lines: number | null;
   readonly binary: boolean;
   readonly deleted: boolean;
+  /**
+   * The file is in the tree but its content was not read.
+   *
+   * Distinct from `lines: null` on a binary file, which is a measurement that
+   * says "this has no line count". An unindexed file has no measurement at all:
+   * the budget ran out before it was read, so its size is unknown rather than
+   * zero, and a client must render it as unknown rather than as an empty file.
+   */
+  readonly unindexed?: true;
 }
 
 /**

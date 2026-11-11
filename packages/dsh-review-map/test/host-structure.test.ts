@@ -414,3 +414,198 @@ describe("a directory that is not a repository", () => {
     await rm(outside, { recursive: true, force: true });
   });
 });
+
+describe("a branch index that runs out of budget", () => {
+  /**
+   * A branch review with a real change set and a budget too small to read it.
+   *
+   * The real-machine failure this reproduces: the branch side reads blobs through
+   * `cat-file --batch`, the chunk packing and the runner's collect budget were
+   * the same number, the framing check failed, and the per-file fallback spent
+   * the whole deadline. `contents` came back empty, `files` was built from
+   * `contents`, and the map had no tiles at all — while the change list was
+   * correct and complete.
+   */
+  async function branchRepo(): Promise<RepoHandle> {
+    const created = await createRepoWithCommit({
+      "a.ts": "export const a = 1;\n",
+      "b.ts": "export const b = 2;\n",
+      "c.ts": "export const c = 3;\n",
+      "docs/readme.md": "one\ntwo\n",
+    });
+    created.git(["checkout", "-q", "-b", "feature"]);
+    await created.write("a.ts", "export const a = 10;\nexport const a2 = 11;\n");
+    await created.write("b.ts", "export const b = 20;\n");
+    await created.write("new.ts", "export const n = 1;\n");
+    created.git(["add", "-A"]);
+    created.git(["commit", "-qm", "feature work"]);
+    return created;
+  }
+
+  it("keeps every listed file even when no content could be read", async () => {
+    repo = await branchRepo();
+    const runner = stdinRunner(repo.root);
+
+    // A deadline that expires before the first file is read: the same path a
+    // real timeout takes, without waiting for one.
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" }, {
+      ...DEFAULT_INDEX_LIMITS,
+      timeBudgetMs: 0,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const paths = result.index.files.map(file => file.path).sort();
+    // The map must still have tiles: the file list is a fact about the tree, not
+    // a product of how much content was read.
+    expect(paths).toEqual(["a.ts", "b.ts", "c.ts", "docs/readme.md", "new.ts"]);
+    expect(result.index.indexed.complete).toBe(false);
+    expect(result.index.indexed.note).not.toBeNull();
+    expect(result.index.indexed.files).toBe(5);
+    expect(result.index.indexed.parsed).toBe(0);
+  });
+
+  it("marks an unread file as unindexed rather than claiming zero lines", async () => {
+    repo = await branchRepo();
+    const runner = stdinRunner(repo.root);
+
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" }, {
+      ...DEFAULT_INDEX_LIMITS,
+      timeBudgetMs: 0,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const file of result.index.files) {
+      // Unknown is not a measurement: a zero here would be a fabricated line
+      // count for a file nobody read.
+      expect(file.unindexed).toBe(true);
+      expect(file.lines).toBeNull();
+      expect(file.binary).toBe(false);
+    }
+  });
+
+  it("does not add unknown line counts into a directory total", async () => {
+    repo = await branchRepo();
+    const runner = stdinRunner(repo.root);
+
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" }, {
+      ...DEFAULT_INDEX_LIMITS,
+      timeBudgetMs: 0,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const root = result.index.dirs.find(dir => dir.path === "");
+    // Every file is counted; none of their lines are, because none were read.
+    expect(root?.files).toBe(5);
+    expect(root?.lines).toBe(0);
+  });
+
+  it("reads the changed files first when the budget is short", async () => {
+    repo = await branchRepo();
+    const runner = stdinRunner(repo.root);
+
+    // Room for a couple of files, not for the tree. The changed files are the
+    // ones whose cards and edges the map needs, so they go first.
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" }, {
+      ...DEFAULT_INDEX_LIMITS,
+      maxFiles: 3,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const changedPaths = new Set(result.index.changed.map(entry => entry.path));
+    const read = result.index.files.filter(file => file.unindexed !== true).map(file => file.path);
+    // a.ts, b.ts and new.ts changed; three files fit the budget, so all three
+    // must be among the ones actually read.
+    expect(read.length).toBeGreaterThan(0);
+    for (const path of read) {
+      expect(changedPaths.has(path)).toBe(true);
+    }
+    expect(result.index.indexed.complete).toBe(false);
+  });
+
+  it("still indexes a small branch review completely", async () => {
+    repo = await createRepoWithCommit({ "a.ts": "export const a = 1;\n", "b.ts": "export const b = 2;\n" });
+    repo.git(["checkout", "-q", "-b", "feature"]);
+    await repo.write("c.ts", "export const c = 3;\n");
+    repo.git(["add", "-A"]);
+    repo.git(["commit", "-qm", "feature work"]);
+    const runner = stdinRunner(repo.root);
+
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The happy path is unchanged: every file read, nothing marked unindexed.
+    expect(result.index.indexed.complete).toBe(true);
+    expect(result.index.indexed.parsed).toBe(result.index.files.length);
+    expect(result.index.files.every(file => file.unindexed !== true)).toBe(true);
+    expect(result.index.files.map(file => file.path).sort()).toEqual(["a.ts", "b.ts", "c.ts"]);
+  });
+});
+
+describe("a branch read that meets a binary blob", () => {
+  it("keeps reading the rest of the chunk after a binary body", async () => {
+    // The real-machine root cause: a binary blob decodes to replacement
+    // characters whose width has nothing to do with its announced byte count, so
+    // walking the decoded string drifted. The old code abandoned the whole chunk
+    // and re-read every file through its own subprocess — 751 spawns on this
+    // repository, which spent the deadline and left the map empty.
+    repo = await createRepoWithCommit({
+      "a.ts": "export const a = 1;\n",
+      "assets/logo.png": "\u0089PNG\r\n\u001a\n\u0000\u0000\u0000\rIHDR\u0000\u0000\u0000\u0001\u0000\u0000\u0000\u0001\u0008\u0006\u0000\u0000\u0000\u001f\u0015\u00c4\u0089\u0000\u0000\u0000\nIDATx\u009cc\u0000\u0001\u0000\u0000\u0005\u0000\u0001\r\n-\u00b4\u0000\u0000\u0000\u0000IEND\u00aeB`\u0082",
+      "b.ts": "export const b = 2;\n",
+      "c.ts": "export const c = 3;\n",
+    });
+    repo.git(["checkout", "-q", "-b", "feature"]);
+    await repo.write("a.ts", "export const a = 10;\n");
+    repo.git(["add", "-A"]);
+    repo.git(["commit", "-qm", "feature work"]);
+    const runner = stdinRunner(repo.root);
+
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const byPath = new Map(result.index.files.map(file => [file.path, file]));
+    // The files after the binary one in the same chunk are still read: a binary
+    // body must not cost the rest of the batch.
+    expect(byPath.get("a.ts")?.unindexed).toBeUndefined();
+    expect(byPath.get("a.ts")?.lines).toBe(1);
+    expect(byPath.get("b.ts")?.unindexed).toBeUndefined();
+    expect(byPath.get("c.ts")?.unindexed).toBeUndefined();
+    // The binary file is reported as binary, which is a measurement, not a gap.
+    expect(byPath.get("assets/logo.png")?.binary).toBe(true);
+    expect(byPath.get("assets/logo.png")?.lines).toBeNull();
+    expect(byPath.get("assets/logo.png")?.unindexed).toBeUndefined();
+    expect(result.index.indexed.complete).toBe(true);
+  });
+
+  it("does not fall back to one subprocess per file for a binary chunk", async () => {
+    repo = await createRepoWithCommit({
+      "a.ts": "export const a = 1;\n",
+      "assets/one.png": "\u0089PNG\r\n\u001a\n\u0000\u0001\u0002\u0003binary\u0000\u00ff\u00fe",
+      "b.ts": "export const b = 2;\n",
+    });
+    repo.git(["checkout", "-q", "-b", "feature"]);
+    await repo.write("b.ts", "export const b = 20;\n");
+    repo.git(["add", "-A"]);
+    repo.git(["commit", "-qm", "feature work"]);
+    const runner = stdinRunner(repo.root);
+
+    const result = await collectIndex({ runner, cwd: repo.root }, { kind: "branch", baseRef: "main" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Every file was accounted for in one batched read rather than by spawning a
+    // process each. `parsed` counts script files whose imports were extracted,
+    // so it is the unindexed count that says whether the batch held: a fallback
+    // would have left the deadline spent and files unread.
+    expect(result.index.files.every(file => file.unindexed !== true)).toBe(true);
+    expect(result.index.indexed.complete).toBe(true);
+    // The two script files were parsed; the binary one is measured, not parsed.
+    expect(result.index.indexed.parsed).toBe(2);
+  });
+});

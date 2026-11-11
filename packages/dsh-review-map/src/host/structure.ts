@@ -80,7 +80,12 @@ export interface IndexLimits {
 export const DEFAULT_INDEX_LIMITS: IndexLimits = {
   timeBudgetMs: 4_000,
   maxFiles: 8_000,
-  maxChunkBytes: 4 * 1024 * 1024,
+  // Deliberately well under the runner's 4 MiB collect budget. That budget
+  // covers the whole `cat-file --batch` output, which is every blob body plus a
+  // `<sha> blob <size>` header per record, so packing chunks to 4 MiB of bodies
+  // guaranteed an overflow on every chunk and a fallback to one subprocess per
+  // file — 1200 spawns, which is what spent the deadline on a real repository.
+  maxChunkBytes: 2 * 1024 * 1024,
 };
 
 /** Bytes inspected for a NUL when deciding whether a file is binary. */
@@ -236,8 +241,37 @@ export function sliceByBytes(text: string, start: number, bytes: number): { valu
 /** One batch read's outcome. */
 interface BatchRead {
   readonly blobs: Map<string, string | null>;
-  /** False when a record's framing did not land where its size said it would. */
+  /** Paths whose body is not decodable text; they are binary by definition. */
+  readonly binary: ReadonlySet<string>;
+  /** False when a record's framing could not be recovered at all. */
   readonly framed: boolean;
+}
+
+/**
+ * The header a `cat-file --batch` record starts with.
+ *
+ * `<sha> blob <size>`, `<sha> missing`, `<sha> ambiguous`. Used only to resync
+ * after a binary body, where the byte accounting cannot be trusted.
+ */
+const BATCH_HEADER = /\n[0-9a-f]{40} (?:blob \d+|missing|ambiguous)\n/gu;
+
+/**
+ * Where the next record's header starts, or -1.
+ *
+ * The returned index points at the header's first character, not past it: the
+ * caller's loop expects to read a header there, and handing it the position
+ * after the header would make it read that record's body as a header and lose
+ * the rest of the chunk.
+ * @param text - the whole batch output.
+ * @param from - where to start looking.
+ * @returns the header's start index, or -1 when there is no further record.
+ */
+function nextHeaderStart(text: string, from: number): number {
+  BATCH_HEADER.lastIndex = from;
+  const found = BATCH_HEADER.exec(text);
+  // `found.index` is the newline that precedes the header; the header itself
+  // starts one character later.
+  return found === null ? -1 : found.index + 1;
 }
 
 /**
@@ -271,23 +305,26 @@ async function readBlobs(
   signal?: AbortSignal,
 ): Promise<BatchRead> {
   const blobs = new Map<string, string | null>();
-  if (paths.length === 0) return { blobs, framed: true };
+  const binary = new Set<string>();
+  if (paths.length === 0) return { blobs, binary, framed: true };
   const stdinData = `${paths.map(path => `${rev}:${path}`).join("\n")}\n`;
   const result = await runReadOnly(runner, ["cat-file", "--batch"], { cwd, signal, stdinData });
   if (isRefused(result) || result.exitCode !== 0) {
     for (const path of paths) blobs.set(path, null);
-    return { blobs, framed: true };
+    return { blobs, binary, framed: true };
   }
+  const text = result.stdout;
+
   let cursor = 0;
   let framed = true;
   for (const path of paths) {
-    const headerEnd = result.stdout.indexOf("\n", cursor);
+    const headerEnd = text.indexOf("\n", cursor);
     if (headerEnd < 0) {
       blobs.set(path, null);
       framed = false;
       continue;
     }
-    const header = result.stdout.slice(cursor, headerEnd);
+    const header = text.slice(cursor, headerEnd);
     cursor = headerEnd + 1;
     if (header.endsWith(" missing") || header.endsWith(" ambiguous")) {
       blobs.set(path, null);
@@ -299,14 +336,32 @@ async function readBlobs(
       framed = false;
       continue;
     }
-    const slice = sliceByBytes(result.stdout, cursor, size);
-    blobs.set(path, slice.value);
-    // The protocol puts one newline after each body. Anything else means the
-    // byte accounting drifted, and every record after this one is suspect.
-    if (result.stdout[slice.next] !== "\n") framed = false;
-    cursor = slice.next + 1;
+    const slice = sliceByBytes(text, cursor, size);
+    if (text[slice.next] === "\n") {
+      blobs.set(path, slice.value);
+      cursor = slice.next + 1;
+      continue;
+    }
+    // The body did not land where its byte count said it would. That is the
+    // signature of a binary blob: invalid UTF-8 decodes to replacement
+    // characters, so walking the decoded string drifts. The file is binary, its
+    // content is not needed, and the scan resumes at the next header instead of
+    // abandoning the whole chunk to one subprocess per file.
+    binary.add(path);
+    blobs.set(path, null);
+    // A binary body decodes to replacement characters whose width has nothing
+    // to do with the announced byte count, so the only reliable way forward is
+    // to find where the next record's header begins.
+    const next = nextHeaderStart(text, cursor);
+    if (next < 0) {
+      // No further header: this was the last record, and its body was the only
+      // thing left. Nothing to resync to, and nothing lost.
+      if (path !== paths[paths.length - 1]) framed = false;
+      break;
+    }
+    cursor = next;
   }
-  return { blobs, framed };
+  return { blobs, binary, framed };
 }
 
 /**
@@ -353,8 +408,9 @@ async function readBlobChunks(
   entries: readonly SideEntry[],
   limits: IndexLimits,
   signal?: AbortSignal,
-): Promise<{ readonly blobs: Map<string, string | null>; readonly lossy: boolean }> {
+): Promise<{ readonly blobs: Map<string, string | null>; readonly binary: ReadonlySet<string>; readonly lossy: boolean }> {
   const blobs = new Map<string, string | null>();
+  const binary = new Set<string>();
   let chunk: SideEntry[] = [];
   let chunkBytes = 0;
   let lossy = false;
@@ -362,10 +418,17 @@ async function readBlobChunks(
   const flush = async (): Promise<void> => {
     if (chunk.length === 0) return;
     const read = await readBlobs(runner, cwd, rev, chunk.map(entry => entry.path), signal);
-    if (read.framed) {
-      for (const [path, text] of read.blobs) blobs.set(path, text);
-    } else {
-      for (const entry of chunk) blobs.set(entry.path, await readOneBlob(runner, cwd, rev, entry.path, signal));
+    for (const [path, text] of read.blobs) blobs.set(path, text);
+    for (const path of read.binary) binary.add(path);
+    if (!read.framed) {
+      // Framing could not be recovered at all, which is now rare: a binary body
+      // resyncs to the next header, so this only happens on a genuinely
+      // malformed stream. Re-read the chunk one file at a time rather than
+      // hand back a shifted record set.
+      for (const entry of chunk) {
+        if (read.binary.has(entry.path)) continue;
+        blobs.set(entry.path, await readOneBlob(runner, cwd, rev, entry.path, signal));
+      }
     }
     chunk = [];
     chunkBytes = 0;
@@ -380,7 +443,7 @@ async function readBlobChunks(
     if (chunkBytes >= limits.maxChunkBytes) await flush();
   }
   await flush();
-  return { blobs, lossy };
+  return { blobs, binary, lossy };
 }
 
 /**
@@ -719,9 +782,26 @@ async function runStructurePass(
 
   let complete = true;
   let note: string | null = null;
-  let budgeted = newEntries;
-  if (budgeted.length > limits.maxFiles) {
-    budgeted = budgeted.slice(0, limits.maxFiles);
+
+  // Changed files are read first, and the file cap is applied to that order
+  // rather than to the path order. A budget that runs out should leave the map
+  // with the files the review is about — their cards and their import edges are
+  // what the reader came for — instead of with whichever paths happened to sort
+  // first.
+  const changedOnNewSide = new Set(
+    changedFiles.files
+      .filter(file => file.status !== "deleted")
+      .map(file => file.path),
+  );
+  const ordered = [...newEntries].sort((left, right) => {
+    const leftChanged = changedOnNewSide.has(left.path) ? 0 : 1;
+    const rightChanged = changedOnNewSide.has(right.path) ? 0 : 1;
+    if (leftChanged !== rightChanged) return leftChanged - rightChanged;
+    return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
+  });
+  let readOrder = ordered;
+  if (readOrder.length > limits.maxFiles) {
+    readOrder = readOrder.slice(0, limits.maxFiles);
     complete = false;
     note = `file budget ${limits.maxFiles}`;
   }
@@ -732,7 +812,7 @@ async function runStructurePass(
   let stopped = false;
 
   if (resolved.kind === "worktree") {
-    for (const entry of budgeted) {
+    for (const entry of readOrder) {
       if (expired()) {
         stopped = true;
         break;
@@ -748,12 +828,23 @@ async function runStructurePass(
         parsed += 1;
       }
     }
+  } else if (expired()) {
+    // The deadline is spent before the batched read starts. Skipping it is the
+    // honest answer: nothing was read, so every file is reported unindexed
+    // rather than the whole tree being dropped from the map.
+    stopped = true;
   } else {
-    const read = await readBlobChunks(runner, cwd, "HEAD", budgeted, limits, signal);
-    for (const entry of budgeted) {
+    const read = await readBlobChunks(runner, cwd, "HEAD", readOrder, limits, signal);
+    for (const entry of readOrder) {
       if (expired()) {
         stopped = true;
         break;
+      }
+      // A body the batch could not decode is binary: that is a measurement, not
+      // a gap, so it is recorded as binary rather than as unindexed.
+      if (read.binary.has(entry.path)) {
+        contents.set(entry.path, { lines: null, binary: true });
+        continue;
       }
       const text = read.blobs.get(entry.path);
       if (text === null || text === undefined) continue;
@@ -808,9 +899,28 @@ async function runStructurePass(
     oldImports.set(oldPath, extractImports(text));
   }
 
+  // The file list is the new side's listing, not the set of files whose content
+  // was read. Building it from `contents` is what made a budget overrun produce
+  // an empty map: the tree was fully known, but nothing had been read, so the
+  // map had no tiles at all. A file nobody read is reported as unindexed — its
+  // size is unknown, which is not the same as zero.
   const files: StructureFile[] = [];
-  for (const [path, content] of contents) {
-    files.push({ path, lines: content.lines, binary: content.binary, deleted: deletedPaths.has(path) });
+  for (const entry of readOrder) {
+    const content = contents.get(entry.path);
+    if (content === undefined) {
+      files.push({ path: entry.path, lines: null, binary: false, deleted: false, unindexed: true });
+      continue;
+    }
+    files.push({ path: entry.path, lines: content.lines, binary: content.binary, deleted: false });
+  }
+  // Deleted files come from the old side, under their old path.
+  for (const path of deletedPaths) {
+    const content = contents.get(path);
+    if (content === undefined) {
+      files.push({ path, lines: null, binary: false, deleted: true, unindexed: true });
+      continue;
+    }
+    files.push({ path, lines: content.lines, binary: content.binary, deleted: true });
   }
   files.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
 

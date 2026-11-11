@@ -852,7 +852,12 @@ function diffEdges(newEdges, oldEdges, changedPaths) {
 var DEFAULT_INDEX_LIMITS = {
   timeBudgetMs: 4e3,
   maxFiles: 8e3,
-  maxChunkBytes: 4 * 1024 * 1024
+  // Deliberately well under the runner's 4 MiB collect budget. That budget
+  // covers the whole `cat-file --batch` output, which is every blob body plus a
+  // `<sha> blob <size>` header per record, so packing chunks to 4 MiB of bodies
+  // guaranteed an overflow on every chunk and a fallback to one subprocess per
+  // file — 1200 spawns, which is what spent the deadline on a real repository.
+  maxChunkBytes: 2 * 1024 * 1024
 };
 var BINARY_SNIFF_BYTES = 8e3;
 var STREAM_THRESHOLD_BYTES = 1024 * 1024;
@@ -919,26 +924,34 @@ function sliceByBytes(text, start, bytes) {
   }
   return { value: text.slice(start, index), next: index };
 }
+var BATCH_HEADER = /\n[0-9a-f]{40} (?:blob \d+|missing|ambiguous)\n/gu;
+function nextHeaderStart(text, from) {
+  BATCH_HEADER.lastIndex = from;
+  const found = BATCH_HEADER.exec(text);
+  return found === null ? -1 : found.index + 1;
+}
 async function readBlobs(runner, cwd, rev, paths, signal) {
   const blobs = /* @__PURE__ */ new Map();
-  if (paths.length === 0) return { blobs, framed: true };
+  const binary = /* @__PURE__ */ new Set();
+  if (paths.length === 0) return { blobs, binary, framed: true };
   const stdinData = `${paths.map((path) => `${rev}:${path}`).join("\n")}
 `;
   const result = await runReadOnly(runner, ["cat-file", "--batch"], { cwd, signal, stdinData });
   if (isRefused(result) || result.exitCode !== 0) {
     for (const path of paths) blobs.set(path, null);
-    return { blobs, framed: true };
+    return { blobs, binary, framed: true };
   }
+  const text = result.stdout;
   let cursor = 0;
   let framed = true;
   for (const path of paths) {
-    const headerEnd = result.stdout.indexOf("\n", cursor);
+    const headerEnd = text.indexOf("\n", cursor);
     if (headerEnd < 0) {
       blobs.set(path, null);
       framed = false;
       continue;
     }
-    const header = result.stdout.slice(cursor, headerEnd);
+    const header = text.slice(cursor, headerEnd);
     cursor = headerEnd + 1;
     if (header.endsWith(" missing") || header.endsWith(" ambiguous")) {
       blobs.set(path, null);
@@ -950,12 +963,22 @@ async function readBlobs(runner, cwd, rev, paths, signal) {
       framed = false;
       continue;
     }
-    const slice = sliceByBytes(result.stdout, cursor, size);
-    blobs.set(path, slice.value);
-    if (result.stdout[slice.next] !== "\n") framed = false;
-    cursor = slice.next + 1;
+    const slice = sliceByBytes(text, cursor, size);
+    if (text[slice.next] === "\n") {
+      blobs.set(path, slice.value);
+      cursor = slice.next + 1;
+      continue;
+    }
+    binary.add(path);
+    blobs.set(path, null);
+    const next = nextHeaderStart(text, cursor);
+    if (next < 0) {
+      if (path !== paths[paths.length - 1]) framed = false;
+      break;
+    }
+    cursor = next;
   }
-  return { blobs, framed };
+  return { blobs, binary, framed };
 }
 async function readOneBlob(runner, cwd, rev, path, signal) {
   const result = await runReadOnly(runner, ["cat-file", "blob", `${rev}:${path}`], { cwd, signal });
@@ -964,16 +987,20 @@ async function readOneBlob(runner, cwd, rev, path, signal) {
 }
 async function readBlobChunks(runner, cwd, rev, entries, limits, signal) {
   const blobs = /* @__PURE__ */ new Map();
+  const binary = /* @__PURE__ */ new Set();
   let chunk = [];
   let chunkBytes = 0;
   let lossy = false;
   const flush = async () => {
     if (chunk.length === 0) return;
     const read = await readBlobs(runner, cwd, rev, chunk.map((entry) => entry.path), signal);
-    if (read.framed) {
-      for (const [path, text] of read.blobs) blobs.set(path, text);
-    } else {
-      for (const entry of chunk) blobs.set(entry.path, await readOneBlob(runner, cwd, rev, entry.path, signal));
+    for (const [path, text] of read.blobs) blobs.set(path, text);
+    for (const path of read.binary) binary.add(path);
+    if (!read.framed) {
+      for (const entry of chunk) {
+        if (read.binary.has(entry.path)) continue;
+        blobs.set(entry.path, await readOneBlob(runner, cwd, rev, entry.path, signal));
+      }
     }
     chunk = [];
     chunkBytes = 0;
@@ -985,7 +1012,7 @@ async function readBlobChunks(runner, cwd, rev, entries, limits, signal) {
     if (chunkBytes >= limits.maxChunkBytes) await flush();
   }
   await flush();
-  return { blobs, lossy };
+  return { blobs, binary, lossy };
 }
 function parseHunkRange(line) {
   const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u.exec(line);
@@ -1172,9 +1199,18 @@ async function runStructurePass(options, resolved, limits, signal) {
   const newEntries = listed.entries.filter((entry) => !deletedPaths.has(entry.path));
   let complete = true;
   let note = null;
-  let budgeted = newEntries;
-  if (budgeted.length > limits.maxFiles) {
-    budgeted = budgeted.slice(0, limits.maxFiles);
+  const changedOnNewSide = new Set(
+    changedFiles.files.filter((file) => file.status !== "deleted").map((file) => file.path)
+  );
+  const ordered = [...newEntries].sort((left, right) => {
+    const leftChanged = changedOnNewSide.has(left.path) ? 0 : 1;
+    const rightChanged = changedOnNewSide.has(right.path) ? 0 : 1;
+    if (leftChanged !== rightChanged) return leftChanged - rightChanged;
+    return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
+  });
+  let readOrder = ordered;
+  if (readOrder.length > limits.maxFiles) {
+    readOrder = readOrder.slice(0, limits.maxFiles);
     complete = false;
     note = `file budget ${limits.maxFiles}`;
   }
@@ -1183,7 +1219,7 @@ async function runStructurePass(options, resolved, limits, signal) {
   let parsed = 0;
   let stopped = false;
   if (resolved.kind === "worktree") {
-    for (const entry of budgeted) {
+    for (const entry of readOrder) {
       if (expired()) {
         stopped = true;
         break;
@@ -1196,12 +1232,18 @@ async function runStructurePass(options, resolved, limits, signal) {
         parsed += 1;
       }
     }
+  } else if (expired()) {
+    stopped = true;
   } else {
-    const read = await readBlobChunks(runner, cwd, "HEAD", budgeted, limits, signal);
-    for (const entry of budgeted) {
+    const read = await readBlobChunks(runner, cwd, "HEAD", readOrder, limits, signal);
+    for (const entry of readOrder) {
       if (expired()) {
         stopped = true;
         break;
+      }
+      if (read.binary.has(entry.path)) {
+        contents.set(entry.path, { lines: null, binary: true });
+        continue;
       }
       const text = read.blobs.get(entry.path);
       if (text === null || text === void 0) continue;
@@ -1249,8 +1291,21 @@ async function runStructurePass(options, resolved, limits, signal) {
     oldImports.set(oldPath, extractImports(text));
   }
   const files = [];
-  for (const [path, content] of contents) {
-    files.push({ path, lines: content.lines, binary: content.binary, deleted: deletedPaths.has(path) });
+  for (const entry of readOrder) {
+    const content = contents.get(entry.path);
+    if (content === void 0) {
+      files.push({ path: entry.path, lines: null, binary: false, deleted: false, unindexed: true });
+      continue;
+    }
+    files.push({ path: entry.path, lines: content.lines, binary: content.binary, deleted: false });
+  }
+  for (const path of deletedPaths) {
+    const content = contents.get(path);
+    if (content === void 0) {
+      files.push({ path, lines: null, binary: false, deleted: true, unindexed: true });
+      continue;
+    }
+    files.push({ path, lines: content.lines, binary: content.binary, deleted: true });
   }
   files.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
   const linesByPath = new Map(files.map((file) => [file.path, file.lines]));
