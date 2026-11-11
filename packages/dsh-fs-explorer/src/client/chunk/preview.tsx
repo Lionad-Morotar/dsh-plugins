@@ -15,10 +15,28 @@ import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 import type { CodePreviewHandle, CodePreviewOptions, PreviewChunkModule } from "../preview-chunk.ts";
+import { boot as bootChunkLoader, type LoaderRequire } from "./boot.ts";
+import { MarkdownView } from "./markdown-view.tsx";
+
+/**
+ * The GFM reader lives in its own module so a test can mount it without pulling
+ * CodeMirror in; re-exported here because this chunk is where the pane looks for
+ * it, and the chunk's export shape must not move.
+ */
+export { MarkdownView } from "./markdown-view.tsx";
+export type { MarkdownViewProps } from "./markdown-view.tsx";
+
+/**
+ * The chunk's own handle on the diagram loader.
+ *
+ * Re-exported rather than left to `boot.ts` alone because this chunk is what
+ * fetches the renderer: naming the loader here is what keeps the build's route
+ * assertion meaningful, and it is the entry the Markdown reader calls once a
+ * fence asks for a diagram.
+ */
+export { loadMermaidChunk } from "./boot.ts";
 
 /** Marker the build asserts and the pane exposes as `data-renderer`. */
 export const renderer = "codemirror" as const;
@@ -132,41 +150,18 @@ export function mountCodePreview(host: HTMLElement, options: CodePreviewOptions)
 }
 
 /**
- * The GFM reading mode.
+ * Take the loader require into this bundle.
  *
- * `skipHtml` drops raw HTML nodes instead of passing them through: no
- * `rehype-raw` is installed, so nothing in a document can become live markup.
- * @param props - the page text.
- * @returns the rendered document.
+ * The chunk is its own bundle with its own copy of `chunk/boot.ts`, so the `boot`
+ * the startup entry calls never reaches it. `loadPreviewChunk` calls this one
+ * when it resolves the chunk, which is what lets a diagram fetch the mermaid
+ * chunk at all.
+ * @param require - the loader's require, with `async` attached.
  */
-export function MarkdownView({ text }: { readonly text: string }) {
-  return (
-    <div className="fx-md" data-renderer="react-markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        skipHtml
-        components={{
-          // A workspace-relative image has no URL the page can fetch; showing a
-          // named placeholder beats a broken-image glyph that says nothing.
-          img: ({ src, alt }) => {
-            const source = typeof src === "string" ? src : "";
-            if (!/^(https?:|data:|blob:)/iu.test(source)) {
-              return (
-                <span className="fx-md-img" title={source}>
-                  {alt === undefined || alt === "" ? "image" : alt}
-                </span>
-              );
-            }
-            return <img src={source} alt={alt ?? ""} loading="lazy" />;
-          },
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-    </div>
-  );
+export function boot(require: LoaderRequire): void {
+  bootChunkLoader(require);
 }
 
-const chunkModule: PreviewChunkModule = { renderer, mountCodePreview, MarkdownView };
+const chunkModule: PreviewChunkModule = { renderer, mountCodePreview, MarkdownView, boot };
 
 export default chunkModule;
