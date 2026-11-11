@@ -97,6 +97,14 @@ describe("PreviewCrumbs", () => {
     expect(host.querySelector(".fx-preview-crumbs")?.getAttribute("title")).toBe("提交版本");
   });
 
+  it("opts its controls out of the command panel's reference links", async () => {
+    // Every crumb carries the path in `title`, which the reference-link
+    // recogniser would otherwise claim as a document reference before the
+    // crumb's own click can open the sibling panel.
+    await mount();
+    expect(host.querySelector(".fx-preview-crumbs")?.getAttribute("data-dcp-ref-skip")).toBe("");
+  });
+
   it("lists the clicked crumb's siblings with the current one highlighted", async () => {
     const list = vi.fn(async () => ({
       entries: [entry("c.ts", "file"), entry("b", "directory")],
@@ -111,12 +119,32 @@ describe("PreviewCrumbs", () => {
     expect(rows()[1]?.getAttribute("data-current")).toBeNull();
   });
 
-  it("lists the workspace root for the first crumb", async () => {
-    const list = vi.fn(async () => ({ entries: [entry("a", "directory")] }));
+  it("lists the workspace root for the first crumb through the host's dot path", async () => {
+    // The host rejects an empty path with "path is required"; the tree asks for
+    // the root as ".", so the flyout's first level has to spell it that way too.
+    const list = vi.fn(async () => ({ entries: [entry("a", "directory")], path: "" }));
     await mount({ files: { list }, sessionId: "s1" });
     await click(crumbs()[0] as HTMLElement);
-    expect(list).toHaveBeenCalledWith("s1", "");
+    expect(list).toHaveBeenCalledWith("s1", ".");
+    expect(flyout()).not.toBeNull();
+    expect(names()).toEqual(["a"]);
     expect(host.querySelector('[data-testid="fs-preview-crumb-head"]')?.textContent).toBe("./");
+  });
+
+  it("keeps the flyout mounted when the pointer goes down on another crumb", async () => {
+    // A real click starts with pointerdown. Closing the flyout there unmounts
+    // it mid-gesture and the browser stops synthesising the click on the crumb,
+    // so switching levels by clicking a sibling crumb would silently do nothing.
+    const list = vi.fn(async () => ({ entries: [entry("a", "directory")] }));
+    await mount({ files: { list }, sessionId: "s1" });
+    await click(crumbs()[1] as HTMLElement);
+    expect(flyout()).not.toBeNull();
+    await act(async () => {
+      crumbs()[2]?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    });
+    expect(flyout()).not.toBeNull();
+    await click(crumbs()[2] as HTMLElement);
+    expect(list).toHaveBeenLastCalledWith("s1", "a/b");
   });
 
   it("opens the peer file and closes the flyout", async () => {

@@ -463,6 +463,17 @@ export function createReferenceResolver(deps: ReferenceResolverDeps, limit = DEF
 export const REF_LINK_ATTR = "data-dcp-ref";
 
 /**
+ * Marks a subtree whose controls are not chat prose.
+ *
+ * The detector is document-wide because the prose it serves is rendered into
+ * many surfaces. A control that carries a `title` (a breadcrumb, a toolbar
+ * button) would otherwise read as a host file link to a path that happens to
+ * exist, and the capture listener would claim its click before its own handler
+ * runs. Marking the widget's container keeps those controls to their owner.
+ */
+export const REF_LINK_SKIP_ATTR = "data-dcp-ref-skip";
+
+/**
  * The tags a bare path may be written in.
  *
  * These are the elements the host's markdown renderer wraps a paragraph, a list
@@ -513,6 +524,7 @@ function candidateOf(event: Event): Element | undefined {
   if (Element === undefined || !(target instanceof Element)) return undefined;
   if (target.closest("[data-streaming]") !== null) return undefined;
   if (target.closest("pre") !== null) return undefined;
+  if (target.closest(`[${REF_LINK_SKIP_ATTR}]`) !== null) return undefined;
   // The host's local markdown link is a button rather than an anchor: it has no
   // navigation of its own and its path lives in `title`, so it is recognised
   // here and its probe decides whether it is a reference at all.

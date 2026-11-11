@@ -9,6 +9,8 @@
  * the virtual window also uses.
  */
 
+import { ENTRY_MARK_STYLES } from "./entry-mark.tsx";
+
 /** Attribute that tells a re-mount the stylesheet is already present. */
 const STYLE_ID = "dsh-fs-explorer-styles";
 
@@ -159,7 +161,10 @@ export const FS_STYLES = `
   padding: 4px;
   border: 1px solid var(--fx-border);
   border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  /* A floating card sits on the host's top layer, not the panel's own layer:
+     skins that make the workspace translucent (layer-1 / layer-2 with alpha)
+     keep layer-3 opaque so raised surfaces still read as solid. */
+  background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2));
   box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent);
   display: flex;
   flex-direction: column;
@@ -224,11 +229,11 @@ export const FS_STYLES = `
 /* The management menu is fixed and placed from its button's rect, for the same
    reason the flyouts are: the header clips its overflow. */
 .fx-bookmark-manage-menu {
-  position: fixed; z-index: 75; min-width: 150px; padding: 4px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 1px; font-family: var(--fx-font); font-size: calc(var(--fx-fs) * 0.8571); }
+  position: fixed; z-index: 75; min-width: 150px; padding: 4px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 1px; font-family: var(--fx-font); font-size: calc(var(--fx-fs) * 0.8571); }
 
 /* The destination picker: one card, one level at a time. */
 .fx-bookmark-picker {
-  position: absolute; z-index: 65; top: calc(var(--fx-fs) * 3.1429); left: 12px; width: 280px; max-height: 60vh; overflow-y: auto; padding: 10px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 8px; font-family: var(--fx-font); font-size: calc(var(--fx-fs) * 0.8571); }
+  position: absolute; z-index: 65; top: calc(var(--fx-fs) * 3.1429); left: 12px; width: 280px; max-height: 60vh; overflow-y: auto; padding: 10px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 8px; font-family: var(--fx-font); font-size: calc(var(--fx-fs) * 0.8571); }
 .fx-bookmark-picker-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .fx-bookmark-picker-head strong { font-size: calc(var(--fx-fs) * 0.8571); font-weight: 600; }
 .fx-bookmark-picker-target { color: var(--fx-caption); font-size: calc(var(--fx-fs) * 0.7857); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -280,7 +285,7 @@ export const FS_STYLES = `
   padding: 4px;
   border: 1px solid var(--fx-border);
   border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2));
   box-shadow: 0 8px 24px color-mix(in srgb, currentColor 16%, transparent);
   color: var(--fx-text);
   font-family: var(--fx-font);
@@ -325,7 +330,10 @@ export const FS_STYLES = `
   padding: 10px;
   border: 1px solid var(--fx-border);
   border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  /* A floating card sits on the host's top layer, not the panel's own layer:
+     skins that make the workspace translucent (layer-1 / layer-2 with alpha)
+     keep layer-3 opaque so raised surfaces still read as solid. */
+  background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2));
   box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent);
   display: flex;
   flex-direction: column;
@@ -454,16 +462,6 @@ export const FS_STYLES = `
   white-space: nowrap;
 }
 .fx-search-count[data-state="empty"] { color: var(--fx-modified); }
-/* A result row's dimmed directory prefix; the name itself stays full strength. */
-.fx-row-dir {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--fx-caption);
-  font-size: calc(var(--fx-fs) * 0.75);
-  white-space: nowrap;
-}
 .fx-pane-handle {
   position: relative;
   z-index: 1;
@@ -678,34 +676,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-chevron[data-open="true"] { transform: rotate(90deg); }
 .fx-chevron[data-visible="false"] { visibility: hidden; }
 .fx-row:hover .fx-chevron { opacity: 1; }
-.fx-folder { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: none; color: var(--fx-folder); }
-.fx-folder[data-open="false"] { color: color-mix(in oklab, var(--fx-folder) 78%, var(--fx-caption)); }
-
-.fx-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(var(--fx-fs-code) * 1.6364);
-  height: calc(var(--fx-fs-code) * 1.3636);
-  flex: none;
-  border-radius: 4px;
-  background: color-mix(in oklab, currentColor 13%, transparent);
-  font-family: var(--fx-mono);
-  font-size: calc(var(--fx-fs-code) * 0.7727);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1;
-}
-.fx-badge[data-icon="code"] { color: var(--fx-code); }
-.fx-badge[data-icon="markdown"] { color: var(--fx-markdown); }
-.fx-badge[data-icon="data"] { color: var(--fx-data); }
-.fx-badge[data-icon="image"] { color: var(--fx-image); }
-.fx-badge[data-icon="style"] { color: var(--fx-style); }
-.fx-badge[data-icon="config"] { color: var(--fx-config); }
-.fx-badge[data-icon="archive"] { color: var(--fx-archive); }
-.fx-badge[data-icon="file"] { color: var(--fx-file); }
-
-.fx-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: calc(var(--fx-fs) * 0.8571); }
+${ENTRY_MARK_STYLES}
 .fx-row[data-kind="directory"] .fx-name { font-weight: 500; }
 .fx-tag {
   display: inline-flex;
@@ -1285,7 +1256,10 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   padding: 4px;
   border: 1px solid var(--fx-border);
   border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  /* A floating card sits on the host's top layer, not the panel's own layer:
+     skins that make the workspace translucent (layer-1 / layer-2 with alpha)
+     keep layer-3 opaque so raised surfaces still read as solid. */
+  background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2));
   box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent);
   font-family: var(--fx-font);
   font-size: calc(var(--fx-fs) * 0.8571);
@@ -1304,7 +1278,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   flex: none;
   padding: 4px 8px;
   overflow: hidden;
-  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2));
   color: var(--fx-caption);
   font-family: var(--fx-mono);
   font-size: var(--fx-fs-code);

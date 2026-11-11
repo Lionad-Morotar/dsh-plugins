@@ -17,7 +17,7 @@ import {
 } from "react";
 
 import type { Translate } from "./copy.ts";
-import { badgeFor, buildTree, iconFor, joinPath, type TreeNode } from "./model.ts";
+import { badgeFor, buildTree, iconFor, joinPath, listingPath, type TreeNode } from "./model.ts";
 import { previewCrumbs } from "./preview-crumbs-model.ts";
 import { FolderIcon } from "./tree.tsx";
 import { describeFailure, normalizeListing, type WorkspaceFilesFace } from "./wire.ts";
@@ -169,7 +169,9 @@ export function PreviewCrumbs(props: PreviewCrumbsProps): ReactElement {
           : Math.max(VIEWPORT_MARGIN, rect.left);
       setAnchor({ left, top: rect.bottom + FLYOUT_GAP });
       setOpenIndex(index);
-      void load(model.segments[index]?.parent ?? "");
+      // The host rejects an empty path, so the root level is asked for as "."
+      // exactly the way the tree lists it.
+      void load(listingPath(model.segments[index]?.parent ?? ""));
     },
     [close, load, model.segments, openIndex],
   );
@@ -192,10 +194,14 @@ export function PreviewCrumbs(props: PreviewCrumbsProps): ReactElement {
     const onPointerDown = (event: Event): void => {
       const target = event.target;
       if (!(target instanceof Node)) return;
-      if (popoverRef.current?.contains(target) === true) return;
-      // The crumb row's own buttons toggle themselves; treating them as
-      // "outside" here would close and immediately reopen on the same click.
-      if (triggerRef.current?.parentElement?.contains(target) === true) return;
+      // Crumbs and the flyout are one widget. Closing on pointerdown for a
+      // pointerdown that lands on another crumb would unmount the flyout in the
+      // middle of the gesture, and the browser's click synthesis then loses the
+      // crumb (the click resolves to whatever sits at the replaced coordinates).
+      // Leaving the widget alone here lets the crumb's own click switch levels.
+      const insideWidget =
+        target instanceof Element ? target.closest(".fx-preview-crumbs") !== null : popoverRef.current?.contains(target) === true;
+      if (insideWidget) return;
       close(false);
     };
     document.addEventListener("keydown", onKeyDown, true);
@@ -241,7 +247,8 @@ export function PreviewCrumbs(props: PreviewCrumbsProps): ReactElement {
   const currentName = openIndex === null ? "" : (model.segments[openIndex]?.name ?? "");
   const lastIndex = model.segments.length - 1;
 
-  const head = peers === null ? "" : peers.dir === "" ? "./" : peers.dir;
+  // The root is requested as "." but reads as "./" in the head line.
+  const head = peers === null ? "" : peers.dir === "" || peers.dir === "." ? "./" : peers.dir;
   const statusText =
     peers === null
       ? ""
@@ -256,6 +263,11 @@ export function PreviewCrumbs(props: PreviewCrumbsProps): ReactElement {
   return (
     <div
       className="fx-preview-crumbs"
+      // The breadcrumb is a control, not chat prose: every crumb carries the
+      // path in `title`, which the command panel's reference links would read
+      // as a document reference and claim the click for. Opting the widget out
+      // keeps the click on the crumb, where it opens the sibling panel.
+      data-dcp-ref-skip=""
       title={interactive ? undefined : unavailableReason}
       data-interactive={interactive ? "true" : "false"}
     >

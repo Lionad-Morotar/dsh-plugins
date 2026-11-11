@@ -60,6 +60,7 @@
   "dependencies": {
     "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.3",
     "@deepseek-ai/schemastery": "^3.18.5",
+    "dsh-fs-explorer": "workspace:*",
     "dsh-preview-viewers": "workspace:*"
   },
   "devDependencies": {
