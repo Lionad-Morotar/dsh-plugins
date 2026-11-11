@@ -1112,6 +1112,41 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   tab-size: 4;
 }
 
+/* The plaintext renderer: a gutter and the page, side by side.
+   The gutter is a column of numbers that scrolls with the text, so both live in
+   one scroll box; the numbers are not selectable, because copying a page should
+   give the reader the text and not the line numbers. */
+.fx-plaintext {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow: auto;
+  padding: 12px 16px 40px;
+  font-family: var(--fx-mono);
+  font-size: calc(var(--fx-fs-code) * 1.0909);
+  line-height: 1.55;
+}
+.fx-plaintext-gutter {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  padding-right: 10px;
+  border-right: 1px solid var(--fx-border-soft);
+  color: var(--fx-caption);
+  text-align: right;
+  user-select: none;
+  min-width: 3ch;
+}
+.fx-plaintext-body {
+  margin: 0;
+  padding-left: 12px;
+  font: inherit;
+  white-space: pre;
+  tab-size: 4;
+  color: var(--fx-text);
+}
+
 .fx-md {
   padding: 18px 24px 64px;
   font-size: calc(var(--fx-fs) * 0.9286);

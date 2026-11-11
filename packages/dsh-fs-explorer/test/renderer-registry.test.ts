@@ -253,7 +253,9 @@ describe("built-in renderers", () => {
       expect(registry.resolve({ path: `asset.${String(suffix)}` })?.id).toBe(`builtin.family.${family}`);
     }
     expect(registry.resolve({ path: "src/main.ts" })?.id).toBe("builtin.source");
-    expect(registry.resolve({ path: "Makefile" })?.id).toBe("builtin.source");
+    // `Makefile` has no suffix; the plaintext renderer claims it by name, which
+    // is the whole reason it exists: drawing it must not cost a chunk.
+    expect(registry.resolve({ path: "Makefile" })?.id).toBe("builtin.plaintext");
   });
 
   it("defer to a plugin that outranks them", () => {
@@ -290,8 +292,9 @@ describe("built-in renderers", () => {
 
     expect(registry.resolve({ path: "Makefile" })?.id).toBe("text-editor");
     expect(registry.resolve({ path: "build/Dockerfile" })?.id).toBe("text-editor");
-    // A name the editor did not list still falls through to the catch-all.
-    expect(registry.resolve({ path: "LICENSE" })?.id).toBe("builtin.source");
+    // A name the editor did not list still falls through to the plaintext
+    // renderer, which claims it by name.
+    expect(registry.resolve({ path: "LICENSE" })?.id).toBe("builtin.plaintext");
   });
 
   it("keeps the source catch-all as the answer when no editor plugin is installed", async () => {

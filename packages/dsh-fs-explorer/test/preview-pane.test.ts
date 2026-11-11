@@ -319,11 +319,13 @@ describe("preview pane language chunk routing", () => {
     expect(calls).not.toContain("./client.preview.js");
   });
 
-  it("falls back to the preview chunk for a language with no block", async () => {
+  it("falls back to the preview chunk for a language with no block and no plaintext row", async () => {
     const calls: string[] = [];
     await bootWith(calls);
-    // `.bat` is a backlog row: no grammar covers it, so it stays monochrome.
-    await show("a.bat");
+    // `.xyz` matches no catalogue row at all, so it is neither a language block
+    // nor plaintext: it keeps the monochrome editor, which the first-line tier
+    // needs to stay reachable.
+    await show("a.xyz");
 
     expect(calls).toContain("./client.preview.js");
     expect(calls.some(call => call.startsWith("./client.lang-"))).toBe(false);
@@ -746,5 +748,140 @@ describe("preview pane language routing", () => {
     await show("a.txt");
     // Plaintext is a decided answer, not a gap: it has no block to fetch.
     expect(calls.filter(call => call.startsWith("./client.lang-"))).toEqual([]);
+  });
+});
+
+/**
+ * The plaintext renderer: a page of text with line numbers, and no fetch.
+ *
+ * Everything else the pane draws needs a chunk: a language block for a file with
+ * a grammar, the preview chunk for the monochrome editor. A file that is only
+ * ever plain text needs neither, and fetching 132 KB to draw it was the cost this
+ * renderer removes.
+ */
+describe("preview pane plaintext renderer", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let Pane: typeof PreviewPane;
+  let calls: string[];
+
+  beforeEach(async () => {
+    vi.resetModules();
+    Pane = (await import("../src/client/preview-pane.tsx")).PreviewPane;
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    calls = [];
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  /** Boot the loader so any fetch at all is recorded. */
+  async function boot(): Promise<void> {
+    const previewChunk = await import("../src/client/preview-chunk.ts");
+    const require = ((specifier: string): unknown => {
+      throw new Error(`unexpected platform require: ${specifier}`);
+    }) as { (specifier: string): unknown; async(specifier: string): Promise<unknown> };
+    require.async = async (specifier: string): Promise<unknown> => {
+      calls.push(specifier);
+      if (specifier === "./client.preview.js") {
+        return {
+          renderer: "codemirror",
+          mountCodePreview: () => ({ update() {}, revealRange() {}, clearSelection() {}, destroy() {} }),
+          MarkdownView: () => null,
+        };
+      }
+      const block = /^\.\/client\.lang-(.+)\.js$/u.exec(specifier)?.[1] ?? "";
+      return {
+        renderer: block,
+        mount: () => ({ update() {}, revealRange() {}, clearSelection() {}, destroy() {} }),
+      };
+    };
+    previewChunk.boot(require);
+  }
+
+  async function show(path: string, text = "hello\nworld\n", offset = 1): Promise<void> {
+    const files = {
+      list: async () => ({ entries: [] }),
+      read: async () => ({ ok: true, value: { text, offset, lines: 2, eof: true } }),
+    };
+    await act(async () => {
+      root.render(createElement(Pane, { sessionId: "s1", files, path, t }));
+    });
+    await act(async () => {
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+  }
+
+  it("draws a .txt file without fetching anything", async () => {
+    await boot();
+    await show("notes.txt");
+    expect(calls).toEqual([]);
+    expect(host.querySelector('[data-testid="fs-preview-plaintext"]')).not.toBeNull();
+  });
+
+  it("shows the text word for word", async () => {
+    await boot();
+    await show("notes.txt", "first line\nsecond line\n");
+    expect(host.textContent).toContain("first line");
+    expect(host.textContent).toContain("second line");
+  });
+
+  it("numbers the lines from one on the first page", async () => {
+    await boot();
+    await show("notes.txt", "alpha\nbravo\n");
+    const gutter = host.querySelector('[data-testid="fs-preview-plaintext-gutter"]');
+    expect(gutter?.textContent).toContain("1");
+    expect(gutter?.textContent).toContain("2");
+  });
+
+  it("numbers the lines from the page offset on a later page", async () => {
+    await boot();
+    await show("notes.txt", "alpha\nbravo\n", 201);
+    const gutter = host.querySelector('[data-testid="fs-preview-plaintext-gutter"]');
+    // A page starting at 201 must not claim to start at 1.
+    expect(gutter?.textContent).toContain("201");
+    expect(gutter?.textContent).toContain("202");
+  });
+
+  it("draws LICENSE by its exact name without fetching anything", async () => {
+    await boot();
+    await show("LICENSE", "MIT License\n");
+    expect(calls).toEqual([]);
+    expect(host.querySelector('[data-testid="fs-preview-plaintext"]')).not.toBeNull();
+  });
+
+  it("draws Makefile by its exact name without fetching anything", async () => {
+    await boot();
+    await show("Makefile", "all:\n\techo hi\n");
+    expect(calls).toEqual([]);
+    expect(host.querySelector('[data-testid="fs-preview-plaintext"]')).not.toBeNull();
+  });
+
+  it("still sends an unknown suffix to the monochrome editor", async () => {
+    await boot();
+    await show("a.xyz");
+    // The first-line tier needs a real editor, so unknown files are not bypassed.
+    expect(calls).toContain("./client.preview.js");
+  });
+
+  it("still sends .py to its language block", async () => {
+    await boot();
+    await show("a.py", "print(1)\n");
+    expect(calls).toContain("./client.lang-python.js");
+    expect(calls).not.toContain("./client.preview.js");
+  });
+
+  it("leaves .md to the markdown reader", async () => {
+    await boot();
+    await show("a.md", "# title\n");
+    // builtin.markdown is priority 0 and must outrank the plaintext renderer.
+    expect(calls).toContain("./client.preview.js");
+    expect(host.querySelector('[data-testid="fs-preview-plaintext"]')).toBeNull();
   });
 });

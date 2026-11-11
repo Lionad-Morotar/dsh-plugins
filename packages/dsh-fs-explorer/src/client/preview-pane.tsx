@@ -19,7 +19,7 @@
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from "react";
 
-import { BY_ID } from "dsh-text-languages/catalog.ts";
+import { ALL_LANGUAGES, BY_ID } from "dsh-text-languages/catalog.ts";
 
 import { FAMILY_CHUNKS } from "../shared.ts";
 import { writeClipboard } from "./clipboard.ts";
@@ -214,6 +214,38 @@ const IDLE_RENDERER: RendererState = { status: "idle" };
 const MARKDOWN_EXTENSIONS: readonly string[] = (BY_ID.get("markdown")?.extensions ?? []).filter(
   extension => extension.startsWith(".") && !/[*?[\]]/u.test(extension),
 );
+
+/**
+ * The rows whose files are plain text and will never have a grammar.
+ *
+ * Two kinds qualify: the explicit plaintext row (`.txt`, `.text`, and the
+ * `LICENSE` / `README` / `CHANGELOG` names) and the backlog rows, which are
+ * deliberately monochrome because no grammar covers them. The excluded rows are
+ * not here: they have no file entry of their own, so nothing can open as them.
+ */
+const PLAINTEXT_ROWS = ALL_LANGUAGES.filter(row => row.id === "plaintext" || row.disposition === "backlog");
+
+/**
+ * The suffixes these rows own, minus the ones that are not suffixes.
+ *
+ * `*.log.?` is a wildcard upstream wrote into the extensions column; it can never
+ * match a real name and the registry does not do globs, so it is dropped rather
+ * than registered as a literal that would never fire.
+ */
+const PLAINTEXT_EXTENSIONS: readonly string[] = [
+  ...new Set(PLAINTEXT_ROWS.flatMap(row => row.extensions).filter(extension => !/[*?[\]]/u.test(extension))),
+];
+
+/**
+ * The exact filenames these rows own: `Makefile`, `LICENSE`, `COMMIT_EDITMSG`.
+ *
+ * Derived from the same rows as the suffixes, so the two cannot disagree about
+ * what counts as plain text.
+ */
+const PLAINTEXT_NAMES: readonly string[] = [...new Set(PLAINTEXT_ROWS.flatMap(row => row.filenames))];
+
+/** Priority of the plaintext renderer: below the readers that name a language, above the catch-all. */
+const PLAINTEXT_RENDERER_PRIORITY = -100;
 
 /**
  * Priority of the built-in source viewer.
@@ -464,6 +496,59 @@ function createMarkdownRenderer(chunk: PreviewChunkModule): RendererModule {
   return { Body: MarkdownBody, renderer: chunk.renderer };
 }
 
+/**
+ * The plaintext body: the page as text, with a line-number gutter.
+ *
+ * No editor and no chunk. A file that is only ever plain text does not need a
+ * parser, and the monochrome editor costs 132 KB of preview chunk to draw it. The
+ * gutter carries the page's absolute line numbers, the same contract the editor's
+ * gutter keeps, so page two starts at 201 rather than at 1.
+ */
+function PlainTextBody({ page, find }: RendererBodyProps) {
+  const text = page?.text ?? "";
+  const offset = page?.offset ?? 1;
+  // `split` on a trailing newline yields a final empty string; dropping it keeps
+  // the gutter from numbering a line that does not exist.
+  const lines = text === "" ? [] : text.replace(/\n$/u, "").split("\n");
+  const pageText = useRef(text);
+  pageText.current = text;
+
+  // The find bar counts against this page's text. There is no selection to drive
+  // here, so `select` and `clear` are no-ops: the bar still counts and highlights
+  // through its own layer, which is what the plain-text fallback has always done.
+  useEffect(() => {
+    if (find === undefined) return;
+    find.register({
+      scope: "page",
+      text: () => pageText.current,
+      select: () => undefined,
+      clear: () => undefined,
+    });
+    return () => find.register(null);
+  }, [find]);
+
+  return (
+    <div className="fx-plaintext" data-testid="fs-preview-plaintext">
+      <div className="fx-plaintext-gutter" data-testid="fs-preview-plaintext-gutter" aria-hidden="true">
+        {lines.map((_line, index) => (
+          <span key={index}>{offset + index}</span>
+        ))}
+      </div>
+      <pre className="fx-plaintext-body">{text}</pre>
+    </div>
+  );
+}
+
+/**
+ * The plaintext renderer module.
+ *
+ * Returned synchronously by the contribution's `load`, which is the point: this
+ * renderer must never reach a chunk loader.
+ */
+function createPlaintextRenderer(): RendererModule {
+  return { renderer: "plaintext", Body: PlainTextBody };
+}
+
 /** The built-in source body: read-only CodeMirror over the held page. */
 function createSourceRenderer(chunk: PreviewChunkModule): RendererModule {
   function SourceBody({ page, path, find }: RendererBodyProps) {
@@ -543,6 +628,15 @@ export function createBuiltinRenderers(): readonly RendererContribution[] {
       match: { extensions: [...MARKDOWN_EXTENSIONS] },
       priority: 0,
       load: () => loadPreviewChunk().then(createMarkdownRenderer),
+    },
+    {
+      id: "builtin.plaintext",
+      label: "纯文本",
+      match: { extensions: [...PLAINTEXT_EXTENSIONS], names: [...PLAINTEXT_NAMES] },
+      priority: PLAINTEXT_RENDERER_PRIORITY,
+      // Synchronous on purpose: this renderer draws text and needs no chunk, so
+      // it must not touch a loader even to resolve an already-cached module.
+      load: () => Promise.resolve(createPlaintextRenderer()),
     },
     {
       id: SOURCE_RENDERER_ID,
