@@ -118,7 +118,9 @@ node scripts/preview.mjs --out ../../temp/testboard-preview
 
 产出 `index.html` 与 `assets.js`，React 已内联，页面不引用外链，`file://` 直接打开或起静态服务器都能看。`?theme=dark|light` 选主题（缺省暗色），`?state=empty` 渲染首次打开时的等待态，`?state=loading` 渲染首轮运行中的等待态，`?state=cached` 渲染从磁盘缓存载入后的上一次结果，`?state=tree` 渲染一棵多级目录树供折叠演示。空态与 dsh-arch 的空界面同一套版式：内容区居中、文字弱化，只留一个动作入口。
 
-预览页用 fixture runtime，与线上走同一个 `TestboardRuntime` 接口，所以渲染的是真实 tab 的代码路径。`?state=tree` 在已提交快照之外另加一个只用于演示的 `demo-tree` 包（`test/unit`、`test/unit/nested`、`test/integration` 三层，六个文件、通过失败混合），因为真实快照里只有 `dsh-arch` 一棵两层树，看不出多级折叠。这份演示数据只存在于 `preview.tsx`，不写进 `src/client/data/`，线上看板拿不到它。它自动循环演示一遍完整叙事：`running`（竖条逐格点亮、计数增长、图表生长）→ `fixing`（标题 `正在修复 N 个失败`，图表右下浮层卡 `Fixing <file>` / `<model> · Ns` / `+2 −2`）→ `rerunning`（失败用例先扫灰再重亮，元信息 `重跑 · Xs`）→ `finished`（`测试完成`，全绿）→ 循环。
+预览页用 fixture runtime，与线上走同一个 `TestboardRuntime` 接口，所以渲染的是真实 tab 的代码路径。`?state=tree` 在已提交快照之外另加一个只用于演示的 `demo-tree` 包（`test/unit`、`test/unit/nested`、`test/integration` 三层，六个文件、通过失败混合），因为真实快照里只有 `dsh-arch` 一棵两层树，看不出多级折叠。这份演示数据只存在于 `preview.tsx`，不写进 `src/client/data/`，线上看板拿不到它。
+
+除 `?state=tree` 是静止看板外，预览页自动循环演示一遍完整叙事：`running`（竖条逐格点亮、计数增长、图表生长）→ `fixing`（标题 `正在修复 N 个失败`，图表右下浮层卡 `Fixing <file>` / `<model> · Ns` / `+2 −2`）→ `rerunning`（失败用例先扫灰再重亮，元信息 `重跑 · Xs`）→ `finished`（`测试完成`，全绿）→ 循环。
 
 `fixing` 只是预览的演示阶段，不进 wire 的 phase：宿主拿不到 agent 修复事件，线上伪造就是假信息。
 
