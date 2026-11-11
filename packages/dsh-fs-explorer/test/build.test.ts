@@ -11,12 +11,13 @@
  * code in front of it.
  */
 import { build } from "esbuild";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
-import { FAMILY_CHUNKS, PREVIEW_CHUNK } from "../src/shared.ts";
+import { FAMILY_CHUNKS, MERMAID_CHUNK, PREVIEW_CHUNK } from "../src/shared.ts";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -38,6 +39,17 @@ const ENGINE_MARKERS = ["THREE.WebGLRenderer", "UTIF", "_ProcessDxfEntity"];
 
 /** The editor and Markdown symbols the entry may not carry either. */
 const EDITOR_MARKERS = ["@codemirror", "codemirror", "react-markdown", "remark-gfm", "marked"];
+
+/**
+ * Symbols that only appear when mermaid is bundled.
+ *
+ * Mirrors `MERMAID_MARKERS` in `scripts/build.mjs`. The bare word `mermaid` is
+ * not one of them: the route table names the file `client.mermaid.js`, so both
+ * bundles contain it by design and a check on it would fail on a correct build.
+ * These are mermaid's own namespace, its layout engine and two of its
+ * dependencies, which survive minification as property names and literals.
+ */
+const MERMAID_MARKERS = ["@mermaid-js", "cytoscape", "dagre", "mermaidAPI"];
 
 /**
  * Bundle the browser entry exactly as the build does, once per run.
@@ -83,6 +95,15 @@ describe("client entry bundle", () => {
       expect(entry.includes(marker), `${marker} leaked into the entry`).toBe(false);
     }
   });
+
+  it("carries no mermaid", async () => {
+    // The startup bundle is parsed on every conversation boot, so the diagram
+    // renderer may not be in it under any circumstances.
+    const entry = await entryBundle();
+    for (const marker of MERMAID_MARKERS) {
+      expect(entry.includes(marker), `${marker} leaked into the entry`).toBe(false);
+    }
+  });
 });
 
 /**
@@ -110,4 +131,52 @@ describe("family chunk boundary", () => {
       }
     });
   }
+});
+
+/**
+ * The committed artifacts, read from `lib/` rather than rebuilt.
+ *
+ * These are the files the host actually loads, so they are the honest target for
+ * an assertion about what a reader downloads. `lib/` is a committed product here
+ * (profiles never rebuild), which is also why `build --check` exists.
+ */
+describe("committed artifacts", () => {
+  const libFiles = readdirSync(join(packageRoot, "lib")).sort();
+
+  it("emits 23 files: two host halves and 21 chunks", () => {
+    // 2 host files (index.js, client.js) plus the preview chunk, the diagram
+    // chunk, five family chunks and fourteen language chunks.
+    expect(libFiles).toHaveLength(23);
+    expect(libFiles).toContain("index.js");
+    expect(libFiles).toContain("client.js");
+    expect(libFiles).toContain(MERMAID_CHUNK.chunk);
+  });
+
+  it("ships the diagram chunk as its own file", () => {
+    const chunk = readFileSync(join(packageRoot, "lib", MERMAID_CHUNK.chunk), "utf8");
+    // The exported module object, which is what survives minification: the
+    // `renderer` constant is folded into the literal, so the string `"mermaid"`
+    // itself is gone by the time this file is written.
+    expect(chunk).toMatch(/\{renderer:\w+,renderDiagram:\w+\}/u);
+    for (const marker of MERMAID_MARKERS) {
+      expect(chunk.includes(marker), `${marker} is missing from ${MERMAID_CHUNK.chunk}`).toBe(true);
+    }
+  });
+
+  it("keeps mermaid out of the preview chunk", () => {
+    // The preview chunk is fetched by every source file and every README; the
+    // diagram renderer is fetched only by a document that fences one.
+    const preview = readFileSync(join(packageRoot, "lib", PREVIEW_CHUNK.chunk), "utf8");
+    expect(preview).toContain(`"${MERMAID_CHUNK.chunk}"`);
+    for (const marker of MERMAID_MARKERS) {
+      expect(preview.includes(marker), `${marker} leaked into ${PREVIEW_CHUNK.chunk}`).toBe(false);
+    }
+  });
+
+  it("keeps the diagram chunk inside its size budget", () => {
+    // 1,700,000 B gzipped is the ceiling `scripts/build.mjs` enforces; measured
+    // at about 1.53 MB, which leaves roughly a tenth of headroom for an upgrade.
+    const gzipped = gzipSync(readFileSync(join(packageRoot, "lib", MERMAID_CHUNK.chunk))).length;
+    expect(gzipped).toBeLessThanOrEqual(1_700_000);
+  });
 });

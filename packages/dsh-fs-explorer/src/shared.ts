@@ -67,6 +67,17 @@ export function hiddenIgnoredLabel(count: number): string {
 export const PREVIEW_CHUNK = { chunk: "client.preview.js" } as const;
 
 /**
+ * The chunk the diagram renderer lives in.
+ *
+ * A third file name under the same three-way agreement {@link PREVIEW_CHUNK}
+ * documents: the route table here, the `chunk:` field the chunk script registers
+ * with, and the file `scripts/build.mjs` emits. It is separate from the preview
+ * chunk because mermaid is about 5.4 MB raw, and a document with no diagram in
+ * it must not pay for that.
+ */
+export const MERMAID_CHUNK = { chunk: "client.mermaid.js" } as const;
+
+/**
  * One lazy chunk per binary renderer family.
  *
  * The family names come from the shared format catalogue, which is what makes

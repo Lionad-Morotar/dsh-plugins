@@ -19,6 +19,17 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { CodePreviewHandle, CodePreviewOptions, PreviewChunkModule } from "../preview-chunk.ts";
+import { boot as bootChunkLoader, type LoaderRequire } from "./boot.ts";
+
+/**
+ * The chunk's own handle on the diagram loader.
+ *
+ * Re-exported rather than left to `boot.ts` alone because this chunk is what
+ * fetches the renderer: naming the loader here is what keeps the build's route
+ * assertion meaningful, and it is the entry the Markdown reader calls once a
+ * fence asks for a diagram.
+ */
+export { loadMermaidChunk } from "./boot.ts";
 
 /** Marker the build asserts and the pane exposes as `data-renderer`. */
 export const renderer = "codemirror" as const;
@@ -132,6 +143,19 @@ export function mountCodePreview(host: HTMLElement, options: CodePreviewOptions)
 }
 
 /**
+ * Take the loader require into this bundle.
+ *
+ * The chunk is its own bundle with its own copy of `chunk/boot.ts`, so the `boot`
+ * the startup entry calls never reaches it. `loadPreviewChunk` calls this one
+ * when it resolves the chunk, which is what lets a diagram fetch the mermaid
+ * chunk at all.
+ * @param require - the loader's require, with `async` attached.
+ */
+export function boot(require: LoaderRequire): void {
+  bootChunkLoader(require);
+}
+
+/**
  * The GFM reading mode.
  *
  * `skipHtml` drops raw HTML nodes instead of passing them through: no
@@ -167,6 +191,6 @@ export function MarkdownView({ text }: { readonly text: string }) {
   );
 }
 
-const chunkModule: PreviewChunkModule = { renderer, mountCodePreview, MarkdownView };
+const chunkModule: PreviewChunkModule = { renderer, mountCodePreview, MarkdownView, boot };
 
 export default chunkModule;

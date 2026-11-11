@@ -27,6 +27,14 @@ import type { Translate } from "./copy.ts";
 import type { PreviewFamily } from "./preview.ts";
 import { FAMILY_CHUNKS, PACKAGE_NAME, PREVIEW_CHUNK } from "../shared.ts";
 
+// The diagram loader lives in `chunk/boot.ts` because this module imports the
+// language catalogue by value and the preview chunk must not carry it. Re-exported
+// here so the package still has one route table to read. `boot` is not re-exported:
+// this module's own `boot` fills the startup copy, and the chunk's copy is filled
+// through `PreviewChunkModule.boot` below.
+export { loadMermaidChunk, mermaidChunkRoute } from "./chunk/boot.ts";
+export type { MermaidChunkModule, MermaidChunkRoute } from "./chunk/boot.ts";
+
 /** The `require` the ModuleLoader factory receives. */
 export interface LoaderRequire {
   (specifier: string): unknown;
@@ -64,6 +72,19 @@ export interface PreviewChunkModule {
   readonly renderer: "codemirror";
   mountCodePreview(host: HTMLElement, options: CodePreviewOptions): CodePreviewHandle;
   readonly MarkdownView: ComponentType<{ readonly text: string }>;
+  /**
+   * Take the loader require into the chunk's own bundle.
+   *
+   * This module is packaged twice, once into the startup bundle and once into
+   * `client.preview.js`, and each copy has its own module state. The `boot` the
+   * entry calls only fills the startup copy, so the chunk's copy has no require
+   * and could not fetch the mermaid chunk. Handing the require over here is what
+   * initialises the copy that actually renders diagrams.
+   *
+   * Optional so a chunk built before this hand-over keeps working: its editor and
+   * Markdown reader are fine, only diagrams would stay as source.
+   */
+  readonly boot?: (require: LoaderRequire) => void;
 }
 
 /**
@@ -279,6 +300,10 @@ export function loadPreviewChunk(): Promise<PreviewChunkModule> {
     if (chunk === null || typeof chunk.mountCodePreview !== "function" || typeof chunk.MarkdownView !== "function") {
       throw new Error(`${PACKAGE_NAME}: chunk ${ROUTE.id} is missing its preview renderers`);
     }
+    // Before resolving, hand this require to the chunk's own copy of the loader.
+    // Without it the chunk renders its editor and Markdown fine but cannot fetch
+    // the diagram renderer, which shows up only as diagrams that never arrive.
+    chunk.boot?.(active);
     return chunk as PreviewChunkModule;
   });
   pending = request;
