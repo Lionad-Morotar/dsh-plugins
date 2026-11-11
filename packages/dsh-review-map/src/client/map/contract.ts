@@ -13,6 +13,37 @@
  * is the layer that knows which level the reader is looking at.
  */
 
+/**
+ * The change status a card encodes.
+ *
+ * Declared here rather than imported from `shared.ts` so the chunk depends on
+ * nothing but its own two files. It is the same vocabulary the host reports;
+ * the view is what converts one into the other, and a drift between them is a
+ * type error at that conversion rather than a silent mismatch.
+ */
+export type MapStatus =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "type-changed"
+  | "untracked"
+  | "conflicted"
+  | "unknown";
+
+/**
+ * One hunk's position on the new side, for the distribution bar.
+ *
+ * Only the new side is carried: the bar answers "where in the file did this
+ * land", and a reader who wants the old side's line numbers opens the diff.
+ */
+export interface MapHunk {
+  readonly newStart: number;
+  readonly newLines: number;
+  readonly oldLines: number;
+}
+
 /** One file in a map level. */
 export interface MapFileInput {
   /** Repository-relative path. */
@@ -20,6 +51,13 @@ export interface MapFileInput {
   /** Newline count, or null for a binary file whose size is not a line count. */
   readonly lines: number | null;
   readonly changed: boolean;
+  /** The change status, when this file is in the change set. */
+  readonly status?: MapStatus;
+  readonly additions?: number | null;
+  readonly deletions?: number | null;
+  readonly binary?: boolean;
+  /** Hunk positions for the distribution bar; absent means no bar. */
+  readonly hunks?: readonly MapHunk[];
 }
 
 /** One directory in a map level, already carrying its subtree's line total. */
@@ -27,6 +65,20 @@ export interface MapDirInput {
   readonly path: string;
   readonly lines: number;
   readonly changed: boolean;
+  /** Files in the subtree, for the folder header's reading. */
+  readonly files?: number;
+  /** Files in the subtree that changed. */
+  readonly changedFiles?: number;
+  readonly additions?: number;
+  readonly deletions?: number;
+  /**
+   * The index has not finished for this subtree.
+   *
+   * A separate flag rather than a sentinel count, because "we have not counted"
+   * and "we counted zero" must render differently: the requirement is explicit
+   * that an unfinished index shows as pending rather than as a definite zero.
+   */
+  readonly pending?: boolean;
 }
 
 /**
@@ -99,7 +151,42 @@ export interface MapHandlers {
   readonly onDrill?: (path: string) => void;
 }
 
+/**
+ * How the map is sized and titled.
+ *
+ * The size is in the map's own coordinate space, not pixels: the `<svg>` scales
+ * to its box, so these numbers are proportions. An explicit size wins over the
+ * host's measured one because a caller that has already decided the aspect
+ * ratio should not have it re-derived from a layout that may not have happened
+ * yet — which is exactly the state a first paint is in.
+ */
+export interface MapOptions {
+  readonly width?: number;
+  readonly height?: number;
+  /** The root breadcrumb's label; the repository name, when the caller knows it. */
+  readonly title?: string;
+}
+
 /** The handle a mounted map returns. */
 export interface MapHandle {
   destroy(): void;
+  /** The directory currently drawn; the repository root is `""`. */
+  path(): string;
+  /**
+   * Mark one file or directory as highlighted, without changing the level.
+   *
+   * A target that is not on the current level highlights the nearest visible
+   * ancestor and marks it as the breadcrumb target instead of drilling to it:
+   * the map is a place the reader navigates, and a highlight that moved them
+   * would be the map deciding where they wanted to be.
+   */
+  setHighlight(path: string | null): void;
+  /**
+   * Point at a path without following it.
+   *
+   * Same restraint as `setHighlight`, stated separately because the two have
+   * different callers: `reveal` is what a list row does when the reader hovers
+   * it, and it must never change the level either.
+   */
+  reveal(path: string): void;
 }

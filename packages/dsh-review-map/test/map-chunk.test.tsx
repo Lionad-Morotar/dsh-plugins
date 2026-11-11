@@ -67,8 +67,10 @@ describe("mounting a map", () => {
       }),
     );
 
-    const rects = [...element.querySelectorAll("rect")];
-    const byPath = new Map(rects.map(rect => [rect.getAttribute("data-path"), rect]));
+    // The identity moved onto the card group when cards gained text and a bar;
+    // the rect is now the card's surface rather than the card itself.
+    const cards = [...element.querySelectorAll('[data-rm="map-tile"]')];
+    const byPath = new Map(cards.map(card => [card.getAttribute("data-path"), card]));
     expect(byPath.get("src")?.getAttribute("data-kind")).toBe("dir");
     expect(byPath.get("src")?.getAttribute("data-lines")).toBe("300");
     expect(byPath.get("a.ts")?.getAttribute("data-kind")).toBe("file");
@@ -92,7 +94,7 @@ describe("mounting a map", () => {
     const element = host();
     const map = createMap(element, data(level([{ path: "big.ts", lines: 5000 }, { path: "logo.png", lines: null }])));
 
-    const binary = element.querySelector('rect[data-path="logo.png"]');
+    const binary = element.querySelector('[data-rm="map-tile"][data-path="logo.png"]');
     expect(binary).not.toBeNull();
     expect(binary?.getAttribute("data-lines")).toBe("1");
     map.destroy();
@@ -115,8 +117,8 @@ describe("mounting a map", () => {
     ]);
     const map = createMap(element, { levels, rootPath: "src" });
 
-    expect(element.querySelectorAll("rect")).toHaveLength(1);
-    expect(element.querySelector("rect")?.getAttribute("data-path")).toBe("src/deep.ts");
+    expect(element.querySelectorAll('[data-rm="map-tile"]')).toHaveLength(1);
+    expect(element.querySelector('[data-rm="map-tile"]')?.getAttribute("data-path")).toBe("src/deep.ts");
     map.destroy();
   });
 
@@ -136,7 +138,7 @@ describe("the handlers", () => {
     const onOpenFile = vi.fn();
     const map = createMap(element, data(level([{ path: "a.ts", lines: 10 }])), { onOpenFile });
 
-    element.querySelector('rect[data-path="a.ts"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    element.querySelector('[data-rm="map-tile"][data-path="a.ts"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     expect(onOpenFile).toHaveBeenCalledWith("a.ts");
     map.destroy();
@@ -152,8 +154,13 @@ describe("the handlers", () => {
       { onDrill, onOpenFile },
     );
 
-    element.querySelector('rect[data-path="src"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    element
+      .querySelector('[data-rm="map-tile"][data-path="src"]')
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
+    // Drilling is the map's own behaviour: it changes level and then tells the
+    // caller, so a map mounted without handlers is still navigable.
+    expect(map.path()).toBe("src");
     expect(onDrill).toHaveBeenCalledWith("src");
     expect(onOpenFile).not.toHaveBeenCalled();
     map.destroy();
@@ -164,7 +171,7 @@ describe("the handlers", () => {
     const map = createMap(element, data(level([{ path: "a.ts", lines: 10 }])));
 
     expect(() => {
-      element.querySelector("rect")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      element.querySelector('[data-rm="map-tile"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     }).not.toThrow();
     map.destroy();
   });
