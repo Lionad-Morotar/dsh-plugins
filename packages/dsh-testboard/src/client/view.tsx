@@ -358,6 +358,10 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const [snapshot, setSnapshot] = useState<TestSnapshot | undefined>(undefined);
     const [workspaceName, setWorkspaceName] = useState<string | undefined>(undefined);
     const [run, setRun] = useState<RunProgress | undefined>(undefined);
+    // The canonical run log: the last all-scope run. A scoped rerun patches the
+    // snapshot but must not replace this, or the full run's chart and line
+    // disappear the first time a reader re-runs one file.
+    const [log, setLog] = useState<RunProgress | undefined>(undefined);
     // The last settled run, kept so a scoped rerun can say how many cases it is
     // about to redo before it has reported any.
     const previousRunRef = useRef<RunProgress | undefined>(undefined);
@@ -442,6 +446,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       setSnapshot(undefined);
       setWorkspaceName(undefined);
       setRun(undefined);
+      setLog(undefined);
       setStateError(undefined);
       setLoadError(undefined);
       setSelection(undefined);
@@ -458,8 +463,11 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const applyState = useCallback((state: TestboardState): void => {
       if (state.snapshot !== undefined) setSnapshot(state.snapshot);
       setWorkspaceName(state.workspaceName);
-      // A settled run becomes the reference for the next scoped rerun's size.
-      if (state.run !== undefined && state.run.phase !== "running") previousRunRef.current = state.run;
+      // The log is the canonical reference for a scoped rerun's size. Falling
+      // back to the latest settled run keeps a pre-log cache readable.
+      if (state.log !== undefined) previousRunRef.current = state.log;
+      else if (state.run !== undefined && state.run.phase !== "running") previousRunRef.current = state.run;
+      setLog(state.log);
       setRun(state.run);
       setStateError(state.error);
       // Only the preview's fixture fills this in; on the host it is absent and
@@ -977,17 +985,23 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
             tone: "failed",
           }
         : phaseLabel(run, motionStrings, { total: rerunTotal }, { failed: boardFailed });
+    // Which run the chart and the "last run" line speak for. A scoped rerun is
+    // live while it runs, then the board goes back to the canonical log: its
+    // rows and header counts have already been patched, and rewriting the chart
+    // with a three-case run would erase the full run's shape.
+    const scopedRun = run !== undefined && run.scope.kind === "file";
+    const storyRun = scopedRun && run.phase !== "running" ? (log ?? run) : run;
     // With no run in flight the header still has a number to show: the last
     // reading's own duration. Reporting 0.0s would say the suite took no time.
-    const elapsedMs = run === undefined ? summary.wallClockMs : elapsedOf(run, nowMs);
-    // The chart reads the live run when there is one and the snapshot's own
+    const elapsedMs = storyRun === undefined ? summary.wallClockMs : elapsedOf(storyRun, nowMs);
+    // The chart reads the story run when there is one and the snapshot's own
     // synthetic series otherwise, so an idle board still shows the last shape.
     // The two bucket shapes differ (the snapshot's are per-second deltas, the
     // host's are cumulative), so the synthetic one is folded into the same
     // cumulative form rather than special-cased in the chart.
     const chartSeries: RunProgress["series"] =
-      run === undefined ? cumulativeOf(throughputSeries(snapshot)) : run.series;
-    const meta = runMeta(run, motionStrings, elapsedMs);
+      storyRun === undefined ? cumulativeOf(throughputSeries(snapshot)) : storyRun.series;
+    const meta = runMeta(storyRun, motionStrings, elapsedMs);
     // A reading recovered from disk is the same result the reader saw last time;
     // saying where it came from is the difference between "these numbers just
     // landed" and "this is where you left off".

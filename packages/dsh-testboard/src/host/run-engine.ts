@@ -127,7 +127,11 @@ export interface RunEngineOptions {
    */
   readonly onSettled?: (
     workspace: string,
-    result: { readonly run: RunProgress; readonly snapshot: NonNullable<TestboardState["snapshot"]> },
+    result: {
+      readonly run: RunProgress;
+      readonly snapshot: NonNullable<TestboardState["snapshot"]>;
+      readonly log?: RunProgress;
+    },
   ) => void;
 }
 
@@ -192,6 +196,14 @@ const SERIES_BUCKET_MS = 1000;
 interface WorkspaceEntry {
   snapshot?: TestSnapshot;
   run?: RunProgress;
+  /**
+   * The last all-scope run, which the chart and the "last run" line speak for.
+   *
+   * A scoped rerun updates `run` and the snapshot but leaves this untouched, so
+   * a reader who fixes failures one file at a time keeps the full run's shape
+   * on screen while the rows turn green.
+   */
+  log?: RunProgress;
   controller?: AbortController;
   /** Runs started in this workspace, so the board can label a rerun. */
   runCount: number;
@@ -406,6 +418,65 @@ export function createRunEngine(options: RunEngineOptions): RunEngine {
     return { ...incoming, packages };
   }
 
+  /**
+   * Patch the canonical run log with one file's new verdicts.
+   *
+   * The log is history: it keeps the full run's timing, but a failure that has
+   * since been fixed should stop painting the chart red. Each case the rerun
+   * reported is updated where it originally landed, and cases the run added are
+   * appended at the log's end. Totals and the failure list are then recomputed
+   * from the patched cases so the chart and the last-run line agree with the
+   * board's patched snapshot.
+   *
+   * @param log - the full run the board narrates.
+   * @param incoming - the snapshot the scoped run produced.
+   * @param scopePath - the file the rerun covered.
+   * @returns the patched log.
+   */
+  function patchLog(log: RunProgress, incoming: TestSnapshot, scopePath: string): RunProgress {
+    const replacement = incoming.packages.flatMap(pkg => pkg.files).find(file => file.path === scopePath);
+    if (replacement === undefined) return log;
+
+    const verdicts = new Map(replacement.cases.map(entry => [entry.name, entry]));
+    const seen = new Set<string>();
+    const cases: RunCaseEvent[] = [];
+    for (const event of log.cases) {
+      if (event.path !== scopePath) {
+        cases.push(event);
+        continue;
+      }
+      const verdict = verdicts.get(event.name);
+      // A case the rerun no longer reports was removed from the file: its old
+      // completion should not stay in a log that describes the current board.
+      if (verdict === undefined) continue;
+      seen.add(event.name);
+      cases.push({ ...event, status: verdict.status, durationMs: verdict.durationMs });
+    }
+    for (const verdict of replacement.cases) {
+      if (seen.has(verdict.name)) continue;
+      cases.push({
+        path: scopePath,
+        name: verdict.name,
+        status: verdict.status,
+        durationMs: verdict.durationMs,
+        atMs: log.elapsedMs,
+      });
+    }
+
+    const counts = countsOf(cases);
+    const failures = cases
+      .filter(event => event.status === "failed")
+      .map(event => ({ tMs: event.atMs, path: event.path, name: event.name }));
+    return {
+      ...log,
+      status: failures.length === 0 ? "passed" : "failed",
+      counts,
+      failures,
+      cases,
+      series: seriesOf(cases, log.elapsedMs),
+    };
+  }
+
   async function execute(workspace: string, scope: RunScope, runId: string, entry: WorkspaceEntry): Promise<void> {
     const controller = new AbortController();
     entry.controller = controller;
@@ -571,12 +642,23 @@ export function createRunEngine(options: RunEngineOptions): RunEngine {
       entry.snapshot =
         scope.kind === "file" ? mergeScoped(entry.snapshot, parsed, scope.path) : parsed;
       settle("finished", runFailed(parsed, exitCode) ? "failed" : "passed");
+      // A full run is the new story. A scoped rerun is a patch to the current
+      // one: the board's rows come from the merged snapshot, and the chart's
+      // story is the full run with the rerun's verdicts folded in, so a fixed
+      // file stops painting the chart red. The first run of either scope becomes
+      // the log because there is nothing older to preserve.
+      if (scope.kind === "all" || entry.log === undefined) entry.log = entry.run;
+      else entry.log = patchLog(entry.log, parsed, scope.path);
       // Both halves are defined here: the snapshot was just assigned and
       // `settle` just wrote the run. The callback is invoked synchronously so a
       // caller that reads the board in the same tick sees the same result the
       // cache is about to hold.
       if (entry.snapshot !== undefined && entry.run !== undefined) {
-        options.onSettled?.(workspace, { snapshot: entry.snapshot, run: entry.run });
+        options.onSettled?.(workspace, {
+          snapshot: entry.snapshot,
+          run: entry.run,
+          ...(entry.log === undefined ? {} : { log: entry.log }),
+        });
       }
     } catch (error) {
       settle("error", "error", error instanceof Error ? error.message : String(error));
@@ -595,6 +677,7 @@ export function createRunEngine(options: RunEngineOptions): RunEngine {
       return {
         ...(entry.snapshot === undefined ? {} : { snapshot: entry.snapshot }),
         ...(entry.run === undefined ? {} : { run: entry.run }),
+        ...(entry.log === undefined ? {} : { log: entry.log }),
       };
     },
 

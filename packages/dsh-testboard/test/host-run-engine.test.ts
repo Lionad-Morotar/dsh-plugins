@@ -509,6 +509,19 @@ describe("createRunEngine: live progress", () => {
   });
 });
 
+/** The slice of vitest's JSON report these tests hand the engine. */
+interface ReportLike {
+  readonly testResults: readonly {
+    readonly name: string;
+    readonly assertionResults: readonly {
+      readonly title: string;
+      readonly status: string;
+      readonly duration: number;
+      readonly failureMessages?: readonly string[];
+    }[];
+  }[];
+}
+
 describe("createRunEngine: single-file rerun", () => {
   /** A report with two files, so a rerun of one can be told from a full run. */
   const TWO_FILES = {
@@ -534,6 +547,30 @@ describe("createRunEngine: single-file rerun", () => {
     ],
   };
 
+  /** A full run where beta is still red, so a later rerun can turn it green. */
+  const TWO_FILES_FAILING = {
+    testResults: [
+      {
+        name: "/ws/packages/alpha/test/one.test.ts",
+        assertionResults: [{ title: "adds", status: "passed", duration: 5 }],
+      },
+      {
+        name: "/ws/packages/beta/test/two.test.ts",
+        assertionResults: [{ title: "works", status: "failed", duration: 6, failureMessages: ["broke"] }],
+      },
+    ],
+  };
+
+  /** The same beta file after the fix: green. */
+  const BETA_PASSED = {
+    testResults: [
+      {
+        name: "/ws/packages/beta/test/two.test.ts",
+        assertionResults: [{ title: "works", status: "passed", duration: 7 }],
+      },
+    ],
+  };
+
   /**
    * A subprocess that hands out a different report on each spawn.
    *
@@ -542,15 +579,20 @@ describe("createRunEngine: single-file rerun", () => {
    * @param reports - one reporter payload per spawn, in order.
    * @returns the seam and the calls it recorded.
    */
-  function makeSequence(reports: readonly unknown[]): { subprocess: SubprocessLike; calls: SpawnCall[] } {
+  function makeSequence(
+    reports: readonly ReportLike[],
+    options: { readonly verbose?: boolean } = {},
+  ): { subprocess: SubprocessLike; calls: SpawnCall[] } {
     const calls: SpawnCall[] = [];
     let index = 0;
     const subprocess: SubprocessLike = {
       spawn(spec) {
         calls.push({ argv: spec.argv, cwd: spec.cwd, signal: spec.signal });
         const report = reports[index] ?? reports[reports.length - 1];
+        if (report === undefined) throw new Error("no report fixture for this spawn");
         index += 1;
         const outputFile = spec.argv[spec.argv.indexOf("--outputFile") + 1] ?? "";
+        const stdout = options.verbose === true ? verboseLinesOf(report) : "";
         const done = (async () => {
           if (outputFile !== "") await writeFile(outputFile, JSON.stringify(report), "utf8");
           return { exitCode: 0 };
@@ -558,13 +600,31 @@ describe("createRunEngine: single-file rerun", () => {
         return {
           done,
           collected: {
-            stdout: { readFrom: () => ({ text: "", lossy: false }) },
+            stdout: { readFrom: () => ({ text: stdout, lossy: false }) },
             stderr: { readFrom: () => ({ text: "", lossy: false }) },
           },
         };
       },
     };
     return { subprocess, calls };
+  }
+
+  /**
+   * The verbose reporter lines a report would have printed, so the live half of
+   * the engine sees the same cases the JSON report carries.
+   * @param report - the reporter payload.
+   * @returns one line per case, in report order.
+   */
+  function verboseLinesOf(report: ReportLike): string {
+    return report.testResults
+      .flatMap(file =>
+        file.assertionResults.map(entry => {
+          const icon = entry.status === "failed" ? "\u00d7" : entry.status === "skipped" ? "\u2193" : "\u2713";
+          const path = file.name.replace(/^\/ws\//, "");
+          return ` ${icon} ${path} > suite > ${entry.title} ${String(entry.duration)}ms`;
+        }),
+      )
+      .join("\n");
   }
 
   it("replaces only the rerun file's result and keeps the rest", async () => {
@@ -583,6 +643,61 @@ describe("createRunEngine: single-file rerun", () => {
     // Alpha is untouched, beta carries the rerun's verdict.
     expect(files.find(file => file.path === "packages/alpha/test/one.test.ts")?.cases[0]?.status).toBe("passed");
     expect(files.find(file => file.path === "packages/beta/test/two.test.ts")?.cases[0]?.status).toBe("failed");
+  });
+
+  it("keeps the full run's log while patching its snapshot", async () => {
+    const { subprocess } = makeSequence([TWO_FILES, BETA_ONLY]);
+    const engine = createRunEngine({ subprocess });
+
+    await startOk(engine, WORKSPACE, ALL).done;
+    const full = engine.getState(WORKSPACE);
+    expect(full.log?.scope).toEqual(ALL);
+    expect(full.log?.runNumber).toBe(1);
+
+    await startOk(engine, WORKSPACE, { kind: "file", path: "packages/beta/test/two.test.ts" }).done;
+    const patched = engine.getState(WORKSPACE);
+
+    // The rerun is the latest run, but the story on the chart stays the full
+    // run's: one file turning red must not erase the run that found it.
+    expect(patched.run?.scope).toEqual({ kind: "file", path: "packages/beta/test/two.test.ts" });
+    expect(patched.run?.runNumber).toBe(2);
+    expect(patched.log?.runId).toBe(full.log?.runId);
+    expect(patched.log?.scope).toEqual(ALL);
+    // The rerun's red verdict is folded into the log, so the chart agrees with
+    // the row it just repainted.
+    expect(patched.log?.counts.failed).toBe(1);
+  });
+
+  it("clears a fixed failure from the chart's log while the other rows stay", async () => {
+    const { subprocess } = makeSequence([TWO_FILES_FAILING, BETA_PASSED], { verbose: true });
+    const engine = createRunEngine({ subprocess });
+
+    await startOk(engine, WORKSPACE, ALL).done;
+    expect(engine.getState(WORKSPACE).log?.counts.failed).toBe(1);
+
+    await startOk(engine, WORKSPACE, { kind: "file", path: "packages/beta/test/two.test.ts" }).done;
+    const state = engine.getState(WORKSPACE);
+
+    // The failure is gone from the run's story, not only from the row: the
+    // chart's failed band and the last-run line must agree with the board.
+    expect(state.log?.counts.failed).toBe(0);
+    expect(state.log?.failures).toEqual([]);
+    expect(state.log?.series.at(-1)?.failed).toBe(0);
+    expect(state.log?.status).toBe("passed");
+    // The rest of the full run's shape survives: two files, both completed.
+    expect(state.log?.counts.total).toBe(2);
+    expect(state.snapshot?.packages.flatMap(pkg => pkg.files)).toHaveLength(2);
+  });
+
+  it("uses the first scoped run as the log when no full run has happened", async () => {
+    const { subprocess } = makeSequence([BETA_ONLY]);
+    const engine = createRunEngine({ subprocess });
+
+    await startOk(engine, WORKSPACE, { kind: "file", path: "packages/beta/test/two.test.ts" }).done;
+    const state = engine.getState(WORKSPACE);
+
+    expect(state.run?.scope).toEqual({ kind: "file", path: "packages/beta/test/two.test.ts" });
+    expect(state.log?.runId).toBe(state.run?.runId);
   });
 
   it("records the scope and bumps the run number on a rerun", async () => {

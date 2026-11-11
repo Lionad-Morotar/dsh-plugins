@@ -22,7 +22,8 @@
 - **逐用例增量**：`verbose` reporter 逐条打印，引擎按 200ms 轮询 `subprocess` 的 offset 读，把新增的 stdout 折进状态，所以轮询方在进程结束前就能看到用例一条条落地。`json` reporter 在结束时写文件，是最终快照的权威来源（它带状态与失败信息，人类可读行不带）。
 - **每工作区一轮**：第二次 `start` 返回 `busy`，不排队。取消走 `AbortSignal`，保留已收集的部分事件与既有快照。
 - **运行反馈**：还没出任何结果的首轮显示居中 `运行中` 加转圈与取消按钮，不是停在「尚未运行」；已有看板在跑时，面板顶边一条 2px 不定进度条持续扫过，配合计数与竖条动画。`prefers-reduced-motion: reduce` 下转圈与扫光都停住，只留静止的弱化标记。
-- **结果缓存**：每轮跑完把这一轮的 run 与 snapshot 写到工作区 `<workspace>/logs/testboard/<YYMMDD>/<HHmmss>/result.json`（本地时间，同秒重名自动加 `-2` 后缀）。宿主进程里没有该工作区的状态时（重启、新会话、重载页面），`/state` 自动回退到最新一份可读结果，页头 meta 前缀「上次运行」。写盘是 best-effort：只读 checkout 或磁盘满不会把已完成的运行判失败；坏文件或旧版本 schema 会被跳过，而不是清空看板。缓存不自动清理，删 `logs/testboard` 即重置。
+- **文件级重跑是补丁**：`scope` 为 `{kind:"file"}` 时只把该文件的新结果换进当前 snapshot，其余文件的行原样保留；同时保留上一次全量 run 的 run log（series、失败时刻、耗时），并把补跑文件的结论折回这份 log：修好的失败从图表里消失，新出现的失败补回原时刻。页头计数按补丁后的 snapshot 走，吞吐图与「上次运行」行仍讲全量 run 的故事。所以一轮全量跑出多处失败后，可以逐个文件补跑，看板逐步变绿而全量 run 的形态不被单个文件覆盖。
+- **结果缓存**：每轮跑完把这一轮的 run 与 snapshot 写到工作区 `<workspace>/logs/testboard/<YYMMDD>/<HHmmss>/result.json`（本地时间，同秒重名自动加 `-2` 后缀）。宿主进程里没有该工作区的状态时（重启、新会话、重载页面），`/state` 自动回退到最新一份可读结果，页头 meta 前缀「上次运行」。缓存同时保存 canonical run log，重载后补丁过的 snapshot 与全量 run 的图表叙事一起恢复。写盘是 best-effort：只读 checkout 或磁盘满不会把已完成的运行判失败；坏文件或旧版本 schema 会被跳过，而不是清空看板。缓存不自动清理，删 `logs/testboard` 即重置。
 
 ## 交互
 
