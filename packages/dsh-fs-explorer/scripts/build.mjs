@@ -284,6 +284,45 @@ const FORBIDDEN_CHUNK_PATHS = {
 };
 
 /**
+ * Gzipped size ceilings for the family chunks, as a multiple of their baseline.
+ *
+ * The baselines are the `lib/` this package shipped at 546b0f8, before the
+ * language catalogue existed: scene3d 272,836 B, raster 34,156 B, cad 352,493 B,
+ * image 3,693 B, pdf 491,681 B. The ceiling is 1.05x rather than an absolute
+ * number so an engine upgrade that legitimately grows a chunk has room, while a
+ * few kilobytes of unrelated data does not.
+ *
+ * This exists because a family chunk once grew ~5.5 KB each with nothing in the
+ * build noticing: `family-view.tsx` imported the failure classifier from
+ * `preview.ts`, which re-exports the language catalogue, so all 74 language rows
+ * were bundled into every family chunk. The size is the only symptom a build can
+ * see, which is why it is checked here and not left to a reviewer measuring
+ * gzip by hand.
+ */
+const FAMILY_BASELINE_GZIP = {
+  "client.scene3d.js": 272836,
+  "client.raster.js": 34156,
+  "client.cad.js": 352493,
+  "client.image.js": 3693,
+  "client.pdf.js": 491681,
+};
+
+/** How far over its baseline a family chunk may drift before the build fails. */
+const FAMILY_GROWTH_ALLOWANCE = 1.05;
+
+/**
+ * Strings that only appear when the language catalogue is bundled.
+ *
+ * A family chunk that carries any of these has imported something that reaches
+ * the catalogue, whatever the size happens to be. The ids are chosen from rows
+ * no family chunk has any reason to name: `dockercompose` and the four excluded
+ * injection-only languages exist solely in the catalogue, so their presence is
+ * proof the table arrived. A minified identifier would not do as a marker, since
+ * short names collide with unrelated code in a bundle this size.
+ */
+const CATALOGUE_MARKERS = ["dockercompose", "jsx-tags", "markdown_latex_combined", "cpp_embedded_latex"];
+
+/**
  * Fail the build when the artifacts drift apart.
  *
  * Every chunk name has to agree across three files that cannot import each
@@ -321,6 +360,17 @@ function assertArtifacts(entryText, texts) {
     for (const forbidden of FORBIDDEN_CHUNK_PATHS[file] ?? []) {
       if ((texts[file] ?? "").includes(forbidden)) {
         throw new Error(`${file} contains ${forbidden}; that path has no route here, so the engine must be inlined`);
+      }
+    }
+    // A family chunk draws bytes; it has no business knowing which language a
+    // text file is. Catching the data here names the cause, where the size check
+    // below only reports the symptom.
+    for (const catalogue of CATALOGUE_MARKERS) {
+      if ((texts[file] ?? "").includes(catalogue)) {
+        throw new Error(
+          `${file} contains ${catalogue}, so it imported something that reaches the language catalogue; ` +
+            "import preview-failure.ts rather than preview.ts from a family chunk",
+        );
       }
     }
   }
@@ -447,6 +497,10 @@ async function main(checkOnly) {
    * A chunk that grows past its ceiling means a reader who opens one model
    * downloads something nobody asked for. Gzipped, because that is what the route
    * actually transfers.
+   *
+   * Two ceilings per family chunk: the absolute one that keeps a format from
+   * turning every preview into a multi-megabyte download, and the baseline
+   * multiple that catches unrelated data arriving in a chunk that draws bytes.
    * @returns one message per file over budget.
    */
   const overBudget = async () => {
@@ -454,6 +508,17 @@ async function main(checkOnly) {
     for (const [file, budget] of Object.entries(SIZE_BUDGETS)) {
       const gzipped = gzipSync(await bytesOf(file)).length;
       if (gzipped > budget) over.push(`${file}: ${String(gzipped)} B gzipped, budget ${String(budget)} B`);
+    }
+    for (const [file, baseline] of Object.entries(FAMILY_BASELINE_GZIP)) {
+      const gzipped = gzipSync(await bytesOf(file)).length;
+      const ceiling = Math.floor(baseline * FAMILY_GROWTH_ALLOWANCE);
+      if (gzipped > ceiling) {
+        over.push(
+          `${file}: ${String(gzipped)} B gzipped, over ${String(ceiling)} B ` +
+            `(${String(FAMILY_GROWTH_ALLOWANCE)}x the ${String(baseline)} B baseline); ` +
+            "a family chunk must not carry data it does not draw",
+        );
+      }
     }
     return over;
   };

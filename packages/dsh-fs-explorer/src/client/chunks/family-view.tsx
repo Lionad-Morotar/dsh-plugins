@@ -19,7 +19,7 @@ import type { PreviewFamily } from "dsh-preview-viewers/formats.ts";
 import { insertStyles } from "dsh-preview-viewers/styles.ts";
 
 import { surfaceTranslator } from "../copy.ts";
-import { classifyPreviewFailure, type PreviewFailure } from "../preview.ts";
+import { classifyPreviewFailure, type PreviewFailure } from "../preview-failure.ts";
 import { PreviewFailureView, PreviewLoadingView } from "../preview-failure.tsx";
 import type { FamilyViewProps } from "../preview-chunk.ts";
 

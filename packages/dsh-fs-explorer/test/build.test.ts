@@ -11,6 +11,7 @@
  * code in front of it.
  */
 import { build } from "esbuild";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -82,4 +83,31 @@ describe("client entry bundle", () => {
       expect(entry.includes(marker), `${marker} leaked into the entry`).toBe(false);
     }
   });
+});
+
+/**
+ * The family chunks draw bytes and must not know about the language catalogue.
+ *
+ * This reads the committed `lib/` rather than bundling in memory: two of the five
+ * chunks need the build's Draco and pdf-worker plugins to bundle at all, and
+ * duplicating that wiring here would test a different pipeline than the one that
+ * ships. `lib/` is the artifact the host loads, so it is also the honest target.
+ *
+ * The regression this guards against: `family-view.tsx` imported the failure
+ * classifier from `preview.ts`, which re-exports the catalogue, so all 74
+ * language rows landed in every family chunk (+5.5 KB each) and nothing failed.
+ * The ids below exist only in the catalogue, so their presence is proof the
+ * table arrived.
+ */
+describe("family chunk boundary", () => {
+  const CATALOGUE_ONLY_IDS = ["dockercompose", "jsx-tags", "markdown_latex_combined", "cpp_embedded_latex"];
+
+  for (const [family, file] of Object.entries(FAMILY_CHUNKS)) {
+    it(`keeps the language catalogue out of ${family}`, () => {
+      const chunk = readFileSync(join(packageRoot, "lib", file), "utf8");
+      for (const id of CATALOGUE_ONLY_IDS) {
+        expect(chunk.includes(id), `${id} leaked into ${file}`).toBe(false);
+      }
+    });
+  }
 });
