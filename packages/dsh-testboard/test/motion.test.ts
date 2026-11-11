@@ -15,18 +15,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  bucketIndexAt,
   bucketOfSeries,
   caseTickStates,
   countTween,
   defaultMotion,
   easeOutCubic,
   elapsedOf,
-  failureMarkers,
   isReducedMotion,
   phaseLabel,
   rowReading,
   runMeta,
-  seriesPoints,
+  stackedSeries,
   tickDelayMs,
   type MotionInput,
 } from "../src/client/motion.ts";
@@ -208,74 +208,74 @@ describe("runMeta", () => {
   });
 });
 
-describe("seriesPoints", () => {
-  it("maps the host's cumulative buckets onto the chart's axes", () => {
-    const points = seriesPoints(run().series, { width: 100, height: 50 });
+describe("stackedSeries", () => {
+  it("turns the cumulative buckets into one stack per second", () => {
+    const chart = stackedSeries(run().series, { width: 100, height: 50 });
 
-    expect(points).toHaveLength(3);
-    // The first bucket sits on the left edge and the last on the right.
-    expect(points[0]?.x).toBe(0);
-    expect(points[2]?.x).toBe(100);
+    // 10 then +30 then +50; the last second carries two failures.
+    expect(chart.buckets.map(bucket => [bucket.passed, bucket.failed])).toEqual([
+      [10, 0],
+      [30, 0],
+      [48, 2],
+    ]);
+    expect(chart.buckets[0]?.x).toBe(0);
+    expect(chart.buckets[2]?.x).toBe(100);
+    expect(chart.max).toBe(50);
+    expect(chart.passedTop).toHaveLength(3);
+    expect(chart.failedTop).toHaveLength(3);
   });
 
-  it("plots each second's own completions, not the running total", () => {
-    const points = seriesPoints(
-      [
-        { tMs: 0, finished: 10, passed: 10, failed: 0 },
-        { tMs: 1000, finished: 50, passed: 50, failed: 0 },
-        { tMs: 2000, finished: 55, passed: 55, failed: 0 },
-      ],
-      { width: 100, height: 50 },
-    );
+  it("raises a lone failure to a tenth of the stack so its shape stays visible", () => {
+    const chart = stackedSeries([{ tMs: 0, finished: 1001, passed: 1000, failed: 1 }], { width: 100, height: 50 });
 
-    // 10, then 40, then 5: the middle second is the busiest, so it sits highest
-    // and the last one drops back down. A cumulative plot could only ever rise.
-    expect(points[1]?.y).toBeLessThan(points[0]?.y ?? 0);
-    expect(points[2]?.y).toBeGreaterThan(points[1]?.y ?? 0);
+    const bucket = chart.buckets[0];
+    expect(bucket?.failed).toBe(1);
+    expect(bucket?.shownFailed).toBeCloseTo(100.1, 5);
+    expect(bucket?.shownPassed).toBeCloseTo(900.9, 5);
+    expect(bucket?.compressed).toBe(true);
   });
 
-  it("is empty for an empty series, which is what an unstarted run reports", () => {
-    expect(seriesPoints([], { width: 100, height: 50 })).toEqual([]);
+  it("keeps a failure that is already above the floor at its real height", () => {
+    const chart = stackedSeries([{ tMs: 0, finished: 30, passed: 25, failed: 5 }], { width: 100, height: 50 });
+
+    const bucket = chart.buckets[0];
+    expect(bucket?.shownFailed).toBe(5);
+    expect(bucket?.shownPassed).toBe(25);
+    expect(bucket?.compressed).toBe(false);
+  });
+
+  it("draws nothing for an empty series", () => {
+    expect(stackedSeries([], { width: 100, height: 50 })).toEqual({
+      buckets: [],
+      max: 0,
+      passedTop: [],
+      failedTop: [],
+    });
   });
 
   it("survives a single bucket without dividing by zero", () => {
-    const points = seriesPoints([{ tMs: 0, finished: 5, passed: 5, failed: 0 }], { width: 100, height: 50 });
+    const chart = stackedSeries([{ tMs: 0, finished: 5, passed: 5, failed: 0 }], { width: 100, height: 50 });
 
-    expect(points).toHaveLength(1);
-    expect(Number.isFinite(points[0]?.x)).toBe(true);
-    expect(Number.isFinite(points[0]?.y)).toBe(true);
+    expect(chart.buckets).toHaveLength(1);
+    expect(Number.isFinite(chart.passedTop[0]?.y)).toBe(true);
+    // One bucket is a whole-run rate, so its band fills the plot rather than
+    // drawing a single vertical line at the left edge.
+    expect(chart.passedTop.map(point => point.x)).toEqual([0, 100]);
+    expect(chart.max).toBe(5);
   });
 });
 
-describe("failureMarkers", () => {
-  it("places one marker per failing second, at that second's x", () => {
-    const markers = failureMarkers(
-      [
-        { tMs: 1000, path: "a", name: "one" },
-        { tMs: 2500, path: "a", name: "two" },
-      ],
-      { width: 100, height: 50, spanMs: 4000 },
-    );
-
-    expect(markers).toHaveLength(2);
-    expect(markers[0]?.x).toBeCloseTo(25, 1);
-    expect(markers[1]?.x).toBeCloseTo(62.5, 1);
+describe("bucketIndexAt", () => {
+  it("rounds to the nearest bucket across the plot", () => {
+    expect(bucketIndexAt(0, 3)).toBe(0);
+    expect(bucketIndexAt(0.4, 3)).toBe(1);
+    expect(bucketIndexAt(0.8, 3)).toBe(2);
   });
 
-  it("collapses several failures in one second into one line", () => {
-    const markers = failureMarkers(
-      [
-        { tMs: 2000, path: "a", name: "one" },
-        { tMs: 2000, path: "a", name: "two" },
-      ],
-      { width: 100, height: 50, spanMs: 4000 },
-    );
-
-    expect(markers).toHaveLength(1);
-  });
-
-  it("is empty when nothing failed", () => {
-    expect(failureMarkers([], { width: 100, height: 50, spanMs: 1000 })).toEqual([]);
+  it("clamps outside the plot and collapses a single bucket", () => {
+    expect(bucketIndexAt(-1, 3)).toBe(0);
+    expect(bucketIndexAt(2, 3)).toBe(2);
+    expect(bucketIndexAt(0.5, 1)).toBe(0);
   });
 });
 

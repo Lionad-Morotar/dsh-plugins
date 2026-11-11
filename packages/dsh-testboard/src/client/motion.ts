@@ -19,21 +19,53 @@ export interface ChartPoint {
   readonly y: number;
 }
 
-/** One red line marking a second that finished a failure. */
-export interface FailureMarker {
-  readonly x: number;
-}
-
 /** The box a chart is laid out in. */
 export interface ChartBox {
   readonly width: number;
   readonly height: number;
 }
 
-/** The chart box plus the run's own time span, which places the markers. */
-export interface MarkerBox extends ChartBox {
-  readonly spanMs: number;
+/**
+ * One second of the stacked throughput chart.
+ *
+ * `passed` and `failed` are the second's own completions, not the cumulative
+ * bucket: the chart is a rate, and a cumulative stack could only grow.
+ */
+export interface ChartBucket {
+  /** Milliseconds since the run started, on the host's one-second grid. */
+  readonly tMs: number;
+  /** Position in the viewBox, left to right. */
+  readonly x: number;
+  readonly passed: number;
+  readonly failed: number;
+  /** Height the passed band is drawn at after the failure floor is applied. */
+  readonly shownPassed: number;
+  readonly shownFailed: number;
+  /** Whether the failed band was raised to its floor for this second. */
+  readonly compressed: boolean;
 }
+
+/** The stacked chart's geometry in viewBox units. */
+export interface StackedChart {
+  readonly buckets: readonly ChartBucket[];
+  /** The tallest stack, which is the chart's scale. */
+  readonly max: number;
+  /** The top edge of the passed band. */
+  readonly passedTop: readonly ChartPoint[];
+  /** The top edge of the failed band, which is the stack's total height. */
+  readonly failedTop: readonly ChartPoint[];
+}
+
+/**
+ * The least share of a stack a failed second is drawn at.
+ *
+ * A suite that fails one case while passing a thousand would draw that failure
+ * as a hairline, and the shape of the failures (which is what a reader is
+ * watching for) would be invisible. Raising the failed band to a tenth compresses
+ * the passed-to-failed ratio to at most nine to one; the tooltip reports the
+ * real numbers, so the floor never turns into a false count.
+ */
+const MIN_FAILED_SHARE = 0.1;
 
 /** How one case's tick should read. */
 export type TickState = "unrun" | "passed" | "failed" | "skipped";
@@ -246,57 +278,79 @@ export function runMeta(run: RunProgress | undefined, strings: MotionStrings, el
 }
 
 /**
- * The chart's points, in viewBox units.
+ * The chart's buckets and the two bands they stack into.
  *
- * The y axis is what finished in each second, not the running total. The chart's
- * own title says "per second", and a cumulative line can only ever rise: a suite
- * that sprints and then stalls would draw the same straight diagonal as one that
- * ticks along evenly, which is the one thing this chart exists to tell apart.
+ * The stack is passed below, failed above, and the whole stack is as tall as
+ * that second's completions. The failed band has a floor (see
+ * `MIN_FAILED_SHARE`), so a second with one failure among hundreds still shows
+ * a band a reader can see; `compressed` says the drawn height is not the real
+ * count, and the tooltip is what restores the number.
  *
  * @param series - the host's cumulative buckets.
  * @param box - the viewBox.
- * @returns one point per bucket, left to right.
+ * @returns the buckets, the scale, and the two top edges.
  */
-export function seriesPoints(
+export function stackedSeries(
   series: RunProgress["series"],
   box: ChartBox,
-): ChartPoint[] {
-  if (series.length === 0) return [];
-  // The series is cumulative, so each second's own figure is the difference
-  // from the bucket before it.
-  const perSecond = series.map((bucket, index) => bucket.finished - (series[index - 1]?.finished ?? 0));
-  const max = perSecond.reduce((peak, value) => Math.max(peak, value), 0);
+): StackedChart {
+  if (series.length === 0) return { buckets: [], max: 0, passedTop: [], failedTop: [] };
+
+  const perSecond = series.map((bucket, index) => {
+    const previous = series[index - 1];
+    return {
+      tMs: bucket.tMs,
+      passed: Math.max(0, bucket.passed - (previous?.passed ?? 0)),
+      failed: Math.max(0, bucket.failed - (previous?.failed ?? 0)),
+    };
+  });
+  const totals = perSecond.map(bucket => bucket.passed + bucket.failed);
+  const max = totals.reduce((peak, value) => Math.max(peak, value), 0);
   const step = series.length <= 1 ? 0 : box.width / (series.length - 1);
-  return perSecond.map((value, index) => ({
-    x: series.length <= 1 ? 0 : index * step,
-    // A flat run of zero completions draws on the baseline; the small inset
-    // keeps the stroke inside the box rather than half-clipped by its edge.
-    y: max === 0 ? box.height : box.height - (value / max) * box.height,
-  }));
+
+  const buckets = perSecond.map((bucket, index) => {
+    const total = totals[index] ?? 0;
+    const compressed = bucket.failed > 0 && total > 0 && bucket.failed < total * MIN_FAILED_SHARE;
+    const shownFailed = compressed ? total * MIN_FAILED_SHARE : bucket.failed;
+    return {
+      tMs: bucket.tMs,
+      x: series.length <= 1 ? 0 : index * step,
+      passed: bucket.passed,
+      failed: bucket.failed,
+      shownPassed: total - shownFailed,
+      shownFailed,
+      compressed,
+    };
+  });
+
+  const yOf = (value: number): number =>
+    max === 0 ? box.height : box.height - (value / max) * box.height;
+  const passedTop = buckets.map(bucket => ({ x: bucket.x, y: yOf(bucket.shownPassed) }));
+  const failedTop = buckets.map(bucket => ({ x: bucket.x, y: yOf(bucket.shownPassed + bucket.shownFailed) }));
+  // A one-bucket run would otherwise draw one vertical line at the left edge.
+  // The reading is a rate for the whole run, so it fills the plot's width.
+  if (series.length === 1) {
+    passedTop.push({ x: box.width, y: passedTop[0]?.y ?? box.height });
+    failedTop.push({ x: box.width, y: failedTop[0]?.y ?? box.height });
+  }
+  return { buckets, max, passedTop, failedTop };
 }
 
 /**
- * The red lines marking seconds that finished a failure.
+ * The bucket a pointer at `ratio` across the chart is nearest to.
  *
- * Several failures in one second are one line: the chart is a per-second
- * reading, and stacking three lines on the same pixel would only make the stroke
- * darker.
+ * The chart has no discrete hover targets: the reader points at a moment, and
+ * the nearest second is the one the tooltip should speak for. Rounding rather
+ * than flooring means the left half of a gap belongs to the left bucket and the
+ * right half to the right one, which is what the eye expects.
  *
- * @param failures - the run's failures, with their times.
- * @param box - the viewBox plus the run's span.
- * @returns one marker per failing second.
+ * @param ratio - pointer position across the plot, 0 at the left edge and 1 at the right.
+ * @param count - how many buckets the chart drew.
+ * @returns the index to read, clamped into the series.
  */
-export function failureMarkers(failures: RunProgress["failures"], box: MarkerBox): FailureMarker[] {
-  if (failures.length === 0 || box.spanMs <= 0) return [];
-  const seen = new Set<number>();
-  const markers: FailureMarker[] = [];
-  for (const failure of failures) {
-    const second = Math.floor(failure.tMs / 1000);
-    if (seen.has(second)) continue;
-    seen.add(second);
-    markers.push({ x: Math.min(box.width, (failure.tMs / box.spanMs) * box.width) });
-  }
-  return markers;
+export function bucketIndexAt(ratio: number, count: number): number {
+  if (count <= 1) return 0;
+  return Math.min(count - 1, Math.max(0, Math.round(ratio * (count - 1))));
 }
 
 /**

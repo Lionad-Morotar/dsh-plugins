@@ -122,6 +122,10 @@ export interface TestboardViewStrings extends DetailPaneStrings {
   readonly rerun: string;
   readonly tests: string;
   readonly chartTitle: string;
+  readonly chartPassed: string;
+  readonly chartFailed: string;
+  readonly chartSecond: string;
+  readonly chartFloor: string;
   readonly fixing: string;
   readonly fixingModel: string;
   readonly menuReference: string;
@@ -983,8 +987,6 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     // cumulative form rather than special-cased in the chart.
     const chartSeries: RunProgress["series"] =
       run === undefined ? cumulativeOf(throughputSeries(snapshot)) : run.series;
-    const chartFailures = run === undefined ? [] : run.failures;
-    const chartSpanMs = run === undefined ? Math.max(1000, summary.wallClockMs) : Math.max(1000, elapsedMs);
     const meta = runMeta(run, motionStrings, elapsedMs);
     // A reading recovered from disk is the same result the reader saw last time;
     // saying where it came from is the difference between "these numbers just
@@ -1022,10 +1024,16 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
         />
         <AreaChart
           series={chartSeries}
-          failures={chartFailures}
-          spanMs={chartSpanMs}
           reduced={motion.reduced}
-          strings={{ title: strings.chartTitle, peak: strings.peak, perSecond: strings.perSecond }}
+          strings={{
+            title: strings.chartTitle,
+            peak: strings.peak,
+            perSecond: strings.perSecond,
+            passed: strings.chartPassed,
+            failed: strings.chartFailed,
+            second: strings.chartSecond,
+            compressedNote: strings.chartFloor,
+          }}
           overlay={
             demo?.phase === "fixing" ? (
               <aside data-testid="fixing-card" data-tst="fixing-card">

@@ -103,6 +103,10 @@ const STRINGS: TestboardViewStrings = {
   rerun: "Rerun",
   tests: "tests",
   chartTitle: "每秒完成用例数",
+  chartPassed: "通过",
+  chartFailed: "失败",
+  chartSecond: "秒",
+  chartFloor: "失败段按 1/10 最小高度显示",
   fixing: "正在修复",
   fixingModel: "模型",
   menuReference: "引用",
@@ -1384,7 +1388,7 @@ describe("testboard motion", () => {
     expect(states.slice(2).every(state => state === "unrun")).toBe(true);
   });
 
-  it("draws the chart from the run's own series and marks its failures", async () => {
+  it("stacks the chart's passed and failed bands from the run's own series", async () => {
     await mount();
     runtime.setState({ snapshot: SNAPSHOT, run: runningRun() });
     await act(async () => {
@@ -1395,9 +1399,42 @@ describe("testboard motion", () => {
       await new Promise(resolve => setTimeout(resolve, 0));
     });
 
-    expect(host.querySelector('[data-testid="chart-line"]')?.getAttribute("d")).toBeTruthy();
-    expect(host.querySelectorAll('[data-testid="failure-pin"]').length).toBeGreaterThan(0);
+    expect(host.querySelector('[data-testid="chart-passed"]')?.getAttribute("d")).toBeTruthy();
+    expect(host.querySelector('[data-testid="chart-failed"]')?.getAttribute("d")).toBeTruthy();
+    expect(host.querySelector('[data-testid="chart-legend"]')?.textContent).toContain(STRINGS.chartPassed);
+    expect(host.querySelector('[data-testid="chart-legend"]')?.textContent).toContain(STRINGS.chartFailed);
     expect(host.querySelector('[data-testid="peak"]')?.textContent).toBeTruthy();
+  });
+
+  it("reads out the real counts when the pointer is over the chart", async () => {
+    await mount();
+    runtime.setState({ snapshot: SNAPSHOT, run: runningRun() });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await act(async () => host.querySelector<HTMLElement>('[data-testid="run-all"]')?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    const spark = host.querySelector<SVGSVGElement>('[data-tst="spark"]');
+    if (spark === null) throw new Error("no chart");
+    // jsdom has no layout, so the pointer maths needs the box the browser would
+    // have measured. This is the only thing the test supplies: the rest of the
+    // gesture (pointer events, state, tooltip) is the component's own.
+    Object.defineProperty(spark, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 120, width: 1000, height: 120, toJSON() {} }),
+    });
+    await act(async () => {
+      spark.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 500 }));
+    });
+
+    const tooltip = host.querySelector('[data-testid="chart-tooltip"]');
+    expect(tooltip).not.toBeNull();
+    expect(tooltip?.textContent).toContain(`${STRINGS.chartPassed} 1`);
+    expect(tooltip?.textContent).toContain(`${STRINGS.chartFailed} 1`);
+    expect(host.querySelector('[data-testid="chart-guide"]')).not.toBeNull();
   });
 
   it("prints the run's own line under the chart", async () => {
