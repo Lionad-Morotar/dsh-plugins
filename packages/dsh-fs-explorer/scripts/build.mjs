@@ -47,6 +47,13 @@ import { fileURLToPath } from "node:url";
 
 import { dracoDefines, dracoPlugin, loadDracoPayloads } from "dsh-preview-viewers/build/draco-plugin.mjs";
 import { loadPdfWorkerPayload, pdfDefines, pdfWorkerPlugin } from "dsh-preview-viewers/build/pdf-worker-plugin.mjs";
+import {
+  assertLanguageChunkMarkers,
+  assertLanguageChunkSet,
+  buildLanguageChunks,
+  chunkFileName,
+  languageChunkIds,
+} from "dsh-text-languages/build/lang-chunks.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "..");
@@ -56,6 +63,16 @@ const manifest = require(join(packageRoot, "package.json"));
 
 /** The text chunk's name; must match `PREVIEW_CHUNK.chunk` in src/shared.ts. */
 const PREVIEW_CHUNK = "client.preview.js";
+
+/**
+ * Where the language chunk entries live.
+ *
+ * The ids come from the catalogue, not from a list here: the catalogue is the
+ * one place that decides which languages ship as their own chunk, and a build
+ * that keeps its own copy of that list is a build that silently stops emitting a
+ * chunk the day the catalogue grows.
+ */
+const LANG_ENTRY_DIR = join(packageRoot, "src", "client", "chunk", "lang");
 
 /**
  * One lazy chunk per binary family; must match `FAMILY_CHUNKS` in src/shared.ts.
@@ -391,6 +408,26 @@ async function main(checkOnly) {
   }
 
   assertArtifacts(entryText, texts);
+
+  // Language chunks are emitted after the family chunks so a failure in the
+  // expensive engine bundles surfaces before ten more bundles are built. The
+  // set and marker checks run here rather than in assertArtifacts because they
+  // compare against the catalogue, which the family assertions know nothing
+  // about.
+  const languageIds = await languageChunkIds();
+  const languages = await buildLanguageChunks({
+    ids: languageIds,
+    entryDir: LANG_ENTRY_DIR,
+    bundle: entry => bundle(entry, { external: CLIENT_EXTERNALS, minify: true }),
+    wrap: (code, file) => wrap(manifest.name, code, { chunk: file }),
+  });
+  for (const file of languages.written) {
+    texts[file] = languages.texts[file];
+    await emit(file, languages.texts[file]);
+    written.push(file);
+  }
+  assertLanguageChunkSet({ ids: languageIds, emitted: languages.written });
+  assertLanguageChunkMarkers({ emitted: languages.written, texts: languages.texts });
 
   /**
    * The bytes of one artifact: the built text, or the committed file when the

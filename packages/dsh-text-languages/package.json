@@ -12,6 +12,7 @@
     "./glob.ts": "./src/glob.ts",
     "./types.ts": "./src/types.ts",
     "./index.ts": "./src/index.ts",
+    "./build/lang-chunks.mjs": "./build/lang-chunks.mjs",
     "./package.json": "./package.json"
   },
   "files": [
