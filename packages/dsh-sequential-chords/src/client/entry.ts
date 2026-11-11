@@ -184,7 +184,9 @@ export function registerSection(ctx: ClientContextLike, require: LoaderRequire |
 /** 加载器工厂返回的插件对象，形状与宿主半一致。 */
 export const clientPlugin = {
   name: "dsh-sequential-chords",
-  inject: [] as string[],
+  // `slots` 必须声明：宿主对未 inject 的服务属性读取直接抛
+  // "cannot get property \"slots\" without inject"，apply 会整条失败。
+  inject: ["slots"] as string[],
   apply(ctx: ClientContextLike): () => void {
     const teardown = createApp(loaderRequire).apply();
     const offSection = registerSection(ctx, loaderRequire);

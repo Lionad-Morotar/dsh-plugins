@@ -9,6 +9,8 @@
  * the virtual window also uses.
  */
 
+import { ENTRY_MARK_STYLES } from "./entry-mark.tsx";
+
 /** Attribute that tells a re-mount the stylesheet is already present. */
 const STYLE_ID = "dsh-fs-explorer-styles";
 
@@ -460,16 +462,6 @@ export const FS_STYLES = `
   white-space: nowrap;
 }
 .fx-search-count[data-state="empty"] { color: var(--fx-modified); }
-/* A result row's dimmed directory prefix; the name itself stays full strength. */
-.fx-row-dir {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--fx-caption);
-  font-size: calc(var(--fx-fs) * 0.75);
-  white-space: nowrap;
-}
 .fx-pane-handle {
   position: relative;
   z-index: 1;
@@ -684,34 +676,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
 .fx-chevron[data-open="true"] { transform: rotate(90deg); }
 .fx-chevron[data-visible="false"] { visibility: hidden; }
 .fx-row:hover .fx-chevron { opacity: 1; }
-.fx-folder { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: none; color: var(--fx-folder); }
-.fx-folder[data-open="false"] { color: color-mix(in oklab, var(--fx-folder) 78%, var(--fx-caption)); }
-
-.fx-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(var(--fx-fs-code) * 1.6364);
-  height: calc(var(--fx-fs-code) * 1.3636);
-  flex: none;
-  border-radius: 4px;
-  background: color-mix(in oklab, currentColor 13%, transparent);
-  font-family: var(--fx-mono);
-  font-size: calc(var(--fx-fs-code) * 0.7727);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1;
-}
-.fx-badge[data-icon="code"] { color: var(--fx-code); }
-.fx-badge[data-icon="markdown"] { color: var(--fx-markdown); }
-.fx-badge[data-icon="data"] { color: var(--fx-data); }
-.fx-badge[data-icon="image"] { color: var(--fx-image); }
-.fx-badge[data-icon="style"] { color: var(--fx-style); }
-.fx-badge[data-icon="config"] { color: var(--fx-config); }
-.fx-badge[data-icon="archive"] { color: var(--fx-archive); }
-.fx-badge[data-icon="file"] { color: var(--fx-file); }
-
-.fx-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: calc(var(--fx-fs) * 0.8571); }
+${ENTRY_MARK_STYLES}
 .fx-row[data-kind="directory"] .fx-name { font-weight: 500; }
 .fx-tag {
   display: inline-flex;
@@ -1116,6 +1081,41 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   line-height: 1.55;
   white-space: pre;
   tab-size: 4;
+}
+
+/* The plaintext renderer: a gutter and the page, side by side.
+   The gutter is a column of numbers that scrolls with the text, so both live in
+   one scroll box; the numbers are not selectable, because copying a page should
+   give the reader the text and not the line numbers. */
+.fx-plaintext {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow: auto;
+  padding: 12px 16px 40px;
+  font-family: var(--fx-mono);
+  font-size: calc(var(--fx-fs-code) * 1.0909);
+  line-height: 1.55;
+}
+.fx-plaintext-gutter {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  padding-right: 10px;
+  border-right: 1px solid var(--fx-border-soft);
+  color: var(--fx-caption);
+  text-align: right;
+  user-select: none;
+  min-width: 3ch;
+}
+.fx-plaintext-body {
+  margin: 0;
+  padding-left: 12px;
+  font: inherit;
+  white-space: pre;
+  tab-size: 4;
+  color: var(--fx-text);
 }
 
 .fx-md {

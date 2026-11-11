@@ -19,7 +19,6 @@
   --tst-fail: #cf222e;
   --tst-idle: #d0d7de;
   --tst-chart-line: #57606a;
-  --tst-chart-area: color-mix(in srgb, var(--tst-chart-line) 12%, transparent);
   --tst-tick-w: 3px;
   --tst-tick-h: 10px;
   --tst-tick-gap: 2px;
@@ -62,7 +61,6 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
   --tst-fail: #f85149;
   --tst-idle: #30363d;
   --tst-chart-line: #d0d7de;
-  --tst-chart-area: color-mix(in srgb, var(--tst-chart-line) 12%, transparent);
 }
 
 /* Header ------------------------------------------------------------------ */
@@ -182,33 +180,78 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
   overflow: visible;
 }
 
-[data-tst="spark-line"] {
-  fill: none;
-  stroke: var(--tst-chart-line);
+[data-tst="spark-passed"] {
+  fill: color-mix(in srgb, var(--tst-pass) 22%, transparent);
+  stroke: var(--tst-pass);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
-[data-tst="spark-area"] {
-  fill: var(--tst-chart-area);
-  stroke: none;
+/* No stroke: a second with no failures has a zero-height band, and a stroke
+   would still draw its edge as a red line across the whole chart. The fill is
+   the reading; the passed band's stroke marks the boundary between them. */
+[data-tst="spark-failed"] {
+  fill: color-mix(in srgb, var(--tst-fail) 58%, transparent);
 }
 
-/* The red rule marks the second a failure landed in. It fades in rather than
-   appearing, because a line that pops into a chart reads as a rendering fault
-   rather than as an event. */
-[data-tst="pin"] {
-  stroke: var(--tst-fail);
+[data-tst="chart-legend"] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  color: var(--tst-ink-faint);
+  font-size: var(--tst-fs-small);
+}
+
+[data-tst="chart-legend"] > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+[data-tst="legend-swatch"] {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+[data-tst="legend-swatch"][data-kind="passed"] { background: var(--tst-pass); }
+[data-tst="legend-swatch"][data-kind="failed"] { background: var(--tst-fail); }
+
+/* The guide and the tooltip are one gesture: the line says which second the
+   pointer is on, the card says what happened in it. The card is anchored over
+   the plot rather than under the pointer so it cannot leave the panel. */
+[data-tst="chart-guide"] {
+  stroke: var(--tst-ink-faint);
   stroke-width: 1;
-  opacity: 0.9;
+  stroke-dasharray: 3 3;
+  opacity: 0.8;
   vector-effect: non-scaling-stroke;
-  animation: tst-pin-in 150ms ease-out both;
 }
 
-@keyframes tst-pin-in {
-  from { opacity: 0; }
-  to { opacity: 0.9; }
+[data-tst="chart-tooltip"] {
+  position: absolute;
+  top: 22px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 7px;
+  border: 1px solid var(--tst-rule);
+  border-radius: 4px;
+  background: var(--tst-surface);
+  color: var(--tst-ink);
+  font-family: var(--tst-mono);
+  font-size: var(--tst-fs-code);
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--tst-ink) 12%, transparent);
 }
+
+[data-tst="chart-tooltip-passed"] { color: var(--tst-pass); }
+[data-tst="chart-tooltip-failed"] { color: var(--tst-fail); }
+[data-tst="chart-tooltip-note"] { color: var(--tst-ink-faint); }
 
 [data-tst="peak"] {color: var(--tst-ink-faint);font-size: var(--tst-fs-small)}
 
@@ -496,18 +539,17 @@ body.tst-pane-resizing {
   height: var(--tst-tick-h);
   border-radius: 1px;
   background: var(--tst-idle);
-  transform-origin: center;
   transition:
     background-color var(--tst-tick-ms) ease-out,
-    transform var(--tst-tick-ms) ease-out,
     opacity var(--tst-tick-ms) ease-out;
 }
 
-/* A tick that has not been reported yet stays grey and slightly short: the
-   height difference is what makes the lit ones read as having landed. */
+/* One tick is one shape in every state. The colour carries the result, and
+   nothing else does: a ring around a failure or a shorter grey bar makes the
+   states look like different objects, and a row of them stops reading as a
+   count of the same thing. */
 [data-tst="tick"][data-state="unrun"] {
-  transform: scaleY(0.4);
-  opacity: 0.55;
+  opacity: 0.45;
 }
 
 [data-tst="tick"][data-state="passed"],
@@ -516,35 +558,21 @@ body.tst-pane-resizing {
 }
 
 [data-tst="tick"][data-state="passed"] {
-  transform: scaleY(1);
   opacity: 1;
 }
 
-/* A failure gets a ring as well as the colour: colour alone is the one channel
-   a red-green colour-blind reader cannot use, and this board's whole job is
-   making a failure findable. */
 [data-tst="tick"][data-state="failed"],
 [data-tst="case-dot"][data-status="failed"] {
   background: var(--tst-fail);
 }
 
 [data-tst="tick"][data-state="failed"] {
-  transform: scaleY(1);
   opacity: 1;
-  box-shadow: 0 0 0 1px var(--tst-fail);
-  animation: tst-tick-flash 320ms ease-out;
 }
 
 [data-tst="tick"][data-state="skipped"] {
   background: var(--tst-idle);
-  transform: scaleY(0.7);
   opacity: 0.8;
-}
-
-@keyframes tst-tick-flash {
-  0% { box-shadow: 0 0 0 1px var(--tst-fail); }
-  50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--tst-fail) 55%, transparent); }
-  100% { box-shadow: 0 0 0 1px var(--tst-fail); }
 }
 
 [data-tst="lane-reading"] {flex: 0 0 auto;color: var(--tst-ink-faint);text-align: right;min-width: 56px}

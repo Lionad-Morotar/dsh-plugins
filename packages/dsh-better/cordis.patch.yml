@@ -3,3 +3,15 @@
 - insert:
     - id: better
       name: 'dsh-better'
+
+# ── Agent Teams 成员上限（261111）──────────────────────────────────────────
+# 随 dsh-better 分发，任何加载本 bundle 的 profile 都把 Team 上限从
+# @deepseek-ai/dsh-experimental-agent-team-profile 默认的 8 提到 32。
+# 非 insert 的 config 是「整键替换」，所以四个字段写全，避免其余字段退回插件默认值。
+# 不加载 agent-team 的 profile（如 model-verify）只会得到一条 patch not found 警告，不致命。
+- id: agent-team
+  config:
+    maxMembers: 32
+    maxTasks: 256
+    maxMessageBytes: 65536
+    disposalTimeoutMs: 5000

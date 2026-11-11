@@ -19,10 +19,12 @@
  */
 import type { ComponentType } from "react";
 
+import type { Extension } from "@codemirror/state";
 import type { ReadFile } from "dsh-preview-viewers/contracts.ts";
+import { LANGUAGE_CHUNKS } from "dsh-text-languages/index.ts";
 
 import type { Translate } from "./copy.ts";
-import type { LanguageId, PreviewFamily } from "./preview.ts";
+import type { PreviewFamily } from "./preview.ts";
 import { FAMILY_CHUNKS, PACKAGE_NAME, PREVIEW_CHUNK } from "../shared.ts";
 
 /** The `require` the ModuleLoader factory receives. */
@@ -35,7 +37,6 @@ export interface LoaderRequire {
 /** What the chunk needs to mount one read-only editor over one page. */
 export interface CodePreviewOptions {
   readonly text: string;
-  readonly language: LanguageId;
   readonly path: string;
   /** First line of the page; the gutter starts numbering here. */
   readonly offset: number;
@@ -96,6 +97,43 @@ export interface FamilyChunkModule {
   readonly FamilyView: ComponentType<FamilyViewProps>;
 }
 
+/**
+ * Everything one language chunk exports.
+ *
+ * The chunk carries its own editor, so the contract is a mount function rather
+ * than a grammar factory. That is not a style choice: a chunk is its own bundle
+ * and the host's `require` resolves no `@codemirror/*`, so a grammar built in one
+ * chunk cannot be handed to an editor built in another. The marker is checked
+ * against the id that was requested, because a chunk fetched under the wrong
+ * name would otherwise colour a Python file with the JSON grammar.
+ */
+export interface LanguageChunkModule {
+  readonly renderer: string;
+  /**
+   * Mount the editor for one language.
+   *
+   * The id is required because a block can carry several languages: the four
+   * batch blocks dispatch on it, and the single-language blocks ignore it. Passing
+   * it everywhere keeps one call shape rather than two.
+   */
+  mount(host: HTMLElement, options: LanguageMountOptions, id: string): LanguageHandle;
+}
+
+/** What a language chunk's mount needs: the page, its path and its first line. */
+export interface LanguageMountOptions {
+  readonly text: string;
+  readonly path: string;
+  readonly offset: number;
+}
+
+/** The handle a language chunk's editor exposes. */
+export interface LanguageHandle {
+  update(text: string, offset: number): void;
+  revealRange(from: number, to: number): void;
+  clearSelection(): void;
+  destroy(): void;
+}
+
 /** One package-local chunk, named once. */
 export interface PreviewChunkRoute {
   readonly chunk: string;
@@ -110,6 +148,18 @@ const ROUTE: PreviewChunkRoute = Object.freeze({
 let loaderRequire: LoaderRequire | null = null;
 let pending: Promise<PreviewChunkModule> | null = null;
 const familyPending = new Map<PreviewFamily, Promise<FamilyChunkModule>>();
+const languagePending = new Map<string, Promise<LanguageChunkModule>>();
+
+/**
+ * The language ids that have a chunk, taken from the catalogue.
+ *
+ * Derived rather than listed: the catalogue is what decides which blocks exist,
+ * and a copy here would silently disagree the day it changes. These are block
+ * names, not language ids: several languages share one block.
+ */
+export const LANGUAGE_CHUNK_IDS: readonly string[] = Object.freeze(
+  [...new Set(Object.values(LANGUAGE_CHUNKS))].map(file => file.replace(/^client\.lang-/u, "").replace(/\.js$/u, "")),
+);
 
 /**
  * Take the loader require from the factory.
@@ -135,6 +185,79 @@ export function previewChunkRoute(): PreviewChunkRoute {
 export function familyChunkRoute(family: PreviewFamily): PreviewChunkRoute {
   const chunk = FAMILY_CHUNKS[family];
   return { chunk, id: `${PACKAGE_NAME}/${chunk}` };
+}
+
+/**
+ * The chunk one language's grammar lives in, or null when it has none.
+ *
+ * Null is the answer for most languages: the catalogue covers 74 of them and
+ * only ten ship a grammar chunk. The caller uses null to skip the fetch
+ * entirely, which is what keeps a `.rs` file at zero requests.
+ * @param id - language id from the catalogue.
+ * @returns the file name and module-table id, or null when there is no chunk.
+ */
+export function languageChunkRoute(id: string): PreviewChunkRoute | null {
+  const chunk = LANGUAGE_CHUNKS[id];
+  return chunk === undefined ? null : { chunk, id: `${PACKAGE_NAME}/${chunk}` };
+}
+
+/**
+ * Whether a language has a grammar chunk to fetch.
+ *
+ * The pane asks this before calling the loader, because most catalogue ids have
+ * no chunk: plaintext, the 64 approximated and backlog languages, and every
+ * unknown file. Calling the loader for those would be a rejection per mount for
+ * an answer already known, and the contract is that such a file costs zero
+ * requests rather than a request that fails.
+ * @param id - language id from the catalogue.
+ * @returns true when a chunk exists for it.
+ */
+export function hasLanguageChunk(id: string): boolean {
+  return LANGUAGE_CHUNKS[id] !== undefined;
+}
+
+/**
+ * Resolve one language's grammar chunk.
+ *
+ * Three refusals, all of them synchronous or immediate: an id with no chunk, a
+ * missing loader hand-over, and a chunk whose marker names another language.
+ * The last one is the reason the marker exists at all.
+ *
+ * Rejections are dropped from the cache. A grammar that failed once (a chunk
+ * racing the boot hand-over, a transient 404) must be retryable, because the
+ * alternative is a file type that stays monochrome for the life of the page.
+ * @param id - language id from the catalogue.
+ * @returns the chunk module.
+ */
+export function loadLanguageChunk(id: string): Promise<LanguageChunkModule> {
+  const route = languageChunkRoute(id);
+  if (route === null) {
+    return Promise.reject(new Error(`${PACKAGE_NAME}: no language chunk for ${id}`));
+  }
+  // Keyed by the artifact, not the language: `vue`, `svelte` and `razor` are all
+  // drawn by the html block, and opening two of them must cost one fetch.
+  const cached = languagePending.get(route.chunk);
+  if (cached !== undefined) return cached;
+  const active = loaderRequire;
+  if (active === null || typeof active.async !== "function") {
+    return Promise.reject(new Error(`${PACKAGE_NAME}: the loader require was not handed over`));
+  }
+  // The marker names the block, so that is what it is compared against. Comparing
+  // it to the language id would reject every shared block: `vue` arrives from a
+  // chunk whose marker is `html`.
+  const block = route.chunk.replace(/^client\.lang-/u, "").replace(/\.js$/u, "");
+  const request = active.async(`./${route.chunk}`).then(module => {
+    const chunk = module as Partial<LanguageChunkModule> | null;
+    if (chunk === null || typeof chunk.mount !== "function" || chunk.renderer !== block) {
+      throw new Error(`${PACKAGE_NAME}: chunk ${route.id} is not the ${block} renderer`);
+    }
+    return chunk as LanguageChunkModule;
+  });
+  languagePending.set(route.chunk, request);
+  request.catch(() => {
+    if (languagePending.get(route.chunk) === request) languagePending.delete(route.chunk);
+  });
+  return request;
 }
 
 /**

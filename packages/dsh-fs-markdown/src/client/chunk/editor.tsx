@@ -21,68 +21,87 @@ import { html } from "@codemirror/lang-html";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
+import { python } from "@codemirror/lang-python";
 import { yaml } from "@codemirror/lang-yaml";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { Annotation, Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
+import { syntaxHighlighting } from "@codemirror/language";
+import { Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, drawSelection, keymap, type KeyBinding } from "@codemirror/view";
-import { tags } from "@lezer/highlight";
-import { useEffect, useRef, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 
 import { CLASS_NAMES } from "../classes.ts";
 import type { EditorBodyProps } from "../contracts.ts";
 import { planDecorations } from "../decorations.ts";
+import { BLOCK_ASSIGNMENT } from "dsh-text-languages/catalog.ts";
+
+import { EDITABLE_LANG_CHUNKS } from "../../shared.ts";
+import type { EditableHandle } from "../contracts.ts";
+import { boot as bootChunkLoader, loadEditableLangChunk, type LoaderRequire } from "../chunk-loader.ts";
+import { ExternalChange, EDITOR_HIGHLIGHT_STYLE } from "./editor-kit.tsx";
 import { languageOf, type EditorLanguage } from "../language.ts";
 import { TableWidget } from "../table-widget.ts";
 import { planTables, tableIntersects } from "../tables.ts";
 
-/** Marks a document replacement this component made itself, not the reader. */
-const ExternalChange = Annotation.define<boolean>();
+/**
+ * The colour table and the external-write annotation come from the editor kit.
+ *
+ * Both are shared with the four editable language blocks. A second colour table
+ * here would drift from the blocks and paint the same token two ways; a second
+ * annotation would carry a different identity, so a write marked by one would
+ * echo back as a user edit through the other.
+ */
+const highlightStyle = EDITOR_HIGHLIGHT_STYLE;
 
 /**
- * Colours come from the shell's tokens so the editor follows the theme.
+ * One grammar per block.
  *
- * `defaultHighlightStyle` is tuned for one background; this table resolves
- * through the same `--dsw-alias-*` variables as the rest of the panel.
+ * Keyed by block name rather than language id, because a block is what the
+ * catalogue actually assigns and several languages share one. `vue` is drawn by
+ * the html block, so keying by id would need an entry per alias and would drift
+ * the moment the catalogue learned a new one; keying by block asks the catalogue
+ * which block a language belongs to and then looks that block up.
+ *
+ * The four javascript dialects are one package with different flags, and the
+ * flags are the whole difference: `.js` used to be parsed with both JSX and
+ * TypeScript on, which made type annotations look valid in a plain script and
+ * accepted JSX in a file that has none. VS Code parses `.js` as plain
+ * JavaScript, and so does this.
  */
-const highlightStyle = HighlightStyle.define([
-  { tag: [tags.keyword, tags.modifier, tags.operatorKeyword], color: "var(--fmd-syn-keyword)" },
-  { tag: [tags.string, tags.special(tags.string), tags.regexp], color: "var(--fmd-syn-string)" },
-  { tag: [tags.number, tags.bool, tags.null, tags.atom], color: "var(--fmd-syn-number)" },
-  { tag: [tags.comment, tags.lineComment, tags.blockComment], color: "var(--fmd-syn-comment)", fontStyle: "italic" },
-  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: "var(--fmd-syn-function)" },
-  { tag: [tags.typeName, tags.className, tags.namespace, tags.tagName], color: "var(--fmd-syn-type)" },
-  { tag: [tags.propertyName, tags.attributeName], color: "var(--fmd-syn-property)" },
-  { tag: [tags.heading, tags.strong], color: "var(--fmd-syn-heading)", fontWeight: "600" },
-  { tag: [tags.link, tags.url], color: "var(--fmd-syn-link)", textDecoration: "underline" },
-  { tag: tags.invalid, color: "var(--fmd-syn-invalid)" },
-]);
+const BLOCK_GRAMMARS: Readonly<Record<string, () => Extension>> = {
+  javascript: () => javascript({}),
+  javascriptreact: () => javascript({ jsx: true }),
+  typescript: () => javascript({ typescript: true }),
+  typescriptreact: () => javascript({ typescript: true, jsx: true }),
+  json: () => json(),
+  markdown: () => markdown(),
+  css: () => css(),
+  html: () => html(),
+  yaml: () => yaml(),
+  python: () => python(),
+};
 
 /**
  * The parser for one language id.
  *
- * `plaintext` is an empty extension rather than a null language: the file stays
- * editable, it just gets no parser, which is the honest answer for a suffix this
- * editor has no grammar for.
- * @param language - id resolved from the path.
+ * Two lookups: the catalogue says which block the language belongs to, and the
+ * table above says which grammar that block installs. An id with no block, or a
+ * block this table does not carry, gets an empty extension rather than a null
+ * language: the file stays editable, it just gets no parser, which is the honest
+ * answer for something this editor has no grammar for.
+ *
+ * The four batch blocks (`batch-systems`, `batch-script`, `batch-webstyle`,
+ * `batch-datadoc`) are deliberately absent. Their grammars live inside the
+ * read-only chunk, which carries its own editor; this surface is one bundle that
+ * holds its grammars statically, so importing them here would put every batch
+ * grammar into the `.md` first-open cost. Widening the edit surface is a later
+ * slice's problem, and until then those files stay monochrome here.
+ * @param id - language id resolved from the path.
  * @returns the extension to install in the language compartment.
  */
-function languageExtension(language: EditorLanguage): Extension {
-  switch (language) {
-    case "javascript":
-      return javascript({ jsx: true, typescript: true });
-    case "json":
-      return json();
-    case "markdown":
-      return markdown();
-    case "css":
-      return css();
-    case "html":
-      return html();
-    case "yaml":
-      return yaml();
-    default:
-      return [];
-  }
+export function grammarFor(id: EditorLanguage): Extension {
+  const block = BLOCK_ASSIGNMENT[id];
+  if (block === undefined) return [];
+  const factory = BLOCK_GRAMMARS[block];
+  return factory === undefined ? [] : factory();
 }
 
 /**
@@ -194,6 +213,134 @@ function pageCaret(view: EditorView, direction: -1 | 1, extend: boolean): void {
 }
 
 /**
+ * The body for a language whose grammar lives in one of the four batch blocks.
+ *
+ * The shell chunk holds ten grammars statically; the other 44 languages live in
+ * four batch chunks, each carrying its own editor. A file whose language is in
+ * one of those batches is drawn by that block instead, because a grammar cannot
+ * cross a chunk boundary: both bundles inline their own CodeMirror core, so an
+ * extension built in one is rejected by an editor built in the other.
+ *
+ * The first frame is a read-only `<pre>`: the block is a local fetch and arrives
+ * in well under a second, and a blank box would be worse than the text. A block
+ * that fails to load falls back to the shell's own editor, monochrome, because a
+ * file that cannot be coloured must still be editable.
+ */
+function DelegatedBody(props: EditorBodyProps & { readonly block: string }): ReactElement {
+  const { text, path, block } = props;
+  const language = languageOf(path);
+  const host = useRef<HTMLDivElement>(null);
+  const handle = useRef<EditableHandle | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [ready, setReady] = useState(false);
+
+
+  // The sinks are read through refs so a re-render on every keystroke does not
+  // remount the block: the block is created once per (block, path).
+  const onChange = useRef(props.onChange);
+  onChange.current = props.onChange;
+  const onSave = useRef(props.onSave);
+  onSave.current = props.onSave;
+  const findSink = useRef(props.find);
+  findSink.current = props.find;
+  const pageText = useRef(text);
+  pageText.current = text;
+
+  useEffect(() => {
+    const element = host.current;
+    if (element === null) return;
+    let live = true;
+    /** The editor this effect mounted, so cleanup only destroys its own. */
+    let mine: EditableHandle | null = null;
+    loadEditableLangChunk(block).then(
+      module => {
+        if (!live) return;
+        // Re-derive: the path can change between the fetch starting and the
+        // block landing, and the answer must describe the file on screen.
+        if (BLOCK_ASSIGNMENT[languageOf(path)] !== block) return;
+        try {
+          const created = module.mount(element, {
+            text: pageText.current,
+            path,
+            language,
+            onChange: next => onChange.current(next),
+            onFindInvalidate: () => findSink.current?.invalidate?.(),
+            onSave: () => onSave.current?.(),
+          });
+          mine = created;
+          handle.current = created;
+          setReady(true);
+        } catch {
+          // A block that cannot mount leaves the file to the shell's editor,
+          // which is a readable and editable page.
+          setFailed(true);
+        }
+      },
+      // A block that never arrives falls back the same way. Reporting it would
+      // put an error over text that is fine.
+      () => {
+        if (live) setFailed(true);
+      },
+    );
+    return () => {
+      live = false;
+      mine?.destroy();
+      if (handle.current === mine) handle.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block, path, language]);
+
+  // An external write is the shell's own text coming back, so it goes through
+  // `setText` rather than through the change sink.
+  useEffect(() => {
+    handle.current?.setText(text);
+  }, [text]);
+
+  // The block reads the whole document, unlike the pane's pager, so the counter
+  // may say "whole file". Publishing it here is also what keeps focus out of the
+  // editor while a hit is highlighted.
+  useEffect(() => {
+    const find = props.find;
+    if (find === undefined || !ready) return;
+    find.register({
+      scope: "document",
+      // The handle's own text, not the raw props text: the bar searches this and
+      // then asks the handle to select at that offset, so a CRLF file would put
+      // every hit after the first line one position too far per preceding line.
+      text: () => handle.current?.getText() ?? "",
+      select: (from, to) => handle.current?.revealRange(from, to),
+      clear: () => handle.current?.clearSelection(),
+    });
+    return () => find.register(null);
+  }, [props.find, ready]);
+
+  if (failed) {
+    // The shell's own editor, with no grammar for this language: monochrome but
+    // fully editable, which is what the file had before this slice existed.
+    // `ShellEditorBody` and not `EditorBody`: the latter would re-enter the
+    // delegation and recurse, since this file's language still maps to a block.
+    return <ShellEditorBody {...props} />;
+  }
+
+  return (
+    <>
+      {ready ? null : (
+        <pre className="fmd-langs-placeholder" data-testid="fs-md-langs-placeholder">
+          {text}
+        </pre>
+      )}
+      <div
+        className="fmd-editor fmd-source-editor"
+        data-testid="fs-md-editor"
+        data-mode={props.mode}
+        data-renderer={block}
+        ref={host}
+      />
+    </>
+  );
+}
+
+/**
  * Mount the editor for one document.
  *
  * The view is created once; text and mode arrive as effects afterwards. That is
@@ -203,6 +350,21 @@ function pageCaret(view: EditorView, direction: -1 | 1, extend: boolean): void {
  * @returns the editor host element.
  */
 export function EditorBody(props: EditorBodyProps): ReactElement {
+  // A language whose grammar lives in a batch block is drawn by that block. The
+  // check is a table lookup, so the ten in-service languages and `.md` cost one
+  // miss and then take the path below unchanged.
+  const block = BLOCK_ASSIGNMENT[languageOf(props.path)];
+  if (block !== undefined && EDITABLE_LANG_CHUNKS[block] !== undefined) {
+    // Keyed by file: the pane keeps one body mounted across file switches, so
+    // without this a failure on one file would leave the next one on the
+    // monochrome editor with a stale handle and no retry.
+    return <DelegatedBody key={`${block}\u0000${props.path}`} {...props} block={block} />;
+  }
+  return <ShellEditorBody {...props} />;
+}
+
+/** The editor this shell has always been: ten grammars, one view. */
+function ShellEditorBody(props: EditorBodyProps): ReactElement {
   const { text, mode, visible, path } = props;
   // Markdown is the only family whose planner understands the document, so the
   // decoration layer is on only when the caller asked for it.
@@ -241,7 +403,7 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
           keymap.of(defaultKeymap),
           drawSelection(),
           EditorView.lineWrapping,
-          languageCompartment.current.of(languageExtension(language)),
+          languageCompartment.current.of(grammarFor(language)),
           syntaxHighlighting(highlightStyle),
           decorationCompartment.current.of(decorationExtension(decorate && mode === "reading")),
           EditorView.updateListener.of(update => {
@@ -328,7 +490,7 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
     const current = view.current;
     if (current === null) return;
     current.dispatch({
-      effects: languageCompartment.current.reconfigure(languageExtension(language)),
+      effects: languageCompartment.current.reconfigure(grammarFor(language)),
     });
   }, [language]);
 
@@ -341,7 +503,13 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
 
   return (
     <div
-      className="fmd-editor"
+      // The scope class is not decoration: the whole `--fmd-*` set, including the
+      // ten syntax colours, is defined on `.fmd-read, .fmd-source-editor` in the
+      // stylesheet. Without one of them on an ancestor every `var(--fmd-syn-*)`
+      // falls back to `currentColor` and the editor paints one flat colour. The
+      // body wrapper carries it too, but a body mounted on its own does not, so
+      // the root has to carry it as well.
+      className={`fmd-editor ${mode === "source" ? "fmd-source-editor" : "fmd-read"}`}
       data-testid="fs-md-editor"
       data-mode={mode}
       data-renderer="codemirror"
@@ -350,6 +518,19 @@ export function EditorBody(props: EditorBodyProps): ReactElement {
   );
 }
 
-const chunkModule = { renderer: "codemirror" as const, EditorBody };
+/**
+ * Take the loader require into this bundle.
+ *
+ * The chunk is its own bundle with its own copy of `chunk-loader.ts`, so the
+ * `boot` the startup entry calls never reaches it. The loader calls this one when
+ * it resolves the chunk, which is what lets the delegated language blocks fetch
+ * anything at all.
+ * @param require - the loader's require, with `async` attached.
+ */
+export function boot(require: LoaderRequire): void {
+  bootChunkLoader(require);
+}
+
+const chunkModule = { renderer: "codemirror" as const, EditorBody, boot };
 
 export default chunkModule;

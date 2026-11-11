@@ -60,7 +60,8 @@ describe("fileRows", () => {
       absolutePath: "/repo/src/client/panel.ts",
     });
     expect(rows[1]?.action).toEqual({ kind: "insert-path", absolutePath: "/repo/src/client/" });
-    expect(rows[1]?.detail).toBe(copy.directory);
+    expect(rows.map(row => row.name)).toEqual(["panel.ts", "client"]);
+    expect(rows[1]?.detail).toBeUndefined();
   });
 
   it("matches on a basename without losing the full path in the label", () => {
@@ -113,7 +114,7 @@ describe("filesystemRows", () => {
     expect(rows[1]?.action).toEqual({ kind: "insert-path", absolutePath: "/Users/lionad/notes/" });
   });
 
-  it("marks the rows as filesystem origin with the directory detail", () => {
+  it("marks the rows as filesystem origin and names each entry by its basename", () => {
     const rows = filesystemRows(
       {
         home: "/Users/lionad",
@@ -127,7 +128,8 @@ describe("filesystemRows", () => {
 
     expect(rows.map(row => row.origin)).toEqual(["filesystem", "filesystem"]);
     expect(rows.map(row => row.group)).toEqual([copy.groupFilesystem, copy.groupFilesystem]);
-    expect(rows[0]?.detail).toBe(copy.directory);
+    expect(rows.map(row => row.name)).toEqual(["bin", "run"]);
+    expect(rows[0]?.detail).toBeUndefined();
     expect(rows[1]?.detail).toBeUndefined();
     expect(rows.map(row => row.key)).toEqual([
       "fsys:directory:/opt/tool/bin/",
@@ -388,8 +390,10 @@ describe("workspaceRows", () => {
     );
   });
 
-  it("keeps the workspace path as a matchable alias", () => {
+  it("keeps the workspace path as a matchable alias and off the row", () => {
     expect(rows[0]?.alias).toContain("dsh-plugins");
+    expect(rows[0]?.detail).toBeUndefined();
+    expect(rows[0]?.action).toMatchObject({ kind: "drill", scope: { kind: "workspace" } });
   });
 });
 

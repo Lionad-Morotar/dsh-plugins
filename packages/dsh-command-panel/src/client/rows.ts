@@ -75,6 +75,11 @@ export interface PanelRow {
   readonly label: string;
   /** Secondary text matched at a small discount: a basename or a path. */
   readonly alias?: string;
+  /**
+   * The basename a file row leads with. Set only on file and directory rows,
+   * where the view paints the file tree's own mark in front of the path.
+   */
+  readonly name?: string;
   readonly detail?: string;
   readonly hint?: string;
   /**
@@ -155,11 +160,13 @@ export function commitRows(input: CommitRowInput, copy: Copy): PanelRow[] {
 export function filesystemRows(input: FilesystemRowInput, copy: Copy): PanelRow[] {
   return input.entries.map(entry => {
     const label = entry.kind === "directory" && !/[\\/]$/.test(entry.path) ? `${entry.path}/` : entry.path;
+    const bare = label.replace(/[\\/]+$/u, "");
+    const slash = Math.max(bare.lastIndexOf("/"), bare.lastIndexOf("\\"));
     return {
       key: `fsys:${entry.kind}:${label}`,
       label,
       alias: tildeForm(label, input.home),
-      detail: entry.kind === "directory" ? copy.directory : undefined,
+      name: slash >= 0 ? bare.slice(slash + 1) : bare,
       kind: entry.kind,
       group: copy.groupFilesystem,
       origin: "filesystem",
@@ -175,20 +182,27 @@ export function filesystemRows(input: FilesystemRowInput, copy: Copy): PanelRow[
 /**
  * Project file candidates into rows.
  *
- * The label keeps the workspace-relative path because that is what distinguishes
- * two `index.ts` files; the absolute path is the payload, computed here so the
- * runtime never re-derives it.
+ * The label keeps the workspace-relative path because ranking and the tree
+ * drill read it, and because it is what distinguishes two `index.ts` files.
+ * The view shows `name` with the file tree's mark and the parent directory
+ * beside it. The absolute path is the payload, computed here so the runtime
+ * never re-derives it.
  */
-export function fileRows(input: FileRowInput, copy: Copy): PanelRow[] {
+export function fileRows(input: FileRowInput, _copy: Copy): PanelRow[] {
   return input.candidates.map(candidate => {
     const absolutePath = toAbsolutePath(input.cwd, displayPath(candidate));
     const label = displayPath(candidate);
-    const slash = Math.max(label.lastIndexOf("/"), label.lastIndexOf("\\"));
+    const bare = label.replace(/[\\/]+$/u, "");
+    const slash = Math.max(bare.lastIndexOf("/"), bare.lastIndexOf("\\"));
+    const name = slash >= 0 ? bare.slice(slash + 1) : bare;
     return {
       key: `file:${candidate.kind}:${candidate.path}`,
       label,
-      alias: slash >= 0 ? label.slice(slash + 1) : label,
-      detail: candidate.kind === "directory" ? copy.directory : undefined,
+      alias: name,
+      // The view paints the file tree's mark from this, so the row and the
+      // tree name the same file the same way. The full path stays the label
+      // because that is what ranking and the tree drill read.
+      name,
       kind: candidate.kind,
       action: { kind: "insert-path", absolutePath },
     };
@@ -441,7 +455,8 @@ export function workspaceRows(
       key: `workspace:${workspace.workspaceId}`,
       label: workspace.title,
       alias: workspace.path,
-      detail: workspace.path,
+      // The path stays matchable but leaves the row: the sidebar's workspace
+      // row shows a folder and the title, and the panel's row does the same.
       hint: copy.sessionsCount(count),
       tone,
       weight: tone === "strong" || tone === "mid" ? "bold" : undefined,

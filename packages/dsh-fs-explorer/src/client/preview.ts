@@ -4,9 +4,14 @@
  * A workspace file can be arbitrarily large, so the preview never asks for the
  * whole file. It asks for one page of at most {@link PREVIEW_MAX_LINES} lines,
  * keeps the 1-based offset of the page it holds, and moves that offset forward
- * on `next()`. The same module owns the only mapping from a file name to a
- * language id, so the chunk's highlighter and the toolbar agree without either
- * importing the other.
+ * on `next()`.
+ *
+ * The language mapping is not defined here. It lives in `dsh-text-languages`,
+ * which is the single source of truth for every text surface in this repo, and
+ * this module re-exports it so the existing call sites and their types keep
+ * working. Re-exporting rather than re-implementing is what makes the two
+ * surfaces agree: a second table here would drift from the catalogue the moment
+ * either side learned a new suffix.
  *
  * It also owns the split between the two preview paths: a name the shared
  * format catalogue claims is a binary family file and never reaches the pager,
@@ -16,60 +21,30 @@
 import type { ReactElement } from "react";
 
 import { extensionsOf, familyOf, type PreviewFamily } from "dsh-preview-viewers/formats.ts";
+import { languageFor, matchLanguage } from "dsh-text-languages/index.ts";
+
+import { classifyPreviewFailure, type PreviewFailure } from "./preview-failure.ts";
 
 /** Default page size; the host accepts at most its configured `maxLines`. */
 export const PREVIEW_MAX_LINES = 200;
 
-/** Language ids the preview can highlight. */
-export type LanguageId = "javascript" | "json" | "markdown" | "css" | "html" | "yaml" | "plaintext";
-
-const LANGUAGE_BY_EXTENSION: Readonly<Record<string, LanguageId>> = {
-  ts: "javascript",
-  tsx: "javascript",
-  mts: "javascript",
-  cts: "javascript",
-  js: "javascript",
-  jsx: "javascript",
-  mjs: "javascript",
-  cjs: "javascript",
-  json: "json",
-  jsonc: "json",
-  json5: "json",
-  md: "markdown",
-  mdx: "markdown",
-  markdown: "markdown",
-  mdown: "markdown",
-  css: "css",
-  scss: "css",
-  sass: "css",
-  less: "css",
-  pcss: "css",
-  postcss: "css",
-  html: "html",
-  htm: "html",
-  xhtml: "html",
-  vue: "html",
-  svelte: "html",
-  yml: "yaml",
-  yaml: "yaml",
-};
+/**
+ * A language id as the preview sees it.
+ *
+ * Kept as an alias rather than a union: the catalogue decides which ids exist,
+ * and a union here would have to be edited every time it learns a language. The
+ * value is opaque to this package — it is a key into the chunk route table.
+ */
+export type LanguageId = string;
 
 /**
- * Map a file name to the preview's language id.
+ * Map a file name to a language id.
  *
- * The id is not a MIME type and not a CodeMirror extension: the chunk owns that
- * translation. Keeping this table pure is what lets the acceptance probe assert
- * the mapping without loading the 600 KB editor.
- * @param name - a basename or a workspace path.
- * @returns the language id, or `plaintext` when nothing claims the suffix.
+ * The catalogue's own function, re-exported unchanged: the identity matters,
+ * because a caller comparing the two surfaces must get the same answer and the
+ * same instance.
  */
-export function languageFor(name: string): LanguageId {
-  const lower = name.toLowerCase();
-  const base = lower.slice(lower.lastIndexOf("/") + 1);
-  const dot = base.lastIndexOf(".");
-  if (dot <= 0) return "plaintext";
-  return LANGUAGE_BY_EXTENSION[base.slice(dot + 1)] ?? "plaintext";
-}
+export { languageFor, matchLanguage };
 
 /** Whether a file should open in the Markdown reading mode. */
 export function isMarkdownFile(name: string): boolean {
@@ -232,79 +207,15 @@ export function normalizePreviewPage(response: unknown, offset: number): Preview
   return totalLines === undefined ? folded : { ...folded, totalLines };
 }
 
-/** Why a preview could not read a file. */
-export type PreviewFailureKind =
-  | "deleted"
-  | "denied"
-  | "symlink"
-  | "binary"
-  | "commit-binary"
-  | "submodule"
-  | "too-large"
-  | "unavailable"
-  | "unknown";
-
-/** One classified failure, ready for a title and an action. */
-export interface PreviewFailure {
-  readonly kind: PreviewFailureKind;
-  readonly code: string;
-  readonly message: string;
-}
-
 /**
- * Map a thrown read to the four states the preview has copy for.
+ * Failure triage lives in its own module.
  *
- * The host names its refusals with `workspace-file/*` codes, the filesystem
- * layer with POSIX codes; both are matched here so the pane never has to
- * interpret an error itself.
- * @param error - the thrown value.
- * @returns the classified failure.
+ * Re-exported rather than re-implemented so the existing call sites keep their
+ * import path, while the binary family chunks can import `preview-failure.ts`
+ * directly and stay clear of the language catalogue this module re-exports.
  */
-export function classifyPreviewFailure(error: unknown): PreviewFailure {
-  const record = isRecord(error) ? error : {};
-  const code = typeof record.code === "string" ? record.code : "";
-  const detail = typeof record.detail === "string" ? record.detail : "";
-  const message = typeof record.message === "string" && record.message !== "" ? record.message : "读取文件失败";
-  const haystack = `${code} ${detail} ${message}`.toLowerCase();
-  if (haystack.includes("symlink")) return { kind: "symlink", code, message };
-  // Git object kinds have their own copy: a submodule is not a text failure,
-  // and a binary blob in a commit may not have a family renderer to fall back on.
-  if (haystack.includes("git/submodule") || haystack.includes("子模块")) return { kind: "submodule", code, message };
-  if (haystack.includes("git/binary") || haystack.includes("提交版本中的文件是二进制")) {
-    return { kind: "commit-binary", code, message };
-  }
-  if (
-    haystack.includes("eacces") ||
-    haystack.includes("eperm") ||
-    haystack.includes("permission") ||
-    haystack.includes("denied") ||
-    haystack.includes("forbidden") ||
-    haystack.includes("权限")
-  ) {
-    return { kind: "denied", code, message };
-  }
-  if (
-    haystack.includes("not-found") ||
-    haystack.includes("not_found") ||
-    haystack.includes("enoent") ||
-    haystack.includes("no such file") ||
-    haystack.includes("deleted") ||
-    haystack.includes("不存在")
-  ) {
-    return { kind: "deleted", code, message };
-  }
-  if (haystack.includes("not-regular-file") || haystack.includes("not a regular file")) {
-    return { kind: "binary", code, message };
-  }
-  if (haystack.includes("not-text") || haystack.includes("utf-8") || haystack.includes("binary")) {
-    return { kind: "binary", code, message };
-  }
-  if (haystack.includes("too-large") || haystack.includes("too large") || haystack.includes("maxbytes")) {
-    return { kind: "too-large", code, message };
-  }
-  if (haystack.includes("unavailable")) return { kind: "unavailable", code, message };
-  return { kind: "unknown", code, message };
-}
+export { classifyPreviewFailure } from "./preview-failure.ts";
+export type { PreviewFailure, PreviewFailureKind } from "./preview-failure.ts";
 
 /** What the pane paints for one loader state. */
 export type PreviewStatus = "idle" | "loading" | "ready" | "failed";

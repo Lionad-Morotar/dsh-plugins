@@ -432,3 +432,67 @@ describe("EditorBody", () => {
     expect(registered.at(-1)).toBeNull();
   });
 });
+
+/**
+ * The scope class the whole `--fmd-*` variable set hangs on.
+ *
+ * `MARKDOWN_STYLES` defines the typography and the ten syntax colours on
+ * `.fmd-read, .fmd-source-editor`, not on `.fmd-editor`. Without one of those two
+ * classes on an ancestor, every `var(--fmd-syn-*)` falls back to `currentColor`
+ * and the editor paints one flat colour: that is exactly what shipped, because
+ * the wrapper in `body.tsx` carries the class but a body mounted on its own does
+ * not. So the editor root has to carry it too.
+ */
+describe("EditorBody scope class", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    host.remove();
+  });
+
+  async function show(mode: "reading" | "source"): Promise<void> {
+    await act(async () => {
+      root.render(createElement(EditorBody, props({ mode, decorate: mode === "reading" })));
+    });
+  }
+
+  function rootClass(): string {
+    return host.querySelector<HTMLElement>(".fmd-editor")?.className ?? "";
+  }
+
+  it("carries the source scope in source mode", async () => {
+    await show("source");
+    expect(rootClass()).toContain("fmd-source-editor");
+    expect(rootClass()).not.toContain("fmd-read");
+  });
+
+  it("carries the reading scope in reading mode", async () => {
+    await show("reading");
+    expect(rootClass()).toContain("fmd-read");
+    expect(rootClass()).not.toContain("fmd-source-editor");
+  });
+
+  it("keeps fmd-editor, because the stylesheet's child selectors need it", async () => {
+    await show("source");
+    expect(rootClass()).toContain("fmd-editor");
+  });
+
+  it("swaps the scope class when the mode changes under a live editor", async () => {
+    await show("reading");
+    expect(rootClass()).toContain("fmd-read");
+
+    await show("source");
+    expect(rootClass()).toContain("fmd-source-editor");
+    expect(rootClass()).not.toContain("fmd-read");
+  });
+});

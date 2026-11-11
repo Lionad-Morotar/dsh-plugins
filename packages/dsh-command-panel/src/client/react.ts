@@ -35,4 +35,9 @@ export interface PanelDomSlice {
 export interface PanelPrimitives {
   useModalLayer(dialog: { current: HTMLElement | null }, open: boolean, onClose: () => void): void;
   observeComposition(doc: Document): { guards(event: KeyboardEvent): boolean; dispose(): void };
+  /**
+   * The folder the sidebar paints on a workspace header. Optional: a host that
+   * does not export it leaves the row on the file tree's folder instead.
+   */
+  IconFolderCloseRegular?: (props: { readonly size?: number }) => unknown;
 }

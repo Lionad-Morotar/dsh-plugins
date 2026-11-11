@@ -14,8 +14,11 @@
  * "one level up" before it means "close", which is the whole two-level model.
  */
 
-import { highlightOf, type PanelMode, type PanelModel } from "./panel-state.ts";
+import { EntryMark } from "dsh-fs-explorer/src/client/entry-mark.tsx";
+
 import type { Copy } from "./copy.ts";
+import { entryDirectory, fileMarkOf, isWorkspaceRow } from "./entry-mark.ts";
+import { highlightOf, type PanelMode, type PanelModel } from "./panel-state.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
 import type { PanelRow } from "./rows.ts";
 import { ROOT_ATTR } from "./styles.ts";
@@ -258,6 +261,9 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
         list.push(h("div", { key: `group:${row.group}`, "data-dcp-group": "" }, row.group));
       }
       group = row.group;
+      const fileMark = fileMarkOf(row);
+      const workspace = isWorkspaceRow(row);
+      const directory = entryDirectory(row);
       list.push(
         h(
           "div",
@@ -265,15 +271,28 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
             key: row.key,
             "data-dcp-row": "",
             "data-kind": row.action.kind,
+            "data-entry": workspace ? "workspace" : row.kind,
             "data-active": index === active ? "true" : undefined,
             "data-weight": row.weight,
             role: "option",
             "aria-selected": index === active,
+            title: fileMark !== undefined ? row.label : workspace ? row.alias : undefined,
             onMouseMove: () => deps.highlight(index),
             onClick: () => deps.accept(row),
           },
-          h("span", { "data-dcp-label": "", "data-tone": row.tone }, row.label),
-          row.detail === undefined ? null : h("span", { "data-dcp-detail": "" }, row.detail),
+          fileMark !== undefined ? h(EntryMark, { name: fileMark.name, kind: fileMark.kind }) : null,
+          workspace ? workspaceFolder(h, deps.primitives.IconFolderCloseRegular, row.label) : null,
+          h(
+            "span",
+            {
+              "data-dcp-label": "",
+              "data-tone": row.tone,
+              ...(fileMark !== undefined ? { className: "fx-name" } : {}),
+            },
+            fileMark !== undefined ? fileMark.name : row.label,
+          ),
+          directory === undefined ? null : h("span", { className: "fx-row-dir" }, directory),
+          fileMark !== undefined || row.detail === undefined ? null : h("span", { "data-dcp-detail": "" }, row.detail),
           row.hint === undefined
             ? null
             : h("span", { "data-dcp-hint": "", "data-tone": row.hintTone }, row.hint),
@@ -352,6 +371,22 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
       body,
     );
   };
+}
+
+/**
+ * The sidebar's folder, in front of a workspace title.
+ *
+ * The icon is the host primitive the sidebar header renders. When that
+ * primitive is absent the file tree's closed folder stands in, so the row
+ * still leads with a folder and no second glyph is drawn here.
+ */
+function workspaceFolder(
+  h: ReactSlice["createElement"],
+  icon: PanelPrimitives["IconFolderCloseRegular"],
+  title: string,
+): unknown {
+  const glyph = icon === undefined ? h(EntryMark, { name: title, kind: "directory" }) : h(icon, { size: 16 });
+  return h("span", { "data-dcp-folder": "", "aria-hidden": "true" }, glyph);
 }
 
 function statusLine(

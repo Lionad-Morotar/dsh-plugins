@@ -135,6 +135,19 @@ describe("reading a path list back", () => {
     ).toBeUndefined();
   });
 
+  it("leaves a path that carries a line locator as text", () => {
+    // A copied reference names a line (`path line:14`, or the same inside the
+    // mention quotes). That line is not a filename, so consuming it reports the
+    // file missing and the text never reaches the draft.
+    expect(parsePathList(`"${IMAGE.path} line:14"`)).toBeUndefined();
+    expect(parsePathList(`${IMAGE.path} line:14`)).toBeUndefined();
+    expect(parsePathList(`@"${IMAGE.path} line:14"`)).toBeUndefined();
+    expect(parsePathList(`${IMAGE.path} line:14-30`)).toBeUndefined();
+    expect(parsePathList(`${IMAGE.path} line:1-1`)).toBeUndefined();
+    // A filename that merely contains the word is still one file.
+    expect(parsePathList("/tmp/line:14.txt")).toEqual({ text: "", paths: ["/tmp/line:14.txt"] });
+  });
+
   it("does not treat a relative path as one", () => {
     expect(parsePathList("src/client/entry.ts")).toBeUndefined();
   });

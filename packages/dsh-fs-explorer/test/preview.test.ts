@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { families } from "dsh-preview-viewers/formats.ts";
+import {
+  languageFor as catalogueLanguageFor,
+  matchLanguage as catalogueMatchLanguage,
+} from "dsh-text-languages/index.ts";
 
 import { renderMarkdown } from "../src/client/markdown.ts";
 import {
@@ -13,6 +17,7 @@ import {
   isBinaryFamily,
   isMarkdownFile,
   languageFor,
+  matchLanguage,
   normalizePreviewPage,
 } from "../src/client/preview.ts";
 
@@ -37,9 +42,11 @@ function reader(pages: readonly unknown[], calls: ReadCall[] = []) {
 
 describe("languageFor", () => {
   it("maps the common suffixes to language ids", () => {
-    expect(languageFor("a.ts")).toBe("javascript");
-    expect(languageFor("a.tsx")).toBe("javascript");
-    expect(languageFor("a.jsx")).toBe("javascript");
+    expect(languageFor("a.ts")).toBe("typescript");
+    expect(languageFor("a.tsx")).toBe("typescriptreact");
+    expect(languageFor("a.jsx")).toBe("javascriptreact");
+    expect(languageFor("a.js")).toBe("javascript");
+    expect(languageFor("a.py")).toBe("python");
     expect(languageFor("a.json")).toBe("json");
     expect(languageFor("a.md")).toBe("markdown");
     expect(languageFor("README.MD")).toBe("markdown");
@@ -47,13 +54,21 @@ describe("languageFor", () => {
     expect(languageFor("a.html")).toBe("html");
     expect(languageFor("a.yml")).toBe("yaml");
     expect(languageFor("a.yaml")).toBe("yaml");
-    expect(languageFor("src/deep/a.ts")).toBe("javascript");
+    expect(languageFor("src/deep/a.ts")).toBe("typescript");
     expect(languageFor("LICENSE")).toBe("plaintext");
   });
 
   it("treats only markdown ids as the reading mode", () => {
     expect(isMarkdownFile("docs/a.md")).toBe(true);
+    expect(isMarkdownFile("a.mdx")).toBe(true);
     expect(isMarkdownFile("a.ts")).toBe(false);
+  });
+
+  it("is the catalogue's own function, not a copy", () => {
+    // A second implementation would drift from the catalogue the first time
+    // either side learned a suffix, so the identity is the assertion.
+    expect(languageFor).toBe(catalogueLanguageFor);
+    expect(matchLanguage).toBe(catalogueMatchLanguage);
   });
 });
 
@@ -83,18 +98,30 @@ describe("family routing", () => {
     expect(familyOf(".glb")).toBeNull();
   });
 
-  it("routes exactly the family suffixes and leaves the text mapping alone", () => {
+  it("routes exactly the family suffixes ahead of the text mapping", () => {
     for (const family of families()) {
       for (const suffix of extensionsOfFamily(family)) {
         expect(familyOf(`x.${suffix}`)).toBe(family);
         expect(isBinaryFamily(`x.${suffix}`)).toBe(true);
-        // The text pager's table never claimed these; if it started to, the
-        // binary branch would be shadowed by a language id nobody can render.
-        expect(languageFor(`x.${suffix}`)).toBe("plaintext");
       }
     }
     expect(isBinaryFamily("a.ts")).toBe(false);
     expect(isBinaryFamily("a.md")).toBe(false);
+  });
+
+  it("lets the family route win where the catalogue also claims a suffix", () => {
+    // `.svg` is the one overlap: the catalogue files it under xml, and the image
+    // family claims it too. The family route runs first, so the file is drawn as
+    // an image and the language id is never consulted. Asserting the precedence
+    // rather than a plaintext id keeps the overlap visible instead of hiding it.
+    const overlaps = families().flatMap(family =>
+      extensionsOfFamily(family)
+        .filter(suffix => matchLanguage(`x.${suffix}`) !== null)
+        .map(suffix => `${family}:${suffix}`),
+    );
+    expect(overlaps).toEqual(["image:svg"]);
+    expect(isBinaryFamily("x.svg")).toBe(true);
+    expect(languageFor("x.svg")).toBe("xml");
   });
 
   it("routes an image to the image family instead of the text pager's binary refusal", () => {

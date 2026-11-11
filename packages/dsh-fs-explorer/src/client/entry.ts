@@ -357,6 +357,10 @@ export function apply(ctx: ClientContextLike): () => void {
  * bundle's default export to the host; there is no other module handle.
  */
 export const __test = {
+  // Exposed so the browser evidence fixture can mount a built-in renderer without
+  // going through the whole pane: it needs the plaintext body's contribution, and
+  // that is only reachable through this table.
+  createBuiltinRenderers,
   buildTree,
   describeListing,
   iconFor,
