@@ -1078,6 +1078,27 @@ describe("preview pane renderer resolution evidence", () => {
     expect(calls).not.toContain("./client.preview.js");
   });
 
+  it("still resolves a renderer when the first line is empty", async () => {
+    // A file whose first line is blank has no first-line evidence, but its page
+    // has landed. Waiting for evidence that will never arrive would leave the
+    // renderer idle forever and the body on the bare fallback.
+    const files = {
+      list: async () => ({ entries: [] }),
+      read: async () => ({ ok: true, value: { text: "\nbody", offset: 1, lines: 2, eof: true } }),
+    };
+    await act(async () => {
+      root.render(createElement(Pane, { sessionId: "s1", files, path: "notes", t }));
+    });
+    await act(async () => {
+      for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+    });
+    // The page is ready, so the pane must settle on a renderer rather than stay idle.
+    expect(calls).toContain("./client.preview.js");
+    // The pane must settle on a renderer rather than stay idle: idle means the
+    // body never gets an editor, a gutter or a find source.
+    expect(host.querySelector('[data-testid="fs-preview"]')?.getAttribute("data-state")).toBe("ready");
+  });
+
   it("does not apply the previous file's first line to the next file", async () => {
     const files = {
       list: async () => ({ entries: [] }),

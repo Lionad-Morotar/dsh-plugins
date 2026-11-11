@@ -831,6 +831,11 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
   // no text yet, and answering the tier against "" would send the file to the
   // preview chunk before its own page lands.
   const evidence = firstLine === undefined || firstLine === "" ? undefined : firstLine;
+  // Whether this file's page has landed, which is what the effect actually waits
+  // for. It is a separate dependency because a blank first line leaves `evidence`
+  // undefined both before and after the page arrives, so an evidence-only
+  // dependency would never re-run and the renderer would stay idle.
+  const pageSettled = snapshot.path === path && (snapshot.status === "ready" || snapshot.status === "failed");
 
   useEffect(() => {
     // A commit version has no byte reader. Loading its family renderer would
@@ -842,12 +847,14 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
     // A file with no suffix can only be routed by its first line, and that
     // evidence arrives with the page. Loading the preview chunk before then would
     // download it for a file that turns out to have a block of its own, so the
-    // effect waits for this file's page instead of guessing.
-    // A file with no suffix can only be routed by its first line, so the effect
-    // waits until this file's page brings that evidence: loading the preview chunk
-    // first would download it for a file that turns out to have a block.
+    // effect waits for this file's page rather than guessing.
+    //
+    // What it waits for is the page, not the evidence: a file whose first line is
+    // blank has no evidence and never will, so waiting on evidence would leave the
+    // renderer idle for good. A failed page counts as settled too, or the wait
+    // would never end.
     const suffixless = !/[^/]\.[^/]+$/u.test(path);
-    if (suffixless && evidence === undefined) return;
+    if (suffixless && !pageSettled) return;
     const winner = registry.resolve({ path });
     // A text file whose language ships its own chunk is drawn by that chunk, and
     // that chunk carries its own editor. Fetching the preview chunk as well
@@ -901,7 +908,7 @@ export function PreviewPane({ sessionId, files, path, revision, git, t, visible 
     // page lands: without it the effect answered once against an idle snapshot,
     // fetched the preview chunk, and only then discovered the file routes to a
     // block.
-  }, [registry, path, revision, rendererRevision, rendererAttempt, evidence]);
+  }, [registry, path, revision, rendererRevision, rendererAttempt, evidence, pageSettled]);
 
   if (path === undefined) {
     return (
