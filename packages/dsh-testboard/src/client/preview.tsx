@@ -17,7 +17,7 @@ import { createRoot } from "react-dom/client";
 import snapshotData from "./data/snapshot.json" with { type: "json" };
 import sourcesData from "./data/sources.json" with { type: "json" };
 import { createFixtureRuntime } from "./fixture-runtime.ts";
-import { summarize } from "./model.ts";
+import { summarize, throughputSeries } from "./model.ts";
 import type { TestboardRuntime } from "./runtime.ts";
 import type { RunProgress } from "../shared.ts";
 import { ensureStyles } from "./styles.ts";
@@ -135,6 +135,18 @@ function waitingRuntime(base: TestboardRuntime): TestboardRuntime {
 function cachedRuntime(base: TestboardRuntime, snapshot: TestSnapshot): TestboardRuntime {
   const summary = summarize(snapshot);
   const finishedAt = Date.now();
+  // The host persists the run's cumulative series, so the cached board still
+  // draws the last run's shape. Rebuild the same form from the snapshot's own
+  // per-second buckets so the preview shows the chart a real cache would.
+  let finished = 0;
+  let passed = 0;
+  let failed = 0;
+  const series = throughputSeries(snapshot).map(bucket => {
+    finished += bucket.completed;
+    failed += bucket.failed;
+    passed = finished - failed;
+    return { tMs: bucket.second * 1000, finished, passed, failed };
+  });
   const run: RunProgress = {
     runId: "cached-run",
     scope: { kind: "all" },
@@ -152,7 +164,7 @@ function cachedRuntime(base: TestboardRuntime, snapshot: TestSnapshot): Testboar
       skipped: summary.skipped,
       total: summary.total,
     },
-    series: [],
+    series,
     failures: [],
     cases: [],
   };
