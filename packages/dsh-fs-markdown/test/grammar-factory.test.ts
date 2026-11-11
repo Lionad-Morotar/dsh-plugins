@@ -10,6 +10,8 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { BLOCK_ASSIGNMENT } from "dsh-text-languages/catalog.ts";
+
 import { grammarFor } from "../src/client/chunk/editor.tsx";
 
 /** The ten ids the catalogue marks as having a grammar chunk. */
@@ -66,5 +68,69 @@ describe("grammarFor", () => {
     for (const extension of extensions) expect(isEmpty(extension)).toBe(false);
     // Six grammars, six distinct values: a copy-paste slip would show up here.
     expect(new Set(extensions).size).toBe(extensions.length);
+  });
+});
+
+/**
+ * The ids that borrow another language's block.
+ *
+ * The catalogue files `.vue` under `vue`, and `vue` is drawn by the html block.
+ * A grammar table keyed by language id alone cannot see that: it knows `html`
+ * and not `vue`, so these files lost their colour when the catalogue replaced the
+ * editor's own suffix table. Keying the table by block fixes it at the root,
+ * because the block is what the catalogue already decided.
+ */
+describe("grammarFor aliases", () => {
+  /** Ids that share the html block. */
+  const HTML_ALIASES = ["vue", "svelte", "razor"] as const;
+  /** Ids that share the markdown block. */
+  const MARKDOWN_ALIASES = ["juliamarkdown", "prompt", "instructions", "chatagent", "skill"] as const;
+
+  /**
+   * Whether two ids resolve to the same block, and so to the same grammar.
+   *
+   * Compared by block rather than by deep-equalling the extensions: each call
+   * builds a fresh `LanguageSupport`, so two instances are structurally equal but
+   * never the same object, and a deep compare would pass for the wrong reason.
+   * @param left - one language id.
+   * @param right - the id it should borrow from.
+   */
+  function sameBlock(left: string, right: string): boolean {
+    return BLOCK_ASSIGNMENT[left] === BLOCK_ASSIGNMENT[right];
+  }
+
+  it("colours the html aliases by the html block", () => {
+    for (const id of HTML_ALIASES) {
+      expect(isEmpty(grammarFor(id)), id).toBe(false);
+      expect(sameBlock(id, "html"), id).toBe(true);
+    }
+  });
+
+  it("colours the markdown aliases by the markdown block", () => {
+    for (const id of MARKDOWN_ALIASES) {
+      expect(isEmpty(grammarFor(id)), id).toBe(false);
+      expect(sameBlock(id, "markdown"), id).toBe(true);
+    }
+  });
+
+  it("colours dockercompose by the yaml block", () => {
+    expect(isEmpty(grammarFor("dockercompose"))).toBe(false);
+    expect(sameBlock("dockercompose", "yaml")).toBe(true);
+  });
+
+  it("leaves the batch-block languages monochrome", () => {
+    // The batch blocks carry their grammars inside the read-only chunk. The edit
+    // surface is one bundle that holds its grammars statically, so it does not
+    // import them; widening the edit surface is a later slice's problem.
+    expect(isEmpty(grammarFor("rust"))).toBe(true);
+    expect(isEmpty(grammarFor("dockerfile"))).toBe(true);
+    expect(isEmpty(grammarFor("c"))).toBe(true);
+    expect(isEmpty(grammarFor("sql"))).toBe(true);
+  });
+
+  it("leaves an id with no block monochrome", () => {
+    expect(isEmpty(grammarFor("plaintext"))).toBe(true);
+    expect(isEmpty(grammarFor("bat"))).toBe(true);
+    expect(isEmpty(grammarFor("unknownext"))).toBe(true);
   });
 });

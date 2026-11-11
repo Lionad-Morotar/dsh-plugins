@@ -32,6 +32,8 @@ import { useEffect, useRef, type ReactElement } from "react";
 import { CLASS_NAMES } from "../classes.ts";
 import type { EditorBodyProps } from "../contracts.ts";
 import { planDecorations } from "../decorations.ts";
+import { BLOCK_ASSIGNMENT } from "dsh-text-languages/catalog.ts";
+
 import { languageOf, type EditorLanguage } from "../language.ts";
 import { TableWidget } from "../table-widget.ts";
 import { planTables, tableIntersects } from "../tables.ts";
@@ -59,46 +61,56 @@ const highlightStyle = HighlightStyle.define([
 ]);
 
 /**
+ * One grammar per block.
+ *
+ * Keyed by block name rather than language id, because a block is what the
+ * catalogue actually assigns and several languages share one. `vue` is drawn by
+ * the html block, so keying by id would need an entry per alias and would drift
+ * the moment the catalogue learned a new one; keying by block asks the catalogue
+ * which block a language belongs to and then looks that block up.
+ *
+ * The four javascript dialects are one package with different flags, and the
+ * flags are the whole difference: `.js` used to be parsed with both JSX and
+ * TypeScript on, which made type annotations look valid in a plain script and
+ * accepted JSX in a file that has none. VS Code parses `.js` as plain
+ * JavaScript, and so does this.
+ */
+const BLOCK_GRAMMARS: Readonly<Record<string, () => Extension>> = {
+  javascript: () => javascript({}),
+  javascriptreact: () => javascript({ jsx: true }),
+  typescript: () => javascript({ typescript: true }),
+  typescriptreact: () => javascript({ typescript: true, jsx: true }),
+  json: () => json(),
+  markdown: () => markdown(),
+  css: () => css(),
+  html: () => html(),
+  yaml: () => yaml(),
+  python: () => python(),
+};
+
+/**
  * The parser for one language id.
  *
- * Keyed by the catalogue's descriptor id, so the dialect a file gets is decided
- * by the same data the read-only pane uses. The four javascript dialects are one
- * package with different flags, and the flags are the whole difference: `.js`
- * used to be parsed with both JSX and TypeScript on, which made type annotations
- * look valid in a plain script and accepted JSX in a file that has none. VS Code
- * parses `.js` as plain JavaScript, and so does this.
+ * Two lookups: the catalogue says which block the language belongs to, and the
+ * table above says which grammar that block installs. An id with no block, or a
+ * block this table does not carry, gets an empty extension rather than a null
+ * language: the file stays editable, it just gets no parser, which is the honest
+ * answer for something this editor has no grammar for.
  *
- * An id outside the table gets an empty extension rather than a null language:
- * the file stays editable, it just gets no parser, which is the honest answer for
- * a suffix this editor has no grammar for.
+ * The four batch blocks (`batch-systems`, `batch-script`, `batch-webstyle`,
+ * `batch-datadoc`) are deliberately absent. Their grammars live inside the
+ * read-only chunk, which carries its own editor; this surface is one bundle that
+ * holds its grammars statically, so importing them here would put every batch
+ * grammar into the `.md` first-open cost. Widening the edit surface is a later
+ * slice's problem, and until then those files stay monochrome here.
  * @param id - language id resolved from the path.
  * @returns the extension to install in the language compartment.
  */
 export function grammarFor(id: EditorLanguage): Extension {
-  switch (id) {
-    case "javascript":
-      return javascript({});
-    case "typescript":
-      return javascript({ typescript: true });
-    case "typescriptreact":
-      return javascript({ typescript: true, jsx: true });
-    case "javascriptreact":
-      return javascript({ jsx: true });
-    case "json":
-      return json();
-    case "markdown":
-      return markdown();
-    case "css":
-      return css();
-    case "html":
-      return html();
-    case "yaml":
-      return yaml();
-    case "python":
-      return python();
-    default:
-      return [];
-  }
+  const block = BLOCK_ASSIGNMENT[id];
+  if (block === undefined) return [];
+  const factory = BLOCK_GRAMMARS[block];
+  return factory === undefined ? [] : factory();
 }
 
 /**
