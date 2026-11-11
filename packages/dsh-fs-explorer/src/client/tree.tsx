@@ -21,14 +21,13 @@ import {
 
 import type { ContextMenuAnchor } from "./context-menu.ts";
 import type { Translate } from "./copy.ts";
+import { EntryMark, FolderIcon } from "./entry-mark.tsx";
 import { useRowHeight } from "./font-scale.ts";
 import {
   adoptsOpenFile,
-  badgeFor,
   computeTreeWindow,
   firstChildIndex,
   formatSize,
-  iconFor,
   pageEntryIndex,
   pageRowCount,
   revealScrollTop,
@@ -51,30 +50,7 @@ export type EntryRow = Extract<TreeRow, { type: "entry" }>;
 export type StatusRow = Extract<TreeRow, { type: "status" }>;
 
 /** The opened or closed folder glyph, drawn inline so the bundle stays icon-free. */
-export function FolderIcon({ open = true, size = 14 }: { readonly open?: boolean; readonly size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.3"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {open ? (
-        <>
-          <path d="M1.9 12.4V4.1c0-.6.5-1.1 1.1-1.1h3.1l1.4 1.6H12c.6 0 1.1.5 1.1 1.1v.9" />
-          <path d="M1.9 12.4 3.5 7.3c.1-.4.5-.7.9-.7h8.2c.6 0 1 .5.9 1.1l-1.1 4c-.1.4-.5.7-.9.7H3c-.6 0-1.1-.5-1.1-1.1Z" />
-        </>
-      ) : (
-        <path d="M1.9 12.4V4.1c0-.6.5-1.1 1.1-1.1h3.1l1.4 1.6H12c.6 0 1.1.5 1.1 1.1v6.7c0 .6-.5 1.1-1.1 1.1H3c-.6 0-1.1-.5-1.1-1.1Z" />
-      )}
-    </svg>
-  );
-}
+export { FolderIcon };
 
 /** The disclosure chevron; the CSS rotates the wrapper when the directory opens. */
 export function ChevronIcon() {
@@ -114,18 +90,6 @@ export function CollapseIcon() {
   );
 }
 
-/**
- * The coloured file-type badge.
- * @param props - the basename the badge describes.
- * @returns a short uppercase label tinted by the file's icon family.
- */
-export function FileBadge({ name }: { readonly name: string }) {
-  return (
-    <span className="fx-badge" data-icon={iconFor(name)} aria-hidden="true">
-      {badgeFor(name)}
-    </span>
-  );
-}
 
 /**
  * One context-menu gesture.
@@ -215,13 +179,7 @@ export function TreeRowView({
       >
         <ChevronIcon />
       </span>
-      {directory ? (
-        <span className="fx-folder" data-open={row.expanded ? "true" : "false"} aria-hidden="true">
-          <FolderIcon open={row.expanded} />
-        </span>
-      ) : (
-        <FileBadge name={row.name} />
-      )}
+      <EntryMark name={row.name} kind={row.kind} open={directory && row.expanded} />
       <span className="fx-name">{row.name}</span>
       {row.directory === undefined || row.directory === "" ? null : (
         <span className="fx-row-dir" data-testid="fx-row-dir">

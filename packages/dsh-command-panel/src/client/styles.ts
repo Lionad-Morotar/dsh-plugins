@@ -15,6 +15,8 @@
  *     scoped selector would match nothing.
  */
 
+import { ENTRY_MARK_STYLES } from "dsh-fs-explorer/src/client/entry-mark.tsx";
+
 export const STYLE_TAG = "dsh-command-panel";
 export const STYLE_ATTR = "data-plugin-css";
 
@@ -32,6 +34,22 @@ const CSS = `
   padding: max(56px, var(--dsh-frame-overlay-top, 56px)) 16px 16px;
   font: var(--dsw-font-xs-13, 13px/20px system-ui, sans-serif);
   color: var(--dsw-alias-label-primary, #1b1b1f);
+  /* The file tree's marks resolve against these. Declared here because the
+     portal mounts on body, outside the tree's own root. */
+  --fx-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --fx-fs: var(--dsh-content-font-size, 14px);
+  --fx-fs-code: var(--dsh-code-font-size, 11px);
+  --fx-row-h: max(22px, calc(var(--fx-fs) * 1.5714));
+  --fx-caption: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary, currentColor));
+  --fx-code: var(--dsw-alias-state-business-primary, currentColor);
+  --fx-markdown: color-mix(in oklab, var(--dsw-alias-state-business-primary, currentColor) 52%, var(--dsw-alias-state-success-primary, currentColor));
+  --fx-data: var(--dsw-alias-state-warn-primary, currentColor);
+  --fx-image: color-mix(in oklab, var(--dsw-alias-state-business-primary, currentColor) 42%, var(--dsw-alias-state-error-primary, currentColor));
+  --fx-style: var(--dsw-alias-state-error-primary, currentColor);
+  --fx-config: var(--dsw-alias-label-secondary, currentColor);
+  --fx-archive: color-mix(in oklab, var(--dsw-alias-state-warn-primary, currentColor) 55%, var(--dsw-alias-state-error-primary, currentColor));
+  --fx-folder: var(--dsw-alias-state-business-primary, currentColor);
+  --fx-file: var(--dsw-alias-label-tertiary, currentColor);
 }
 
 [${ROOT_ATTR}] [data-dcp-mask] {
@@ -129,6 +147,45 @@ const CSS = `
 [${ROOT_ATTR}] [data-dcp-row]:hover,
 [${ROOT_ATTR}] [data-dcp-row][data-active="true"] {
   background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.06));
+}
+
+${ENTRY_MARK_STYLES}
+[${ROOT_ATTR}] [data-dcp-row][data-entry="file"],
+[${ROOT_ATTR}] [data-dcp-row][data-entry="directory"] {
+  gap: 6px;
+  min-height: var(--fx-row-h, 22px);
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* A workspace row takes the sidebar header's measure: 34px, a 16px folder,
+   and a 14/20 title. The folder colour is the sidebar's tertiary slot, and
+   the keyboard row turns it the same blue the sidebar uses for the workspace
+   that holds the open session. */
+[${ROOT_ATTR}] [data-dcp-row][data-entry="workspace"] {
+  gap: var(--dsh-sidebar-label-gap, 8px);
+  height: 34px;
+  min-height: 34px;
+  border-radius: var(--dsw-radius-md, 8px);
+}
+
+[${ROOT_ATTR}] [data-dcp-folder] {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 20px;
+  color: var(--dsw-alias-label-tertiary, #8a8a95);
+}
+
+[${ROOT_ATTR}] [data-dcp-row][data-active="true"] [data-dcp-folder] {
+  color: var(--dsw-alias-state-business-primary, #2f6fed);
+}
+
+[${ROOT_ATTR}] [data-dcp-row][data-entry="workspace"] [data-dcp-label] {
+  font-size: 14px;
+  line-height: 20px;
 }
 
 [${ROOT_ATTR}] [data-dcp-label] {

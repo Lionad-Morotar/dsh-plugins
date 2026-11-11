@@ -28,7 +28,7 @@
 
 ## 核心能力
 
-- 目录树：每层按需调用 `workspaceFiles.list(sessionId, path)`，根节点用 `"."`。目录优先、同类按名称自然排序（`file2` 在 `file10` 前）。只有 `.git` 恒隐藏（版本库内部结构，任何 SCM 界面都不列）；被 git 忽略的条目默认照常出现并整体灰显，目录连同整棵子树继承灰显，悬停或光标落上去时回升到可读。头部工具条的开关可一键隐藏忽略项并记住偏好（`localStorage` 的 `dsh-fs-explorer.show-ignored`）。工作区不是 Git 仓库、宿主没有 git、或命令失败时降级为「不灰显」，不报错也不弹错误态。
+- 目录树：每层按需调用 `workspaceFiles.list(sessionId, path)`，根节点用 `"."`。目录优先、同类按名称自然排序（`file2` 在 `file10` 前）。文件行前面的彩色类型徽章与文件夹图标是 `src/client/entry-mark.tsx` 里的 `EntryMark`，命令面板的文件行直接渲染同一个组件，不再各画一份。只有 `.git` 恒隐藏（版本库内部结构，任何 SCM 界面都不列）；被 git 忽略的条目默认照常出现并整体灰显，目录连同整棵子树继承灰显，悬停或光标落上去时回升到可读。头部工具条的开关可一键隐藏忽略项并记住偏好（`localStorage` 的 `dsh-fs-explorer.show-ignored`）。工作区不是 Git 仓库、宿主没有 git、或命令失败时降级为「不灰显」，不报错也不弹错误态。
 - 忽略清单：host 半在会话工作目录跑只读、argv-only 的 `git ls-files --others --ignored --exclude-standard --directory -z`（不拼 shell 字符串），收成工作区相对路径清单。`--directory` 把整目录折叠成一条，所以 `node_modules` 只出现一次而不是逐个文件列出；`-z` 是因为路径可能含换行。不加 `--full-name`：输出天然是 cwd 相对路径，与文件树的路径键空间一致，工作区是仓库子目录时也不会冒出 `pkg/` 前缀。超过 20000 条截断并置 `truncated`，stdout 采集上限 8 MiB，命令超时 10 秒。
 - 右键菜单：文件行、目录行与树空白处都能右键（`Shift+F10` / ContextMenu 键在光标行上同效）。菜单顶部是「新建文件」「新建文件夹」，落在被右击的目录里（文件行落到它所在的目录，空白处落到工作区根）；名称卡片校验后提交，新建文件随即打开，新建文件夹随即展开并把光标放上去。行上还有「在 Finder / 资源管理器中显示」、「复制路径 → 绝对路径 / 相对路径（工作区）」与「复制远端地址」。远端地址按 provider 生成 GitHub / GitLab / Gitee / Bitbucket / Codeberg 的文件与目录链接（GitLab 走 `/-/`，Bitbucket 与 Codeberg 走 `src`），未知 host 回退到 `/blob/`；remote URL 在这里归一化成 https 基址，ref 取当前分支、游离 HEAD 取提交哈希，路径段逐段编码但保留 `/`。仓库没有可用远端时该项禁用并说明原因。reveal 由本包 host 半按平台 spawn（darwin `open -R`、win32 `explorer.exe /select,`、linux `xdg-open <父目录>`、WSL 先 `wslpath -w`），路径先 `fs.resolve` + `fs.stat` + `fs.contains` 校验，工作区外与不存在的路径直接拒绝。宿主没装 UI 原语时菜单退化为本包自有的按钮卡片，不崩。动作结果用头部下的一条提示条反馈，4 秒自动消失。
 - 虚拟化：只挂视口内的行加少量 overscan，展开一个几千项的大目录不会把整棵树塞进 DOM。
