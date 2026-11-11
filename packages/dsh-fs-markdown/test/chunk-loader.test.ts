@@ -148,3 +148,68 @@ describe("editable language chunk loader", () => {
     expect(calls).toEqual([]);
   });
 });
+
+/**
+ * The loader require has to reach the editor chunk's own bundle.
+ *
+ * `chunk-loader.ts` is packaged twice: once into the startup bundle and once into
+ * `client.editor.js`. Each copy has its own module state, so the `boot` the entry
+ * calls only fills the startup copy. The editor chunk's copy stayed empty, every
+ * delegated load rejected, and the edit surface silently fell back to monochrome.
+ *
+ * The fix is injection rather than a shared variable: when the loader resolves the
+ * editor chunk it hands that chunk the same require, so the chunk's own copy of
+ * this module is initialised too.
+ */
+describe("editor chunk boot hand-over", () => {
+  /** A fake `require` that answers the editor chunk. */
+  function fakeRequire(module: unknown): {
+    require: { (specifier: string): unknown; async(specifier: string): Promise<unknown> };
+    calls: string[];
+  } {
+    const calls: string[] = [];
+    const require = ((specifier: string): unknown => {
+      throw new Error(`unexpected platform require: ${specifier}`);
+    }) as { (specifier: string): unknown; async(specifier: string): Promise<unknown> };
+    require.async = async (specifier: string): Promise<unknown> => {
+      calls.push(specifier);
+      return module;
+    };
+    return { require, calls };
+  }
+
+  /** A fresh module graph, since the cache and the captured require are module state. */
+  async function fresh(): Promise<typeof import("../src/client/chunk-loader.ts")> {
+    vi.resetModules();
+    return import("../src/client/chunk-loader.ts");
+  }
+
+  it("hands the require to the chunk before resolving", async () => {
+    const received: unknown[] = [];
+    const chunk = {
+      renderer: "codemirror",
+      EditorBody: () => null,
+      boot: (require: unknown) => received.push(require),
+    };
+    const { require } = fakeRequire(chunk);
+    const loader = await fresh();
+    loader.boot(require);
+
+    const loaded = await loader.loadEditorChunk();
+    expect(loaded).toBe(chunk);
+    // The chunk's own copy of this module needs the same require; without it the
+    // delegated language blocks have no way to fetch anything.
+    expect(received).toEqual([require]);
+  });
+
+  it("still resolves a chunk that has no boot, for an older build", async () => {
+    const chunk = { renderer: "codemirror", EditorBody: () => null };
+    const { require } = fakeRequire(chunk);
+    const loader = await fresh();
+    loader.boot(require);
+
+    // A chunk built before this hand-over existed must keep working: the editor
+    // itself is fine, only the delegated blocks would not load.
+    await expect(loader.loadEditorChunk()).resolves.toBe(chunk);
+  });
+});

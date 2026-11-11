@@ -35,7 +35,7 @@ import { BLOCK_ASSIGNMENT } from "dsh-text-languages/catalog.ts";
 
 import { EDITABLE_LANG_CHUNKS } from "../../shared.ts";
 import type { EditableHandle } from "../contracts.ts";
-import { loadEditableLangChunk } from "../chunk-loader.ts";
+import { boot as bootChunkLoader, loadEditableLangChunk, type LoaderRequire } from "../chunk-loader.ts";
 import { ExternalChange, EDITOR_HIGHLIGHT_STYLE } from "./editor-kit.tsx";
 import { languageOf, type EditorLanguage } from "../language.ts";
 import { TableWidget } from "../table-widget.ts";
@@ -511,6 +511,19 @@ function ShellEditorBody(props: EditorBodyProps): ReactElement {
   );
 }
 
-const chunkModule = { renderer: "codemirror" as const, EditorBody };
+/**
+ * Take the loader require into this bundle.
+ *
+ * The chunk is its own bundle with its own copy of `chunk-loader.ts`, so the
+ * `boot` the startup entry calls never reaches it. The loader calls this one when
+ * it resolves the chunk, which is what lets the delegated language blocks fetch
+ * anything at all.
+ * @param require - the loader's require, with `async` attached.
+ */
+export function boot(require: LoaderRequire): void {
+  bootChunkLoader(require);
+}
+
+const chunkModule = { renderer: "codemirror" as const, EditorBody, boot };
 
 export default chunkModule;

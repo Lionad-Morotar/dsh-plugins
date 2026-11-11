@@ -27,6 +27,19 @@ export interface EditorChunkModule {
   /** Diagnostic marker; asserted by the build and reported by the pane. */
   readonly renderer: "codemirror";
   readonly EditorBody: ComponentType<EditorBodyProps>;
+  /**
+   * Take the loader require into the chunk's own bundle.
+   *
+   * This module is packaged twice, once into the startup bundle and once into
+   * `client.editor.js`, and each copy has its own module state. The `boot` the
+   * entry calls only fills the startup copy, so the chunk's copy has no require
+   * and every delegated language block fails to load. Handing the require over
+   * here is what initialises the copy that actually runs the delegation.
+   *
+   * Optional so a chunk built before this hand-over keeps working: its editor is
+   * fine, only the delegated blocks would be unavailable.
+   */
+  readonly boot?: (require: LoaderRequire) => void;
 }
 
 /** The chunk this package fetches, for diagnostics and the build assertion. */
@@ -65,6 +78,10 @@ export function loadEditorChunk(): Promise<EditorChunkModule> {
     if (chunk === null || typeof chunk.EditorBody !== "function" || chunk.renderer !== "codemirror") {
       throw new Error(`${PACKAGE_NAME}: chunk ${route.id} is missing its editor body`);
     }
+    // Before resolving, hand this require to the chunk's own copy of this module.
+    // Without it the chunk can render its editor but cannot fetch a language
+    // block, which is a failure that only shows up as a silent monochrome page.
+    chunk.boot?.(active);
     return chunk as EditorChunkModule;
   });
   pending = request;

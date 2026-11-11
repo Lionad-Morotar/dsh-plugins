@@ -181,3 +181,39 @@ describe("editor body delegation", () => {
     root = createRoot(host);
   });
 });
+
+/**
+ * The editor chunk has to export its own `boot`.
+ *
+ * The loader injects the startup require into the chunk, but only if the chunk
+ * exposes a `boot` for it to call. Forgetting that export is the exact regression
+ * that shipped: the loader's hand-over had nothing to hand the require to, the
+ * chunk's own copy of the loader stayed empty, and every delegated block fell
+ * back to monochrome.
+ */
+describe("editor chunk module exports", () => {
+  it("exposes boot alongside the renderer and the body", async () => {
+    vi.resetModules();
+    const module = await import("../src/client/chunk/editor.tsx");
+    const chunkModule = module.default as { renderer?: string; EditorBody?: unknown; boot?: unknown };
+    expect(chunkModule.renderer).toBe("codemirror");
+    expect(typeof chunkModule.EditorBody).toBe("function");
+    expect(typeof chunkModule.boot).toBe("function");
+  });
+
+  it("initialises this bundle's loader when boot is called", async () => {
+    vi.resetModules();
+    const loader = await import("../src/client/chunk-loader.ts");
+    const module = await import("../src/client/chunk/editor.tsx");
+    const require = Object.assign(() => {
+      throw new Error("sync require is not used here");
+    }, { async: async () => ({}) });
+    // Before the hand-over the delegated loader has nothing to fetch with.
+    await expect(loader.loadEditableLangChunk("batch-script")).rejects.toThrow(/loader require/u);
+    module.boot(require as never);
+    // After it, the same call reaches the loader instead of refusing outright:
+    // the stub answers with an empty module, so the failure is now the marker
+    // check rather than the missing hand-over.
+    await expect(loader.loadEditableLangChunk("batch-script")).rejects.toThrow(/is not the batch-script block/u);
+  });
+});

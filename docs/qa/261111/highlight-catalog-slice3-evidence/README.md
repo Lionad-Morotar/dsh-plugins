@@ -27,19 +27,34 @@ node temp/m3/legacy-size.mjs   # 雾 B：legacy 单 mode 的 gzip 边际成本
 
 前三张的 `renderer` 是 `codemirror` 而不是块名，说明它们走的是 shell 的单色编辑器，即委派回落到失败分支。原因见下节。
 
-## 委派在真实产物里未生效（本刀发现的缺陷）
+## 委派曾未生效，已修并复测
 
-`EditorBody` 的委派判断本身是对的，问题在模块状态跨 bundle 不共享：
+第一次测量时，三个委派样例的 `data-renderer` 都是 `codemirror`，即回落到了 shell 的单色编辑器。根因是模块状态跨 bundle 不共享：
 
 - `chunk-loader.ts` 的 `boot(require)` 把 loader 的 `require` 存进一个模块级变量。
 - 这个 `boot` 只由 `client.js`（启动包）的 entry 调用。
 - 但 `EditorBody` 与它调用的 `loadEditableLangChunk` 都编译进 `client.editor.js`，那是另一个 bundle，里面有一份自己的 `chunk-loader` 模块实例，它的 `loaderRequire` 永远是 `null`。
 
-于是 `loadEditableLangChunk` 每次都立刻 reject（`the loader require was not handed over`），`DelegatedBody` 走 `setFailed(true)`，渲染 `ShellEditorBody`。产物里能看到这个结构：`client.js` 有 `boot` 导出，`client.editor.js` 没有。
+于是 `loadEditableLangChunk` 每次都立刻 reject，`DelegatedBody` 走 `setFailed(true)`，渲染 `ShellEditorBody`。
 
-单元测试没有抓到它，因为 vitest 用 `vi.resetModules()` 让 entry 与 editor 共享同一模块图，`boot` 与 `loadEditableLangChunk` 落在同一个实例里，跨 bundle 的边界在测试里不存在。
+修法是注入而不是共享变量：`loadEditorChunk()` 解析出 chunk 后、在 resolve 之前调用 `chunk.boot?.(active)`，把启动包持有的 require 交给编辑块自己的 bundle；`chunk/editor.tsx` 导出 `boot` 并放进 `chunkModule`，让块内那份 `chunk-loader` 也被初始化。`boot` 在类型上是可选的，所以早于这次改动构建的 chunk 仍能加载，只是委派不可用。
 
-修复方向（下一片）：让 `client.editor.js` 也导出并调用 `boot`，或把 loader 的 `require` 通过 `EditorBody` 的 props 传进来。本片按任务书「不改任何 `src/`」未动。
+复测读数（`node temp/m3/editable.mjs`）：
+
+| 图 | 路径 | data-renderer | keyword | string | comment |
+| --- | --- | --- | --- | --- | --- |
+| `rust.png` | `sample.rs` | `batch-script` | `rgb(17,85,255)` | `rgb(10,143,60)` | `rgb(122,122,130)` |
+| `ini.png` | `app.ini` | `batch-webstyle` | `rgb(28,28,30)` | null | `rgb(122,122,130)` |
+| `php.png` | `page.php` | `batch-webstyle` | `rgb(17,85,255)` | `rgb(10,143,60)` | `rgb(122,122,130)` |
+| `vue.png` | `sample.vue` | `codemirror` | `rgb(204,34,68)` | `rgb(10,143,60)` | `rgb(122,122,130)` |
+
+`rust` 与 `php` 三档齐全，色系与 `vue` 对照一致（keyword 蓝、string 绿、comment 灰）。`vue` 的 `codemirror` 是预期：`.vue` 由 html 在役块着色，不走委派。
+
+`ini` 的 keyword 是正文色、string 为 null，这不是委派失败（`data-renderer` 已是 `batch-webstyle`），而是 legacy `properties` 模式的结构性能力：它只产出 `comment` 与 `header` 两种 token，没有 keyword 与 string 概念，而 `header` 不在 `--fmd-syn-*` 色表里，所以 `[server]` 落在正文色。要让 ini 三档齐全需要一个带 keyword/string 概念的语法源，那是换语法而不是修委派。
+
+反向验证：把注入关掉（`NO_BOOT=1 node temp/m3/editable.mjs`）后，`rust` / `ini` / `php` 三张重新变回 `codemirror` 且三档色全 null，`vue` 对照不受影响。这组红绿确认了注入就是那条让委派生效的线。
+
+单元测试原先没抓到它，因为 vitest 用 `vi.resetModules()` 让 entry 与 editor 共享同一模块图，跨 bundle 边界在测试里不存在。现在补了两类断言：loader 在 resolve 前把 require 交给 chunk 的 `boot`、缺 `boot` 的老模块照常返回、以及 `chunkModule` 确实导出 `boot`。
 
 ## 雾 A：同页并发挂载多块的上限
 
