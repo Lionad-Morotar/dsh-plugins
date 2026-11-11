@@ -1183,6 +1183,44 @@ ${ENTRY_MARK_STYLES}
 }
 .fx-md input[type="checkbox"] { margin-right: .45em; vertical-align: middle; }
 
+/* A rendered diagram: the picture, then its source behind a toggle. The figure
+   is a block of its own so a wide graph scrolls inside the document rather than
+   forcing the whole panel sideways. */
+.fx-md-diagram {
+  margin: 1em 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.fx-md-diagram svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+/* The source while the diagram is pending, and inside the toggle once it is
+   drawn: same box as every other fence, so a reader who was looking at code
+   keeps looking at the same shape. */
+.fx-md-diagram-source {
+  overflow-x: auto;
+  margin: 1em 0;
+  padding: 10px 14px;
+  border: 1px solid var(--fx-border-soft);
+  border-radius: 8px;
+  background: var(--fx-panel-2);
+  line-height: 1.55;
+}
+.fx-md-diagram-source-toggle {
+  margin-top: .5em;
+  color: var(--fx-caption);
+  font-size: .88em;
+}
+.fx-md-diagram-source-toggle > summary { cursor: pointer; }
+.fx-md-diagram-source-toggle .fx-md-diagram-source { margin: .5em 0 0; }
+.fx-md-diagram-error {
+  margin: .25em 0 1em;
+  color: var(--fx-caption);
+  font-size: .88em;
+}
+
 @media (max-width: 760px) {
   .fx-main { flex-direction: column; }
   .fx-tree-pane {

@@ -26,6 +26,7 @@ import { LANGUAGE_CHUNKS } from "dsh-text-languages/index.ts";
 import type { Translate } from "./copy.ts";
 import type { PreviewFamily } from "./preview.ts";
 import { FAMILY_CHUNKS, PACKAGE_NAME, PREVIEW_CHUNK } from "../shared.ts";
+import type { MarkdownViewProps } from "./chunk/markdown-view.tsx";
 
 // The diagram loader lives in `chunk/boot.ts` because this module imports the
 // language catalogue by value and the preview chunk must not carry it. Re-exported
@@ -71,7 +72,7 @@ export interface PreviewChunkModule {
   /** Diagnostic marker asserted by the build and exposed on the pane. */
   readonly renderer: "codemirror";
   mountCodePreview(host: HTMLElement, options: CodePreviewOptions): CodePreviewHandle;
-  readonly MarkdownView: ComponentType<{ readonly text: string }>;
+  readonly MarkdownView: ComponentType<MarkdownViewProps>;
   /**
    * Take the loader require into the chunk's own bundle.
    *
