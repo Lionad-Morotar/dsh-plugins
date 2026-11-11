@@ -377,3 +377,41 @@ describe("languageFor", () => {
     expect(languageFor("a.toml")).toBe(languageFor("a.txt"));
   });
 });
+
+/**
+ * The four suffixes the old hardcoded table coloured.
+ *
+ * Before the catalogue existed, `preview.ts` carried a suffix table that mapped
+ * `.json5` to json and `.sass` / `.pcss` / `.postcss` to css. The catalogue has no
+ * upstream row for any of them, so they fell to plaintext and those files lost
+ * their colour. They are added back through the additions layer, which exists for
+ * exactly this: a suffix this repo colours that upstream does not list.
+ */
+describe("suffixes the old table coloured", () => {
+  const RESTORED: ReadonlyArray<readonly [string, string]> = [
+    [".json5", "json"],
+    [".sass", "css"],
+    [".pcss", "css"],
+    [".postcss", "css"],
+  ];
+
+  it("resolves each one to the language the old table gave it", () => {
+    for (const [suffix, id] of RESTORED) {
+      expect(languageFor(`a${suffix}`), suffix).toBe(id);
+    }
+  });
+
+  it("gives each one a block, so both surfaces can colour it", () => {
+    for (const [suffix] of RESTORED) {
+      const id = languageFor(`a${suffix}`);
+      expect(LANGUAGE_CHUNKS[id], suffix).toBeDefined();
+    }
+  });
+
+  it("keeps .sass on css rather than moving it to scss", () => {
+    // The old table said css, and changing that here would be a silent recolour
+    // rather than a restoration.
+    expect(languageFor("a.sass")).toBe("css");
+    expect(languageFor("a.scss")).toBe("scss");
+  });
+});

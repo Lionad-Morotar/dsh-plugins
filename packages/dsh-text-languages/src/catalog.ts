@@ -71,6 +71,29 @@ const SUFFIX_ADDITIONS: readonly SuffixAddition[] = [
     to: "markdown",
     reason: "upstream has no row for .mdx; the read-only surface already reads it as markdown, and unknown would drop markdown reading mode",
   },
+  // The four below were coloured by the suffix table this catalogue replaced.
+  // Upstream lists none of them, so without these entries the files would fall to
+  // plaintext: a silent recolour of files that used to be highlighted.
+  {
+    suffix: ".json5",
+    to: "json",
+    reason: "the old hardcoded table coloured .json5 as json; upstream has no row, so this keeps it coloured",
+  },
+  {
+    suffix: ".sass",
+    to: "css",
+    reason: "the old hardcoded table coloured .sass as css; upstream has no row, so this keeps it coloured",
+  },
+  {
+    suffix: ".pcss",
+    to: "css",
+    reason: "the old hardcoded table coloured .pcss as css; upstream has no row, so this keeps it coloured",
+  },
+  {
+    suffix: ".postcss",
+    to: "css",
+    reason: "the old hardcoded table coloured .postcss as css; upstream has no row, so this keeps it coloured",
+  },
 ];
 
 /**
