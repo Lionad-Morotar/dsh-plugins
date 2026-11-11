@@ -159,7 +159,10 @@ export const FS_STYLES = `
   padding: 4px;
   border: 1px solid var(--fx-border);
   border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  /* A floating card sits on the host's top layer, not the panel's own layer:
+     skins that make the workspace translucent (layer-1 / layer-2 with alpha)
+     keep layer-3 opaque so raised surfaces still read as solid. */
+  background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2));
   box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent);
   display: flex;
   flex-direction: column;
@@ -224,11 +227,11 @@ export const FS_STYLES = `
 /* The management menu is fixed and placed from its button's rect, for the same
    reason the flyouts are: the header clips its overflow. */
 .fx-bookmark-manage-menu {
-  position: fixed; z-index: 75; min-width: 150px; padding: 4px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 1px; font-family: var(--fx-font); font-size: calc(var(--fx-fs) * 0.8571); }
+  position: fixed; z-index: 75; min-width: 150px; padding: 4px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 1px; font-family: var(--fx-font); font-size: calc(var(--fx-fs) * 0.8571); }
 
 /* The destination picker: one card, one level at a time. */
 .fx-bookmark-picker {
-  position: absolute; z-index: 65; top: calc(var(--fx-fs) * 3.1429); left: 12px; width: 280px; max-height: 60vh; overflow-y: auto; padding: 10px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 8px; font-family: var(--fx-font); font-size: calc(var(--fx-fs) * 0.8571); }
+  position: absolute; z-index: 65; top: calc(var(--fx-fs) * 3.1429); left: 12px; width: 280px; max-height: 60vh; overflow-y: auto; padding: 10px; border: 1px solid var(--fx-border); border-radius: 8px; background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2)); box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent); display: flex; flex-direction: column; gap: 8px; font-family: var(--fx-font); font-size: calc(var(--fx-fs) * 0.8571); }
 .fx-bookmark-picker-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .fx-bookmark-picker-head strong { font-size: calc(var(--fx-fs) * 0.8571); font-weight: 600; }
 .fx-bookmark-picker-target { color: var(--fx-caption); font-size: calc(var(--fx-fs) * 0.7857); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -280,7 +283,7 @@ export const FS_STYLES = `
   padding: 4px;
   border: 1px solid var(--fx-border);
   border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2));
   box-shadow: 0 8px 24px color-mix(in srgb, currentColor 16%, transparent);
   color: var(--fx-text);
   font-family: var(--fx-font);
@@ -325,7 +328,10 @@ export const FS_STYLES = `
   padding: 10px;
   border: 1px solid var(--fx-border);
   border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  /* A floating card sits on the host's top layer, not the panel's own layer:
+     skins that make the workspace translucent (layer-1 / layer-2 with alpha)
+     keep layer-3 opaque so raised surfaces still read as solid. */
+  background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2));
   box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent);
   display: flex;
   flex-direction: column;
@@ -1250,7 +1256,10 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   padding: 4px;
   border: 1px solid var(--fx-border);
   border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  /* A floating card sits on the host's top layer, not the panel's own layer:
+     skins that make the workspace translucent (layer-1 / layer-2 with alpha)
+     keep layer-3 opaque so raised surfaces still read as solid. */
+  background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2));
   box-shadow: 0 10px 28px color-mix(in srgb, currentColor 18%, transparent);
   font-family: var(--fx-font);
   font-size: calc(var(--fx-fs) * 0.8571);
@@ -1269,7 +1278,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   flex: none;
   padding: 4px 8px;
   overflow: hidden;
-  background: var(--dsw-alias-bg-layer-2, var(--fx-panel-2));
+  background: var(--dsw-alias-bg-layer-3, var(--fx-panel-2));
   color: var(--fx-caption);
   font-family: var(--fx-mono);
   font-size: var(--fx-fs-code);
