@@ -59,7 +59,7 @@
 | `lib/client.js` | 浏览器半，CJS 包在 ModuleLoader factory 里 |
 | `lib/client.editor.js` | 懒 chunk：CodeMirror 与高亮代码视图 |
 
-启动包有 72KB 预算（gzip 后约 19KB）。这条线抬过三次，都是因为面板不再是原型：40KB 时是分栏、键盘与拖拽落地，64KB 时是运行头、面积图与动效层成为启动代码，72KB 时是右键菜单与引用通道（输入框可能在首帧就持有 chip，source 必须从首帧注册）。真正要守的是 CodeMirror 不进启动包，那条断言还在。
+启动包有 76KB 预算（gzip 后约 20.8KB，实测 75,573 B）。这条线抬过四次，都是因为面板不再是原型：40KB 时是分栏、键盘与拖拽落地，64KB 时是运行头、面积图与动效层成为启动代码，72KB 时是右键菜单与引用通道（输入框可能在首帧就持有 chip，source 必须从首帧注册），76KB 时是目录折叠（折叠集合、可见行推导与选中迁移都在首帧）。真正要守的是 CodeMirror 不进启动包，那条断言还在。
 
 `src/client/data/snapshot.json` 与 `sources.json` 由 `scripts/snapshot.mjs` 扫描本仓 `packages/*/test/**/*.test.{ts,tsx}` 生成。它们现在只服务两处：预览页的 fixture runtime，以及测试语料。线上看板不读它们。
 

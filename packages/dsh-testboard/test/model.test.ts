@@ -11,16 +11,19 @@ import { describe, expect, it } from "vitest";
 import snapshotData from "../src/client/data/snapshot.json" with { type: "json" };
 
 import {
+  directoryKeysForFile,
   groupByPackage,
   groupFileRows,
   groupFileRowsIntoTree,
   listFileRows,
   listRows,
+  nearestVisiblePath,
   PARALLEL_TEST_PROCESSES,
   peakThroughput,
   summarize,
   throughputSeries,
   treeFileRows,
+  visibleFileRows,
   wallClockMs,
   type TestCase,
   type TestFileRow,
@@ -402,6 +405,129 @@ describe("treeFileRows", () => {
       "packages/a/test/zeta.test.ts",
       "packages/a/test/alpha.test.ts",
     ]);
+  });
+});
+
+describe("visibleFileRows", () => {
+  /** A tree with two top directories, one of them nested. */
+  const TREE = groupFileRowsIntoTree([
+    fileRow("a", "packages/a/test/one.test.ts"),
+    fileRow("a", "packages/a/test/unit/two.test.ts"),
+    fileRow("a", "packages/a/test/unit/deep/three.test.ts"),
+    fileRow("a", "packages/a/integration/four.test.ts"),
+  ]);
+
+  it("returns every row when nothing is collapsed", () => {
+    // Render order is the tree's: directories by segment name, so `integration`
+    // comes before `test`.
+    expect(visibleFileRows(TREE, new Set()).map(row => row.path)).toEqual([
+      "packages/a/integration/four.test.ts",
+      "packages/a/test/one.test.ts",
+      "packages/a/test/unit/two.test.ts",
+      "packages/a/test/unit/deep/three.test.ts",
+    ]);
+  });
+
+  it("drops a collapsed leaf directory's files", () => {
+    expect(visibleFileRows(TREE, new Set(["a:test/unit/deep"])).map(row => row.path)).toEqual([
+      "packages/a/integration/four.test.ts",
+      "packages/a/test/one.test.ts",
+      "packages/a/test/unit/two.test.ts",
+    ]);
+  });
+
+  it("drops a collapsed parent's own files and its whole subtree", () => {
+    // Collapsing `test/unit` has to take `test/unit/deep` with it: the child is
+    // not on screen either, so its rows must not be navigable.
+    expect(visibleFileRows(TREE, new Set(["a:test/unit"])).map(row => row.path)).toEqual([
+      "packages/a/integration/four.test.ts",
+      "packages/a/test/one.test.ts",
+    ]);
+  });
+
+  it("keeps a flat package's rows whatever is collapsed", () => {
+    // A suppressed package has no headers, so no key can name it; a stray key
+    // must not hide its rows.
+    const flat = groupFileRowsIntoTree([
+      fileRow("b", "packages/b/test/one.test.ts"),
+      fileRow("b", "packages/b/test/two.test.ts"),
+    ]);
+    expect(visibleFileRows(flat, new Set(["b:test"])).map(row => row.path)).toEqual([
+      "packages/b/test/one.test.ts",
+      "packages/b/test/two.test.ts",
+    ]);
+  });
+
+  it("collapses the root group's directories by their own keys", () => {
+    const root = groupFileRowsIntoTree([
+      fileRow(".", "tests/client/a.test.ts"),
+      fileRow(".", "tests/server/api/b.test.ts"),
+    ]);
+    expect(visibleFileRows(root, new Set([".:tests/server"])).map(row => row.path)).toEqual([
+      "tests/client/a.test.ts",
+    ]);
+  });
+
+  it("returns nothing when every directory is collapsed", () => {
+    expect(visibleFileRows(TREE, new Set(["a:test", "a:integration"]))).toEqual([]);
+  });
+});
+
+describe("directoryKeysForFile", () => {
+  it("lists a package file's directories from the root down", () => {
+    expect(directoryKeysForFile("packages/a/test/unit/deep/three.test.ts", "a")).toEqual([
+      "a:test",
+      "a:test/unit",
+      "a:test/unit/deep",
+    ]);
+  });
+
+  it("uses the whole path for a root-group file", () => {
+    expect(directoryKeysForFile("tests/server/api/b.test.ts", ".")).toEqual([
+      ".:tests",
+      ".:tests/server",
+      ".:tests/server/api",
+    ]);
+  });
+
+  it("returns nothing for a file at its package root", () => {
+    expect(directoryKeysForFile("packages/a/one.test.ts", "a")).toEqual([]);
+  });
+});
+
+describe("nearestVisiblePath", () => {
+  const ALL = [
+    fileRow("a", "packages/a/test/one.test.ts"),
+    fileRow("a", "packages/a/test/unit/two.test.ts"),
+    fileRow("a", "packages/a/test/unit/deep/three.test.ts"),
+    fileRow("a", "packages/a/integration/four.test.ts"),
+  ];
+
+  it("keeps a selection that is still visible", () => {
+    const visible = [ALL[0]!, ALL[3]!];
+    expect(nearestVisiblePath(ALL, visible, "packages/a/test/one.test.ts")).toBe("packages/a/test/one.test.ts");
+  });
+
+  it("moves forward to the next visible row", () => {
+    const visible = [ALL[0]!, ALL[3]!];
+    expect(nearestVisiblePath(ALL, visible, "packages/a/test/unit/two.test.ts")).toBe(
+      "packages/a/integration/four.test.ts",
+    );
+  });
+
+  it("falls back to the previous visible row when nothing follows", () => {
+    const tail = [ALL[0]!, ALL[1]!];
+    expect(nearestVisiblePath(ALL, tail, "packages/a/integration/four.test.ts")).toBe(
+      "packages/a/test/unit/two.test.ts",
+    );
+  });
+
+  it("returns undefined when nothing is visible", () => {
+    expect(nearestVisiblePath(ALL, [], "packages/a/test/one.test.ts")).toBeUndefined();
+  });
+
+  it("returns undefined for a path that is not in the full order", () => {
+    expect(nearestVisiblePath(ALL, [ALL[0]!], "packages/a/nope.test.ts")).toBeUndefined();
   });
 });
 

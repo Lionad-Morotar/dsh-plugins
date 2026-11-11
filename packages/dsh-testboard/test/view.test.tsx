@@ -118,6 +118,8 @@ const STRINGS: TestboardViewStrings = {
   noticeCopied: "已复制路径",
   noticeCopyFailed: "复制失败",
   fromCache: "上次运行",
+  expandDirectory: "展开目录",
+  collapseDirectory: "收起目录",
 };
 
 /**
@@ -520,6 +522,146 @@ describe("testboard view", () => {
       await act(async () => row.click());
       expect(row.getAttribute("data-selected")).toBe("true");
       expect(host.querySelectorAll('[data-testid="case-item"]')).toHaveLength(1);
+    });
+
+    /** The toggle inside one directory header. */
+    function toggleOf(dir: string): HTMLElement {
+      const found = host.querySelector<HTMLElement>(`[data-dir="${dir}"] [data-testid="directory-toggle"]`);
+      if (found === null) throw new Error(`no toggle for ${dir}`);
+      return found;
+    }
+
+    /** The file paths currently rendered, in document order. */
+    function shownPaths(): (string | null)[] {
+      return rows(host).map(row => row.getAttribute("data-path"));
+    }
+
+    describe("collapsing", () => {
+      it("starts fully expanded", async () => {
+        await mountTree();
+        const toggles = [...host.querySelectorAll<HTMLElement>('[data-testid="directory-toggle"]')];
+        expect(toggles.length).toBeGreaterThan(0);
+        expect(toggles.every(toggle => toggle.getAttribute("aria-expanded") === "true")).toBe(true);
+        expect(toggles.every(toggle => toggle.getAttribute("data-collapsed") === "false")).toBe(true);
+      });
+
+      it("hides a directory's files and its subtree on click, and restores them", async () => {
+        await mountTree();
+        expect(shownPaths()).toContain("packages/tree/test/unit/a.test.ts");
+        expect(shownPaths()).toContain("packages/tree/test/unit/nested/b.test.ts");
+
+        await act(async () => toggleOf("tree:test/unit").click());
+        expect(toggleOf("tree:test/unit").getAttribute("aria-expanded")).toBe("false");
+        expect(toggleOf("tree:test/unit").getAttribute("data-collapsed")).toBe("true");
+        // The nested child goes with its parent: the reader folded the branch.
+        expect(shownPaths()).not.toContain("packages/tree/test/unit/a.test.ts");
+        expect(shownPaths()).not.toContain("packages/tree/test/unit/nested/b.test.ts");
+        expect(host.querySelector('[data-dir="tree:test/unit/nested"]')).toBeNull();
+        // The sibling branch is untouched.
+        expect(shownPaths()).toContain("packages/tree/test/integration/c.test.ts");
+
+        await act(async () => toggleOf("tree:test/unit").click());
+        expect(shownPaths()).toContain("packages/tree/test/unit/a.test.ts");
+        expect(shownPaths()).toContain("packages/tree/test/unit/nested/b.test.ts");
+      });
+
+      it("does not select a row when the header is clicked", async () => {
+        await mountTree();
+        await act(async () => toggleOf("tree:test/unit").click());
+        expect(rows(host).some(row => row.getAttribute("data-selected") === "true")).toBe(false);
+        expect(host.querySelector('[data-testid="detail-empty"]')).not.toBeNull();
+      });
+
+      it("keeps the toggle out of the listbox keyboard order", async () => {
+        await mountTree();
+        const toggle = toggleOf("tree:test/unit");
+        // The list owns the arrow keys; a focusable header would take the focus
+        // away from it and strand the keyboard reader.
+        expect(toggle.hasAttribute("tabindex")).toBe(false);
+        expect(toggle.getAttribute("role")).not.toBe("option");
+        expect(toggle.getAttribute("aria-label")).toBe(STRINGS.collapseDirectory);
+      });
+
+      it("shows every match while a search is running, then restores the fold", async () => {
+        await mountTree();
+        await act(async () => toggleOf("tree:test/unit").click());
+        expect(shownPaths()).not.toContain("packages/tree/test/unit/a.test.ts");
+
+        const input = host.querySelector<HTMLInputElement>('[data-testid="search-input"]');
+        if (input === null) throw new Error("no search input");
+        await act(async () => {
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+          setter?.call(input, "unit/a.test");
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        // A search that cannot reach the file it matched would be useless, so a
+        // live query overrides the fold.
+        expect(shownPaths()).toEqual(["packages/tree/test/unit/a.test.ts"]);
+
+        await act(async () => {
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+          setter?.call(input, "");
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        // The reader's own fold comes back rather than being silently dropped.
+        expect(shownPaths()).not.toContain("packages/tree/test/unit/a.test.ts");
+      });
+
+      it("moves the selection to the next visible row when its file is folded away", async () => {
+        await mountTree();
+        const target = rows(host).find(row => row.getAttribute("data-path") === "packages/tree/test/unit/a.test.ts");
+        if (target === undefined) throw new Error("no target row");
+        await act(async () => target.click());
+        expect(target.getAttribute("data-selected")).toBe("true");
+
+        await act(async () => toggleOf("tree:test/unit").click());
+        // `test/integration/c.test.ts` follows the folded branch in render order.
+        const selected = rows(host).find(row => row.getAttribute("data-selected") === "true");
+        expect(selected?.getAttribute("data-path")).toBe("packages/tree/test/integration/c.test.ts");
+        expect(host.querySelector('[data-testid="detail-file"]')).not.toBeNull();
+      });
+
+      it("moves the selection into the next package when its own is folded away", async () => {
+        await mountTree();
+        const target = rows(host).find(row => row.getAttribute("data-path") === "packages/tree/test/integration/c.test.ts");
+        if (target === undefined) throw new Error("no target row");
+        await act(async () => target.click());
+
+        // Folding the whole `tree` package leaves the root group and `flat`
+        // visible, all of them earlier in render order, so the nearest surviving
+        // row is the last one before the fold.
+        await act(async () => toggleOf("tree:test").click());
+        const selected = rows(host).find(row => row.getAttribute("data-selected") === "true");
+        expect(selected?.getAttribute("data-path")).toBe("packages/flat/test/a.test.ts");
+        expect(host.querySelector('[data-testid="detail-file"]')).not.toBeNull();
+      });
+
+      it("expands the ancestors of a chip's target before selecting it", async () => {
+        await mountTree();
+        await act(async () => toggleOf("tree:test/unit").click());
+        expect(shownPaths()).not.toContain("packages/tree/test/unit/nested/b.test.ts");
+
+        const complete = { calls: 0 };
+        await act(async () => {
+          root.render(
+            createElement(makeView(), {
+              sessionId: "session-1",
+              viewRequest: { view: "testboard", focus: "file:packages/tree/test/unit/nested/b.test.ts" },
+              completeViewRequest: () => {
+                complete.calls += 1;
+              },
+            }),
+          );
+        });
+        await settleBoard(host);
+
+        // The request is the reason the reader is here, so the fold that hides
+        // its target gives way.
+        const selected = rows(host).find(row => row.getAttribute("data-selected") === "true");
+        expect(selected?.getAttribute("data-path")).toBe("packages/tree/test/unit/nested/b.test.ts");
+        expect(toggleOf("tree:test/unit").getAttribute("aria-expanded")).toBe("true");
+        expect(complete.calls).toBeGreaterThan(0);
+      });
     });
   });
 

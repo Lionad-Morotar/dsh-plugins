@@ -308,3 +308,46 @@ describe("pageStep", () => {
     expect(pageStep(400, 20, 1)).toBe(1);
   });
 });
+
+/**
+ * Navigation over a collapsed tree.
+ *
+ * The model never learned about directories: it walks whatever row list it is
+ * given. That is exactly the property collapsing needs, and it is worth pinning
+ * rather than assuming, because the alternative (teaching `flattenNav` about
+ * collapsed keys) would put the tree's shape in two places.
+ */
+describe("navigation over visible rows only", () => {
+  /** The rows still on screen after `packages/b/test` was folded away. */
+  const VISIBLE: readonly TestFileRow[] = [ROWS[0]!, ROWS[2]!];
+
+  it("walks past a hidden row without stopping on it", () => {
+    const result = applyNavIntent("down", { selection: { kind: "file", path: ROWS[0]!.path }, expanded: NO_EXPANDED }, VISIBLE);
+    // The hidden middle file is not in the list, so Down lands on the next one
+    // the reader can actually see.
+    expect(result.selection).toEqual({ kind: "file", path: ROWS[2]!.path });
+  });
+
+  it("counts only visible rows for Home and End", () => {
+    expect(applyNavIntent("last", { selection: undefined, expanded: NO_EXPANDED }, VISIBLE).selection).toEqual({
+      kind: "file",
+      path: ROWS[2]!.path,
+    });
+    expect(applyNavIntent("first", { selection: undefined, expanded: NO_EXPANDED }, VISIBLE).selection).toEqual({
+      kind: "file",
+      path: ROWS[0]!.path,
+    });
+  });
+
+  it("pages by the visible row count, not the full one", () => {
+    // Two visible rows means the ceiling is one row: a page key must not claim
+    // to move through rows that are folded away.
+    expect(pageStep(400, 2000, VISIBLE.length)).toBe(1);
+  });
+
+  it("drops a selection whose file was folded away", () => {
+    // The view migrates the selection with `nearestVisiblePath`; the model's own
+    // job is to refuse to keep pointing at a row that is not on screen.
+    expect(normalizeSelection({ kind: "file", path: ROWS[1]!.path }, VISIBLE, NO_EXPANDED)).toBeUndefined();
+  });
+});

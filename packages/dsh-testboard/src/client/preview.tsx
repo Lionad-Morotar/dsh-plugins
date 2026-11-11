@@ -92,6 +92,8 @@ const STRINGS: TestboardViewStrings = {
   noticeCopied: "已复制路径",
   noticeCopyFailed: "复制失败",
   fromCache: "上次运行",
+  expandDirectory: "展开目录",
+  collapseDirectory: "收起目录",
 };
 
 /** Which static state the page should show instead of the demoting demo loop. */

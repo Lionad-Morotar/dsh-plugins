@@ -449,6 +449,28 @@ body.tst-pane-resizing {
 
 [data-tst="directory-name"] {overflow: hidden;text-overflow: ellipsis;white-space: nowrap}
 
+/* The header's click target. It is a button for the pointer and the assistive
+   name, but it must not look like one: a bordered control on every directory
+   would turn the tree into a toolbar. */
+[data-tst="directory-toggle"] {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+[data-tst="directory-toggle"]:hover [data-tst="directory-name"] {color: var(--tst-ink-dim)}
+
+[data-tst="directory-chevron"] {flex: 0 0 auto;width: 1ch;color: var(--tst-ink-faint)}
+
 [data-tst="directory-failed"] {flex: 0 0 auto;color: var(--tst-fail);white-space: nowrap}
 
 [data-tst="lane"] {

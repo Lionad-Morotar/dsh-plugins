@@ -54,15 +54,17 @@ const CLIENT_EXTERNALS = ["react", "react/jsx-runtime", "react-dom", "@deepseek-
  * The line has moved three times, always for the same reason: the panel stopped
  * being a prototype. It went to 40KB when the split view, keyboard navigation
  * and the resize handle landed; to 64KB when the run header, the throughput
- * chart and the motion layer became startup code; and to 72KB when the context
+ * chart and the motion layer became startup code; to 72KB when the context
  * menu and the reference source/writer arrived, which the composer needs
- * registered from the first paint because a draft can already hold a chip.
+ * registered from the first paint because a draft can already hold a chip; and
+ * to 76KB when the directory tree became foldable, which put the fold state, the
+ * visible-row derivation and the selection migration in the first paint.
  *
  * What the ceiling guards is the payload that must never be inlined: CodeMirror
  * stays in its own chunk, and the assertion below fails if it creeps in. That is
- * the megabyte; this bundle is tens of kilobytes, and gzipped it is under 20KB.
+ * the megabyte; this bundle is tens of kilobytes, and gzipped it is under 21KB.
  */
-const CLIENT_MAX_BYTES = 72 * 1024;
+const CLIENT_MAX_BYTES = 76 * 1024;
 
 /** CodeMirror's view, state, language and JavaScript parser, minified. */
 const EDITOR_MAX_BYTES = 1_200_000;

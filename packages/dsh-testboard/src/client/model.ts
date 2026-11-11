@@ -522,6 +522,95 @@ export function treeFileRows(pkg: PackageTree): TestFileRow[] {
   return pkg.directories.flatMap(node => walk(node));
 }
 
+/**
+ * The rows still on screen with some directories folded away.
+ *
+ * A collapsed directory takes its own files and its whole subtree with it: the
+ * child headers are not rendered either, so their rows must not be navigable.
+ * A suppressed package has no headers to fold, so it always contributes every
+ * row, whatever a stray key in the set says.
+ * @param trees - the packages, in render order.
+ * @param collapsed - the directory keys that are folded.
+ * @returns the rows, in the order the tree draws them.
+ */
+export function visibleFileRows(
+  trees: readonly PackageTree[],
+  collapsed: ReadonlySet<string>,
+): TestFileRow[] {
+  const rows: TestFileRow[] = [];
+  for (const pkg of trees) {
+    if (!pkg.grouped) {
+      rows.push(...pkg.rows);
+      continue;
+    }
+    const walk = (node: DirectoryNode): void => {
+      if (collapsed.has(`${pkg.packageName}:${node.key}`)) return;
+      rows.push(...node.files);
+      for (const child of node.directories) walk(child);
+    };
+    for (const node of pkg.directories) walk(node);
+  }
+  return rows;
+}
+
+/**
+ * The directory keys above one file, from the root down.
+ *
+ * A chip can point at a file the reader has folded away, and revealing it means
+ * unfolding every branch between the package and the file. The keys are the
+ * same strings the tree puts on its headers, so the caller can subtract them
+ * from the collapsed set without parsing anything.
+ * @param path - repo-relative test file path.
+ * @param packageName - the package the file belongs to.
+ * @returns the keys, outermost first; empty for a file at its package root.
+ */
+export function directoryKeysForFile(path: string, packageName: string): string[] {
+  const prefix = `packages/${packageName}/`;
+  const relative = path.startsWith(prefix) ? path.slice(prefix.length) : path;
+  const index = relative.lastIndexOf("/");
+  if (index === -1) return [];
+  const segments = relative.slice(0, index).split("/").filter(segment => segment !== "");
+  const keys: string[] = [];
+  let dirPath = "";
+  for (const segment of segments) {
+    dirPath = dirPath === "" ? segment : `${dirPath}/${segment}`;
+    keys.push(`${packageName}:${dirPath}`);
+  }
+  return keys;
+}
+
+/**
+ * Where the selection should go when its row is no longer on screen.
+ *
+ * Folding a directory can hide the file the reader was looking at. The nearest
+ * surviving row is the one that took its place: the next visible file, or the
+ * previous one when the fold was at the end of the list. Nothing visible at all
+ * leaves the selection empty, which the right pane already renders as its hint.
+ * @param allRows - every row, in render order.
+ * @param visibleRows - the rows still on screen, in the same order.
+ * @param selectedPath - the file the selection points at.
+ * @returns the path to select instead, or undefined when there is nothing left.
+ */
+export function nearestVisiblePath(
+  allRows: readonly TestFileRow[],
+  visibleRows: readonly TestFileRow[],
+  selectedPath: string,
+): string | undefined {
+  if (visibleRows.some(row => row.path === selectedPath)) return selectedPath;
+  const visible = new Set(visibleRows.map(row => row.path));
+  const index = allRows.findIndex(row => row.path === selectedPath);
+  if (index === -1) return undefined;
+  for (let next = index + 1; next < allRows.length; next += 1) {
+    const candidate = allRows[next];
+    if (candidate !== undefined && visible.has(candidate.path)) return candidate.path;
+  }
+  for (let previous = index - 1; previous >= 0; previous -= 1) {
+    const candidate = allRows[previous];
+    if (candidate !== undefined && visible.has(candidate.path)) return candidate.path;
+  }
+  return undefined;
+}
+
 /** One second of the run: how many cases finished, and how many of those failed. */
 export interface ThroughputBucket {
   readonly second: number;
