@@ -45,11 +45,12 @@ export interface ClientContextLike {
 /**
  * Resolve the platform kit through the loader.
  *
- * Partial availability is a hard no: a pill without its placement hook cannot
- * anchor a dialog, and one without the gauge glyph would render a pill whose
- * height differs from the shipped one. Registering nothing is the honest
- * outcome, because the shipped pill then keeps its seat.
- * @returns the kit, or undefined when any member is missing.
+ * Three members are hard: a pill without the gauge glyph would differ in height
+ * from the shipped one, and the dialog cannot open without outside-pointer
+ * dismissal and a portal target. Placement is not: host 0.2.2-rc.2 removed the
+ * shared `useAnchoredPosition` hook, so the pill carries its own measurement
+ * fallback and a kit without that hook still mounts.
+ * @returns the kit, or undefined when a hard member is missing.
  */
 export function resolveKit(require: ModuleRequire | null): PlatformKit | undefined {
   if (require === null) return undefined;
@@ -60,14 +61,15 @@ export function resolveKit(require: ModuleRequire | null): PlatformKit | undefin
   const useDismissOnOutsidePointer = primitives?.useDismissOnOutsidePointer;
   const createPortal = reactDom?.createPortal;
   if (typeof IconGauge !== "function") return undefined;
-  if (typeof useAnchoredPosition !== "function") return undefined;
   if (typeof useDismissOnOutsidePointer !== "function") return undefined;
   if (typeof createPortal !== "function") return undefined;
   return {
     IconGauge: IconGauge as PlatformKit["IconGauge"],
-    useAnchoredPosition: useAnchoredPosition as PlatformKit["useAnchoredPosition"],
     useDismissOnOutsidePointer: useDismissOnOutsidePointer as PlatformKit["useDismissOnOutsidePointer"],
     createPortal: createPortal as PlatformKit["createPortal"],
+    ...(typeof useAnchoredPosition === "function"
+      ? { useAnchoredPosition: useAnchoredPosition as PlatformKit["useAnchoredPosition"] }
+      : {}),
   };
 }
 

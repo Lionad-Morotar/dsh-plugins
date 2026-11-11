@@ -17,7 +17,7 @@
  * hook named `foo`, which is how a settings preference reaches a third-party
  * pill at all.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import type { TimingView } from "../schema.ts";
 import { decodeSpeed, type Translate } from "./format.ts";
@@ -49,7 +49,21 @@ export type AnchoredPosition = (options: {
   side: "top" | "bottom";
   gap: number;
   margin: number;
-}) => { readonly left: number; readonly top: number } | null;
+}) => PanelPosition | null;
+
+/** The fixed-position coordinates the dialog renders with. */
+export interface PanelPosition {
+  readonly left: number;
+  readonly top: number;
+}
+
+/** A measured box: the subset of DOMRect the fallback placement reads. */
+export interface PanelBox {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
 
 /** The outside-dismiss hook of the shared primitive kit. */
 export type DismissOnOutsidePointer = (
@@ -63,7 +77,11 @@ export type DismissOnOutsidePointer = (
 export interface PlatformKit {
   /** The gauge glyph the dock pill uses. */
   readonly IconGauge: ComponentType<Record<string, unknown>>;
-  readonly useAnchoredPosition: AnchoredPosition;
+  /**
+   * Shared anchored placement. Present on 0.2.2-rc.1, removed in 0.2.2-rc.2:
+   * when absent the dialog measures itself in `useMeasuredPanelPosition`.
+   */
+  readonly useAnchoredPosition?: AnchoredPosition;
   readonly useDismissOnOutsidePointer: DismissOnOutsidePointer;
   readonly createPortal: PortalRender;
 }
@@ -80,12 +98,108 @@ export interface StatsPillProps {
   readonly t: Translate;
 }
 
+/**
+ * Place the panel above the trigger, aligning its left edge and clamping it into
+ * the viewport. Kept pure so the fallback math is testable without a layout.
+ * @param anchor - trigger box.
+ * @param panel - panel box, measured while laid out.
+ * @param viewport - viewport size.
+ * @returns fixed-position coordinates.
+ */
+export function placePanelAbove(
+  anchor: PanelBox,
+  panel: PanelBox,
+  viewport: { readonly width: number; readonly height: number },
+): PanelPosition {
+  const maxLeft = Math.max(PANEL_MARGIN, viewport.width - panel.width - PANEL_MARGIN);
+  return {
+    left: Math.min(Math.max(anchor.left, PANEL_MARGIN), maxLeft),
+    top: Math.max(PANEL_MARGIN, anchor.top - PANEL_GAP - panel.height),
+  };
+}
+
+/**
+ * Fallback placement for hosts whose primitive kit dropped the anchor hook
+ * (0.2.2-rc.2 and later). It measures both boxes after the portal commits and
+ * re-measures on viewport resize and on scroll, because the panel is fixed
+ * while its trigger moves with the composer.
+ * @param open - whether the dialog is mounted.
+ * @param anchorRef - trigger ref.
+ * @param panelRef - panel ref.
+ * @returns coordinates, or null while closed or not yet measured.
+ */
+export function useMeasuredPanelPosition(
+  open: boolean,
+  anchorRef: { readonly current: HTMLElement | null },
+  panelRef: { readonly current: HTMLElement | null },
+): PanelPosition | null {
+  const [position, setPosition] = useState<PanelPosition | null>(null);
+  useLayoutEffect(() => {
+    if (!open) {
+      setPosition(null);
+      return;
+    }
+    const place = (): void => {
+      const anchor = anchorRef.current;
+      const panel = panelRef.current;
+      if (anchor === null || panel === null) return;
+      const panelBox = panel.getBoundingClientRect();
+      // A zero-size box means the portal has not been laid out yet. Keeping the
+      // hidden measuring style for another frame beats pinning the panel to 0,0.
+      if (panelBox.width === 0 && panelBox.height === 0) return;
+      const next = placePanelAbove(anchor.getBoundingClientRect(), panelBox, {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+      setPosition((current) =>
+        current !== null && current.left === next.left && current.top === next.top ? current : next,
+      );
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    // The host hook also tracks the panel's own size; rows can appear while the
+    // dialog is open, and a taller panel would otherwise grow over its trigger.
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(place) : null;
+    if (panelRef.current !== null) observer?.observe(panelRef.current);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+      observer?.disconnect();
+    };
+  }, [open, anchorRef, panelRef]);
+  return position;
+}
+
+/**
+ * Resolve the dialog placement. The shared hook owns the work when the host
+ * seeds one; otherwise the measured fallback stands in. The kit is fixed by the
+ * loader for the life of the page, so this branch cannot flip between renders
+ * and reorder the hooks. Same shape as dsh-git-explorer's branch popover.
+ * @param kit - platform kit.
+ * @param open - whether the dialog is mounted.
+ * @param anchorRef - trigger ref.
+ * @param panelRef - panel ref.
+ * @returns coordinates, or null while closed.
+ */
+function usePanelPosition(
+  kit: PlatformKit,
+  open: boolean,
+  anchorRef: { readonly current: HTMLElement | null },
+  panelRef: { readonly current: HTMLElement | null },
+): PanelPosition | null {
+  if (kit.useAnchoredPosition !== undefined) {
+    return kit.useAnchoredPosition({ open, anchorRef, panelRef, side: "top", gap: PANEL_GAP, margin: PANEL_MARGIN });
+  }
+  return useMeasuredPanelPosition(open, anchorRef, panelRef);
+}
+
 /** One trigger-anchored dialog seat: open state, clamped placement, Escape-close. */
 function useStatDialog(kit: PlatformKit) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLSpanElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const pos = kit.useAnchoredPosition({ open, anchorRef: rootRef, panelRef, side: "top", gap: PANEL_GAP, margin: PANEL_MARGIN });
+  const pos = usePanelPosition(kit, open, rootRef, panelRef);
   kit.useDismissOnOutsidePointer(rootRef, open, setOpen, panelRef);
   useEffect(() => {
     if (!open) return;
