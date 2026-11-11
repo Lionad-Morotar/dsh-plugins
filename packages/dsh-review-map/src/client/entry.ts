@@ -19,6 +19,15 @@ import { EN, ZH } from "./copy.ts";
 import { ensureStyles } from "./styles.ts";
 import { createReviewMapView, type ReviewMapViewStrings } from "./view.tsx";
 
+/**
+ * The loader hand-over, re-exported so the ModuleLoader factory can call it.
+ *
+ * The build appends `module.exports.boot?.(require)` to this bundle, and the
+ * optional call is what keeps the entry loadable when this export is missing.
+ * Re-exporting rather than defining it here keeps the chunk route in one file.
+ */
+export { boot } from "./chunk-loader.ts";
+
 /** The slice of the client context this entry uses. */
 export interface ReviewMapClientContext {
   readonly slots: {

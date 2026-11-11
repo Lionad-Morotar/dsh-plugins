@@ -7,11 +7,15 @@
  *
  *   lib/index.js             Host half, plain ESM (Node imports it directly).
  *   lib/client.js            Browser half, CJS wrapped in a ModuleLoader factory.
+ *   lib/client.map.js        Lazy chunk: the directory map renderer.
  *
- * Two artifacts, no lazy chunk: this slice renders a frame and fetches nothing,
- * so there is nothing to defer. The host half stays unminified so the committed
- * output remains readable evidence of what `src/` produced; only the browser
- * half pays for minification, and it is the one with a size budget.
+ * The map renderer is a chunk rather than part of the entry because `client.js`
+ * is evaluated on every page boot whether or not the review tab is ever opened.
+ * The entry only names the file; the renderer is fetched through the loader's
+ * `require.async` the first time a map actually mounts. The loader accepts a
+ * chunk only when it declares its own file name in a `chunk:` field, keyed as
+ * `<package>/<file>` — a chunk registering under the package id alone is
+ * rejected as a duplicate factory.
  */
 import { build } from "esbuild";
 import { createRequire } from "node:module";
@@ -25,6 +29,13 @@ const packageRoot = join(here, "..");
 const libRoot = join(packageRoot, "lib");
 const require = createRequire(join(packageRoot, "package.json"));
 const manifest = require(join(packageRoot, "package.json"));
+
+/**
+ * The package-local chunk name; must match `MAP_CHUNK` in src/shared.ts.
+ * The build script cannot import the TS module, so the agreement is enforced by
+ * `assertArtifacts` against the bundled loader reference instead of by trust.
+ */
+const MAP_CHUNK = "client.map.js";
 
 /**
  * Host-half platform packages: the Harness install provides its own copies.
@@ -58,12 +69,12 @@ const CLIENT_MAX_BYTES = 48 * 1024;
 const REQUIRED_LITERALS = ["conversation.view", "review-map"];
 
 /**
- * The ModuleLoader wrapper for the client half.
+ * The ModuleLoader wrapper for one client artifact.
  *
- * `window.__ModuleLoader__.load` accepts only `{id, factory}` and the id must
- * equal the package name, because the loader keys its module table on it. The
- * factory must return the plugin object `{name, inject, apply}`; an IIFE result
- * is rejected at mount.
+ * `window.__ModuleLoader__.load` accepts `{id, factory}` plus an optional
+ * `chunk` file name. A chunk's id stays the package name because the loader
+ * keys it as `<id>/<chunk>`; only the entry adds the `boot` hand-over, the one
+ * place the factory's `require` is reachable.
  *
  * The bundle text is inserted verbatim and deliberately NOT re-indented: the
  * minified code may contain multi-line template literals, and padding every
@@ -71,15 +82,18 @@ const REQUIRED_LITERALS = ["conversation.view", "review-map"];
  * default export as `module.exports.default`, hence the unwrap.
  * @param id - module-table id, the package name.
  * @param code - bundled CJS text.
+ * @param options - `boot` adds the require hand-over, `chunk` marks a lazy chunk.
  * @returns the script text the browser evaluates.
  */
-function wrap(id, code) {
+function wrap(id, code, { boot = false, chunk } = {}) {
+  const handover = boot ? "\nmodule.exports.boot?.(require);" : "";
+  const chunkField = chunk === undefined ? "" : `  chunk: ${JSON.stringify(chunk)},\n`;
   return `window.__ModuleLoader__.load({
   id: ${JSON.stringify(id)},
-  factory: (require) => {
+${chunkField}  factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
-${code}
+${code}${handover}
     return module.exports.default ?? module.exports;
   }
 });
@@ -158,6 +172,39 @@ async function assertHostHalf(file) {
   }
 }
 
+/**
+ * Assert the client artifacts agree about the lazy boundary.
+ *
+ * The chunk name has to agree in three places that cannot import each other:
+ * the file this script emits, the `chunk:` field the chunk script registers
+ * with, and the loader reference bundled into the entry (which comes from
+ * `MAP_CHUNK` in src/shared.ts). A drift in any of them is a tab that fetches a
+ * file nobody built, which no type check catches.
+ * @param entryText - built `client.js`.
+ * @param chunkText - built `client.map.js`.
+ * @throws when a name or a boundary is wrong.
+ */
+function assertMapChunk(entryText, chunkText) {
+  // The minifier may hoist MAP_CHUNK into a variable initializer, so the loader
+  // reference is asserted as the name literal itself: if src/shared.ts drifts,
+  // the literal disappears from the entry entirely.
+  if (!entryText.includes(`"${MAP_CHUNK}"`)) {
+    throw new Error(`client.js no longer names its lazy chunk ${MAP_CHUNK}; the map would fetch a file nobody built`);
+  }
+  if (!chunkText.includes(`chunk: "${MAP_CHUNK}"`)) {
+    throw new Error(`${MAP_CHUNK} does not register its own name in its chunk: field`);
+  }
+  // The renderer must not be reachable from the startup bundle: the SVG
+  // namespace only exists inside the chunk, so its presence in the entry means
+  // the split collapsed.
+  if (entryText.includes("www.w3.org/2000/svg")) {
+    throw new Error(`client.js contains the SVG namespace; the renderer must stay in ${MAP_CHUNK}`);
+  }
+  if (!chunkText.includes("www.w3.org/2000/svg")) {
+    throw new Error(`${MAP_CHUNK} does not look like it contains the SVG renderer`);
+  }
+}
+
 await rm(libRoot, { recursive: true, force: true });
 await mkdir(libRoot, { recursive: true });
 
@@ -168,13 +215,21 @@ const client = await bundle(join(packageRoot, "src", "client", "entry.ts"), "cjs
   external: CLIENT_EXTERNALS,
   minify: true,
 });
-const clientText = wrap(manifest.name, client);
+const clientText = wrap(manifest.name, client, { boot: true });
 await writeFile(join(libRoot, "client.js"), clientText, "utf8");
 
+const map = await bundle(join(packageRoot, "src", "client", "map", "index.ts"), "cjs", {
+  external: CLIENT_EXTERNALS,
+  minify: true,
+});
+const mapText = wrap(manifest.name, map, { chunk: MAP_CHUNK });
+await writeFile(join(libRoot, MAP_CHUNK), mapText, "utf8");
+
 assertClientHalf(clientText);
+assertMapChunk(clientText, mapText);
 await assertHostHalf(join(libRoot, "index.js"));
 
-const written = ["index.js", "client.js"];
+const written = ["index.js", "client.js", MAP_CHUNK];
 const sizes = await Promise.all(
   written.map(async file => {
     const bytes = await readFile(join(libRoot, file));

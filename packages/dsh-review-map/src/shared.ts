@@ -34,6 +34,18 @@ export const LOCALE_NAMESPACE = "review-map";
 export const ROUTE_PREFIX = "/review-map/api";
 
 /**
+ * The package-local chunk the map renderer is fetched from.
+ *
+ * Named here rather than in the loader because three things have to agree on
+ * the spelling and none of them can import the others: the build script that
+ * emits the file, the `chunk:` field the chunk registers with, and the loader
+ * reference bundled into the entry. The build asserts all three against this
+ * constant, so a drift is a failed build rather than a tab that fetches a file
+ * nobody built.
+ */
+export const MAP_CHUNK = "client.map.js";
+
+/**
  * The `require` the ModuleLoader factory hands to a client bundle.
  *
  * Declared even though this slice fetches nothing: the factory signature is the
