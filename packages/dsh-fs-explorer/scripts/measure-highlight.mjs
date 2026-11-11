@@ -39,13 +39,20 @@ function libOf(name) {
 }
 
 /**
- * Baselines taken from `546b0f8`, the commit before this slice started.
+ * Baselines, in bytes, for the four artifacts this delivery measured.
+ *
+ * The other three are `546b0f8`, the commit before this slice started. The
+ * explorer startup bundle is `dbf56e7`, main's state once the file-row badge
+ * batch was committed there: that batch is a separate feature the branch was
+ * merged into, and its 491 B of startup weight is not this delivery's cost.
+ * Keeping the branch-start number instead would either fail on somebody else's
+ * code or force this feature to pay for it.
  *
  * Raw sizes are kept beside the gzipped ones because a gzip ratio that shifts
  * without the raw size moving means the content changed shape, not size.
  */
 const BASELINES = {
-  "dsh-fs-explorer/lib/client.js": { gzip: 66860, raw: 238034 },
+  "dsh-fs-explorer/lib/client.js": { gzip: 67351, raw: 238876 },
   "dsh-fs-explorer/lib/client.preview.js": { gzip: 227634, raw: 665098 },
   "dsh-fs-markdown/lib/client.js": { gzip: 5642, raw: 15724 },
   "dsh-fs-markdown/lib/client.editor.js": { gzip: 189183, raw: 536994 },
@@ -345,7 +352,7 @@ async function report() {
   };
 
   return {
-    baselinesFrom: "546b0f8",
+    baselinesFrom: "546b0f8 (explorer startup: dbf56e7, after main's badge batch)",
     startup,
     heavy,
     languageChunks: { explorer: chunkRows, totalGzip: chunkTotal, markdown: markdownChunks },
