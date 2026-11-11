@@ -946,7 +946,13 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   border-bottom: 1px solid var(--fx-border-soft);
   min-width: 0;
 }
+/* The crumb row is a block element and the link arrow sits beside it, so this
+   container has to be flex: overflow: hidden does nothing on an inline box,
+   and the arrow would otherwise wrap onto its own line. */
 .fx-preview-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -957,6 +963,7 @@ body.fx-pane-resizing { user-select: none; cursor: col-resize; }
   color: var(--fx-text-2);
 }
 .fx-preview-link {
+  flex: none;
   color: var(--fx-caption);
 }
 .fx-preview-range {

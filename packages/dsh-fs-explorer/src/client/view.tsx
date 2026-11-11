@@ -1020,6 +1020,27 @@ export function createFsExplorerView({
     );
 
     /**
+     * Open one sibling of the file on screen.
+     *
+     * The preview's breadcrumb can only reach a path, so the decision of what
+     * that path means belongs here: a file joins the panel stack (an already
+     * open one is activated rather than opened twice), and a directory enters
+     * the tree the way any other directory gesture does.
+     * @param path - the sibling's workspace-relative path.
+     * @param kind - whether the sibling is a file or a directory.
+     */
+    const openPeer = useCallback(
+      (path: string, kind: "file" | "directory"): void => {
+        if (kind === "directory") {
+          beginEnter(path);
+          return;
+        }
+        stack.open(path, 1, false);
+      },
+      [beginEnter, stack],
+    );
+
+    /**
      * Route one `enter:` request to the tree.
      *
      * The prose writes a path the way the reader saw it, which may be absolute;
@@ -2337,6 +2358,7 @@ export function createFsExplorerView({
                             renderers={renderers}
                             documents={documents}
                             locate={sessionLocator}
+                            onOpenPeer={openPeer}
                           />
                         </div>
                       );
