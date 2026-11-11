@@ -47,7 +47,7 @@ import type {
 } from "./dsh.ts";
 import { isGitExplorerFace, isHostShutdownFace, isNativeOpenFace, isPathExplorerFace, isSessionOpenFace } from "./dsh.ts";
 import { sessionFileAddress } from "dsh-preview-viewers/address.ts";
-import { runCatalogAction, type ActionDeps } from "./actions.ts";
+import { failureCode, runCatalogAction, type ActionDeps } from "./actions.ts";
 import { createBridgeView, type BridgeState } from "./bridge.ts";
 import { clientCommandRows, isClientCommandRow, runClientCommand } from "./client-commands.ts";
 import { createLinkBadge, LINK_BADGE_ID, LINK_BADGE_SLOT } from "./link-badge.ts";
@@ -66,6 +66,7 @@ import {
   PANEL_MODES,
   back as backModel,
   clampHighlight,
+  dismissOnSessionSwitch,
   drill,
   drillArchived,
   highlightAt,
@@ -82,7 +83,8 @@ import { createReferenceResolver, installReferenceLinks, type ReferenceProbeAnsw
 import { composeInsertion } from "./paths.ts";
 import { rankRows } from "./ranking.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
-import { catalogRows, shortcutRows, withConfirmLabel, type PanelRow } from "./rows.ts";
+import { catalogRows, shortcutRows, withConfirmLabel, withShortcutHints, type PanelRow } from "./rows.ts";
+import { matchesShortcut, usableShortcut } from "./shortcut-key.ts";
 import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from "./sources.ts";
 import { statusStamp } from "./status.ts";
 import { createPanelStore } from "./store.ts";
@@ -202,6 +204,12 @@ export interface PanelRuntime {
   readonly __test: {
     readonly store: ReturnType<typeof createPanelStore>;
     readonly verbs: PanelVerbs;
+    /**
+     * The bridge's sink, exposed because the test harness never mounts the
+     * bridge view: a suite drives the screen session through this instead of
+     * through React.
+     */
+    readonly publishScreenSession: (state: BridgeState) => void;
   };
 }
 
@@ -527,8 +535,12 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     const hints = new Map<string, string>();
     const shortcuts = services.shortcuts();
     if (shortcuts === undefined) return hints;
-    for (const row of shortcuts.catalog.getSnapshot()) {
-      if (row.keys.length > 0) hints.set(row.id, row.keys.join(" "));
+    const entries = shortcuts.catalog.getSnapshot();
+    // A keycap that cannot be pressed is worse than none, so the same usability
+    // gate the rows use decides what this map offers.
+    for (const entry of entries) {
+      const usable = usableShortcut(entries, entry.id);
+      if (usable !== undefined) hints.set(entry.id, usable.keys.join(" "));
     }
     return hints;
   }
@@ -722,7 +734,9 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
           result.rows.flatMap(row => (row.action.kind === "execute-command" ? [row.action.name] : [])),
         );
       }
-      const composed = latest.model.mode === "command" ? composeCommandRows(result.rows) : result.rows;
+      const composed = latest.model.mode === "command"
+        ? composeCommandRows(result.rows)
+        : withShortcutHints(result.rows, services.shortcuts()?.catalog.getSnapshot() ?? []);
       rawRows = composed;
       cache.set(keyOf(latest), composed);
       store.set({
@@ -855,6 +869,24 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     lastSignature = "";
     prefixEntry = false;
     store.set({ open: false, status: "idle", notice: null, noticeTone: undefined });
+  }
+
+  /**
+   * Take one bridge publish: record it, warm the session, and follow the screen.
+   *
+   * A session switch is the one change the panel cannot survive. It is a surface
+   * for the session it was opened on, so a native `⌘N` on the desktop, which
+   * creates a session without going through the panel, would otherwise leave the
+   * palette covering the new session as if the key had done nothing.
+   *
+   * @param state - what the bridge just published.
+   */
+  function publishScreenSession(state: BridgeState): void {
+    const previous = bridge.state.sessionId;
+    bridge.state = state;
+    if (state.sessionId === previous) return;
+    void warm(state.sessionId);
+    if (dismissOnSessionSwitch(store.getSnapshot().open, previous, state.sessionId)) close();
   }
 
   function crumbLabel(): string | null {
@@ -1071,6 +1103,72 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
    */
   function treeActive(): boolean {
     return store.getSnapshot().model.mode === "navigate";
+  }
+
+  /**
+   * Run the host command behind a chord one of the open panel's rows declares.
+   *
+   * The candidate set is every `shortcutId` in the mode's own rows, not the
+   * filtered view: a chord belongs to the mode, and having it stop working
+   * because the reader typed a query would make the panel's own keycap a lie.
+   *
+   * @param event - the keydown the panel's capture listener saw.
+   * @param composing - whether an IME currently owns the keystrokes.
+   * @returns true when a row's command owns this chord and the key is consumed.
+   */
+  function shortcutKey(event: KeyboardEvent, composing: boolean): boolean {
+    const shortcuts = services.shortcuts();
+    if (shortcuts === undefined) return false;
+    const entries = shortcuts.catalog.getSnapshot();
+    const env = { runtime: shortcuts.runtime, platform: shortcuts.platform };
+    const facts = {
+      code: event.code,
+      key: event.key,
+      repeat: event.repeat,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+      altGraph: event.getModifierState?.("AltGraph") === true,
+      composing,
+    };
+
+    const declared = new Set(
+      rawRows.flatMap(row => (row.shortcutId === undefined ? [] : [row.shortcutId])),
+    );
+    for (const id of declared) {
+      const usable = usableShortcut(entries, id);
+      if (usable === undefined) continue;
+      if (!matchesShortcut(facts, usable.binding, env)) continue;
+      // A held key repeats the same chord; the command runs once, and every
+      // repeat is still consumed so the host never sees it.
+      if (!event.repeat) {
+        // This runs inside a capture listener, so a throw would escape before
+        // the caller can preventDefault: the key would fall through to the
+        // host's modal gate and the reader would get nothing at all.
+        try {
+          runShortcut(id, shortcuts);
+        } catch (error) {
+          const label = entries.find(entry => entry.id === id)?.label ?? id;
+          notice(copy().actions.failed(label, failureCode(error)), "error");
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /** Execute one declared shortcut, through the host registry when it has one. */
+  function runShortcut(id: string, shortcuts: ShortcutsService): void {
+    if (shortcuts.registry !== undefined) {
+      // Menu semantics: the row speaks for the page, so the panel's own modal
+      // scope is deliberately not passed.
+      shortcuts.registry.invoke(id, { region: "page", modal: null, target: null });
+      return;
+    }
+    const row = rawRows.find(candidate => candidate.shortcutId === id);
+    if (row === undefined) return;
+    void runCatalogAction(row.action, actionDeps());
   }
 
   /** Rewrite the query through the same path typing takes. */
@@ -1579,11 +1677,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     });
 
     // The bridge publishes the session on screen and its live composer face.
-    const bridgeView = createBridgeView(deps.React, state => {
-      const changed = state.sessionId !== bridge.state.sessionId;
-      bridge.state = state;
-      if (changed) void warm(state.sessionId);
-    });
+    const bridgeView = createBridgeView(deps.React, publishScreenSession);
 
     const stops: Unsubscribe[] = [
       slots.inject("shell.overlay", () =>
@@ -1721,6 +1815,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     openInSidebar,
     treeActive,
     crumbLabel,
+    shortcutKey,
   };
 
   // ── assembly ────────────────────────────────────────────────────────────
@@ -1895,7 +1990,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   disposers.push(deps.ctx.inject(["sessions", "workspaces"], watchCatalogs));
 
   return {
-    __test: { store, verbs },
+    __test: { store, verbs, publishScreenSession },
     dispose(): void {
       if (disposed) return;
       disposed = true;

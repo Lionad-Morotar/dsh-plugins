@@ -481,6 +481,13 @@ export interface ShortcutsService {
   readonly catalog: Snapshot<readonly ShortcutCatalogEntry[]>;
   readonly config: Snapshot<ShortcutConfigSnapshot>;
   /**
+   * Which host the panel is running in. The matcher's Dead-key exception is a
+   * web behaviour, so a caller that cannot tell the two apart would either
+   * swallow a real chord or fire on a character gesture.
+   */
+  readonly runtime?: "desktop" | "web";
+  readonly platform?: "macos" | "windows" | "linux";
+  /**
    * Programmatic command execution. The service itself publishes no `invoke`;
    * the desktop menu bridge calls `registry.invoke` with the same context, so
    * that member is the supported seam for palette execution too.

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   back,
   clampHighlight,
+  dismissOnSessionSwitch,
   drill,
   drillArchived,
   highlightAt,
@@ -201,5 +202,31 @@ describe("quit confirmation", () => {
     if (result.kind !== "model") return;
     expect(result.model.confirmQuit).toBe(false);
     expect(modelFor("command").confirmQuit).toBe(false);
+  });
+});
+
+describe("dismissOnSessionSwitch", () => {
+  it("leaves a closed panel alone, whatever the screen does", () => {
+    expect(dismissOnSessionSwitch(false, "sess-a", "sess-b")).toBe(false);
+    expect(dismissOnSessionSwitch(false, "sess-a", null)).toBe(false);
+  });
+
+  it("keeps the panel on the first publish, when there was no session before", () => {
+    // The bridge mounts after the panel can already be open, so its first
+    // publish is news about a session that was always there, not a switch.
+    expect(dismissOnSessionSwitch(true, null, "sess-a")).toBe(false);
+    expect(dismissOnSessionSwitch(true, null, null)).toBe(false);
+  });
+
+  it("closes the panel when the screen moves to another session", () => {
+    expect(dismissOnSessionSwitch(true, "sess-a", "sess-b")).toBe(true);
+  });
+
+  it("closes the panel when the screen loses its session", () => {
+    expect(dismissOnSessionSwitch(true, "sess-a", null)).toBe(true);
+  });
+
+  it("keeps the panel while the same session stays on screen", () => {
+    expect(dismissOnSessionSwitch(true, "sess-a", "sess-a")).toBe(false);
   });
 });

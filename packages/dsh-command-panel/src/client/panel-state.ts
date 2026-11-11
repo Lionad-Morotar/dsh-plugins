@@ -197,3 +197,30 @@ export function readQuitAccept(model: PanelModel): QuitAccept {
   if (!model.confirmQuit) return { kind: "arm", model: { ...model, confirmQuit: true } };
   return { kind: "fire" };
 }
+
+/**
+ * Whether a screen-session change should take the open panel down with it.
+ *
+ * The panel is a surface for one session's surroundings, so once the screen
+ * moves elsewhere it is answering a question nobody asked any more. A native
+ * `⌘N` on the desktop creates a session without going through the panel, and
+ * leaving the palette on top of the new session would read as if the key had
+ * done nothing.
+ *
+ * `previous === null` is the exception, and it is not a switch: the bridge
+ * mounts after the panel can already be open, so its first publish reports the
+ * session that was there all along. Closing on that would make the panel vanish
+ * on hosts where the bridge arrives late.
+ *
+ * @param open - whether the panel is on screen right now.
+ * @param previous - the session the bridge last reported, null before its first publish.
+ * @param next - the session it reports now.
+ * @returns true when the runtime should close the panel.
+ */
+export function dismissOnSessionSwitch(
+  open: boolean,
+  previous: string | null,
+  next: string | null,
+): boolean {
+  return open && previous !== null && previous !== next;
+}

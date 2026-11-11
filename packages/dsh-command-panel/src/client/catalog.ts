@@ -121,7 +121,13 @@ export const CATALOG: readonly CatalogEntry[] = [
   },
 
   // 会话：生命周期
-  { id: "session.newInWorkspace", category: "session", action: { kind: "create-session", scope: "workspace" } },
+  // 新建会话的宿主命令 id 就是 `session.new`，声明它让快捷键目录不再重复列出同一个动作。
+  {
+    id: "session.newInWorkspace",
+    category: "session",
+    action: { kind: "create-session", scope: "workspace" },
+    shortcutId: "session.new",
+  },
   {
     id: "session.newUngrouped",
     category: "session",
