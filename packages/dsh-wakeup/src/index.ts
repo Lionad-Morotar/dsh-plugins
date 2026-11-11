@@ -6,9 +6,13 @@
  *
  * 目标会话不在 agents 注册表里时（DSH 会在 continuable subagent 空闲结算后释放它的
  * agent，这是按设计的驻留策略，不是故障），改走宿主 subagent 的冷恢复：用持久化
- * 会话头里的 `parentSession` 找到仍活着的父 agent，再由 subagent 服务把消息投给冷态
- * 子会话，子会话被重新物化、消息进 inbox。直接 `agents.resume` 会抢走该会话的写入权，
+ * 会话头里的 `parentSession` 找到父 agent，再由 subagent 服务把消息投给冷态子会话，
+ * 子会话被重新物化、消息进 inbox。直接 `agents.resume` 会抢走该会话的写入权，
  * 让 subagent 运行时的后续冷恢复失败，所以只在没有父会话的普通根会话上用它。
+ *
+ * 冷恢复有两条宿主协议：0.2.2-rc.1 用进程级符号 `dsh.subagent.deliverPrompt`，
+ * 0.2.2-rc.2 起该符号被删除，公开替代是 `ctx.subagents.sendMessage`（消息由宿主按
+ * agent 消息铸造，前缀与 source 也随之改变）。
  */
 import { randomUUID } from "node:crypto"
 import { mkdirSync, readdirSync, readFileSync, renameSync, watch } from "node:fs"
@@ -68,7 +72,15 @@ export interface WakeupStatus {
   routes: Record<string, TargetStatus>
   /** source 未命中路由时的兜底目标（最近活跃根会话），null 表示没有可投递的活会话 */
   fallback: { sessionId: string | null }
-  services: { agents: boolean; sessionQuery: boolean; subagents: boolean; deliverPrompt: boolean }
+  services: {
+    agents: boolean
+    sessionQuery: boolean
+    subagents: boolean
+    /** 旧宿主的进程级冷投递符号 `dsh.subagent.deliverPrompt` 是否可用 */
+    deliverPrompt: boolean
+    /** 新宿主的公开方法 `subagents.sendMessage` 是否可用 */
+    sendMessage: boolean
+  }
   probedAt: string
 }
 
@@ -94,8 +106,17 @@ interface SessionQueryLike {
   observeSession?(sessionId: string, options?: { signal?: AbortSignal }): Promise<SessionObservation>
 }
 
+/** 0.2.2-rc.2 起公开的树内投递面；sender 必须是树根或常驻 continuable 成员。 */
+type SubagentsSendMessage = (
+  sender: AgentLike,
+  targetId: string,
+  content: Array<{ type: "text"; text: string }>,
+  options: { signal: AbortSignal },
+) => Promise<unknown>
+
 interface SubagentsLike {
   [key: symbol]: unknown
+  sendMessage?: SubagentsSendMessage
 }
 
 interface WebServerLike {
@@ -117,8 +138,9 @@ const WAKE_TIMEOUT_MS = 30_000
 const STATUS_PROBE_TIMEOUT_MS = 10_000
 
 /**
- * 宿主协议投递的进程级符号键（`@deepseek-ai/dsh-subagent/internal` 冻结的契约）。
- * 插件与宿主各自打包，只能靠 `Symbol.for` 认出同一个键。
+ * 旧宿主冷投递的进程级符号键（`@deepseek-ai/dsh-subagent/internal` 冻结的契约）。
+ * 插件与宿主各自打包，只能靠 `Symbol.for` 认出同一个键。0.2.2-rc.2 起宿主不再提供，
+ * 届时改走下面的公开 `subagents.sendMessage`。
  */
 const DELIVER_SUBAGENT_PROMPT = Symbol.for("dsh.subagent.deliverPrompt")
 
@@ -213,6 +235,11 @@ function hasResume(ctx: ContextLike): boolean {
 function hasDeliverPrompt(ctx: ContextLike): boolean {
   const subagents = readService<SubagentsLike>(ctx, "subagents")
   return subagents !== undefined && typeof subagents[DELIVER_SUBAGENT_PROMPT] === "function"
+}
+
+function hasSendMessage(ctx: ContextLike): boolean {
+  const subagents = readService<SubagentsLike>(ctx, "subagents")
+  return subagents !== undefined && typeof subagents.sendMessage === "function"
 }
 
 interface SessionHeaderInfo {
@@ -319,22 +346,37 @@ export async function deliver(
   // 正规唤醒路径是「父 agent 授权 → subagent 冷恢复 → 消息进 inbox」
   const parentId = await readParentSessionId(ctx, targetId, signal)
   const subagents = readService<SubagentsLike>(ctx, "subagents")
-  const deliverPrompt = subagents?.[DELIVER_SUBAGENT_PROMPT]
-  if (parentId !== null && subagents !== undefined && typeof deliverPrompt === "function") {
-    const parent = await ensureLiveAgent(ctx, parentId, signal)
-    await (deliverPrompt as (...args: unknown[]) => Promise<unknown>).call(
-      subagents,
-      parent,
-      targetId,
-      [{ type: "text", text }],
-      buildSource(source, request.meta),
-      signal,
-      "steer",
+  if (parentId !== null) {
+    const deliverPrompt = subagents?.[DELIVER_SUBAGENT_PROMPT]
+    if (subagents !== undefined && typeof deliverPrompt === "function") {
+      // 旧宿主（0.2.2-rc.1）：内部符号，source 由本插件铸造
+      const parent = await ensureLiveAgent(ctx, parentId, signal)
+      await (deliverPrompt as (...args: unknown[]) => Promise<unknown>).call(
+        subagents,
+        parent,
+        targetId,
+        [{ type: "text", text }],
+        buildSource(source, request.meta),
+        signal,
+        "steer",
+      )
+      return { sessionId: targetId, via: "cold-resume" }
+    }
+    if (subagents !== undefined && typeof subagents.sendMessage === "function") {
+      // 新宿主（0.2.2-rc.2 起）：公开方法，消息按 agent 消息铸造（带前缀，source 由宿主写）
+      const parent = await ensureLiveAgent(ctx, parentId, signal)
+      await subagents.sendMessage(parent, targetId, [{ type: "text", text }], { signal })
+      return { sessionId: targetId, via: "cold-resume" }
+    }
+    // 有父会话说明这是 subagent 子会话；两种冷投递都不可用时绝不能退回 root-resume，
+    // 那会抢走写入权、破坏 subagent 运行时之后的冷恢复。
+    throw new Error(
+      `session ${targetId} is a subagent session (parent ${parentId}) but the host exposes neither ` +
+        `the deliverPrompt symbol nor subagents.sendMessage; refusing to root-resume it`,
     )
-    return { sessionId: targetId, via: "cold-resume" }
   }
 
-  // 没有父会话（普通根会话冷态），或宿主没有 subagent 服务：按 id 恢复再插话
+  // 没有父会话（普通根会话冷态）：按 id 恢复再插话
   const resumed = await resumeAgent(ctx, targetId, signal)
   resumed.steer(buildMessage(text, source, request.meta))
   return { sessionId: targetId, via: "root-resume" }
@@ -380,8 +422,27 @@ async function probeTarget(
   }
   const header = await readSessionHeader(ctx, sessionId, signal)
   const parentLive = header.parentSession !== null && findLiveAgent(ctx, header.parentSession) !== null
-  const canColdResume = header.parentSession !== null && hasDeliverPrompt(ctx) && (parentLive || hasResume(ctx))
-  const via: DeliveryVia | "unreachable" = canColdResume ? "cold-resume" : hasResume(ctx) ? "root-resume" : "unreachable"
+  const deliverPrompt = hasDeliverPrompt(ctx)
+  const sendMessage = hasSendMessage(ctx)
+  const canColdDeliver = deliverPrompt || sendMessage
+  const canResume = hasResume(ctx)
+  const canColdResume = header.parentSession !== null && canColdDeliver && (parentLive || canResume)
+  // 有父会话的冷目标是 subagent 子会话：没有冷投递面时不能退到 root-resume，只能报不可达。
+  const via: DeliveryVia | "unreachable" = canColdResume
+    ? "cold-resume"
+    : header.parentSession !== null
+      ? "unreachable"
+      : canResume
+        ? "root-resume"
+        : "unreachable"
+  const error =
+    via !== "unreachable"
+      ? undefined
+      : header.parentSession !== null && !canColdDeliver
+        ? "target is a subagent session but the host exposes neither the deliverPrompt symbol nor subagents.sendMessage; root-resume is refused"
+        : header.parentSession !== null
+          ? "target is a subagent session whose parent is not live and cannot be resumed"
+          : "target is not live and the host cannot resume it"
   return {
     source,
     configured,
@@ -392,9 +453,7 @@ async function probeTarget(
     headerReadable: header.readable,
     via,
     deliverable: via !== "unreachable",
-    ...(via === "unreachable"
-      ? { error: "target is not live and the host can neither cold-resume nor resume it" }
-      : {}),
+    ...(error === undefined ? {} : { error }),
   }
 }
 
@@ -435,6 +494,7 @@ export async function buildStatus(ctx: ContextLike, routes: Record<string, strin
       sessionQuery: readService<SessionQueryLike>(ctx, "sessionQuery") !== undefined,
       subagents: readService<SubagentsLike>(ctx, "subagents") !== undefined,
       deliverPrompt: hasDeliverPrompt(ctx),
+      sendMessage: hasSendMessage(ctx),
     },
     probedAt: new Date().toISOString(),
   }
