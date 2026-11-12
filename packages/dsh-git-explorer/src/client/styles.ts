@@ -638,12 +638,13 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   z-index: 40;
   border: 1px solid var(--gx-border);
   border-radius: 8px;
-  /* The card floats over other rows, so it must be opaque even when the host's
-     layer-2 token is translucent or absent. The base colour is the solid
-     underlay; the layer tint sits on top as an image so the composite cannot
-     fall through. */
-  background-color: var(--dsw-alias-bg-base, Canvas);
-  background-image: linear-gradient(var(--gx-panel-2), var(--gx-panel-2));
+  /* The card floats over other rows, so it must be opaque: a skin may publish
+     layer-2 as a translucent ground colour, so the raised surface is restated
+     at alpha 1 instead of trusting the token's alpha. Canvas is the system
+     surface colour, which keeps the card solid on a host that publishes no
+     layer-2 at all. */
+  background: var(--gx-panel-2);
+  background: rgb(from var(--gx-panel-2) r g b / 1);
   color: var(--gx-text);
   box-shadow: 0 10px 28px color-mix(in srgb, var(--gx-text) 22%, transparent);
   overflow: hidden;
@@ -769,23 +770,20 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   box-sizing: border-box;
   overflow: hidden;
   border-radius: var(--dsw-radius-lg, 10px);
-  /* Frosted glass: the sidebar's own fill kept slightly translucent over a
-     blurred backdrop, plus a top-light gradient so the pane reads as a sheet
-     of glass rather than a flat tint. Both colours come from theme tokens, so
-     the light and dark themes each get their own version of the material. */
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--dsw-alias-label-primary, #000) 4%, transparent),
-      transparent 42%
-    ),
-    color-mix(
-      in srgb,
-      var(--dsw-specific-sidebar-fill, var(--dsw-menu-surface-fill, #f8f9fa)) 84%,
-      transparent
-    );
-  backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
-  -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
+  /* A popup is opaque: a frosted fill only reads as glass while the surface
+     behind it is opaque, and a skin may publish the sidebar's fill as a
+     translucent ground colour so its picture shows through the shell. The
+     sidebar's own colour is therefore restated at alpha 1 (keeping the skin's
+     hue), with a top-light gradient on top so the pane still reads as a raised
+     sheet rather than a flat tint. A browser without relative-colour syntax
+     drops the second declaration and keeps the first. */
+  background-color: var(--dsw-specific-sidebar-fill, var(--dsw-menu-surface-fill, #f8f9fa));
+  background-color: rgb(from var(--dsw-specific-sidebar-fill, var(--dsw-menu-surface-fill, #f8f9fa)) r g b / 1);
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--dsw-alias-label-primary, #000) 4%, transparent),
+    transparent 42%
+  );
   box-shadow:
     var(--dsw-elevation-prominent, 0 8px 24px color-mix(in srgb, var(--dsw-alias-label-primary, currentColor) 16%, transparent)),
     inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, #fff) 6%, transparent);
@@ -880,9 +878,9 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
 }
 .gx-branch-match { color: var(--dsw-alias-label-primary, inherit); font-weight: 500; }
 
-/* The Workspace switch reuses the branch popover's material and metrics: the
-   two sit in the same header and open the same way, so a second visual language
-   would read as a different kind of control. */
+/* The Workspace switch reuses the branch popover's solid surface and metrics:
+   the two sit in the same header and open the same way, so a second visual
+   language would read as a different kind of control. */
 .gx-workspace-panel {
   position: fixed;
   z-index: 1100;
@@ -896,19 +894,13 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   box-sizing: border-box;
   overflow: hidden;
   border-radius: var(--dsw-radius-lg, 10px);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--dsw-alias-label-primary, #000) 4%, transparent),
-      transparent 42%
-    ),
-    color-mix(
-      in srgb,
-      var(--dsw-specific-sidebar-fill, var(--dsw-menu-surface-fill, #f8f9fa)) 84%,
-      transparent
-    );
-  backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
-  -webkit-backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%));
+  background-color: var(--dsw-specific-sidebar-fill, var(--dsw-menu-surface-fill, #f8f9fa));
+  background-color: rgb(from var(--dsw-specific-sidebar-fill, var(--dsw-menu-surface-fill, #f8f9fa)) r g b / 1);
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--dsw-alias-label-primary, #000) 4%, transparent),
+    transparent 42%
+  );
   box-shadow:
     var(--dsw-elevation-prominent, 0 8px 24px color-mix(in srgb, var(--dsw-alias-label-primary, currentColor) 16%, transparent)),
     inset 0 1px 0 color-mix(in srgb, var(--dsw-alias-label-primary, #fff) 6%, transparent);

@@ -66,10 +66,11 @@ async function flush(): Promise<void> {
 }
 
 describe("DetailPane hover preview", () => {
-  it("keeps the hover card opaque when the host publishes no surface token", () => {
+  it("keeps the hover card opaque even when the skin publishes a translucent surface", () => {
     expect(GIT_STYLES).toMatch(/--gx-panel-2: var\(--dsw-alias-bg-layer-2, Canvas\)/u);
-    expect(GIT_STYLES).toMatch(/\.gx-preview \{[^}]*background-color: var\(--dsw-alias-bg-base, Canvas\)/u);
-    expect(GIT_STYLES).toMatch(/\.gx-preview \{[^}]*background-image: linear-gradient\(var\(--gx-panel-2\), var\(--gx-panel-2\)\)/u);
+    expect(GIT_STYLES).toMatch(/\.gx-preview \{[^}]*background: var\(--gx-panel-2\)/u);
+    // Alpha pinned: layer-2 is opaque on a stock theme but a skin may not be.
+    expect(GIT_STYLES).toMatch(/\.gx-preview \{[^}]*background: rgb\(from var\(--gx-panel-2\) r g b \/ 1\)/u);
   });
 
   let host: HTMLDivElement;

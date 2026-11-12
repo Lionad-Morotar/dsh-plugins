@@ -724,10 +724,13 @@ describe("branch popover width and full names", () => {
     expect(GIT_STYLES).toMatch(/\.gx-branch-row \{[^}]*box-sizing: border-box/u);
   });
 
-  it("paints the panel as frosted glass over the sidebar fill", () => {
-    expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*backdrop-filter/u);
-    expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*dsw-specific-sidebar-fill/u);
-    expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*linear-gradient\(\s*180deg/u);
+  it("paints the panel opaque in the sidebar's own colour", () => {
+    // A frosted fill only reads as glass while the surface behind it is opaque;
+    // a skin can make the sidebar translucent, so the popup pins its own alpha.
+    expect(GIT_STYLES).not.toMatch(/\.gx-branch-panel \{[^}]*backdrop-filter/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*background-color: var\(--dsw-specific-sidebar-fill/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*background-color: rgb\(from var\(--dsw-specific-sidebar-fill/u);
+    expect(GIT_STYLES).toMatch(/\.gx-branch-panel \{[^}]*background-image: linear-gradient\(\s*180deg/u);
     // Focus underline used brand-primary, which is near-black in the light
     // theme and read as a stray rule between search and list.
     expect(GIT_STYLES).toMatch(/\.gx-branch-search:focus-visible \{[^}]*--dsw-alias-link/u);
