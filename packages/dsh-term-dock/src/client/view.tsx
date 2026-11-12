@@ -99,13 +99,14 @@ const BLEED_LEFT = "--dsh-dock-bleed-left";
 const BLEED_RIGHT = "--dsh-dock-bleed-right";
 
 /**
- * Custom properties the dock publishes for its own surfaces.
+ * The custom property the dock publishes for its surface.
  *
  * Read by every painted piece of chrome (including the lazy chunk's xterm theme)
  * so one opaque colour defines the dock; `--dsw-alias-*` remains the fallback for
- * the first frame, before the layout effect has measured the tokens.
+ * the first frame, before the layout effect has measured the token. There is only
+ * one surface on purpose: a second, slightly different fill for the panels reads
+ * as a card inside a card.
  */
-const SURFACE_BASE = "--dsh-dock-bg";
 const SURFACE_PANEL = "--dsh-dock-surface";
 
 /** Read one custom property as a pixel count; unset or garbage reads as zero. */
@@ -202,10 +203,9 @@ function useDockSurface(ref: RefObject<HTMLDivElement | null>, visible: boolean)
     const read = (): void => {
       const base = readSolidToken(node, "--dsw-alias-bg-base", "");
       if (base === "") return;
-      const panel = readSolidToken(node, "--dsw-alias-bg-layer-1", base);
-      const nextPanel = panel === "" ? base : panel;
-      if (node.style.getPropertyValue(SURFACE_BASE) !== base) node.style.setProperty(SURFACE_BASE, base);
-      if (node.style.getPropertyValue(SURFACE_PANEL) !== nextPanel) node.style.setProperty(SURFACE_PANEL, nextPanel);
+      const surface = readSolidToken(node, "--dsw-alias-bg-layer-1", base);
+      const next = surface === "" ? base : surface;
+      if (node.style.getPropertyValue(SURFACE_PANEL) !== next) node.style.setProperty(SURFACE_PANEL, next);
     };
     read();
     return watchSurfaceColors(read);
@@ -224,22 +224,23 @@ const rootStyle: CSSProperties = {
   width: "100%",
   borderTop: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
   // Solid, not a wash: the dock can hang over a skin's moving background, and a
-  // terminal needs one stable ground. `--dsh-dock-bg` is the token with its
+  // terminal needs one stable ground. `--dsh-dock-surface` is the token with its
   // alpha stripped; the token itself is only the first-frame fallback.
-  background: `var(${SURFACE_BASE}, var(--dsw-alias-bg-base))`,
+  background: `var(${SURFACE_PANEL}, var(--dsw-alias-bg-layer-1))`,
   boxSizing: "border-box",
   overflow: "hidden",
   // The dock body owns its scrolling; a wheel at an end must not chain into the
   // conversation scroller this panel is nested in.
   overscrollBehavior: "contain",
 };
+// No rule under the header and no border around the panes: the dock is one
+// surface, and every nested edge made it look like cards stacked in a card.
 const headerStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
   gap: 8,
-  padding: "6px 12px",
-  borderBottom: "1px solid color-mix(in srgb, currentColor 10%, transparent)",
+  padding: "5px 12px",
 };
 const actionsStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 2 };
 // Mid-section of the single-row header: session tabs with inline close, then
@@ -262,16 +263,21 @@ const scopeChipStyle: CSSProperties = {
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
 };
+// The panes tile the body edge to edge. The only line between them is the left
+// border of every pane but the first, which keeps the dock one surface and still
+// lets a panel body paint its own transparent background.
 const bodyStyle: CSSProperties = {
   display: "grid",
-  gap: 8,
   flex: 1,
   minHeight: 0,
-  // No inset: the terminal screen runs to the dock's edges, which is what makes
-  // the panel read as docked rather than as a card with a frame around it.
   padding: 0,
   boxSizing: "border-box",
   overscrollBehavior: "contain",
+};
+const paneCellStyle: CSSProperties = {
+  display: "grid",
+  minWidth: 0,
+  minHeight: 0,
 };
 const emptyStyle: CSSProperties = {
   flex: 1,
@@ -298,13 +304,12 @@ const tabStyle: CSSProperties = {
   ...buttonStyle,
   fontSize: 11,
   padding: "2px 8px",
-  border: "1px solid transparent",
+  borderRadius: 5,
 };
 const tabActiveStyle: CSSProperties = {
   ...tabStyle,
   opacity: 1,
-  border: "1px solid color-mix(in srgb, currentColor 18%, transparent)",
-  background: "color-mix(in srgb, currentColor 8%, transparent)",
+  background: "color-mix(in srgb, currentColor 9%, transparent)",
 };
 
 /** One header control. */
@@ -808,12 +813,19 @@ export function createTermDockView({ dock, rack, host, t, visibility, scopes }: 
             }}
           >
             {panels.map((panel: DockPanel, index: number) => (
-              <DockBody
+              <div
                 key={`${panel.scopeKey}:${panel.id}`}
-                panel={panel}
-                label={panelLabel(panel, index)}
-                focusToken={focusTokenFor(focusState, panel.id)}
-              />
+                data-dock-cell={panel.id}
+                style={index === 0
+                  ? paneCellStyle
+                  : { ...paneCellStyle, borderLeft: "1px solid color-mix(in srgb, currentColor 11%, transparent)" }}
+              >
+                <DockBody
+                  panel={panel}
+                  label={panelLabel(panel, index)}
+                  focusToken={focusTokenFor(focusState, panel.id)}
+                />
+              </div>
             ))}
           </div>
         )}

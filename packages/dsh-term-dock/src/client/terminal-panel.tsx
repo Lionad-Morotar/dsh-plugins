@@ -30,18 +30,16 @@ const TONE_COLOR: Record<StatusTone, string> = {
   error: "#c4483c",
 };
 
-// The panel is a solid surface, not a wash over the conversation: the dock can
-// hang over a skin's translucency or a moving picture, and a terminal needs one
-// stable ground behind its glyphs. `--dsh-dock-surface` is the host's own token
-// with any alpha stripped (see surface.ts); the raw token is the fallback for the
-// first frame, before the dock root has measured it.
+// The panel is the dock's surface, edge to edge: it has no frame or radius of
+// its own, and the body's one-pixel gap draws the only separation between panes.
+// It stays opaque because a terminal needs one stable ground behind its glyphs;
+// `--dsh-dock-surface` is the host's token with any alpha stripped (see
+// surface.ts), and the raw token covers the first frame before the root measured.
 const panelStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   minWidth: 0,
   minHeight: 0,
-  border: "1px solid color-mix(in srgb, currentColor 12%, transparent)",
-  borderRadius: 8,
   overflow: "hidden",
   background: "var(--dsh-dock-surface, var(--dsw-alias-bg-layer-1))",
   overscrollBehavior: "contain",
@@ -58,12 +56,12 @@ const retryStyle: CSSProperties = {
   padding: "0 6px",
   lineHeight: 1.5,
 };
+// A caption, not a footer bar: no rule and no fill, so a visible status does not
+// add another band to the dock.
 const statusStyle: CSSProperties = {
   fontSize: 11,
   lineHeight: 1.5,
-  padding: "4px 10px",
-  borderTop: "1px solid color-mix(in srgb, currentColor 10%, transparent)",
-  background: "color-mix(in srgb, currentColor 4%, var(--dsh-dock-surface, transparent))",
+  padding: "0 10px 4px",
 };
 const loadingStyle: CSSProperties = { padding: "10px 12px", fontSize: 12, opacity: 0.68 };
 

@@ -36,7 +36,8 @@
 - 可见性跟着 core 走：`createDockController` 订阅 `workbench.dockVisibility`，运行中按 `⌘⇧M` 收起时只把高度释放（`display:none`），面板子树与终端进程都留在原地，再按一次恢复停靠高度，不重放屏幕。
 - 布局状态机：停靠 / 最小化 / 全屏三态，停靠高度 `clamp(120px, 32dvh, 300px)`（随窗口高度伸缩，与宿主 inspector 底部面板同一量法），全屏到 `min(72vh, 900px)`；`split()` 在当前面板旁新开一个终端（新 id、新 shell），上限每个作用域两栏（别的分支的面板不占本分支的名额）。此前用 `innerHeight − rect.top` 实测余量定高，但 dock 贴底、`rect.top` 编码了刚写入的高度，ResizeObserver 每轮触发都会把间隙常量再扣一次，打开后高度棘轮式压缩到下限，视口比例没有这个回路。
 - 标签栏：一个终端一个标签，点选切换、点 × 关闭；关闭后相邻面板接管选中，全部关掉时 body 为空，用头部的「新建终端」再开一个。点标签、点 `+`、分割、打开 dock 都会把焦点放进对应终端；切换会话导致的自动建面板不会（否则读者一换会话光标就被从输入框拉走）。
-- 实色面板：终端所在的皮肤可能把 `--dsw-alias-bg-base` 改成带 alpha 的颜色（ascii-rest 就是 `#rrggbbaa`），半透明面板会让壁纸在字符后面流动。dock 在挂载时与主题变化时把同两个 token 的 alpha 去掉，写成自己的 `--dsh-dock-bg` / `--dsh-dock-surface` 供根、面板、状态行和 xterm 主题共用：保留皮肤的色相，得到实色。遇到解析不了的颜色格式时原样退回 token 值，不会把面板画成黑色。
+- 实色且单一的表面：终端所在的皮肤可能把 `--dsw-alias-bg-base` 改成带 alpha 的颜色（ascii-rest 就是 `#rrggbbaa`），半透明面板会让壁纸在字符后面流动。dock 在挂载时与主题变化时把 `--dsw-alias-bg-layer-1` 的 alpha 去掉，写成自己的 `--dsh-dock-surface` 供根、面板、状态行和 xterm 主题共用：保留皮肤的色相，得到实色。只有这一个表面色，没有再深一层的面板色；解析不了的颜色格式原样退回 token 值，不会把面板画成黑色。
+- 平面化：面板不再自带边框与圆角，header 下面也没有分隔线。dock 是一整块表面，分栏只留后一栏的 1px 左边线当分隔，单栏时没有线；面板本身可以不画背景，分隔不依赖面板不透明。分割出的终端因此不会读成「卡片里再放两张卡片」。
 - 滚动隔离：终端嵌套在对话的 scroll body 里。一条轮到自己滚动时不该把对话卷走，因此 xterm 视口、屏幕容器、dock 根都声明 `overscroll-behavior: contain`，根上再挂一个 `wheel` 兜底：只有事件没有被 xterm 消费（`defaultPrevented === false`）且不是 Ctrl/Cmd+滚轮缩放手势时才 `preventDefault`，让终端的 scrollback 仍然按 xterm 自己的路径滚，而对话区不动。
 - 头部只放控件：左侧页签与「+」，右侧最小化 / 全屏 / 分割 / 关闭四个图标按钮。标题与常驻提示行已移除，页签本身就是标识，键位写在本文档里而不是常驻在界面上；`section` 上留一个不可见的 `aria-label` 供读屏。关闭键的第一下会把当前页签的 × 标红，读屏文案同时改成「再按一次关闭当前终端」。
 - 占满整行：宿主的 composer dock 行（`[data-composer-dock]`）是 `flex-direction:row` + `nowrap` 的居中行，用量条也是其中一个条目。终端面板不是小 chip，在 nowrap 行里 `width:100%` 只等于 flex-basis，默认 `flex-shrink` 会把空间还给用量条，于是 dock 比输入框窄、和用量条并排。插件注入一条 `:has()` 规则（只在 dock 挂载时命中），让那一行换行：dock 占第一行整宽，用量条落到下一行。
