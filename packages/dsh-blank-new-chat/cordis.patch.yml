@@ -1,0 +1,6 @@
+# Mount dsh-blank-new-chat: the Host row exists so the bundle has a Loader
+# entry; the browser half registers the synthetic target and the blank-home
+# frame that activates it.
+- insert:
+    - id: blank-new-chat
+      name: 'dsh-blank-new-chat'
