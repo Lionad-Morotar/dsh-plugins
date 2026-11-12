@@ -11,6 +11,7 @@ import {
   dateBucketLabel,
   fileRows,
   filesystemRows,
+  newestSession,
   sessionRows,
   shortcutRows,
   visibleSessions,
@@ -346,6 +347,34 @@ describe("visibleSessions", () => {
   it("lists the sessions no workspace owns", () => {
     const ungrouped = visibleSessions(list, snapshot, { kind: "ungrouped" });
     expect(ungrouped.map(session => session.displayTitle)).toEqual(["历史对话"]);
+  });
+});
+
+describe("newestSession", () => {
+  const list = sessionList([SESSION_A, SESSION_B, SESSION_C, SESSION_BLANK, SESSION_SUBAGENT, SESSION_ARCHIVED]);
+  const snapshot = workspaceSnapshot();
+
+  it("answers with the row the scope's second level would have put first", () => {
+    // sess-a is ws-one's only live session: the blank and the archived members
+    // are filtered out before recency is even consulted.
+    const scoped = newestSession(list, snapshot, { kind: "workspace", workspaceId: "ws-one" });
+    expect(scoped?.id).toBe(SESSION_A.id);
+    const rows = sessionRows(list, snapshot, { kind: "workspace", workspaceId: "ws-one" }, copy, now);
+    expect(rows[0]?.action).toEqual({ kind: "open-session", sessionId: scoped?.id });
+  });
+
+  it("picks the most recently updated session of the all scope", () => {
+    expect(newestSession(list, snapshot, { kind: "all" })?.id).toBe(SESSION_B.id);
+  });
+
+  it("scopes the ungrouped remainder the same way its list does", () => {
+    expect(newestSession(list, snapshot, { kind: "ungrouped" })?.id).toBe(SESSION_C.id);
+  });
+
+  it("answers nothing when the scope has no live session to open", () => {
+    const onlyHidden = sessionList([SESSION_ARCHIVED, SESSION_BLANK]);
+    const owned = workspaceSnapshot([{ ...WORKSPACE_ONE, sessionIds: [SESSION_ARCHIVED.id, SESSION_BLANK.id] }]);
+    expect(newestSession(onlyHidden, owned, { kind: "workspace", workspaceId: "ws-one" })).toBeUndefined();
   });
 });
 

@@ -13,6 +13,11 @@
  *     `code[data-dcp-commit]` stays unscoped. The hash it decorates is inline code
  *     in the conversation prose, which is never inside `[data-dcp-root]`, so a
  *     scoped selector would match nothing.
+ *   - The card is opaque. A skin may publish the raised-surface token as a
+ *     translucent ground colour so its picture shows through the shell's panels;
+ *     that is right for a card on the page and wrong for a modal palette, whose
+ *     rows must not compete with the transcript behind it. The card restates the
+ *     token at alpha 1 instead of naming a second colour.
  */
 
 import { ENTRY_MARK_STYLES } from "dsh-fs-explorer/src/client/entry-mark.tsx";
@@ -69,7 +74,15 @@ const CSS = `
   overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
   border-radius: var(--dsw-radius-panel, 14px);
+  /* The palette is a dialog, not a card on the page: the transcript behind it
+     must not read through the rows. The host's layer-2 is opaque, but a skin is
+     free to publish it as a translucent ground colour so its picture shows
+     through every panel — under that skin a stock declaration would turn the
+     palette into a window. The relative-colour rule keeps the token's hue and
+     forces its alpha to 1; a browser without the syntax drops the second line
+     and keeps exactly what the panel had before. */
   background: var(--dsw-alias-bg-layer-2, #ffffff);
+  background: rgb(from var(--dsw-alias-bg-layer-2, #ffffff) r g b / 1);
   box-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0, 0, 0, 0.16));
   animation: dcp-rise var(--ds-transition-duration, 0.2s) var(--ds-ease-in-out, ease-out);
 }

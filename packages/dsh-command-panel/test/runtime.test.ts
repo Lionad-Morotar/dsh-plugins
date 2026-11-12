@@ -33,6 +33,7 @@ import type {
   ShortcutCommand,
   ShortcutCatalogEntry,
   ShortcutConfigSnapshot,
+  WorkspaceSnapshot,
 } from "../src/client/dsh.ts";
 import {
   COMMIT_FOCUS,
@@ -45,6 +46,8 @@ import {
   fakeSessionOpen,
   fakeWorkspaces,
   sessionList,
+  WORKSPACE_ONE,
+  WORKSPACE_TWO,
   withActivity,
   workspaceSnapshot,
 } from "./fixtures.ts";
@@ -120,6 +123,8 @@ interface HarnessOptions {
   readonly rpc?: { readonly call: (scope: string, endpoint: string, payload: unknown) => Promise<unknown> };
   /** The conversation view ids the slot roster reports; the file workbench is one. */
   readonly viewIds?: readonly string[];
+  /** The workspace registry; the default owns the fixture workspaces. */
+  readonly workspaces?: WorkspaceSnapshot;
 }
 
 interface Harness {
@@ -146,6 +151,10 @@ interface Harness {
   };
   readonly verbs: PanelVerbs;
   readonly store: ReturnType<typeof createRuntime>["__test"]["store"];
+  readonly uiWorkspace: {
+    readonly openSession: ReturnType<typeof vi.fn>;
+    readonly startSession: ReturnType<typeof vi.fn>;
+  };
 }
 
 function harness(options: HarnessOptions = {}): Harness {
@@ -195,6 +204,14 @@ function harness(options: HarnessOptions = {}): Harness {
     return { ok: true as const, value: await answer };
   });
   const shutdownFace: HostShutdownRemote = { available: shutdownAvailable, request: shutdownRequest };
+  const uiWorkspace = {
+    openSession: vi.fn(),
+    startSession: vi.fn(),
+    archiveSession: vi.fn(async () => undefined),
+    forkSession: vi.fn(async () => "sess-forked"),
+    pinSession: vi.fn(async () => undefined),
+    unpinSession: vi.fn(async () => undefined),
+  };
 
   const fakes: Record<string, unknown> = {
     sessions: {
@@ -205,16 +222,9 @@ function harness(options: HarnessOptions = {}): Harness {
         subscribe: () => () => undefined,
       },
     },
-    workspaces: fakeWorkspaces(workspaceSnapshot()),
+    workspaces: fakeWorkspaces(options.workspaces ?? workspaceSnapshot()),
     conversation: { input: { for: () => input } },
-    uiWorkspace: {
-      openSession: vi.fn(),
-      startSession: vi.fn(),
-      archiveSession: vi.fn(async () => undefined),
-      forkSession: vi.fn(async () => "sess-forked"),
-      pinSession: vi.fn(async () => undefined),
-      unpinSession: vi.fn(async () => undefined),
-    },
+    uiWorkspace,
     locale: { getSnapshot: () => ({ active: "zh" }) },
     commandUi: options.commandUi,
     "remote.fileReferences": files,
@@ -332,6 +342,7 @@ function harness(options: HarnessOptions = {}): Harness {
     inserted,
     verbs: runtime.__test.verbs,
     store: runtime.__test.store,
+    uiWorkspace,
     shutdownAvailable,
     shutdownRequest,
     sidebar: { openResource: sidebarOpenResource, openTab: sidebarOpenTab },
@@ -660,6 +671,91 @@ describe("screen session switching", () => {
 
     h.runtime.__test.publishScreenSession({ sessionId: "sess-a", inputActions: null });
     h.runtime.__test.publishScreenSession({ sessionId: "sess-a", inputActions: null });
+    expect(h.store.getSnapshot().open).toBe(true);
+    h.runtime.dispose();
+  });
+});
+
+describe("the heavier confirm in switch mode", () => {
+  /** The row with one stable key, and the highlight seated on it. */
+  function seat(h: Harness, key: string): void {
+    const rows = h.store.getSnapshot().rows;
+    const index = rows.findIndex(row => row.key === key);
+    expect(index).toBeGreaterThan(-1);
+    h.verbs.highlight(index);
+  }
+
+  it("opens the newest live session of the highlighted workspace", async () => {
+    const h = harness({ sessions: [SESSION_A, SESSION_B, SESSION_ARCHIVED] });
+    runCommand(h, "command-panel.switch");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    seat(h, "workspace:ws-one");
+    h.verbs.acceptFirst();
+
+    // sess-a is the workspace's only live session. The newer archived session is
+    // not a switch target, and sess-b belongs to the other workspace.
+    expect(h.uiWorkspace.openSession).toHaveBeenCalledWith(SESSION_A.id);
+    expect(h.store.getSnapshot().open).toBe(false);
+    h.runtime.dispose();
+  });
+
+  it("answers the all-sessions row with the newest session it would list", async () => {
+    const h = harness({ sessions: [SESSION_A, SESSION_B] });
+    runCommand(h, "command-panel.switch");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    seat(h, "scope:all");
+    h.verbs.acceptFirst();
+
+    expect(h.uiWorkspace.openSession).toHaveBeenCalledWith(SESSION_B.id);
+    h.runtime.dispose();
+  });
+
+  it("drills instead when the scope has nothing to open", async () => {
+    const h = harness({
+      sessions: [SESSION_A, SESSION_B],
+      workspaces: workspaceSnapshot([{ ...WORKSPACE_ONE, sessionIds: [] }, WORKSPACE_TWO], []),
+    });
+    runCommand(h, "command-panel.switch");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    seat(h, "workspace:ws-one");
+    h.verbs.acceptFirst();
+
+    // No switch happened; the reader lands on the list, where the new-session
+    // row is the action that actually answers "I want to work here".
+    expect(h.uiWorkspace.openSession).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(h.store.getSnapshot().model.level).toBe("sessions"));
+    expect(h.store.getSnapshot().open).toBe(true);
+    h.runtime.dispose();
+  });
+
+  it("keeps Enter's meaning on a session row: the chord opens that row", async () => {
+    const h = harness({ sessions: [SESSION_A, SESSION_B] });
+    runCommand(h, "command-panel.switch");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.accept(h.store.getSnapshot().rows.find(row => row.key === "workspace:ws-two")!);
+    await vi.waitFor(() => expect(h.store.getSnapshot().model.level).toBe("sessions"));
+
+    seat(h, `session:${SESSION_B.id}`);
+    h.verbs.acceptFirst();
+
+    expect(h.uiWorkspace.openSession).toHaveBeenCalledWith(SESSION_B.id);
+    expect(h.store.getSnapshot().open).toBe(false);
+    h.runtime.dispose();
+  });
+
+  it("does nothing in navigate mode, where the chord belongs to the file panel", async () => {
+    const h = harness();
+    runCommand(h, "command-panel.navigate");
+    await vi.waitFor(() => expect(h.store.getSnapshot().status).toBe("ready"));
+
+    h.verbs.acceptFirst();
+
+    expect(h.inserted).toEqual([]);
+    expect(h.workbench.openViewOrSwitch).not.toHaveBeenCalled();
     expect(h.store.getSnapshot().open).toBe(true);
     h.runtime.dispose();
   });

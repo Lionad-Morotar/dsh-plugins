@@ -340,6 +340,31 @@ export function visibleSessions(
 }
 
 /**
+ * The newest live session of one scope: the second level's first row.
+ *
+ * One function rather than a second rule because the accelerator must open the
+ * row the reader would have landed on had they drilled: same visibility filter,
+ * same recency order. A tie keeps the catalogue's own order, exactly as the
+ * stable sort in `sessionRows` does.
+ *
+ * @param sessions - the host's session catalogue.
+ * @param snapshot - the workspace registry, for ownership and the archive set.
+ * @param scope - one workspace, every session, or the ungrouped remainder.
+ * @returns the session, or undefined when the scope has nothing to open.
+ */
+export function newestSession(
+  sessions: SessionListState,
+  snapshot: WorkspaceSnapshot,
+  scope: SessionScope,
+): SessionSummary | undefined {
+  let newest: SessionSummary | undefined;
+  for (const session of visibleSessions(sessions, snapshot, scope)) {
+    if (newest === undefined || session.updatedAt > newest.updatedAt) newest = session;
+  }
+  return newest;
+}
+
+/**
  * The scope's archived sessions: the mirror image of `visibleSessions`.
  *
  * The host keeps archived summaries inside the ordinary session catalogue (the

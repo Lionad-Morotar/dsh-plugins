@@ -83,7 +83,7 @@ import { createReferenceResolver, installReferenceLinks, type ReferenceProbeAnsw
 import { composeInsertion } from "./paths.ts";
 import { rankRows } from "./ranking.ts";
 import type { PanelDomSlice, PanelPrimitives, ReactSlice } from "./react.ts";
-import { catalogRows, shortcutRows, withConfirmLabel, withShortcutHints, type PanelRow } from "./rows.ts";
+import { catalogRows, newestSession, shortcutRows, withConfirmLabel, withShortcutHints, type PanelRow } from "./rows.ts";
 import { matchesShortcut, usableShortcut } from "./shortcut-key.ts";
 import { loadRows, PANEL_SOURCE, type LoadRequest, type SourceServices } from "./sources.ts";
 import { statusStamp } from "./status.ts";
@@ -1107,6 +1107,44 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
   }
 
   /**
+   * The heavier confirm in switch mode: take the first thing, not the list.
+   *
+   * Enter on a workspace row is two steps by design: the list is the point, and
+   * the reader may be after an older conversation. `⌘↵` says the scope is
+   * already decided, so it answers with the newest session in it — the row the
+   * second level would have put first. A scope with nothing to open falls back
+   * to the ordinary drill, so the reader still lands on the "new session" row
+   * instead of on a dead key.
+   *
+   * Every other row already is a destination (a session opens, the new-session
+   * row starts one, the archive row drills), so the chord means the same thing
+   * there as Enter: one key, one intention, no row where it silently dies.
+   *
+   * Mode-gated because the same chord owns the file workbench in navigate mode;
+   * command mode has no scope to resolve and stays a no-op.
+   */
+  function acceptFirst(): void {
+    const snapshot = store.getSnapshot();
+    if (snapshot.model.mode !== "switch") return;
+    const row = snapshot.rows[clampHighlight(snapshot.model.highlight, snapshot.rows.length)];
+    if (row === undefined) return;
+    if (row.action.kind !== "drill") {
+      accept(row);
+      return;
+    }
+    const sessions = services.sessions();
+    const workspaces = services.workspaces();
+    const first = sessions === undefined || workspaces === undefined
+      ? undefined
+      : newestSession(sessions.list.getSnapshot(), workspaces.list.getSnapshot(), row.action.scope);
+    if (first === undefined) {
+      drillTo(row.action.scope);
+      return;
+    }
+    acceptSession(first.id);
+  }
+
+  /**
    * Whether the horizontal arrows and the reveal accelerator belong to the tree.
    *
    * Only navigate mode has directories; in the other modes the arrows must keep
@@ -1817,6 +1855,7 @@ export function createRuntime(deps: PanelRuntimeDeps): PanelRuntime {
     setQuery: applyQuery,
     backspaceToNavigate,
     acceptActive,
+    acceptFirst,
     accept,
     dismiss: close,
     back: goBack,

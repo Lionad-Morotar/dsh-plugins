@@ -44,6 +44,12 @@ export interface PanelVerbs {
    */
   readonly backspaceToNavigate: () => boolean;
   readonly acceptActive: () => void;
+  /**
+   * The heavier confirm in switch mode: open the newest session of the
+   * highlighted scope without showing the scope's list. A no-op in the other
+   * modes, where the same chord already has a destination of its own.
+   */
+  readonly acceptFirst: () => void;
   /** Move the tree cursor up one level; no-op outside navigate mode. */
   readonly treeUp: () => void;
   /** Enter the highlighted directory; no-op when the row is not one. */
@@ -90,25 +96,34 @@ const INPUT_PROPS = {
 } as const;
 
 /** What a confirm key means for the panel, once its modifiers are read. */
-export type ConfirmIntent = "reveal" | "sidebar" | "accept";
+export type ConfirmIntent = "reveal" | "sidebar" | "first" | "accept";
 
 /**
  * Read one confirm key into the destination it asks for.
  *
- * `⌘`/`Ctrl` is the heavier modifier and keeps the file workbench, so `⌘⇧↩`
- * stays where it has always been. Shift is the sidebar accent on Enter only:
- * `⇧Tab` is reverse tabbing, and the panel answers Tab as a second confirm key,
- * so folding shift in there would silently take a focus gesture.
+ * `⌘`/`Ctrl` is the heavier modifier. In navigate mode it keeps the file
+ * workbench, so `⌘⇧↩` stays where it has always been; in switch mode there is no
+ * file to hand over, and the heavier confirm means "skip the second list": open
+ * the newest session of the scope the highlighted row names.
+ *
+ * Shift is the sidebar accent on Enter only: `⇧Tab` is reverse tabbing, and the
+ * panel answers Tab as a second confirm key, so folding shift in there would
+ * silently take a focus gesture.
+ *
  * @param event - the key, read for its `key` and its three modifiers.
+ * @param mode - the mode the key is being read in.
  * @returns the destination the runtime should act on.
  */
-export function confirmIntent(event: {
-  readonly key: string;
-  readonly metaKey: boolean;
-  readonly ctrlKey: boolean;
-  readonly shiftKey: boolean;
-}): ConfirmIntent {
-  if (event.metaKey || event.ctrlKey) return "reveal";
+export function confirmIntent(
+  event: {
+    readonly key: string;
+    readonly metaKey: boolean;
+    readonly ctrlKey: boolean;
+    readonly shiftKey: boolean;
+  },
+  mode: PanelMode,
+): ConfirmIntent {
+  if (event.metaKey || event.ctrlKey) return mode === "switch" ? "first" : "reveal";
   if (event.shiftKey && event.key === "Enter") return "sidebar";
   return "accept";
 }
@@ -226,10 +241,12 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
             return;
           case "Enter":
           case "Tab": {
-            // Three destinations for one row: the path into the composer, the
-            // file workbench, or a tab of the right column.
-            const intent = confirmIntent(event);
-            if (intent === "reveal") deps.revealActive();
+            // Four destinations for one row: the path into the composer, the
+            // file workbench, a tab of the right column, or — in switch mode —
+            // the first session of the scope under the cursor.
+            const intent = confirmIntent(event, deps.store.getSnapshot().model.mode);
+            if (intent === "first") deps.acceptFirst();
+            else if (intent === "reveal") deps.revealActive();
             else if (intent === "sidebar") deps.openInSidebar();
             else deps.acceptActive();
             return;
@@ -253,6 +270,9 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
     const { model, rows } = snapshot;
     const active = highlightOf(model, rows.length);
     const tree = deps.treeActive();
+    // The accelerator's own promise, shown only where it does something the
+    // plain confirm does not: a scope row in switch mode.
+    const firstHint = model.mode === "switch" && rows[active]?.action.kind === "drill";
 
     const list: unknown[] = [];
     let group: string | undefined;
@@ -347,6 +367,7 @@ export function createPanelView(deps: PanelViewDeps): (props: unknown) => unknow
         h("span", null, copy.footer.move),
         tree ? h("span", null, copy.footer.tree) : null,
         h("span", null, copy.footer.accept),
+        firstHint && copy.footer.first !== undefined ? h("span", null, copy.footer.first) : null,
         tree ? h("span", null, copy.footer.reveal) : null,
         tree && copy.footer.sidebar !== undefined ? h("span", null, copy.footer.sidebar) : null,
         h("span", null, crumb === null ? copy.footer.close : copy.footer.back),

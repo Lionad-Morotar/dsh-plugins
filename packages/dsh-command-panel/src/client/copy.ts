@@ -21,6 +21,8 @@ export interface FooterHint {
   readonly reveal?: string;
   /** Only shown where a file can be opened as a tab of the right column. */
   readonly sidebar?: string;
+  /** Only shown on a scope row in switch mode: the heavier confirm skips the list. */
+  readonly first?: string;
 }
 
 export interface Copy {
@@ -159,6 +161,7 @@ const ZH: Copy = {
     tree: "←→ 上下层",
     reveal: "⌘↵ 文件面板",
     sidebar: "⇧↵ 侧边栏",
+    first: "⌘↵ 首个会话",
   },
   noticeRevealUnfocused: "已切到文件面板；这个宿主没把定位能力交给插件，请手动打开该文件",
   noticeOpenedBySystem: "已用系统默认应用打开",
@@ -277,6 +280,7 @@ const EN: Copy = {
     tree: "←→ up/down a level",
     reveal: "⌘↵ file panel",
     sidebar: "⇧↵ sidebar",
+    first: "⌘↵ newest session",
   },
   noticeRevealUnfocused: "Switched to the file panel; this host hands out no focus capability, so open the file there",
   noticeOpenedBySystem: "Opened with the system default application",
