@@ -376,6 +376,49 @@ describe("landing after a current-session archive", () => {
     expect(mounted.openSession).toHaveBeenCalledWith("c");
   });
 
+  it("does not treat a collapsed group above the current session as next", () => {
+    mounted = mount({
+      selection: "b",
+      items: [
+        { workspaceId: "w1", sessionIds: ["a1", "a2"] },
+        { workspaceId: "w2", sessionIds: ["b"] },
+        { workspaceId: "w3", sessionIds: ["c1", "c2"] },
+      ],
+      rows: ["b"],
+    });
+    mounted.archive("b");
+    vi.advanceTimersByTime(0);
+    expect(mounted.openSession).toHaveBeenCalledWith("c1");
+  });
+
+  it("takes the nearest previous session from the group above, not its first member", () => {
+    mounted = mount({
+      selection: "c",
+      items: [
+        { workspaceId: "w1", sessionIds: ["a1", "a2"] },
+        { workspaceId: "w2", sessionIds: ["c"] },
+      ],
+      rows: ["c"],
+    });
+    mounted.archive("c");
+    vi.advanceTimersByTime(0);
+    expect(mounted.openSession).toHaveBeenCalledWith("a2");
+  });
+
+  it("takes the painted previous row before an earlier group's hidden member", () => {
+    mounted = mount({
+      selection: "b5",
+      items: [
+        { workspaceId: "w1", sessionIds: ["a1", "a2", "a3", "a4", "a5", "a6"] },
+        { workspaceId: "w2", sessionIds: ["b1", "b2", "b3", "b4", "b5"] },
+      ],
+      rows: ["a1", "a2", "a3", "a4", "a5", "b1", "b2", "b3", "b4", "b5"],
+    });
+    mounted.archive("b5");
+    vi.advanceTimersByTime(0);
+    expect(mounted.openSession).toHaveBeenCalledWith("b4");
+  });
+
   it("stops watching and drops the pending landing when disposed", () => {
     mounted = mount({
       selection: "b",

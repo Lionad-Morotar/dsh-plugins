@@ -137,19 +137,6 @@ function workspaceIdOf(snapshot: unknown, sessionId: string): string | undefined
   return undefined;
 }
 
-/**
- * Read one workspace's member order.
- * @param snapshot - the `workspaces.list` snapshot.
- * @param workspaceId - the workspace, when one was resolved.
- * @returns the member ids in manual order, or an empty list.
- */
-function workspaceMembers(snapshot: unknown, workspaceId: string | undefined): string[] {
-  if (workspaceId === undefined) return [];
-  for (const item of itemsOf(snapshot)) {
-    if (asId(item.workspaceId) === workspaceId) return asIds(item.sessionIds);
-  }
-  return [];
-}
 
 /**
  * Read the registry-wide archive set, but only once the list is ready.
@@ -166,14 +153,6 @@ function archiveSetOf(snapshot: unknown): ReadonlySet<string> | undefined {
   return new Set(asIds(root.archivedSessionIds));
 }
 
-/**
- * Read the pinned set; pinned rows are painted above the rest of their group.
- * @param snapshot - the `workspaces.list` snapshot.
- * @returns the pinned session ids.
- */
-function pinnedSetOf(snapshot: unknown): ReadonlySet<string> {
-  return new Set(asIds(asRecord(snapshot)?.pinnedSessionIds));
-}
 
 /**
  * Read the sidebar's painted session rows, top to bottom.
@@ -192,21 +171,36 @@ function paintedOrder(): string[] {
 }
 
 /**
- * Flatten the workspace data order into one list.
+ * Build the pre-archive sidebar order from the group structure.
  *
- * Workspace members come first, workspace by workspace, then the registry ids
- * that belong to no workspace. The sidebar groups ungrouped sessions under
- * their own group; leaving them out would make a collapsed Ungrouped group
- * look empty and start a new conversation instead of landing in it.
- * @param snapshot - the `workspaces.list` snapshot.
- * @param sessions - the `sessions.list` snapshot.
- * @returns the member ids, workspace by workspace, then ungrouped ids.
+ * Workspaces are groups in list order. Inside a group, the painted rows keep
+ * their DOM order and members the host folded behind its watermark follow in
+ * data order; the ungrouped group closes the list. Keeping every group's
+ * unpainted part at that group's position is what makes "next" mean below and
+ * "previous" mean above: appending the whole data order at the end would treat
+ * a collapsed group above the current session as if it came after it.
+ * @param before - the list snapshot from before this archive.
+ * @param sessions - the `sessions.list` snapshot for ungrouped ids.
+ * @returns session ids in pre-archive sidebar order.
  */
-function dataOrder(snapshot: unknown, sessions: unknown): string[] {
-  const grouped = itemsOf(snapshot).flatMap((item) => asIds(item.sessionIds));
-  const seen = new Set(grouped);
-  const ungrouped = asIds(asRecord(sessions)?.ids).filter((id) => !seen.has(id));
-  return [...grouped, ...ungrouped];
+function sidebarOrder(before: unknown, sessions: unknown): string[] {
+  const painted = unique(paintedOrder());
+  const paintedSet = new Set(painted);
+  const order: string[] = [];
+  const grouped = new Set<string>();
+  for (const item of itemsOf(before)) {
+    const members = asIds(item.sessionIds);
+    for (const id of members) grouped.add(id);
+    const visible = painted.filter((id) => members.includes(id));
+    const hidden = members.filter((id) => !paintedSet.has(id));
+    order.push(...visible, ...hidden);
+  }
+  const ungroupedVisible = painted.filter((id) => !grouped.has(id));
+  const ungroupedHidden = asIds(asRecord(sessions)?.ids).filter(
+    (id) => !grouped.has(id) && !paintedSet.has(id),
+  );
+  order.push(...ungroupedVisible, ...ungroupedHidden);
+  return unique(order);
 }
 
 /**
@@ -226,26 +220,11 @@ function unique(ids: readonly string[]): string[] {
 /**
  * Build the pre-archive order the landing rule reads.
  *
- * The painted rows are the only source that knows about pinning, collapsed
- * groups and the archived filter, so they win whenever they contain the current
- * session. Two gaps need filling:
- *
- * - the current session may not be painted at all (a collapsed group, a narrow
- *   rail, or a session reached through search); the list snapshot from before
- *   the archive is the documented fallback;
- * - the host paints each group up to the current session's row and folds the
- *   rest behind the group's watermark, so the current row can be the last
- *   painted one while later members of the same workspace still exist. Those are
- *   appended in data order, because falling back to "previous" would contradict
- *   the "next row" the user means.
- *
- * Sessions that are already archived are not landing targets; the current one is
- * kept so its position stays resolvable.
- *
- * The painted rows alone are not the whole list: other workspaces may be
- * collapsed, and the ungrouped group may be folded too. The full data order is
- * appended after the visible rows so "next" can reach a collapsed session, and
- * "start" only happens when the whole registry holds no other session.
+ * The group structure decides where a session sits; the DOM supplies the
+ * visible rows and their order. A session that is not in the pre-archive list
+ * (a workspace that appeared between snapshots) is looked up in the after
+ * snapshot instead. Already archived sessions are not landing targets; the
+ * current one stays so its position resolves.
  * @param before - the list snapshot from before this archive.
  * @param after - the list snapshot that announced the archive.
  * @param current - the session being archived.
@@ -260,23 +239,9 @@ function landingOrder(
   archived: ReadonlySet<string>,
   sessions: unknown,
 ): string[] {
-  const painted = unique(paintedOrder()).filter((id) => id === current || !archived.has(id));
-  const data = dataOrder(before, sessions);
-  if (!painted.includes(current)) {
-    return unique(data).filter((id) => id === current || !archived.has(id));
-  }
-  if (painted[painted.length - 1] !== current) return painted;
-  const paintedSet = new Set(painted);
-  const pinned = pinnedSetOf(after);
-  const workspaceId = workspaceIdOf(before, current) ?? workspaceIdOf(after, current);
-  const members = workspaceMembers(before, workspaceId);
-  const source = members.length > 0 ? members : workspaceMembers(after, workspaceId);
-  const hidden = source.filter(
-    (id) => id !== current && !paintedSet.has(id) && !pinned.has(id) && !archived.has(id),
-  );
-  // The visible rows and the folded members of the current group come first;
-  // the rest of the registry keeps its data order behind them.
-  return unique([...painted, ...hidden, ...data]).filter((id) => id === current || !archived.has(id));
+  const fromBefore = sidebarOrder(before, sessions);
+  const data = fromBefore.includes(current) ? fromBefore : sidebarOrder(after, sessions);
+  return unique(data).filter((id) => id === current || !archived.has(id));
 }
 
 /**
