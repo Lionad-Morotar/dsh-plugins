@@ -70,6 +70,23 @@ export interface HostMenuItemButtonProps {
   readonly separatorBefore?: boolean;
 }
 
+/** One action button the host `Toast` renders inside the sentence. */
+export interface HostToastAction {
+  readonly label: string;
+  readonly prefix?: string;
+  readonly onClick: () => void;
+}
+
+/** The props this package passes the host `Toast`; `onDone` fires after the hold and fade. */
+export interface HostToastProps {
+  readonly text: string;
+  readonly icon?: ReactNode;
+  readonly tone?: "success";
+  readonly holdMs?: number;
+  readonly actions?: readonly HostToastAction[];
+  readonly onDone: () => void;
+}
+
 /** The props this package passes the host `Input`. */
 export interface HostInputProps {
   readonly ref?: Ref<HTMLInputElement>;
@@ -91,6 +108,8 @@ export interface MenuKit {
   readonly MenuItemButton?: ComponentType<HostMenuItemButtonProps>;
   readonly Input?: ComponentType<HostInputProps>;
   readonly IconChevronDownOutlineRegular?: IconLike;
+  readonly IconWarningOutlineRegular?: IconLike;
+  readonly Toast?: ComponentType<HostToastProps>;
   readonly useAnchoredPosition?: AnchoredPositionHook;
 }
 
@@ -170,6 +189,10 @@ export function resolveMenuKit(): MenuKit {
   if (input !== undefined) kit.Input = input;
   const chevron = component<{ className?: string }>("IconChevronDownOutlineRegular");
   if (chevron !== undefined) kit.IconChevronDownOutlineRegular = chevron as IconLike;
+  const warning = component<{ className?: string }>("IconWarningOutlineRegular");
+  if (warning !== undefined) kit.IconWarningOutlineRegular = warning as IconLike;
+  const toast = component<HostToastProps>("Toast");
+  if (toast !== undefined) kit.Toast = toast;
   const anchored = fn<AnchoredPositionHook>("useAnchoredPosition");
   if (anchored !== undefined) kit.useAnchoredPosition = anchored;
   return kit;

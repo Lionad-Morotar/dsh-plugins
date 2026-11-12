@@ -126,6 +126,7 @@ import {
   type WorkspaceFilesFace,
 } from "./wire.ts";
 import { PACKAGE_NAME, VIEW_ID } from "../shared.ts";
+import { resolveMenuKit } from "./platform.ts";
 
 /** The pending-focus queue the core carries, as this view consumes it. */
 export interface ViewFocusFace {
@@ -422,6 +423,72 @@ export function isSaveChord(event: SaveChordLike): boolean {
   return primary && event.altKey !== true && event.shiftKey !== true;
 }
 
+/** One announced sentence, whatever the presentation needs to remount per action. */
+interface NoticeModel {
+  readonly text: string;
+  readonly tone: "ok" | "error";
+  readonly seq: number;
+}
+
+interface NoticeToastProps {
+  readonly notice: NoticeModel;
+  readonly onDone: () => void;
+}
+
+/**
+ * Present one action's outcome where the reader is looking.
+ *
+ * The host's `Toast` primitive is the first choice: it portals to the shell,
+ * carries the shell's material, timing and motion, and fires `onDone` after
+ * its hold plus fade, so this package neither styles it nor arms a timer
+ * against it. A host without the primitive kit gets the original inline bar
+ * under the header with its own four-second lifetime — the same slot the
+ * tests read, and a presentation that never covers the tree row acted on.
+ * @param props - the sentence and the dismissal both presentations call.
+ * @returns the host toast, or the inline fallback bar.
+ */
+function NoticeToast({ notice, onDone }: NoticeToastProps) {
+  const kit = resolveMenuKit();
+  const HostToast = kit.Toast;
+  if (HostToast !== undefined) {
+    return (
+      <HostToast
+        key={notice.seq}
+        text={notice.text}
+        {...(notice.tone === "ok" ? { tone: "success" as const } : {})}
+        {...(notice.tone === "error" && kit.IconWarningOutlineRegular !== undefined
+          ? { icon: <kit.IconWarningOutlineRegular /> }
+          : {})}
+        onDone={onDone}
+      />
+    );
+  }
+  return <InlineNotice notice={notice} onDone={onDone} />;
+}
+
+/** Props for the no-primitives inline bar. */
+interface InlineNoticeProps {
+  readonly notice: NoticeModel;
+  readonly onDone: () => void;
+}
+
+/**
+ * The header-under sentence for a host without the primitive kit.
+ * @param props - the sentence and a dismissal the view clears with.
+ * @returns the inline bar, dismissed by its own timer.
+ */
+function InlineNotice({ notice, onDone }: InlineNoticeProps) {
+  useEffect(() => {
+    const timer = setTimeout(onDone, 4000);
+    return () => clearTimeout(timer);
+  }, [notice.seq, onDone]);
+  return (
+    <div className="fx-notice" role="status" data-tone={notice.tone} data-testid="fx-notice">
+      {notice.text}
+    </div>
+  );
+}
+
 /**
  * Build the view component for one mount.
  * @param wiring - the core service, contract version, copy and file resolver.
@@ -533,9 +600,12 @@ export function createFsExplorerView({
     >(null);
     // What the host's desktop can do. Probed once per session, not per menu: the
     // answer is a property of the host, not of the click.
-    const [capabilities, setCapabilities] = useState<WorkspaceCapabilities | undefined>(undefined);    // One transient sentence under the header: what the last action did.
-    const [notice, setNotice] = useState<{ readonly text: string; readonly tone: "ok" | "error" } | null>(null);
-    const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [capabilities, setCapabilities] = useState<WorkspaceCapabilities | undefined>(undefined);
+    // One transient sentence about what the last action did. `seq` remounts the
+    // toast per action so the entry animation replays instead of silently
+    // swapping the text; clearing goes through each presentation's own timer.
+    const [notice, setNotice] = useState<NoticeModel | null>(null);
+    const noticeSeq = useRef(0);
 
     // The name card, while it is up: what is being created, where, and what the
     // host said about the last attempt. A refusal keeps the card open, so the
@@ -1609,29 +1679,24 @@ export function createFsExplorerView({
     );
 
     /**
-     * Show one sentence under the header for a few seconds.
+     * Show one sentence about what the last action did.
      *
-     * One timer for the whole view: a second action replaces the first notice
-     * rather than stacking, and the timer is cleared on unmount so a notice
-     * cannot land on a view that is gone.
+     * A second action replaces the first notice rather than stacking: the new
+     * `seq` remounts the presentation, which restarts its lifetime. Dismissal
+     * belongs to the presentation — the host toast fires `onDone` after its
+     * hold plus fade, the inline fallback runs its own timer — so nothing here
+     * arms a timer that could cut the toast's fade short.
      * @param text - the sentence, already translated.
      * @param tone - whether it reports success or a refusal.
      */
     const announce = useCallback((text: string, tone: "ok" | "error"): void => {
-      if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
-      setNotice({ text, tone });
-      noticeTimer.current = setTimeout(() => {
-        noticeTimer.current = null;
-        setNotice(null);
-      }, 4000);
+      noticeSeq.current += 1;
+      setNotice({ text, tone, seq: noticeSeq.current });
     }, []);
 
-    useEffect(
-      () => () => {
-        if (noticeTimer.current !== null) clearTimeout(noticeTimer.current);
-      },
-      [],
-    );
+    const clearNotice = useCallback((): void => {
+      setNotice(null);
+    }, []);
 
     /**
      * Publish one bookmark tree and write it through.
@@ -2243,11 +2308,7 @@ export function createFsExplorerView({
           </div>
         </header>
 
-        {notice === null ? null : (
-          <div className="fx-notice" role="status" data-tone={notice.tone} data-testid="fx-notice">
-            {notice.text}
-          </div>
-        )}
+        {notice === null ? null : <NoticeToast notice={notice} onDone={clearNotice} />}
 
         <div className="fx-main">
           {sessionId === undefined ? (

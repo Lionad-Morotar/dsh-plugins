@@ -257,9 +257,11 @@ export const FS_STYLES = `
 }
 .fx-head-meta b { color: var(--fx-text-2); font-weight: 600; }
 
-/* One transient sentence about what the last action did. It sits between the
-   header and the panes rather than floating over them: a toast would cover the
-   tree row the reader just acted on, which is exactly what they are looking at. */
+/* The no-primitives fallback for one transient sentence about what the last
+   action did; hosts with the primitive kit see the host toast instead. It sits
+   between the header and the panes rather than floating over them: a floating
+   toast would cover the tree row the reader just acted on, which is exactly
+   what they are looking at. */
 .fx-notice {
   flex: none;
   padding: 4px 12px;

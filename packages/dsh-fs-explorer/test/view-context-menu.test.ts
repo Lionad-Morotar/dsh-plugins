@@ -13,7 +13,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { WorkspaceCapabilities } from "../src/host/types.ts";
-import { setMenuKitForTest, type HostMenuProps } from "../src/client/platform.ts";
+import { setMenuKitForTest, type HostMenuProps, type HostToastProps } from "../src/client/platform.ts";
 import { createFsExplorerView, type WorkbenchFace } from "../src/client/view.tsx";
 import type { WorkspaceClient } from "../src/client/workspace-face.ts";
 
@@ -206,6 +206,80 @@ describe("file view context menu", () => {
 
     expect(clipboard).toEqual(["a.md"]);
     expect(host.querySelector('[data-testid="fx-notice"]')?.textContent).toBe("notice.copiedRelative");
+  });
+
+  it("hands the sentence to the host toast when the primitive kit has one", async () => {
+    const captured: HostToastProps[] = [];
+    const Toast = (props: HostToastProps): null => {
+      captured.push(props);
+      return null;
+    };
+    const IconWarningOutlineRegular = (): null => null;
+    setMenuKitForTest({ Toast, IconWarningOutlineRegular });
+    try {
+      const workspace = fakeWorkspace();
+      await mount(workspace.client);
+      await rightClick("a.md");
+      await act(async () => {
+        menuItem("menu.copy").click();
+      });
+      await act(async () => {
+        menuItem("copy.absolute").click();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+    } finally {
+      setMenuKitForTest(null);
+    }
+
+    const toast = captured.at(-1);
+    if (toast === undefined) throw new Error("the host toast never rendered");
+    expect(toast.text).toBe("notice.copiedAbsolute");
+    expect(toast.tone).toBe("success");
+    expect(toast.icon).toBeUndefined();
+    expect(toast.onDone).toBeTypeOf("function");
+    // The host primitive portals to the shell and owns the material; the
+    // inline bar must stay unmounted or two notices would say the same thing.
+    expect(host.querySelector('[data-testid="fx-notice"]')).toBeNull();
+  });
+
+  it("sends a warning icon instead of a success tone when the copy fails", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async () => Promise.reject(new Error("denied")) },
+    });
+    const captured: HostToastProps[] = [];
+    const Toast = (props: HostToastProps): null => {
+      captured.push(props);
+      return null;
+    };
+    const IconWarningOutlineRegular = (): null => null;
+    setMenuKitForTest({ Toast, IconWarningOutlineRegular });
+    try {
+      const workspace = fakeWorkspace();
+      await mount(workspace.client);
+      await rightClick("a.md");
+      await act(async () => {
+        menuItem("menu.copy").click();
+      });
+      await act(async () => {
+        menuItem("copy.absolute").click();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+    } finally {
+      setMenuKitForTest(null);
+    }
+
+    const toast = captured.at(-1);
+    if (toast === undefined) throw new Error("the host toast never rendered");
+    expect(toast.text).toBe("notice.copyFailed");
+    expect(toast.tone).toBeUndefined();
+    // The refusal pairs the warning icon with the default tone, the same
+    // mapping the workspace toasts use.
+    expect(toast.icon).toMatchObject({ type: IconWarningOutlineRegular });
   });
 
   it("reveals the row through the workspace channel", async () => {
