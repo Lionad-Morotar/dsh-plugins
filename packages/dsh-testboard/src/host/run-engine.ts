@@ -32,6 +32,7 @@ import type {
   TestboardError,
   TestboardState,
 } from "../shared.ts";
+import type { PlannedLivePaths } from "./run-plan.ts";
 import { buildVitestArgv, parseVerboseOutput, parseVitestJson, runFailed } from "./vitest.ts";
 
 /** One collected stream read. Mirrors `SubprocessOutputRead` structurally. */
@@ -114,6 +115,13 @@ export interface RunEngineOptions {
     readonly argv: readonly string[];
     readonly cwd: string;
     readonly cleanup?: () => Promise<void>;
+    /**
+     * Where the live reporter's paths sit in the workspace.
+     *
+     * Omitted means the run prints workspace-relative paths, which is true for a
+     * single-config workspace and for nothing else.
+     */
+    readonly livePaths?: PlannedLivePaths;
   }>;
   /**
    * Called once a run has settled with a snapshot to show.
@@ -512,6 +520,43 @@ export function createRunEngine(options: RunEngineOptions): RunEngine {
     // Marked running synchronously so a second `start` in the same tick is busy.
     entry.run = progressOf(base, live, 0);
 
+    let planned: {
+      argv: readonly string[];
+      cwd: string;
+      cleanup?: () => Promise<void>;
+      livePaths?: PlannedLivePaths;
+    } = {
+      argv: buildVitestArgv({ workspace, scope, outputFile }),
+      cwd: workspace,
+    };
+    // Built once, when the first event is mapped: the projects are known only
+    // after the plan resolved, and every case in the run reads the same table.
+    let projectRoots: Map<string, string> | undefined;
+
+    /**
+     * The workspace-relative path one live event's file is at.
+     *
+     * The reporter prints a case's file relative to the project it ran in, and
+     * prefixes the line with that project's name when it has one. The plan wrote
+     * those names, so it also says where each project prints from; a project the
+     * plan does not know, and a line with no name at all, print from the run's own
+     * root. The settled report carries absolute paths, so this mapping exists
+     * only for the live half.
+     *
+     * @param event - one parsed reporter line.
+     * @returns the path a row and the source route both key on.
+     */
+    const livePathOf = (event: { readonly project?: string; readonly path: string }): string => {
+      const live = planned.livePaths;
+      if (live === undefined) return event.path;
+      if (projectRoots === undefined) {
+        projectRoots = new Map(live.projects.map(project => [project.name, project.directory]));
+      }
+      const directory =
+        event.project === undefined ? live.root : (projectRoots.get(event.project) ?? live.root);
+      return directory === "" || directory === "." ? event.path : `${directory}/${event.path}`;
+    };
+
     /**
      * Fold one chunk of the verbose stream into the live half.
      *
@@ -532,17 +577,18 @@ export function createRunEngine(options: RunEngineOptions): RunEngine {
       const complete = combined.slice(0, lastBreak);
       for (const event of parseVerboseOutput(complete)) {
         const atMs = Math.max(0, now() - startedAtMs);
+        const path = livePathOf(event);
         if (event.kind === "case") {
           live.cases.push({
-            path: event.path,
+            path,
             name: event.name,
             status: event.status,
             durationMs: event.durationMs,
             atMs,
           });
-          finishedFiles.add(event.path);
+          finishedFiles.add(path);
         } else {
-          live.failures.push({ tMs: atMs, path: event.path, name: event.name });
+          live.failures.push({ tMs: atMs, path, name: event.name });
         }
       }
       live.completedFiles = finishedFiles.size;
@@ -576,10 +622,6 @@ export function createRunEngine(options: RunEngineOptions): RunEngine {
       entry.controller = undefined;
     };
 
-    let planned: { argv: readonly string[]; cwd: string; cleanup?: () => Promise<void> } = {
-      argv: buildVitestArgv({ workspace, scope, outputFile }),
-      cwd: workspace,
-    };
     try {
       if (options.plan !== undefined) planned = await options.plan({ workspace, scope, outputFile });
       const handle = options.subprocess.spawn({

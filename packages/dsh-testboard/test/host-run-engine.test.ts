@@ -522,6 +522,76 @@ interface ReportLike {
   }[];
 }
 
+/**
+ * The live half's paths.
+ *
+ * The verbose reporter prints a case's file relative to the project it ran in,
+ * and names that project on the line. The plan generates those names, so the
+ * engine is what has to turn the pair back into the workspace-relative path the
+ * report will use once the run settles; a path that disagreed would put one file
+ * in two rows, depending on whether the run was over.
+ */
+describe("createRunEngine: live paths", () => {
+  /** The same three cases, as a run over a named project prints them. */
+  const PROJECT_STREAM = [
+    " \u2713 |packages/alpha| test/one.test.ts > suite > adds 1ms",
+    " \u00d7 |packages/alpha| test/one.test.ts > suite > subtracts 3ms",
+    " FAIL  |packages/alpha| test/one.test.ts > suite > subtracts",
+  ].join("\n");
+
+  it("rebuilds a named project's paths under the directory the plan gave it", async () => {
+    const { subprocess } = makeSubprocess({ stdout: [PROJECT_STREAM] });
+    const engine = createRunEngine({
+      subprocess,
+      plan: async input => ({
+        // The report path still has to reach the child: the fake spawn writes it,
+        // and a run with no report settles as an error before its stream is read.
+        argv: ["/ws/node_modules/.bin/vitest", "run", "--outputFile", input.outputFile],
+        cwd: WORKSPACE,
+        livePaths: { root: "", projects: [{ name: "packages/alpha", directory: "packages/alpha" }] },
+      }),
+    });
+
+    await startOk(engine, WORKSPACE, ALL).done;
+    const run = engine.getState(WORKSPACE).run;
+
+    expect(run?.cases.map(entry => entry.path)).toEqual([
+      "packages/alpha/test/one.test.ts",
+      "packages/alpha/test/one.test.ts",
+    ]);
+    expect(run?.failures[0]?.path).toBe("packages/alpha/test/one.test.ts");
+  });
+
+  it("re-roots a package-scoped run, which prints from the package and names no project", async () => {
+    const { subprocess } = makeSubprocess({
+      stdout: [" \u2713 test/one.test.ts > suite > adds 1ms"],
+    });
+    const engine = createRunEngine({
+      subprocess,
+      plan: async input => ({
+        argv: ["/ws/node_modules/.bin/vitest", "run", "--outputFile", input.outputFile],
+        cwd: "/ws/packages/alpha",
+        livePaths: { root: "packages/alpha", projects: [] },
+      }),
+    });
+
+    await startOk(engine, WORKSPACE, { kind: "file", path: "packages/alpha/test/one.test.ts" }).done;
+
+    expect(engine.getState(WORKSPACE).run?.cases[0]?.path).toBe("packages/alpha/test/one.test.ts");
+  });
+
+  it("leaves a workspace-relative stream alone", async () => {
+    // The default plan is a single config at the workspace root, and the
+    // reporter already speaks the board's own vocabulary there.
+    const { subprocess } = makeSubprocess({ stdout: [VERBOSE_STREAM] });
+    const engine = createRunEngine({ subprocess });
+
+    await startOk(engine, WORKSPACE, ALL).done;
+
+    expect(engine.getState(WORKSPACE).run?.cases[0]?.path).toBe("packages/alpha/test/one.test.ts");
+  });
+});
+
 describe("createRunEngine: single-file rerun", () => {
   /** A report with two files, so a rerun of one can be told from a full run. */
   const TWO_FILES = {

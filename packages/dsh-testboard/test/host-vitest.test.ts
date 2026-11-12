@@ -305,6 +305,36 @@ describe("parseVerboseLine", () => {
     expect(parseVerboseLine(" \u2713 test/a.test.ts > s > t 1.5s")).toMatchObject({ durationMs: 1500 });
   });
 
+  it("reports the project a line was printed under, separately from the path", () => {
+    // A run over several projects names each one and prints the path relative to
+    // it; the caller is what re-roots the path, so the parser only carries both.
+    const event = parseVerboseLine(" \u2713 |packages/alpha| test/one.test.ts > suite > adds 1ms");
+
+    expect(event).toEqual({
+      kind: "case",
+      project: "packages/alpha",
+      path: "test/one.test.ts",
+      name: "adds",
+      status: "passed",
+      durationMs: 1,
+    });
+  });
+
+  it("carries the project label on the failure summary line too", () => {
+    expect(parseVerboseLine(" FAIL  |packages/alpha| test/one.test.ts > suite > subtracts")).toEqual({
+      kind: "failure",
+      project: "packages/alpha",
+      path: "test/one.test.ts",
+      name: "subtracts",
+    });
+  });
+
+  it("adds no project to a line printed without one", () => {
+    const event = parseVerboseLine(" \u2713 test/alpha.test.ts > suite > adds 1ms");
+
+    expect(event).not.toHaveProperty("project");
+  });
+
   it("reports the failure summary line as a failure marker", () => {
     const event = parseVerboseLine(" FAIL  test/alpha.test.ts > alpha suite > subtracts two numbers");
 

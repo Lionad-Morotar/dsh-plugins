@@ -189,6 +189,42 @@ describe("listFileRows", () => {
     expect(rows.map(row => row.durationMs)).toEqual([904, 701]);
   });
 
+  it("keeps a live run's rows in arrival order instead of sorting moving figures", () => {
+    // A live run's durations grow and its failures are the ones that have
+    // happened so far, so both ordering rules would rank rows on numbers that
+    // are still changing and every poll would reshuffle the list. The order the
+    // rows arrived in is the order the reader watched them appear.
+    const live: TestSnapshot = {
+      version: 1,
+      statusSource: "vitest",
+      packages: [
+        {
+          name: "a",
+          files: [
+            {
+              path: "packages/a/test/late.test.ts",
+              cases: [{ path: "packages/a/test/late.test.ts", line: 0, name: "x", status: "passed", durationMs: 1 }],
+            },
+            {
+              path: "packages/a/test/early.test.ts",
+              cases: [{ path: "packages/a/test/early.test.ts", line: 0, name: "y", status: "failed", durationMs: 90 }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const options = { filter: "all", query: "", sort: "fail-first" } as const;
+    expect(listFileRows(live, options).map(row => row.path)).toEqual([
+      "packages/a/test/early.test.ts",
+      "packages/a/test/late.test.ts",
+    ]);
+    expect(listFileRows(live, { ...options, live: true }).map(row => row.path)).toEqual([
+      "packages/a/test/late.test.ts",
+      "packages/a/test/early.test.ts",
+    ]);
+  });
+
   it("breaks duration ties by path so the order is stable", () => {
     const tied: TestSnapshot = {
       version: 1,

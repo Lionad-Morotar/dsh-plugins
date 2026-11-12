@@ -141,6 +141,17 @@ export interface ListOptions {
   readonly filter: RowFilter;
   readonly query: string;
   readonly sort: RowSort;
+  /**
+   * Whether these rows describe a run that is still going.
+   *
+   * A live run's rows are the cases it has reported so far: their durations are
+   * partial and their failures are the ones that have happened yet, so the two
+   * ordering rules would rank them on numbers that are still moving. A reader
+   * would see a row jump every poll. Live rows therefore keep the order they
+   * arrived in, which is also the order the reader watched them appear; the
+   * chosen sort applies the moment the run settles and its figures are final.
+   */
+  readonly live?: boolean;
 }
 
 /**
@@ -329,6 +340,10 @@ export function listFileRows(snapshot: TestSnapshot, options: ListOptions): Test
       rows.push(row);
     }
   }
+  // A live run has no final figures to order by, so its rows stay in the order
+  // the snapshot lists them, which is the order they arrived in. See
+  // `ListOptions.live`.
+  if (options.live === true) return rows;
   return rows.sort((left, right) => compareFileRows(left, right, options.sort));
 }
 
@@ -394,6 +409,25 @@ export interface PackageTree {
    */
   readonly rootFiles: readonly TestFileRow[];
   readonly directories: readonly DirectoryNode[];
+}
+
+/**
+ * The board's package group for one test file.
+ *
+ * The board groups by package because that is how the repository is laid out and
+ * how a reader thinks about a suite. Anything not under `packages/<name>/` lands
+ * in the root group `"."`, which is a real group (this package's own tests live
+ * there) rather than a leftover bucket.
+ *
+ * The host's report parse and the client's live grouping both call this: a file
+ * must land in the same group whether the run has finished or is still going.
+ *
+ * @param path - workspace-relative test file path, forward slashes.
+ * @returns the package name, or `"."` for the root group.
+ */
+export function packageNameOf(path: string): string {
+  const match = /^packages\/([^/]+)\//u.exec(path);
+  return match?.[1] ?? ".";
 }
 
 /**

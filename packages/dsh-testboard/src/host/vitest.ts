@@ -10,8 +10,16 @@
  */
 import { posix } from "node:path";
 
-import type { TestCase, TestFile, TestPackage, TestSnapshot, TestStatus } from "../client/model.ts";
+import { packageNameOf, type TestCase, type TestFile, type TestPackage, type TestSnapshot, type TestStatus } from "../client/model.ts";
 import type { RunScope } from "../shared.ts";
+
+/**
+ * The package-grouping rule is shared with the client, which groups a run's live
+ * events the same way before any report has been read: two spellings of
+ * `packages/<name>/` would put the same file in two different groups depending on
+ * whether the run has finished.
+ */
+export { packageNameOf };
 
 /** Bumped when the emitted snapshot's shape changes. */
 const SNAPSHOT_VERSION = 2;
@@ -47,22 +55,6 @@ export function buildVitestArgv(options: {
   if (options.scope.kind === "file") argv.push(options.scope.path);
   argv.push("--reporter=verbose", "--reporter=json", "--outputFile", options.outputFile);
   return argv;
-}
-
-/**
- * The board's package group for one test file.
- *
- * The board groups by package because that is how the repository is laid out and
- * how a reader thinks about a suite. Anything not under `packages/<name>/` lands
- * in the root group `"."`, which is a real group (this package's own tests live
- * there) rather than a leftover bucket.
- *
- * @param path - workspace-relative test file path, forward slashes.
- * @returns the package name, or `"."` for the root group.
- */
-export function packageNameOf(path: string): string {
-  const match = /^packages\/([^/]+)\//u.exec(path);
-  return match?.[1] ?? ".";
 }
 
 /**
@@ -261,6 +253,15 @@ export function completedFileOf(line: string): string | undefined {
 /** One case the verbose reporter announced as finished. */
 export interface VerboseCaseEvent {
   readonly kind: "case";
+  /**
+   * The project the line was printed under, when the run named one.
+   *
+   * A run over several projects prints `|name| test/x.test.ts > suite > title`,
+   * and the path is relative to that project's root. The plan generates those
+   * names, so the caller can turn the pair back into a workspace-relative path;
+   * here the name is only carried.
+   */
+  readonly project?: string;
   readonly path: string;
   readonly name: string;
   readonly status: TestStatus;
@@ -270,6 +271,8 @@ export interface VerboseCaseEvent {
 /** One failing case, from the summary block the reporter prints at the end. */
 export interface VerboseFailureEvent {
   readonly kind: "failure";
+  /** The project the summary line was printed under; see {@link VerboseCaseEvent.project}. */
+  readonly project?: string;
   readonly path: string;
   readonly name: string;
 }
@@ -304,24 +307,47 @@ function parseDuration(raw: string | undefined): number {
   return match[2] === "s" ? value * 1000 : value;
 }
 
+/** A reporter location, split into the project it belongs to and the case itself. */
+interface VerboseLocation {
+  readonly project?: string;
+  readonly path: string;
+  readonly name: string;
+}
+
 /**
- * Split a reporter location into its file path and the case's own title.
+ * The project label a reporter line may start with.
  *
- * The reporter prints `path > describe > describe > title`, so the path is the
- * first segment and the title is the last. Everything between is the describe
- * chain: it identifies the case in the file but is not part of its name, and a
- * reader comparing the board against the source looks for the title alone.
+ * Vitest prints `|name| ` in front of every line of a project whose name is set,
+ * and the path after it is relative to that project's root. The label only has
+ * this shape when the reporter is not colourising its output (which is the case
+ * for a collected pipe); a coloured run prints the name as a background block
+ * instead, and the label cannot be recovered from the text. That run is still
+ * readable: the path falls back to being relative to the run's own root.
+ */
+const PROJECT_LABEL = /^\|([^|]+)\|\s+(.*)$/u;
+
+/**
+ * Split a reporter location into its project, file path and the case's own title.
+ *
+ * The reporter prints `[|project| ]path > describe > describe > title`, so the
+ * path is the first segment after the label and the title is the last.
+ * Everything between is the describe chain: it identifies the case in the file
+ * but is not part of its name, and a reader comparing the board against the
+ * source looks for the title alone.
  *
  * @param location - the part of the line after the status marker.
- * @returns the path and title, or undefined when the line is not a location.
+ * @returns the parts, or undefined when the line is not a location.
  */
-function splitLocation(location: string): { path: string; name: string } | undefined {
-  const segments = location.split(" > ");
+function splitLocation(location: string): VerboseLocation | undefined {
+  const labelled = PROJECT_LABEL.exec(location);
+  const project = labelled?.[1]?.trim();
+  const rest = labelled === null ? location : (labelled[2] ?? "");
+  const segments = rest.split(" > ");
   if (segments.length < 2) return undefined;
   const path = segments[0]?.trim() ?? "";
   const name = segments[segments.length - 1]?.trim() ?? "";
   if (path === "" || name === "") return undefined;
-  return { path, name };
+  return project === undefined || project === "" ? { path, name } : { project, path, name };
 }
 
 /**
@@ -330,6 +356,7 @@ function splitLocation(location: string): { path: string; name: string } | undef
  * The format, as this repository's vitest prints it:
  *
  *   ` ✓ test/a.test.ts > suite > title 1ms`
+ *   ` ✓ |packages/a| test/a.test.ts > suite > title 1ms`   (a named project)
  *   ` × test/a.test.ts > suite > title 3ms`
  *   ` ↓ test/a.test.ts > suite > title`        (skipped and todo alike)
  *   ` FAIL  test/a.test.ts > suite > title`    (in the summary block)
@@ -358,14 +385,14 @@ export function parseVerboseLine(line: string): VerboseEvent | undefined {
     const split = splitLocation(location);
     if (split === undefined) return undefined;
     const status: TestStatus = marker === "✓" ? "passed" : marker === "×" ? "failed" : "skipped";
-    return { kind: "case", path: split.path, name: split.name, status, durationMs };
+    return { kind: "case", ...split, status, durationMs };
   }
 
   const failure = /^\s*FAIL\s+(.+)$/u.exec(cleaned);
   if (failure !== null) {
     const split = splitLocation(failure[1] ?? "");
     if (split === undefined) return undefined;
-    return { kind: "failure", path: split.path, name: split.name };
+    return { kind: "failure", ...split };
   }
 
   return undefined;

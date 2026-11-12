@@ -2,16 +2,20 @@
  * The motion layer's pure half: what each frame should show, without a DOM.
  *
  * Animation is the one part of this board that cannot be asserted from rendered
- * output: a tween's intermediate value, a phase's label and a tick's colour are
- * decided by arithmetic, and a jsdom render only ever shows the last frame. So
- * the arithmetic lives here, and the components apply it.
+ * output: a tween's intermediate value, a phase's label, the shape of the
+ * throughput chart are decided by arithmetic, and a jsdom render only ever shows
+ * the last frame. So the arithmetic lives here, and the components apply it.
+ *
+ * A row's ticks are not computed here. They are the cases the run has reported
+ * for that file, in the order it reported them, so the row already says what to
+ * draw; what this module owns is when and how it draws it.
  *
  * The split also keeps `prefers-reduced-motion` honest. Reduced motion is not a
  * second implementation: it is the same target values with every duration
  * collapsed to zero, which is why every function here takes the reduced flag
  * rather than the components branching on it.
  */
-import type { RunProgress, RunScope } from "../shared.ts";
+import type { RunProgress } from "../shared.ts";
 
 /** One point on the throughput chart, in viewBox units. */
 export interface ChartPoint {
@@ -67,15 +71,6 @@ export interface StackedChart {
  */
 const MIN_FAILED_SHARE = 0.1;
 
-/** How one case's tick should read. */
-export type TickState = "unrun" | "passed" | "failed" | "skipped";
-
-/** One tick in a file's row. */
-export interface CaseTick {
-  readonly name: string;
-  readonly state: TickState;
-}
-
 /** What the header's phase line says. */
 export type PhaseKind = "idle" | "running" | "rerunning" | "finished";
 
@@ -120,36 +115,6 @@ export interface RerunSize {
 export interface BoardTotals {
   readonly failed: number;
 }
-
-/** Everything the view hands the motion layer for one frame. */
-export interface MotionInput {
-  readonly run: RunProgress | undefined;
-  readonly nowMs: number;
-  readonly reduced: boolean;
-}
-
-/** The durations one frame's animation uses. */
-export interface MotionConfig {
-  readonly reduced: boolean;
-  /** How long a count takes to reach its new value. */
-  readonly countMs: number;
-  /** How long one tick takes to light. */
-  readonly tickMs: number;
-  /** How long the phase line takes to cross-fade. */
-  readonly phaseMs: number;
-}
-
-/** The stagger between two ticks in one file, in milliseconds. */
-const TICK_STAGGER_MS = 30;
-
-/**
- * The most a tick's stagger may add up to.
- *
- * A file with hundreds of cases would otherwise take seconds to finish lighting,
- * which stops reading as progress and starts reading as a stuck board. Past this
- * cap the ticks light together.
- */
-const TICK_STAGGER_CAP_MS = 400;
 
 /**
  * Ease-out cubic: fast at the start, settling at the end.
@@ -373,103 +338,6 @@ export function bucketOfSeries(series: RunProgress["series"]): number {
   return peak;
 }
 
-/** What one file row's ticks are computed from. */
-export interface TickInput {
-  /** The snapshot's cases for this file, in file order. */
-  readonly snapshotCases: readonly { readonly name: string; readonly status: "passed" | "failed" | "skipped" }[];
-  /** The run's incremental events, already filtered to this file. */
-  readonly runCases: RunProgress["cases"];
-  /** The run's scope, when it has one. */
-  readonly scope: RunScope | undefined;
-  /** Whether this run is a rerun that has not reported anything yet. */
-  readonly rerunning?: boolean;
-  /**
-   * Whether a run is in flight.
-   *
-   * This is what decides whether an unreported case reads as grey or as its
-   * snapshot value. With no run going, the snapshot is the only reading there
-   * is and greying it out would hide a result the reader came to see.
-   */
-  readonly running?: boolean;
-  /**
-   * The file this row belongs to.
-   *
-   * Needed because a scoped run only touches one file: the other rows are not
-   * being redone, so they keep their last reading even while the run is going.
-   */
-  readonly path?: string;
-}
-
-/**
- * The ticks one file's row should show.
- *
- * Three rules, in order:
- *
- * 1. A case the run reported takes that reading, matched by name.
- * 2. A case the run did not report keeps the snapshot's reading, so a scoped
- *    rerun does not blank the files it did not touch.
- * 3. A case the snapshot never had is appended, because a run can discover one.
- *
- * Rule 2 has two exceptions, both about a run in flight. While a run is going,
- * a case it has not reported yet is grey: that is the reference's tick-by-tick
- * lighting, and showing the previous run's green would claim a result this run
- * has not produced. And while a scoped rerun has reported nothing at all, the
- * file it targets goes grey wholesale, which is the "scan back, then light up
- * again" that tells a reader the row is being redone.
- *
- * @param input - the snapshot's cases, the run's events and the scope.
- * @returns one tick per case, in row order.
- */
-export function caseTickStates(input: TickInput): CaseTick[] {
-  const reported = new Map<string, TickState>();
-  for (const entry of input.runCases) reported.set(entry.name, entry.status);
-
-  // A scoped run only redoes the file it names. Every other row keeps its last
-  // reading: greying them would claim the board is redoing work it is not.
-  const inScope =
-    input.scope === undefined || input.scope.kind === "all" || input.path === undefined || input.scope.path === input.path;
-  const running = input.running === true && inScope;
-  const sweeping =
-    running &&
-    input.rerunning === true &&
-    input.runCases.length === 0 &&
-    (input.scope === undefined || input.scope.kind === "all" || input.scope.path === undefined);
-
-  const ticks: CaseTick[] = input.snapshotCases.map(entry => {
-    if (sweeping) return { name: entry.name, state: "unrun" };
-    const reportedState = reported.get(entry.name);
-    if (reportedState !== undefined) return { name: entry.name, state: reportedState };
-    // A run in flight has not reached this case yet; a settled one never will,
-    // so the snapshot's reading stands.
-    return { name: entry.name, state: running ? "unrun" : entry.status };
-  });
-
-  // A case the run found but the snapshot did not know about has no row to sit
-  // in, so it joins the end. Dropping it would hide a real result.
-  const known = new Set(input.snapshotCases.map(entry => entry.name));
-  for (const entry of input.runCases) {
-    if (known.has(entry.name)) continue;
-    known.add(entry.name);
-    ticks.push({ name: entry.name, state: entry.status });
-  }
-
-  return ticks;
-}
-
-/**
- * How long a tick waits before it starts lighting.
- *
- * The stagger is what makes a row read as cases finishing one after another
- * rather than as a bar filling. It is capped so a file with hundreds of cases
- * does not take seconds to finish.
- *
- * @param index - the tick's position in its row.
- * @returns the delay in milliseconds.
- */
-export function tickDelayMs(index: number): number {
-  return Math.min(TICK_STAGGER_CAP_MS, Math.max(0, index) * TICK_STAGGER_MS);
-}
-
 /**
  * Whether the reader asked for reduced motion.
  *
@@ -478,89 +346,4 @@ export function tickDelayMs(index: number): number {
  */
 export function isReducedMotion(query: { readonly matches: boolean } | undefined): boolean {
   return query?.matches === true;
-}
-
-/**
- * The durations one frame animates with.
- *
- * Under reduced motion every duration is zero rather than the functions being
- * skipped: the same code path then produces the final value on its first frame,
- * so there is no second implementation to keep in sync.
- *
- * @param query - the media query's result.
- * @returns the configuration.
- */
-export function defaultMotion(query: { readonly matches: boolean } | undefined): MotionConfig {
-  const reduced = isReducedMotion(query);
-  return {
-    reduced,
-    countMs: reduced ? 0 : 300,
-    tickMs: reduced ? 0 : 120,
-    phaseMs: reduced ? 0 : 150,
-  };
-}
-
-/** What one row's right-hand reading should show. */
-export type RowReading =
-  | { readonly kind: "duration"; readonly durationMs: number }
-  | { readonly kind: "failed"; readonly failed: number }
-  /** The current run has not finished this file yet, so there is nothing to say. */
-  | { readonly kind: "pending" };
-
-/** Everything one row's reading is decided from. */
-export interface RowReadingInput {
-  /** The snapshot's duration for this file, from the last settled run. */
-  readonly snapshotDurationMs: number;
-  /** The snapshot's failure count for this file. */
-  readonly snapshotFailed: number;
-  /** How many cases the snapshot holds for this file. */
-  readonly snapshotCaseCount: number;
-  /** The current run's events for this file, already filtered. */
-  readonly runCases: RunProgress["cases"];
-  /** Whether a run is in flight. */
-  readonly running: boolean;
-  /**
-   * Whether the current run covers this file.
-   *
-   * A scoped rerun touches one file; every other row keeps its last reading,
-   * because nothing is being redone there.
-   */
-  readonly inScope: boolean;
-}
-
-/**
- * What one row's right-hand reading should show.
- *
- * The board renders rows from the snapshot, and the snapshot carries the last
- * settled run's numbers. While a run is going those numbers are stale for the
- * files it has not reached: a row would still show the previous run's 16s and
- * its red "1 failed", which reads as a result this run has already produced.
- *
- * So a row in flight says nothing until its file is done. "Done" means every
- * case the snapshot knows about has been reported, which is the only signal
- * available: the host reports cases, not files.
- *
- * @param input - the snapshot's figures, the run's events and the scope.
- * @returns what the row should render.
- */
-export function rowReading(input: RowReadingInput): RowReading {
-  const live = input.running && input.inScope;
-  if (!live) {
-    return input.snapshotFailed > 0
-      ? { kind: "failed", failed: input.snapshotFailed }
-      : { kind: "duration", durationMs: input.snapshotDurationMs };
-  }
-
-  // A file is done when the run has reported every case the snapshot holds for
-  // it. Until then the row has no result of its own to show.
-  const reported = input.runCases.length;
-  if (reported === 0 || reported < input.snapshotCaseCount) return { kind: "pending" };
-
-  let failed = 0;
-  let durationMs = 0;
-  for (const entry of input.runCases) {
-    if (entry.status === "failed") failed += 1;
-    durationMs += entry.durationMs;
-  }
-  return failed > 0 ? { kind: "failed", failed } : { kind: "duration", durationMs };
 }

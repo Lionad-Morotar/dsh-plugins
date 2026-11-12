@@ -16,11 +16,14 @@
  * gesture as opening it. That also means it must not take the list's focus on
  * click, which is why it is only reachable by pointer for now; the keyboard's
  * run affordance is the toolbar's "run all".
+ *
+ * Everything the row reports comes from that row: its ticks are its cases, and
+ * its right-hand reading is their sum. A row therefore cannot disagree with the
+ * board it belongs to, because there is no second source to disagree with.
  */
 import type { CSSProperties, MouseEvent, ReactElement } from "react";
 
 import { fileNameOf, fileDirectoryOf, formatDuration } from "../format.ts";
-import type { CaseTick, RowReading } from "../motion.ts";
 import type { TestFileRow } from "../model.ts";
 import { TickMatrix } from "./tick-matrix.tsx";
 
@@ -39,24 +42,6 @@ export interface LaneRowProps {
   readonly optionId: string;
   /** Whether the host is running something, which disables this row's button. */
   readonly running: boolean;
-  /**
-   * One tick per case, already resolved by `caseTickStates`.
-   *
-   * The row does not compute them: the reading depends on the run's scope and
-   * phase, which the view owns, and a row that guessed would disagree with its
-   * neighbours.
-   */
-  readonly ticks: readonly CaseTick[];
-  /** Whether the reader asked for reduced motion. */
-  readonly reduced: boolean;
-  /**
-   * What the right-hand column says.
-   *
-   * Resolved by the view rather than here: whether a row shows the snapshot's
-   * figures, this run's own, or nothing yet depends on the run's scope and
-   * phase, and a row that decided for itself would disagree with its neighbours.
-   */
-  readonly reading: RowReading;
   readonly strings: LaneRowStrings;
   /**
    * Whether the row repeats the directory after the file name.
@@ -91,9 +76,6 @@ export function LaneRow({
   selected,
   optionId,
   running,
-  ticks,
-  reduced,
-  reading,
   strings,
   showDirectory = true,
   indentPx = 0,
@@ -113,7 +95,7 @@ export function LaneRow({
       data-testid="file-row"
       data-tst="lane"
       data-path={row.path}
-      data-has-failed={reading.kind === "failed" ? "true" : "false"}
+      data-has-failed={row.failed > 0 ? "true" : "false"}
       data-expanded={expanded ? "true" : "false"}
       data-selected={selected ? "true" : "false"}
       style={{ "--tst-row-indent": `${String(indentPx)}px` } as CSSProperties}
@@ -132,16 +114,24 @@ export function LaneRow({
         {showDirectory ? <span data-tst="lane-dir">{directory}</span> : null}
       </span>
 
-      <TickMatrix ticks={ticks} reduced={reduced} />
+      <TickMatrix cases={row.cases} />
 
-      <span data-tst="lane-reading" data-reading={reading.kind}>
-        {reading.kind === "failed" ? (
+      {/* The row's own figures. A live row's numbers are what this run has
+          reported so far, which is why the board never mixes them with the
+          previous run's: there is nothing to mix in. A row this run has not
+          reached has no figures at all, and a 0.0s there would read as a result
+          it already produced. */}
+      <span
+        data-tst="lane-reading"
+        data-reading={row.failed > 0 ? "failed" : row.cases.length === 0 ? "pending" : "duration"}
+      >
+        {row.failed > 0 ? (
           <span data-tst="lane-failed">
-            {reading.failed} {strings.failed}
+            {row.failed} {strings.failed}
           </span>
-        ) : reading.kind === "duration" ? (
-          <span data-tst="lane-duration">{formatDuration(reading.durationMs)}</span>
-        ) : null}
+        ) : row.cases.length === 0 ? null : (
+          <span data-tst="lane-duration">{formatDuration(row.durationMs)}</span>
+        )}
       </span>
 
       <button

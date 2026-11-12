@@ -10,6 +10,14 @@ import { join } from "node:path";
 
 // src/host/vitest.ts
 import { posix } from "node:path";
+
+// src/client/model.ts
+function packageNameOf(path) {
+  const match = /^packages\/([^/]+)\//u.exec(path);
+  return match?.[1] ?? ".";
+}
+
+// src/host/vitest.ts
 var SNAPSHOT_VERSION = 2;
 function buildVitestArgv(options) {
   const argv = [
@@ -19,10 +27,6 @@ function buildVitestArgv(options) {
   if (options.scope.kind === "file") argv.push(options.scope.path);
   argv.push("--reporter=verbose", "--reporter=json", "--outputFile", options.outputFile);
   return argv;
-}
-function packageNameOf(path) {
-  const match = /^packages\/([^/]+)\//u.exec(path);
-  return match?.[1] ?? ".";
 }
 function lineOfCase(text, title) {
   if (title === "") return 0;
@@ -112,13 +116,17 @@ function parseDuration(raw) {
   const value = Number.parseFloat(match[1] ?? "0");
   return match[2] === "s" ? value * 1e3 : value;
 }
+var PROJECT_LABEL = /^\|([^|]+)\|\s+(.*)$/u;
 function splitLocation(location) {
-  const segments = location.split(" > ");
+  const labelled = PROJECT_LABEL.exec(location);
+  const project = labelled?.[1]?.trim();
+  const rest = labelled === null ? location : labelled[2] ?? "";
+  const segments = rest.split(" > ");
   if (segments.length < 2) return void 0;
   const path = segments[0]?.trim() ?? "";
   const name2 = segments[segments.length - 1]?.trim() ?? "";
   if (path === "" || name2 === "") return void 0;
-  return { path, name: name2 };
+  return project === void 0 || project === "" ? { path, name: name2 } : { project, path, name: name2 };
 }
 function parseVerboseLine(line) {
   const cleaned = stripAnsi(line);
@@ -132,13 +140,13 @@ function parseVerboseLine(line) {
     const split = splitLocation(location);
     if (split === void 0) return void 0;
     const status = marker === "\u2713" ? "passed" : marker === "\xD7" ? "failed" : "skipped";
-    return { kind: "case", path: split.path, name: split.name, status, durationMs };
+    return { kind: "case", ...split, status, durationMs };
   }
   const failure = /^\s*FAIL\s+(.+)$/u.exec(cleaned);
   if (failure !== null) {
     const split = splitLocation(failure[1] ?? "");
     if (split === void 0) return void 0;
-    return { kind: "failure", path: split.path, name: split.name };
+    return { kind: "failure", ...split };
   }
   return void 0;
 }
@@ -336,6 +344,20 @@ function createRunEngine(options) {
     let pending = "";
     const finishedFiles = /* @__PURE__ */ new Set();
     entry.run = progressOf(base, live, 0);
+    let planned = {
+      argv: buildVitestArgv({ workspace, scope, outputFile }),
+      cwd: workspace
+    };
+    let projectRoots;
+    const livePathOf = (event) => {
+      const live2 = planned.livePaths;
+      if (live2 === void 0) return event.path;
+      if (projectRoots === void 0) {
+        projectRoots = new Map(live2.projects.map((project) => [project.name, project.directory]));
+      }
+      const directory = event.project === void 0 ? live2.root : projectRoots.get(event.project) ?? live2.root;
+      return directory === "" || directory === "." ? event.path : `${directory}/${event.path}`;
+    };
     const absorb = (chunk) => {
       const combined = pending + chunk;
       const lastBreak = combined.lastIndexOf("\n");
@@ -347,17 +369,18 @@ function createRunEngine(options) {
       const complete = combined.slice(0, lastBreak);
       for (const event of parseVerboseOutput(complete)) {
         const atMs = Math.max(0, now() - startedAtMs);
+        const path = livePathOf(event);
         if (event.kind === "case") {
           live.cases.push({
-            path: event.path,
+            path,
             name: event.name,
             status: event.status,
             durationMs: event.durationMs,
             atMs
           });
-          finishedFiles.add(event.path);
+          finishedFiles.add(path);
         } else {
-          live.failures.push({ tMs: atMs, path: event.path, name: event.name });
+          live.failures.push({ tMs: atMs, path, name: event.name });
         }
       }
       live.completedFiles = finishedFiles.size;
@@ -381,10 +404,6 @@ function createRunEngine(options) {
         ...message === void 0 ? {} : { message }
       };
       entry.controller = void 0;
-    };
-    let planned = {
-      argv: buildVitestArgv({ workspace, scope, outputFile }),
-      cwd: workspace
     };
     try {
       if (options.plan !== void 0) planned = await options.plan({ workspace, scope, outputFile });
@@ -904,18 +923,19 @@ async function importReports(workspace, results, now = /* @__PURE__ */ new Date(
 // src/host/run-plan.ts
 import { access, mkdtemp, readFile as readFile4, readdir as readdir3, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join4 } from "node:path";
+import { join as join4, relative } from "node:path";
 var CONFIG_NAMES = ["vitest.config.ts", "vitest.config.mts", "vitest.config.js", "vitest.config.mjs", "vitest.config.cts", "vitest.config.cjs"];
-async function hasConfig(directory) {
+async function configOf(directory) {
   for (const name2 of CONFIG_NAMES) {
+    const candidate = join4(directory, name2);
     try {
-      await access(join4(directory, name2));
-      return true;
+      await access(candidate);
+      return candidate;
     } catch {
       continue;
     }
   }
-  return false;
+  return void 0;
 }
 async function discoverProjects(workspace) {
   const packages = join4(workspace, "packages");
@@ -934,14 +954,15 @@ async function discoverProjects(workspace) {
     } catch {
       continue;
     }
-    if (await hasConfig(directory)) {
-      projects.push(directory);
+    const configFile = await configOf(directory);
+    if (configFile !== void 0) {
+      projects.push({ directory, configFile });
       continue;
     }
     try {
       const manifest = JSON.parse(await readFile4(join4(directory, "package.json"), "utf8"));
       const script = manifest.scripts?.test;
-      if (typeof script === "string" && script.includes("vitest")) projects.push(directory);
+      if (typeof script === "string" && script.includes("vitest")) projects.push({ directory });
     } catch {
       continue;
     }
@@ -953,15 +974,23 @@ function packageOf(workspace, scope) {
   const match = /^packages\/([^/]+)\//u.exec(scope.path);
   return match?.[1] === void 0 ? void 0 : join4(workspace, "packages", match[1]);
 }
+function projectDirectoryOf(workspace, directory) {
+  return relative(workspace, directory).split("\\").join("/");
+}
 async function writeProjectsConfig(workspace, projects) {
   const directory = await mkdtemp(join4(tmpdir2(), "dsh-testboard-plan-"));
   const file = join4(directory, "vitest.config.mjs");
+  const entries = projects.map((project) => ({
+    ...project.configFile === void 0 ? {} : { extends: project.configFile },
+    root: project.directory,
+    test: { name: projectDirectoryOf(workspace, project.directory) }
+  }));
   const body = [
     "export default {",
     `  root: ${JSON.stringify(workspace)},`,
     "  test: {",
     "    projects: [",
-    ...projects.map((project) => `      ${JSON.stringify(project)},`),
+    ...entries.map((entry) => `      ${JSON.stringify(entry)},`),
     "    ],",
     "  },",
     "};",
@@ -973,17 +1002,18 @@ async function writeProjectsConfig(workspace, projects) {
 async function planVitestRun(input) {
   const { workspace, scope, outputFile } = input;
   const binary = join4(workspace, "node_modules", ".bin", "vitest");
-  const rootConfig = await hasConfig(workspace);
-  if (scope.kind === "file" && !rootConfig) {
+  const rootConfig = await configOf(workspace);
+  if (scope.kind === "file" && rootConfig === void 0) {
     const directory = packageOf(workspace, scope);
-    if (directory !== void 0 && await hasConfig(directory)) {
+    if (directory !== void 0 && await configOf(directory) !== void 0) {
       return {
         argv: [binary, "run", scope.path, "--reporter=verbose", "--reporter=json", "--outputFile", outputFile],
-        cwd: directory
+        cwd: directory,
+        livePaths: { root: projectDirectoryOf(workspace, directory), projects: [] }
       };
     }
   }
-  if (scope.kind === "all" && !rootConfig) {
+  if (scope.kind === "all" && rootConfig === void 0) {
     const projects = await discoverProjects(workspace);
     if (projects.length > 0) {
       const generated = await writeProjectsConfig(workspace, projects);
@@ -1001,11 +1031,18 @@ async function planVitestRun(input) {
         cwd: workspace,
         cleanup: async () => {
           await rm2(generated.directory, { recursive: true, force: true });
+        },
+        livePaths: {
+          root: "",
+          projects: projects.map((project) => {
+            const directory = projectDirectoryOf(workspace, project.directory);
+            return { name: directory, directory };
+          })
         }
       };
     }
   }
-  return { argv: buildVitestArgv({ workspace, scope, outputFile }), cwd: workspace };
+  return { argv: buildVitestArgv({ workspace, scope, outputFile }), cwd: workspace, livePaths: { root: "", projects: [] } };
 }
 
 // src/host/state-reader.ts

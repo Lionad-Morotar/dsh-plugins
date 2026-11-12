@@ -296,6 +296,14 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
   font: inherit;
 }
 
+/* While a run is going the select names the run instead of a cached one, and is
+   disabled: there is nothing to switch to. It keeps the select's box so the row
+   below it does not move when the run settles. */
+[data-tst="run-picker-select"]:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
 /* Toolbar ----------------------------------------------------------------- */
 
 [data-tst="toolbar"] {
@@ -661,9 +669,11 @@ body.tst-pane-resizing {
   overflow: hidden;
 }
 
-/* One bar per case. The state is an attribute, so the lighting is a CSS
-   transition rather than a React render per bar: a file with hundreds of cases
-   costs one style recalculation, not hundreds of components. */
+/* One bar per case, and it appears with its case: a live row grows as the run
+   reports, so there is no grey bar waiting for a colour. The entrance is a
+   keyframe rather than a transition because the bar is a new element, and the
+   stagger is deliberately absent: the bars arrive in the order the run produced
+   them, which is already a sequence. */
 [data-tst="tick"] {
   display: block;
   flex: 0 0 var(--tst-tick-w);
@@ -671,26 +681,23 @@ body.tst-pane-resizing {
   height: var(--tst-tick-h);
   border-radius: 1px;
   background: var(--tst-idle);
-  transition:
-    background-color var(--tst-tick-ms) ease-out,
-    opacity var(--tst-tick-ms) ease-out;
+  animation: tst-tick-in var(--tst-tick-ms) ease-out;
+}
+
+@keyframes tst-tick-in {
+  from {
+    opacity: 0;
+    transform: scaleY(0.35);
+  }
 }
 
 /* One tick is one shape in every state. The colour carries the result, and
    nothing else does: a ring around a failure or a shorter grey bar makes the
    states look like different objects, and a row of them stops reading as a
    count of the same thing. */
-[data-tst="tick"][data-state="unrun"] {
-  opacity: 0.45;
-}
-
 [data-tst="tick"][data-state="passed"],
 [data-tst="case-dot"][data-status="passed"] {
   background: var(--tst-pass);
-}
-
-[data-tst="tick"][data-state="passed"] {
-  opacity: 1;
 }
 
 [data-tst="tick"][data-state="failed"],
@@ -698,10 +705,8 @@ body.tst-pane-resizing {
   background: var(--tst-fail);
 }
 
-[data-tst="tick"][data-state="failed"] {
-  opacity: 1;
-}
-
+/* A skipped case ran as far as being collected and no further: it keeps the
+   idle fill, because it is not a result either way. */
 [data-tst="tick"][data-state="skipped"] {
   background: var(--tst-idle);
   opacity: 0.8;
@@ -878,12 +883,10 @@ body.tst-pane-resizing {
     transition-duration: 0.001ms !important;
   }
 
+  /* A bar that appears with its case has nothing to skip: the collapsed
+     duration above already resolves the keyframe on its first frame. */
   [data-tst="tick"] {
     transform: none !important;
-  }
-
-  [data-tst="tick"][data-state="unrun"] {
-    opacity: 0.55 !important;
   }
 }
 

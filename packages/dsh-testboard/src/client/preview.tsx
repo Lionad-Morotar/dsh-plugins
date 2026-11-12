@@ -105,21 +105,25 @@ const STRINGS: TestboardViewStrings = {
 };
 
 /** Which static state the page should show instead of the demoting demo loop. */
-type PreviewState = "demo" | "empty" | "loading" | "cached" | "tree" | "history";
+type PreviewState = "demo" | "empty" | "loading" | "running" | "cached" | "tree" | "history";
 
 /**
  * Read the requested state from the query string.
  *
- * The empty and cached boards are real states a reader meets on a fresh
- * workspace or after a reload, and neither is reachable through the fixture
- * runtime (its whole job is to keep a run moving). `?state=` is for looking at
- * and screenshotting them.
+ * The empty, running and cached boards are real states a reader meets on a fresh
+ * workspace, mid-run, and after a reload; `?state=` is for looking at and
+ * screenshotting them without waiting for the demo loop to reach that moment.
  * @param search - the page's query string.
  * @returns the requested state; the demo is the default.
  */
 function requestedState(search: string): PreviewState {
   const value = new URLSearchParams(search).get("state");
-  return value === "empty" || value === "loading" || value === "cached" || value === "tree" || value === "history"
+  return value === "empty" ||
+    value === "loading" ||
+    value === "running" ||
+    value === "cached" ||
+    value === "tree" ||
+    value === "history"
     ? value
     : "demo";
 }
@@ -197,6 +201,173 @@ function loadingRuntime(base: TestboardRuntime): TestboardRuntime {
     cases: [],
   };
   return { ...base, loadState: async () => ({ run }) };
+}
+
+/**
+ * The pace of the frozen mid-run frame, in relative completions per second.
+ *
+ * A real suite's rate rises and dips as slow files start and fast ones finish;
+ * a flat rate would draw the chart as one solid block and stop looking like a
+ * run at all. The weights are arbitrary but the shape is not decoration: the
+ * chart's whole job is to show that rhythm.
+ */
+const RUNNING_PREVIEW_RATE = [1, 1.35, 0.8, 1.6, 1.1, 0.55, 1.3, 1.05, 0.7, 1.45, 0.95, 0.65] as const;
+
+/**
+ * Split a case count across the rate profile.
+ *
+ * Every case has to land in a second, and the profile is a shape rather than a
+ * tally, so the counts are rounded and then trued up on the busiest second: a
+ * preview frame that says 2194 cases while its chart sums to 2193 would be a
+ * reading that does not add up.
+ *
+ * @param total - how many cases the frame has reported.
+ * @returns one count per second, summing to `total`.
+ */
+function splitByRate(total: number): number[] {
+  const weight = RUNNING_PREVIEW_RATE.reduce((sum, value) => sum + value, 0);
+  const counts = RUNNING_PREVIEW_RATE.map(value => Math.floor((value / weight) * total));
+  const missing = total - counts.reduce((sum, value) => sum + value, 0);
+  const busiest = counts.indexOf(Math.max(...counts));
+  counts[busiest] = (counts[busiest] ?? 0) + missing;
+  return counts;
+}
+
+/**
+ * A runtime frozen part-way through a rerun.
+ *
+ * This is the state the board exists for and the one that is hardest to look at:
+ * a run is going, the previous board is still on disk, and the panel must show
+ * this run's results rather than that board. The slice is taken from the front of
+ * the snapshot and stops while there are still rows to come, so the picture shows
+ * a tree that is still filling. Only passing cases are reported: a run that meets
+ * a failure should show it as its own failure, and inventing one would be worse
+ * than leaving the previous board's red where it cannot be mistaken for this
+ * run's result.
+ *
+ * `runNumber` is 2: the previous board exists, so this is a rerun of it, and the
+ * header says so instead of claiming the board has never run.
+ * @param base - the fixture runtime.
+ * @param snapshot - the committed snapshot, which is also the previous board.
+ * @returns the mid-run runtime.
+ */
+function runningRuntime(base: TestboardRuntime, snapshot: TestSnapshot): TestboardRuntime {
+  const summary = summarize(snapshot);
+  const files = snapshot.packages.flatMap(pkg => pkg.files);
+  const target = Math.max(1, Math.floor(summary.total * 0.35));
+  const reported: { readonly path: string; readonly name: string; readonly durationMs: number }[] = [];
+  // Half of each file's passing cases, in file order: a file whose first cases
+  // are in already has a row, and the tree grows one file at a time the way a
+  // real stream does.
+  for (const file of files) {
+    const passing = file.cases.filter(entry => entry.status === "passed");
+    for (const entry of passing.slice(0, Math.ceil(file.cases.length / 2))) {
+      reported.push({ path: file.path, name: entry.name, durationMs: entry.durationMs });
+      if (reported.length >= target) break;
+    }
+    if (reported.length >= target) break;
+  }
+
+  const perSecond = splitByRate(reported.length);
+  const cases: RunProgress["cases"][number][] = [];
+  let second = 0;
+  let used = 0;
+  for (const entry of reported) {
+    while (second < perSecond.length - 1 && used >= (perSecond[second] ?? 0)) {
+      second += 1;
+      used = 0;
+    }
+    const within = (perSecond[second] ?? 1) === 0 ? 0 : used / (perSecond[second] ?? 1);
+    cases.push({
+      path: entry.path,
+      name: entry.name,
+      status: "passed",
+      durationMs: entry.durationMs,
+      atMs: Math.round((second + within) * 1000),
+    });
+    used += 1;
+  }
+
+  // Cumulative, one point per second played, so the chart draws the run's shape
+  // so far rather than a ramp to a total it has not reached.
+  let finished = 0;
+  const series: RunProgress["series"] = perSecond.map((count, index) => {
+    finished += count;
+    return { tMs: index * 1000, finished, passed: finished, failed: 0 };
+  });
+  const elapsedMs = Math.max(1, perSecond.length) * 1000;
+  const run: RunProgress = {
+    runId: "running-run",
+    scope: { kind: "all" },
+    status: "running",
+    phase: "running",
+    runNumber: 2,
+    startedAt: new Date(Date.now() - elapsedMs).toISOString(),
+    elapsedMs,
+    completedFiles: new Set(cases.map(entry => entry.path)).size,
+    totalFiles: null,
+    counts: { passed: cases.length, failed: 0, skipped: 0, total: cases.length },
+    series,
+    failures: [],
+    cases,
+  };
+  // The picker's cached runs are part of this picture: they are what the disabled
+  // select replaces while the run is going, and leaving them out would hide the
+  // very control this state is about.
+  const fileCount = snapshot.packages.reduce((count, pkg) => count + pkg.files.length, 0);
+  const savedAt = new Date(Date.now() - 6 * 60_000);
+  // The run this one is redoing. It rides along as the log: a workspace that can
+  // re-run has a previous run, and the header reads its size from that instead of
+  // counting up from zero.
+  const previous: RunProgress = {
+    runId: "previous-run",
+    scope: { kind: "all" },
+    status: summary.failed > 0 ? "failed" : "passed",
+    phase: "finished",
+    runNumber: 1,
+    startedAt: new Date(savedAt.getTime() - summary.wallClockMs).toISOString(),
+    finishedAt: savedAt.toISOString(),
+    elapsedMs: summary.wallClockMs,
+    completedFiles: fileCount,
+    totalFiles: null,
+    counts: { passed: summary.passed, failed: summary.failed, skipped: summary.skipped, total: summary.total },
+    series: [],
+    failures: [],
+    cases: [],
+  };
+  const history: RunSummary[] = [
+    {
+      id: "261112/105112",
+      savedAt: savedAt.toISOString(),
+      status: "failed",
+      phase: "finished",
+      scope: { kind: "all" },
+      runNumber: 1,
+      startedAt: new Date(savedAt.getTime() - summary.wallClockMs).toISOString(),
+      elapsedMs: summary.wallClockMs,
+      counts: { passed: summary.passed, failed: summary.failed, skipped: summary.skipped, total: summary.total },
+      files: fileCount,
+      cases: summary.total,
+    },
+    {
+      id: "261112/104530",
+      savedAt: new Date(savedAt.getTime() - 4 * 60_000).toISOString(),
+      status: "passed",
+      phase: "finished",
+      scope: { kind: "file", path: snapshot.packages[0]?.files[0]?.path ?? "" },
+      runNumber: 2,
+      startedAt: new Date(savedAt.getTime() - 4 * 60_000 - 3000).toISOString(),
+      elapsedMs: 3000,
+      counts: { passed: 12, failed: 0, skipped: 0, total: 12 },
+      files: fileCount,
+      cases: summary.total,
+    },
+  ];
+  return {
+    ...base,
+    loadState: async () => ({ workspaceName: "dsh-plugins", snapshot, run, log: previous }),
+    listRuns: async () => history,
+  };
 }
 
 /**
@@ -380,7 +551,9 @@ function mount(host: HTMLElement, snapshot: TestSnapshot, sources: SourceBundle,
       ? waitingRuntime(fixture)
       : state === "loading"
         ? loadingRuntime(fixture)
-        : state === "cached"
+        : state === "running"
+          ? runningRuntime(fixture, snapshot)
+          : state === "cached"
           ? cachedRuntime(fixture, snapshot)
           : state === "tree"
             // The tree state is a still board: the fixture's demo loop would keep

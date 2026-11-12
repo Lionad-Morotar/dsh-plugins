@@ -257,9 +257,14 @@ async function waitForBoard<T extends Element>(host: HTMLElement, selector: stri
   throw new Error(`board never rendered ${selector}`);
 }
 
-/** Wait until the board's first reading has landed. */
+/**
+ * Wait until the board's first reading has landed.
+ *
+ * A board whose live tree is still empty is a reading too: it renders the lanes
+ * area with the phase word in it, which is the third way this settles.
+ */
 async function settleBoard(host: HTMLElement): Promise<void> {
-  await waitForBoard(host, '[data-testid="file-row"], [data-testid="testboard-status"]');
+  await waitForBoard(host, '[data-testid="file-row"], [data-testid="testboard-status"], [data-testid="empty"]');
 }
 
 describe("testboard view", () => {
@@ -1732,7 +1737,13 @@ describe("testboard motion", () => {
     await settleBoard(host);
   }
 
-  /** A run in flight with a couple of cases reported. */
+  /**
+   * A run in flight over one file, with three of its cases reported.
+   *
+   * The counts and the events describe the same run: the header summarizes the
+   * board, and the board is built from these cases, so a fixture that disagreed
+   * would be testing a state the host cannot produce.
+   */
   function runningRun(): RunProgress {
     return {
       runId: "run-1",
@@ -1753,6 +1764,7 @@ describe("testboard motion", () => {
       cases: [
         { path: "test/a.test.ts", name: "a", status: "passed", durationMs: 1, atMs: 100 },
         { path: "test/a.test.ts", name: "b", status: "failed", durationMs: 2, atMs: 900 },
+        { path: "test/a.test.ts", name: "c", status: "passed", durationMs: 3, atMs: 1000 },
       ],
     };
   }
@@ -1786,7 +1798,7 @@ describe("testboard motion", () => {
     expect(ticks[0]?.getAttribute("data-state")).toBe(file.cases[0]?.status);
   });
 
-  it("greys a row's ticks while a run has not reported them", async () => {
+  it("draws the tree from the run's own cases while it is going", async () => {
     await mount();
     runtime.setState({ snapshot: SNAPSHOT, run: runningRun() });
     await act(async () => {
@@ -1797,19 +1809,117 @@ describe("testboard motion", () => {
       await new Promise(resolve => setTimeout(resolve, 0));
     });
 
-    const row = rows(host).find(candidate => candidate.getAttribute("data-path") === "test/a.test.ts");
-    if (row === undefined) {
-      // The fixture snapshot may not carry that path; the assertion is about the
-      // mechanism, so any row will do.
-      const any = rows(host)[0];
-      const states = [...(any?.querySelectorAll('[data-testid="tick"]') ?? [])].map(tick => tick.getAttribute("data-state"));
-      expect(states.length).toBeGreaterThan(0);
-      return;
-    }
-    const states = [...row.querySelectorAll('[data-testid="tick"]')].map(tick => tick.getAttribute("data-state"));
-    expect(states.slice(0, 2)).toEqual(["passed", "failed"]);
-    // Everything past the reported cases is grey: the run has not reached them.
-    expect(states.slice(2).every(state => state === "unrun")).toBe(true);
+    // The settled board is gone: the only row on screen is the file this run has
+    // reported, and its ticks are the cases it reported, in that order.
+    expect(rows(host).map(row => row.getAttribute("data-path"))).toEqual(["test/a.test.ts"]);
+    const ticks = [...rows(host)[0]?.querySelectorAll('[data-testid="tick"]') ?? []];
+    expect(ticks.map(tick => tick.getAttribute("data-state"))).toEqual(["passed", "failed", "passed"]);
+  });
+
+  it("carries no failure from the previous run while a run is going", async () => {
+    await mount();
+    const file = SNAPSHOT.packages
+      .flatMap(pkg => pkg.files)
+      .find(candidate => candidate.cases.some(entry => entry.status === "passed"));
+    if (file === undefined) throw new Error("the committed snapshot has no passing case");
+    const passing = file.cases.find(entry => entry.status === "passed");
+    if (passing === undefined) throw new Error("no passing case");
+    // A run that has reported one passing case so far. The previous board holds
+    // its own failures, and none of them may survive on this one.
+    runtime.setState({
+      snapshot: SNAPSHOT,
+      run: {
+        ...runningRun(),
+        cases: [{ path: file.path, name: passing.name, status: "passed", durationMs: 1, atMs: 10 }],
+        counts: { passed: 1, failed: 0, skipped: 0, total: 1 },
+      },
+    });
+    await act(async () => host.querySelector<HTMLElement>('[data-testid="run-all"]')?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 400));
+    });
+
+    // The header counts this run, and this run has no failure: the tally's own
+    // flag is what says whether any red number is on screen at all.
+    expect(host.querySelector('[data-testid="count-failed"]')?.getAttribute("data-has-failed")).toBe("false");
+    expect(host.querySelectorAll('[data-tst="directory-failed"]')).toHaveLength(0);
+    expect(rows(host).length).toBe(1);
+  });
+
+  it("grows a row as the run reports more cases", async () => {
+    const path = "test/a.test.ts";
+    const [first] = runningRun().cases;
+    if (first === undefined) throw new Error("no cases in the fixture");
+    await mount();
+    runtime.setState({ snapshot: SNAPSHOT, run: { ...runningRun(), cases: [first] } });
+    await act(async () => host.querySelector<HTMLElement>('[data-testid="run-all"]')?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 400));
+    });
+
+    const tickCount = (): number =>
+      host.querySelectorAll(`[data-testid="file-row"][data-path="${path}"] [data-testid="tick"]`).length;
+    expect(tickCount()).toBe(1);
+
+    // The next poll carries two more cases. The row is the same row; it simply
+    // has more of the run in it.
+    runtime.setState({ snapshot: SNAPSHOT, run: runningRun() });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600));
+    });
+    expect(tickCount()).toBe(3);
+  });
+
+  it("keeps the rest of the board while a scoped rerun rebuilds its file", async () => {
+    const rerunFile = SNAPSHOT.packages
+      .flatMap(pkg => pkg.files)
+      .find(candidate => candidate.cases.some(entry => entry.status === "failed"));
+    if (rerunFile === undefined) throw new Error("the committed snapshot has no failing case");
+    await mount();
+    runtime.setState({
+      snapshot: SNAPSHOT,
+      run: {
+        ...runningRun(),
+        runNumber: 2,
+        scope: { kind: "file", path: rerunFile.path },
+        counts: { passed: 0, failed: 0, skipped: 0, total: 0 },
+        cases: [],
+        series: [],
+        failures: [],
+      },
+    });
+    const button = rows(host)
+      .find(row => row.getAttribute("data-path") === rerunFile.path)
+      ?.querySelector<HTMLElement>('[data-testid="run-file"]');
+    if (button === undefined) throw new Error("no run-file button on the rerun target");
+    await act(async () => button.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 400));
+    });
+
+    // Every file is still there (the rerun patches one of them), and the file
+    // being redone has none of its old reading: no ticks, no failure count.
+    expect(rows(host).length).toBe(TOTAL_FILES);
+    const row = rows(host).find(candidate => candidate.getAttribute("data-path") === rerunFile.path);
+    expect(row?.querySelectorAll('[data-testid="tick"]')).toHaveLength(0);
+    expect(row?.getAttribute("data-has-failed")).toBe("false");
+    // No figures either: the row has no result of this run's yet, and a 0.0s
+    // would read as one.
+    expect(row?.querySelector('[data-tst="lane-reading"]')?.getAttribute("data-reading")).toBe("pending");
+  });
+
+  it("says it is running in the lanes area before the first case lands", async () => {
+    await mount();
+    runtime.setState({
+      snapshot: SNAPSHOT,
+      run: { ...runningRun(), cases: [], counts: { passed: 0, failed: 0, skipped: 0, total: 0 } },
+    });
+    await act(async () => host.querySelector<HTMLElement>('[data-testid="run-all"]')?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 400));
+    });
+
+    expect(host.querySelector('[data-testid="empty"]')?.textContent).toBe(STRINGS.running);
   });
 
   it("stacks the chart's passed and failed bands from the run's own series", async () => {
@@ -2253,6 +2363,47 @@ describe("testboard history picker", () => {
     expect([...select?.options ?? []].map(option => option.value)).toEqual(["", "261112/080000", "261111/235900"]);
     expect(select?.options[1]?.textContent).toContain("5");
     expect(select?.options[2]?.textContent).toContain(STRINGS.historyScoped);
+  });
+
+  it("shows the running reading instead of the cached runs while a run is going", async () => {
+    await mount();
+    const running: RunProgress = {
+      runId: "run-live",
+      scope: { kind: "all" },
+      status: "running",
+      phase: "running",
+      runNumber: 1,
+      startedAt: new Date().toISOString(),
+      elapsedMs: 400,
+      completedFiles: 1,
+      totalFiles: null,
+      counts: { passed: 1, failed: 0, skipped: 0, total: 1 },
+      series: [],
+      failures: [],
+      cases: [{ path: "test/a.test.ts", name: "a", status: "passed", durationMs: 1, atMs: 10 }],
+    };
+    runtime.setState({ snapshot: SNAPSHOT, run: running });
+    await act(async () => host.querySelector<HTMLElement>('[data-testid="run-all"]')?.click());
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 400));
+    });
+
+    // The board is one run and nothing else, so the picker has nothing to switch
+    // to. It keeps its place in the layout, is disabled, and names the run: the
+    // cached labels, with their failure counts, are not on screen at all.
+    const select = host.querySelector<HTMLSelectElement>('[data-testid="run-picker-select"]');
+    expect(select?.disabled).toBe(true);
+    expect(select?.textContent).toBe(STRINGS.running);
+    expect(host.querySelector('[data-testid="run-picker"]')?.getAttribute("data-running")).toBe("true");
+
+    // Once it settles the cached runs come back, with "latest" selected.
+    runtime.setState({ snapshot: SNAPSHOT, run: { ...running, phase: "finished", status: "passed" } });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600));
+    });
+    const settled = host.querySelector<HTMLSelectElement>('[data-testid="run-picker-select"]');
+    expect(settled?.disabled).toBe(false);
+    expect([...(settled?.options ?? [])].map(option => option.value)).toEqual(["", "261112/080000", "261111/235900"]);
   });
 
   it("loads the picked run by id and shows its cached reading", async () => {

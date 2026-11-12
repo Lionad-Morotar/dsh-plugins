@@ -8,11 +8,14 @@
  *
  * All data comes through one `TestboardRuntime`. The board no longer reads a
  * committed snapshot: it asks the host which workspace this session is in, what
- * that workspace last ran, and starts runs itself. Two consequences shape the
+ * that workspace last ran, and starts runs itself. Three consequences shape the
  * code below. The session id is the identity of everything on screen, so a
  * change to it throws the whole reading state away rather than showing one
- * workspace's rows under another's title. And a run is a process, not a value,
- * so a running run is polled until the host says it settled.
+ * workspace's rows under another's title. A run is a process, not a value, so a
+ * running run is polled until the host says it settled. And while it runs, the
+ * board is drawn from the run's own events rather than from the last settled
+ * result (`live.ts`): the rows grow as the run reports, and no count on screen
+ * describes a run that already finished.
  *
  * Source text is fetched per file and cached: the board can no longer carry
  * every test file's text, and a reader who opens one file should not pay for the
@@ -50,17 +53,8 @@ import {
   type TestboardError,
   type TestboardState,
 } from "../shared.ts";
-import {
-  caseTickStates,
-  defaultMotion,
-  elapsedOf,
-  isReducedMotion,
-  phaseLabel,
-  rowReading,
-  runMeta,
-  type MotionStrings,
-  type PhaseLabel,
-} from "./motion.ts";
+import { elapsedOf, isReducedMotion, phaseLabel, runMeta, type MotionStrings, type PhaseLabel } from "./motion.ts";
+import { liveSnapshotOf } from "./live.ts";
 import { applyNavIntent, flattenNav, navKeyIntent, normalizeSelection, pageStep, type NavSelection } from "./nav.ts";
 import { buildTestboardMenu, menuCopyText, TESTBOARD_MENU_ACTION } from "./context-menu.ts";
 import {
@@ -260,40 +254,6 @@ function errorText(error: TestboardError, strings: TestboardViewStrings): string
     case "run-missing":
       return strings.errorRunMissing;
   }
-}
-
-/**
- * Count the snapshot's failing cases.
- *
- * The header reports the board, and the board is the snapshot: a scoped rerun
- * replaces part of it, and the merged result is what the rows show.
- *
- * @param snapshot - the snapshot the rows are drawn from.
- * @returns how many of its cases failed.
- */
-function countFailedIn(snapshot: TestSnapshot): number {
-  let failed = 0;
-  for (const pkg of snapshot.packages) {
-    for (const file of pkg.files) {
-      for (const entry of file.cases) if (entry.status === "failed") failed += 1;
-    }
-  }
-  return failed;
-}
-
-/**
- * Count the snapshot's passing cases.
- * @param snapshot - the snapshot the rows are drawn from.
- * @returns how many of its cases passed.
- */
-function countPassedIn(snapshot: TestSnapshot): number {
-  let passed = 0;
-  for (const pkg of snapshot.packages) {
-    for (const file of pkg.files) {
-      for (const entry of file.cases) if (entry.status === "passed") passed += 1;
-    }
-  }
-  return passed;
 }
 
 /**
@@ -502,7 +462,6 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       query.addEventListener?.("change", sync);
       return () => query.removeEventListener?.("change", sync);
     }, []);
-    const motion = useMemo(() => defaultMotion({ matches: reduced }), [reduced]);
 
     /**
      * Show a short status line for an action whose result is otherwise off
@@ -711,14 +670,27 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       };
     }, [selection, loadEditor]);
 
+    // While a run is in flight the board is that run's own reading: the cases it
+    // has reported so far, shaped like the settled snapshot so every row, tick
+    // and count below reads the same way. A settled result replaces it wholesale
+    // the moment the host publishes one.
+    const live = useMemo(
+      () => (run === undefined || run.phase !== "running" ? undefined : liveSnapshotOf(run, snapshot)),
+      [run, snapshot],
+    );
+    const board = live ?? snapshot;
+
     // The rows are grouped into one directory tree per package before anything
     // reads them, and the flat navigation order is built from that tree rather
     // than from the sorted row list: the board renders directories and hangs the
     // files under them, so walking the row list's own order would move the
     // selection up and down a different sequence than the one on screen.
     const packages = useMemo(
-      () => (snapshot === undefined ? [] : groupFileRowsIntoTree(listFileRows(snapshot, { filter, query, sort }))),
-      [snapshot, filter, query, sort],
+      () =>
+        board === undefined
+          ? []
+          : groupFileRowsIntoTree(listFileRows(board, { filter, query, sort, live: live !== undefined })),
+      [board, live, filter, query, sort],
     );
     const allRows = useMemo(() => packages.flatMap(pkg => treeFileRows(pkg)), [packages]);
 
@@ -750,7 +722,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
         completeViewRequest?.();
         return;
       }
-      if (snapshot === undefined) return;
+      if (board === undefined) return;
       if (!allRows.some(row => row.path === target.path)) {
         if (query !== "") {
           setQuery("");
@@ -760,6 +732,11 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
           setFilter("all");
           return;
         }
+        // A live board holds only what the run has reported so far, so a target
+        // that is not there yet is not a target that does not exist. Waiting is
+        // what lets a chip still land while a run is going; the request is
+        // completed by the effect's next pass, or by the settled board.
+        if (live !== undefined) return;
         handledFocus.current = key;
         completeViewRequest?.();
         return;
@@ -786,7 +763,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
         setSelection({ kind: "case", path: target.path, index: target.index });
       }
       completeViewRequest?.();
-    }, [viewRequest, completeViewRequest, snapshot, allRows, rows, packages, query, filter]);
+    }, [viewRequest, completeViewRequest, board, live, allRows, rows, packages, query, filter]);
 
     // A filter can remove the selected file and a collapse can take its cases
     // off screen; the selection follows rather than pointing at nothing.
@@ -796,13 +773,13 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     // the list no longer shows.
     useEffect(() => {
       if (selection === undefined) return;
-      // Before the first snapshot the list is empty because nothing has been
-      // read yet, not because the remembered row is gone.
-      if (snapshot === undefined) return;
+      // Before the first board the list is empty because nothing has been read
+      // yet, not because the remembered row is gone.
+      if (board === undefined) return;
       if (rows.some(row => row.path === selection.path)) return;
       const next = nearestVisiblePath(allRows, rows, selection.path);
       setSelection(next === undefined ? undefined : { kind: "file", path: next });
-    }, [selection, rows, allRows, snapshot]);
+    }, [selection, rows, allRows, board]);
 
     const resolved = normalizeSelection(selection, rows, expanded);
     const selectedRow = resolved === undefined ? undefined : rows.find(row => row.path === resolved.path);
@@ -896,18 +873,6 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       setSelection({ kind: "case", path, index });
     }, []);
 
-    /**
-     * The run's events for one file.
-     *
-     * The host reports events for the whole run, and a row only cares about its
-     * own cases; filtering here keeps the tick computation a pure function of
-     * one file.
-     */
-    const runCasesFor = useCallback(
-      (path: string): RunProgress["cases"] => (run === undefined ? [] : run.cases.filter(entry => entry.path === path)),
-      [run],
-    );
-
     const resetPaneWidth = useCallback((): void => {
       resetLeftPaneWidth(storage);
       setLeftWidth(null);
@@ -927,6 +892,13 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
         // selected while it happens: the board would freeze on an older reading
         // and the new run would be invisible.
         setSelectedRun(undefined);
+        // A full run rebuilds the whole board from its own events, so the row the
+        // reader was reading is about to disappear. Letting the selection follow
+        // the nearest surviving row would open a file they did not ask for; the
+        // right pane goes back to its hint until they pick a row from this run. A
+        // file-scoped rerun keeps every other row, and the file it covers keeps
+        // its place in the tree, so its selection stays where the reader left it.
+        if (scope.kind === "all") setSelection(undefined);
         runtime.startRun(sessionId, scope).then(
           result => {
             if (result.ok) {
@@ -1094,24 +1066,6 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
             selected={isSelected}
             optionId={optionId(fileItem)}
             running={running}
-            ticks={caseTickStates({
-              snapshotCases: row.cases,
-              runCases: runCasesFor(row.path),
-              scope: run?.scope,
-              rerunning: run !== undefined && run.runNumber > 1,
-              running,
-              path: row.path,
-            })}
-            reduced={motion.reduced}
-            reading={rowReading({
-              snapshotDurationMs: row.durationMs,
-              snapshotFailed: row.failed,
-              snapshotCaseCount: row.cases.length,
-              runCases: runCasesFor(row.path),
-              running,
-              inScope:
-                run === undefined || run.scope.kind === "all" || run.scope.path === row.path,
-            })}
             strings={{ failed: strings.failed, runFile: strings.runFile }}
             showDirectory={showDirectory}
             indentPx={indentPx}
@@ -1144,13 +1098,14 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const statusText =
       loadError ??
       (stateError === undefined ? undefined : errorText(stateError, strings)) ??
-      (snapshot === undefined ? strings.notRunYet : undefined);
+      (board === undefined ? strings.notRunYet : undefined);
 
-    if (snapshot === undefined) {
-      // A first run has no snapshot to draw yet. The panel has to say it is
-      // working instead of sitting on "not run yet" while vitest starts: one
-      // spinner, the phase word, and the cancel action, which is the only thing
-      // a reader can usefully do until the first case lands.
+    // A first run has nothing to draw until its first case lands, and a workspace
+    // that has never run has nothing to draw at all. Both keep the waiting screen:
+    // one spinner, the phase word, and the cancel action, which is the only thing
+    // a reader can usefully do before the first row exists. The board takes over
+    // the moment there is a row to show.
+    if (board === undefined || (snapshot === undefined && board.packages.length === 0)) {
       const firstRun = run?.phase === "running";
       return (
         <div
@@ -1190,7 +1145,11 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       );
     }
 
-    const summary = summarize(snapshot);
+    // The header reports the board, and the board is what the rows below are
+    // drawn from: the settled snapshot once a run is over, the run's own events
+    // while it is still going. There is no third reading to reconcile, so the
+    // count in the header and the rows it counts can never disagree.
+    const summary = summarize(board);
     const activeOption = resolved === undefined ? undefined : optionId(resolved);
 
     const motionStrings: MotionStrings = {
@@ -1203,28 +1162,22 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       rerun: strings.rerun,
       tests: strings.tests,
     };
-    // A scoped rerun's line is about what it covers, not how far it has got, so
-    // the size comes from the previous run's failure count. Reading the run's own
-    // total would make the line count up from zero as the rerun progresses, which
-    // is the opposite of what the line is for.
+    // A rerun's line is about what it covers, not how far it has got, so the size
+    // comes from the previous reading: a scoped run redoes the cases that were
+    // failing, a full rerun redoes the whole suite it last saw. Reading this
+    // run's own total would count up from zero as it progresses, which is the
+    // opposite of what the line is for.
     const rerunTotal =
-      run !== undefined && run.scope.kind === "file" ? previousRunRef.current?.counts.failed : undefined;
+      run === undefined || run.runNumber <= 1
+        ? undefined
+        : run.scope.kind === "file"
+          ? previousRunRef.current?.counts.failed
+          : previousRunRef.current?.counts.total;
     // The preview's demo has a stage the wire does not: `fixing`. It is not a
     // run phase (D18), so it is layered on here rather than taught to
     // `phaseLabel`, which stays a function of the host's own state.
-    // The header has two jobs, and they read from different places.
-    //
-    // While a run is going it reports that run's progress: the counts climb as
-    // cases land, which is the whole point of the live view. Reading the board
-    // here would show the previous run's totals sitting still.
-    //
-    // Once a run settles it reports the board, because that is what the rows
-    // below are drawn from. A scoped rerun reports only the cases it covered, so
-    // its own count would say "Tests finished" while other files still hold red
-    // rows.
-    const settled = run !== undefined && run.phase !== "running";
-    const boardFailed = run === undefined ? summary.failed : settled ? countFailedIn(snapshot) : run.counts.failed;
-    const boardPassed = run === undefined ? summary.passed : settled ? countPassedIn(snapshot) : run.counts.passed;
+    const boardFailed = summary.failed;
+    const boardPassed = summary.passed;
     const label: PhaseLabel =
       demo?.phase === "fixing"
         ? {
@@ -1248,7 +1201,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     // host's are cumulative), so the synthetic one is folded into the same
     // cumulative form rather than special-cased in the chart.
     const chartSeries: RunProgress["series"] =
-      storyRun === undefined ? cumulativeOf(throughputSeries(snapshot)) : storyRun.series;
+      storyRun === undefined ? cumulativeOf(throughputSeries(board)) : storyRun.series;
     const meta = runMeta(storyRun, motionStrings, elapsedMs);
     // A reading recovered from disk is the same result the reader saw last time;
     // saying where it came from is the difference between "these numbers just
@@ -1281,17 +1234,24 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
           failed={boardFailed}
           elapsedMs={elapsedMs}
           running={running}
-          reduced={motion.reduced}
+          reduced={reduced}
           strings={{ passed: strings.passed, failed: strings.failed, took: strings.took }}
         />
         {history.length === 0 ? null : (
-          <div data-testid="run-picker" data-tst="run-picker">
+          <div data-testid="run-picker" data-tst="run-picker" data-running={running ? "true" : "false"}>
             <label data-tst="run-picker-label">
               {strings.historyLabel}
+              {/* One control, two states. While a run is going the board is that
+                  run and nothing else, so the picker has nothing to switch to:
+                  the select stays in place (the row must not move) but is
+                  disabled and names the run instead of a cached one. Its value
+                  is empty, which is the "latest run" option the reader returns
+                  to once the run settles. */}
               <select
                 data-testid="run-picker-select"
                 data-tst="run-picker-select"
-                value={selectedRun ?? ""}
+                value={running ? "" : (selectedRun ?? "")}
+                disabled={running}
                 onChange={event => {
                   const id = event.target.value;
                   setSelectedRun(id === "" ? undefined : id);
@@ -1301,19 +1261,25 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
                   setLoadError(undefined);
                 }}
               >
-                <option value="">{strings.historyLatest}</option>
-                {history.map(entry => (
-                  <option key={entry.id} value={entry.id}>
-                    {historyLabel(entry, strings)}
-                  </option>
-                ))}
+                {running ? (
+                  <option value="">{strings.running}</option>
+                ) : (
+                  <>
+                    <option value="">{strings.historyLatest}</option>
+                    {history.map(entry => (
+                      <option key={entry.id} value={entry.id}>
+                        {historyLabel(entry, strings)}
+                      </option>
+                    ))}
+                  </>
+                )}
               </select>
             </label>
           </div>
         )}
         <AreaChart
           series={chartSeries}
-          reduced={motion.reduced}
+          reduced={reduced}
           strings={{
             title: strings.chartTitle,
             peak: strings.peak,
@@ -1382,7 +1348,11 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
               tabIndex={0}
               onKeyDown={onListKeyDown}
             >
-              {packages.length === 0 ? <p data-testid="empty" data-tst="empty">{strings.empty}</p> : null}
+              {packages.length === 0 ? (
+                <p data-testid="empty" data-tst="empty">
+                  {running ? strings.running : strings.empty}
+                </p>
+              ) : null}
               {packages.map(pkg => (
                 <section key={pkg.packageName} data-testid="package-section" data-tst="package" data-package={pkg.packageName}>
                   {/* The root group's name is the path separator, which says
