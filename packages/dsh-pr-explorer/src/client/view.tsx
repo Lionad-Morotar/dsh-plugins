@@ -31,6 +31,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 
 import { createHttpRuntime, type PrRuntime } from "./runtime.ts";
+import { createPrViewMemoryRegistry, type PrTab } from "./view-memory.ts";
 import {
   createViewJump,
   formatCommitFocus,
@@ -151,7 +152,7 @@ export interface PrExplorerViewOptions {
 }
 
 /** Which list the left pane is showing. */
-type Tab = "commits" | "files";
+type Tab = PrTab;
 
 /** What the panel is showing right now. */
 type Phase =
@@ -499,13 +500,20 @@ export function createPrExplorerView({
   runtime = createHttpRuntime(),
   workbench,
 }: PrExplorerViewOptions): (props: ConversationViewProps) => ReactElement {
+  // The browsing state per session: the host unmounts this view on every tab
+  // switch, so the pinned pair, the tab and the selected row live in this
+  // factory closure instead of the component.
+  const memoryRegistry = createPrViewMemoryRegistry();
   return function PrExplorerView({ sessionId, viewRequest, completeViewRequest }: ConversationViewProps): ReactElement {
+    // What this conversation remembers from its last mount. Mutated in place,
+    // so the next mount of the same session reads exactly what this one left.
+    const memory = useMemo(() => memoryRegistry.forSession(sessionId), [memoryRegistry, sessionId]);
     const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-    const [base, setBase] = useState<string | undefined>(undefined);
-    const [head, setHead] = useState<string | undefined>(undefined);
-    const [tab, setTab] = useState<Tab>("commits");
-    const [selectedCommit, setSelectedCommit] = useState<string | undefined>(undefined);
-    const [selectedFile, setSelectedFile] = useState<string | undefined>(undefined);
+    const [base, setBase] = useState<string | undefined>(() => memory.base);
+    const [head, setHead] = useState<string | undefined>(() => memory.head);
+    const [tab, setTab] = useState<Tab>(() => memory.tab ?? "commits");
+    const [selectedCommit, setSelectedCommit] = useState<string | undefined>(() => memory.selectedCommit);
+    const [selectedFile, setSelectedFile] = useState<string | undefined>(() => memory.selectedFile);
     const [detail, setDetail] = useState<DetailPhase>({ kind: "none" });
     // Bumped by every user action that should re-read the comparison. The effect
     // below keys on this rather than on `base`/`head`, because those are also
@@ -524,6 +532,17 @@ export function createPrExplorerView({
     // The last shell request this mount consumed, so a parent re-render with the
     // same request does not reload the same range again.
     const handledRequest = useRef<string | undefined>(undefined);
+    // A remembered pair is tried first, and an invalid ref falls back to the
+    // repository's default pair exactly once; a reader's own pick then owns the
+    // pair again.
+    const restoringPair = useRef(memory.base !== undefined && memory.head !== undefined);
+    // The row and tab a returning mount carries in, restored once the comparison
+    // that could contain that row has landed.
+    const restoredSelection = useRef(
+      memory.tab === undefined
+        ? undefined
+        : { tab: memory.tab, commit: memory.selectedCommit, file: memory.selectedFile },
+    );
     // One jump per target view, built from the seam this mount was given. A host
     // without the core leaves both undefined, and the actions are not drawn.
     const jumpToFiles = useMemo(
@@ -553,11 +572,32 @@ export function createPrExplorerView({
               setPhase({ kind: "error", code: refs.error.code });
               return;
             }
-            const chosen = pair ?? defaultPair(refs.listing);
+            let chosen = pair ?? defaultPair(refs.listing);
+            const remembered = restoringPair.current && pair !== undefined;
             setBase(chosen.base);
             setHead(chosen.head);
-            const compared = await runtime.loadCompare(session, chosen.base, chosen.head);
+            let compared = await runtime.loadCompare(session, chosen.base, chosen.head);
             if (compareRequest.current !== mine) return;
+            if (!compared.ok && compared.error.code === "invalid-ref" && remembered) {
+              // The remembered pair named refs that no longer exist (a deleted
+              // branch, a rewritten commit). Fall back once to the repository's
+              // default instead of stranding the panel in an error state.
+              restoringPair.current = false;
+              // The remembered row belonged to the pair that no longer exists;
+              // landing it on the fallback range would select a row the reader
+              // never picked there.
+              restoredSelection.current = undefined;
+              delete memory.selectedCommit;
+              delete memory.selectedFile;
+              chosen = defaultPair(refs.listing);
+              setBase(chosen.base);
+              setHead(chosen.head);
+              compared = await runtime.loadCompare(session, chosen.base, chosen.head);
+              if (compareRequest.current !== mine) return;
+            }
+            restoringPair.current = false;
+            memory.base = chosen.base;
+            memory.head = chosen.head;
             setPhase(
               compared.ok
                 ? { kind: "ready", listing: refs.listing, compare: compared.compare }
@@ -571,7 +611,7 @@ export function createPrExplorerView({
           }
         })();
       },
-      [runtime],
+      [memory, runtime],
     );
 
     /**
@@ -610,6 +650,13 @@ export function createPrExplorerView({
         setBase(undefined);
         setHead(undefined);
         setDetail({ kind: "none" });
+        delete memory.base;
+        delete memory.head;
+        delete memory.selectedCommit;
+        delete memory.selectedFile;
+        memory.tab = "commits";
+        restoredSelection.current = undefined;
+        restoringPair.current = false;
         return;
       }
       if (lastSession.current !== sessionId) {
@@ -621,6 +668,13 @@ export function createPrExplorerView({
         setSelectedCommit(undefined);
         setSelectedFile(undefined);
         setDetail({ kind: "none" });
+        delete memory.base;
+        delete memory.head;
+        delete memory.selectedCommit;
+        delete memory.selectedFile;
+        memory.tab = "commits";
+        restoredSelection.current = undefined;
+        restoringPair.current = false;
         load(sessionId, undefined);
         return;
       }
@@ -638,15 +692,24 @@ export function createPrExplorerView({
      * by a load.
      * @param pair - the two refs.
      */
-    const applyFocus = useCallback((pair: { readonly base: string; readonly head: string }): void => {
-      detailRequest.current += 1;
-      setSelectedCommit(undefined);
-      setSelectedFile(undefined);
-      setDetail({ kind: "none" });
-      setBase(pair.base);
-      setHead(pair.head);
-      setReloadToken(token => token + 1);
-    }, []);
+    const applyFocus = useCallback(
+      (pair: { readonly base: string; readonly head: string }): void => {
+        detailRequest.current += 1;
+        // The requested pair is the reader's new target: a remembered row from
+        // the previous range must not land on top of it.
+        restoredSelection.current = undefined;
+        restoringPair.current = false;
+        delete memory.selectedCommit;
+        delete memory.selectedFile;
+        setSelectedCommit(undefined);
+        setSelectedFile(undefined);
+        setDetail({ kind: "none" });
+        setBase(pair.base);
+        setHead(pair.head);
+        setReloadToken(token => token + 1);
+      },
+      [memory],
+    );
 
     // Delivery path one: a caller holding the host's own `openView(id, focus)`
     // capability lands the request on the view's owner props. The same request
@@ -703,6 +766,9 @@ export function createPrExplorerView({
       // The panel was about a row in the previous range, and the new range may
       // not contain it at all.
       detailRequest.current += 1;
+      restoredSelection.current = undefined;
+      delete memory.selectedCommit;
+      delete memory.selectedFile;
       setSelectedCommit(undefined);
       setSelectedFile(undefined);
       setDetail({ kind: "none" });
@@ -714,6 +780,9 @@ export function createPrExplorerView({
     const swap = (): void => {
       if (base === undefined || head === undefined) return;
       detailRequest.current += 1;
+      restoredSelection.current = undefined;
+      delete memory.selectedCommit;
+      delete memory.selectedFile;
       setSelectedCommit(undefined);
       setSelectedFile(undefined);
       setDetail({ kind: "none" });
@@ -734,6 +803,7 @@ export function createPrExplorerView({
      */
     const select = (which: Tab, key: string): void => {
       if (which === "commits") {
+        memory.selectedCommit = key;
         setSelectedCommit(key);
         const commit = commits.find(entry => entry.hash === key);
         if (commit !== undefined) {
@@ -744,10 +814,27 @@ export function createPrExplorerView({
         }
         return;
       }
+      memory.selectedFile = key;
       setSelectedFile(key);
       if (sessionId === undefined || sessionId === "" || base === undefined || head === undefined) return;
       loadFile(sessionId, { base, head }, key);
     };
+
+    // A returning mount restores the row once the comparison that could contain
+    // it has landed; a file's diff is re-read under the remembered pair, and a
+    // row that is no longer in the range is simply left alone.
+    useEffect(() => {
+      const pending = restoredSelection.current;
+      if (pending === undefined || ready === undefined) return;
+      restoredSelection.current = undefined;
+      if (pending.tab === "commits" && pending.commit !== undefined && commits.some(entry => entry.hash === pending.commit)) {
+        select("commits", pending.commit);
+        return;
+      }
+      if (pending.tab === "files" && pending.file !== undefined && files.some(entry => entry.path === pending.file)) {
+        select("files", pending.file);
+      }
+    }, [ready, commits, files, select]);
 
     const rows = tab === "commits" ? commits : files;
     // The selection falls back to the first row: a list with no tab stop cannot
@@ -770,8 +857,13 @@ export function createPrExplorerView({
       const target = rows[next];
       if (target === undefined) return;
       const key = tab === "commits" ? (target as CommitEntry).hash : (target as PrChangedFile).path;
-      if (tab === "commits") setSelectedCommit(key);
-      else setSelectedFile(key);
+      if (tab === "commits") {
+        memory.selectedCommit = key;
+        setSelectedCommit(key);
+      } else {
+        memory.selectedFile = key;
+        setSelectedFile(key);
+      }
       // Moving the cursor is not opening: a reader scanning a list should not
       // trigger a request per keystroke.
       const selector = tab === "commits" ? `[data-testid="commit-row"][data-hash="${CSS.escape(key)}"]` : `[data-testid="file-row"][data-path="${CSS.escape(key)}"]`;
@@ -823,6 +915,7 @@ export function createPrExplorerView({
 
     const switchTab = (next: Tab): void => {
       if (next === tab) return;
+      memory.tab = next;
       setTab(next);
       setDetail({ kind: "none" });
     };
