@@ -189,6 +189,50 @@ describe("switching by tab index", () => {
     expect(clicked).toEqual(["文件", "Git"]);
   });
 
+  it("follows the visual order the strip stamps, not the render order", () => {
+    // dsh-better's reorder stamps inline `style.order`; the strip lays out by
+    // it, so a digit must address the tab where the reader sees that position.
+    // 对话 is the permanent first tab and carries no stamp.
+    const clicked: string[] = [];
+    const stamp = (order: string, text: string): Tab => ({
+      ...tab(text, clicked),
+      style: { order },
+    });
+    const tabs = [
+      stamp("4", "对话"),
+      stamp("3", "轨迹"),
+      stamp("2", "文件"),
+      stamp("5", "Git"),
+      stamp("6", "PR"),
+    ];
+    const doc: ViewSwitcherDocument = {
+      querySelector: () => ({ querySelectorAll: () => tabs }),
+      querySelectorAll: () => tabs,
+    };
+
+    expect(listViewTabs(doc).map(entry => entry.textContent)).toEqual([
+      "文件",
+      "轨迹",
+      "对话",
+      "Git",
+      "PR",
+    ]);
+    // ⌘1 lands on the visually-first tab, ⌘2 on the second; ⌘0 stays last.
+    switchToViewTab(doc, 1);
+    switchToViewTab(doc, 2);
+    switchToLastViewTab(doc);
+    expect(clicked).toEqual(["文件", "轨迹", "PR"]);
+  });
+
+  it("keeps the render order for a strip without stamps", () => {
+    // dsh-better absent or its plan voided: no stamp anywhere, DOM order rules.
+    const clicked: string[] = [];
+    const doc = documentWith(["对话", "轨迹", "文件"], clicked);
+    expect(listViewTabs(doc).map(entry => entry.textContent)).toEqual(["对话", "轨迹", "文件"]);
+    expect(switchToViewTab(doc, 2)).toBe(true);
+    expect(clicked).toEqual(["轨迹"]);
+  });
+
   it("refuses an index past the last tab instead of wrapping", () => {
     const clicked: string[] = [];
     const doc = documentWith(["对话", "轨迹"], clicked);

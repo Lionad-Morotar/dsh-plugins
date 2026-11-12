@@ -26,6 +26,13 @@ export interface ViewSwitcherElement {
    */
   hasAttribute?(name: string): boolean;
   click?(): void;
+  /**
+   * The inline style face the flex row lays out by.
+   *
+   * Read for `order` only; optional because a plain tab in a test or a host
+   * that never ordered its tabs has none, and absence means "DOM order".
+   */
+  readonly style?: { readonly order?: string };
 }
 
 /** A container that can list its tabs; a real `Element` satisfies it. */
@@ -90,9 +97,30 @@ const TAB_ONLY_SELECTOR = '[role="tab"]';
  */
 const HIDDEN_TAB_ATTR = "data-dsh-better-tab-hidden";
 
-/** Whether a tab is one the reader can still see and therefore address. */
+/**
+ * Whether a tab is one the reader can still see and therefore address.
+ */
 function tabVisible(tab: ViewSwitcherElement): boolean {
   return tab.hasAttribute?.(HIDDEN_TAB_ATTR) !== true;
+}
+
+/**
+ * The tab's visual place in the strip.
+ *
+ * dsh-better's Tab management page stamps each movable button's inline
+ * `style.order` (Chat stays unstamped), and the strip is a flex row, so that
+ * number — not the DOM order — is where the reader sees the tab. Same
+ * named-not-imported discipline as the hidden marker: an inline style is a DOM
+ * contract. Unstamped or unparseable reads as 0, which keeps the host's own
+ * order and sorts Chat, the permanent first tab, ahead of every stamped one.
+ * @param tab - candidate tab.
+ * @returns the visual order key.
+ */
+function tabOrderKey(tab: ViewSwitcherElement): number {
+  const raw = tab.style?.order;
+  if (raw === undefined || raw === "") return 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 /**
@@ -173,16 +201,24 @@ function clickLabels(doc: ViewSwitcherDocument | undefined, labels: readonly str
  * scoped selector. Views parked in the "更多会话视图" overflow menu are not in
  * the strip, so they are not counted either. A tab the reader hid stays in the
  * strip but is dropped here, so the digits follow the tabs that are on screen.
+ * The survivors are then sorted by their visual place (the inline `order` the
+ * strip's flex layout honors), stable on the render order, so the digits name
+ * the tab where the reader sees that position — reordered tabs included — and
+ * an unstamped strip answers exactly as before.
  * @param doc - document face, or undefined outside a browser.
- * @returns the tabs in render order; empty when there is no strip.
+ * @returns the tabs in visible order; empty when there is no strip.
  */
 export function listViewTabs(doc: ViewSwitcherDocument | undefined): ViewSwitcherElement[] {
   if (doc === undefined) return [];
   const row = doc.querySelector?.(TAB_ROW_SELECTOR);
   const scoped = row?.querySelectorAll?.(TAB_ONLY_SELECTOR);
-  if (scoped !== undefined && scoped !== null) return Array.from(scoped).filter(tabVisible);
-  const loose = doc.querySelectorAll?.(`${TAB_ROW_SELECTOR} ${TAB_ONLY_SELECTOR}`);
-  return loose === undefined || loose === null ? [] : Array.from(loose).filter(tabVisible);
+  const tabs = scoped !== undefined && scoped !== null
+    ? Array.from(scoped)
+    : (() => {
+        const loose = doc.querySelectorAll?.(`${TAB_ROW_SELECTOR} ${TAB_ONLY_SELECTOR}`);
+        return loose === undefined || loose === null ? [] : Array.from(loose);
+      })();
+  return tabs.filter(tabVisible).sort((left, right) => tabOrderKey(left) - tabOrderKey(right));
 }
 
 /**
