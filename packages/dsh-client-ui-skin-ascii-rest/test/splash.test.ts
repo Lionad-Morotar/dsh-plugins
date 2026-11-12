@@ -305,6 +305,30 @@ describe("playSplash", () => {
     expect(onEnd).toHaveBeenCalledTimes(1);
   });
 
+  it("fades the layer in over the timing it was given", () => {
+    // A new conversation opens over a live hero page, so the layer can ease in
+    // instead of covering the boot page from the first frame.
+    playSplash(splashOptions({ timing: { fadeInMs: 300 } }));
+
+    expect(layer()?.style.transition).toBe("opacity 300ms linear");
+    expect(layer()?.style.opacity).toBe("1");
+  });
+
+  it("stays opaque from the first frame when no fade-in is asked for", () => {
+    playSplash(splashOptions());
+
+    expect(layer()?.style.transition).toBe("");
+    expect(layer()?.style.opacity).toBe("1");
+  });
+
+  it("cuts the fade-in when the reader asked for less motion", () => {
+    stubMatchMedia(true);
+    playSplash(splashOptions({ timing: { fadeInMs: 300 } }));
+
+    expect(layer()?.style.transition).toBe("");
+    expect(layer()?.style.opacity).toBe("1");
+  });
+
   it("reports a scene that will not mount and leaves nothing behind", () => {
     const onError = vi.fn();
     const onEnd = vi.fn();

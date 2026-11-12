@@ -437,6 +437,11 @@ describe("the built client bundle", () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
 
     expect(window.document.querySelector("[data-ascii-rest-splash]")).not.toBeNull();
+
+    // A new conversation reveals the layer over the hero page instead of popping
+    // it in; the cold start stays opaque because it covers the boot page.
+    const splash = window.document.querySelector("[data-ascii-rest-splash]") as HTMLElement | null;
+    expect(splash?.style.transition).toBe("opacity 300ms linear");
   });
 
   it("offers a slider for how long the new-chat splash holds", () => {

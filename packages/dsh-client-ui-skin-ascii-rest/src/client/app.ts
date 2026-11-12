@@ -463,6 +463,12 @@ export function apply(ctx: ClientContext): void {
    * the same scene, the same timing, and the same rule that the background stops
    * drawing behind it.
    */
+  /**
+   * The new-chat splash eases in over a live hero page. The cold start cannot:
+   * it has to cover the host's boot page from the first frame.
+   */
+  const NEW_CHAT_FADE_IN_MS = 300;
+
   const watchNewChat = (): void => {
     if (newChat !== null) return;
     newChat = createNewChatWatcher({
@@ -476,7 +482,13 @@ export function apply(ctx: ClientContext): void {
         // The reader's own duration, not the cold start's: this splash fires as
         // often as they click, and the opening they see once a day is too long
         // to sit through repeatedly.
-        openSplash(scene, { minVisibleMs: settings.newChatSplashMs });
+        //
+        // It fades in over the hero page; the cold start stays opaque because it
+        // hides the boot page from the first frame.
+        openSplash(scene, {
+          minVisibleMs: settings.newChatSplashMs,
+          fadeInMs: NEW_CHAT_FADE_IN_MS,
+        });
       },
     });
   };

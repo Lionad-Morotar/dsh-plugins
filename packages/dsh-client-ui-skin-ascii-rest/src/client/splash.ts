@@ -43,6 +43,13 @@ export interface SplashTiming {
   maxWaitMs: number;
   /** How long the fade out takes. */
   fadeMs: number;
+  /**
+   * How long the fade in takes.
+   *
+   * Zero means the layer is opaque from the first frame, which is what the cold
+   * start needs: it covers the host's boot page from the moment it exists.
+   */
+  fadeInMs: number;
   /** How often the readiness anchors are re-read. */
   pollMs: number;
 }
@@ -60,6 +67,7 @@ export const DEFAULT_SPLASH_TIMING: SplashTiming = {
   minVisibleMs: 1200,
   maxWaitMs: 5000,
   fadeMs: 650,
+  fadeInMs: 0,
   pollMs: 50,
 };
 
@@ -130,11 +138,23 @@ export function playSplash(options: SplashOptions): Splash {
   // the shell underneath, which are still being laid out while this is up.
   element.style.contain = "strict";
   element.style.pointerEvents = "auto";
+  // The cold start must be opaque from the first frame: the boot page it covers
+  // is already painted underneath. A splash over a live page (the new-chat
+  // splash) may fade in instead; that is the caller's `fadeInMs`.
+  const fadeIn = timing.fadeInMs > 0 && !prefersReducedMotion();
   // Spelled out rather than left to the default: the fade writes this same
   // property, and a transition needs a starting value it was given.
-  element.style.opacity = "1";
+  element.style.opacity = fadeIn ? "0" : "1";
   element.style.backgroundColor = sceneColors(scene, currentScheme(doc), options.lightMode).ground;
   doc.body.append(element);
+  if (fadeIn) {
+    // Reading a layout value commits the transparent first frame before the
+    // transition starts; without it both writes collapse into one paint and the
+    // layer appears at full opacity with no fade at all.
+    element.getBoundingClientRect();
+    element.style.transition = `opacity ${String(timing.fadeInMs)}ms linear`;
+    element.style.opacity = "1";
+  }
 
   let surface: Surface | null = null;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
