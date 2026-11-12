@@ -18,23 +18,24 @@ function descriptor(kind: string, title = kind) {
 describe("dock panel kind", () => {
   it("defaults to the terminal kind when open() gets none", () => {
     const dock = createDockState();
-    dock.open("a");
-    dock.open("b", { sessionId: "s1" });
+    dock.open("a", { scopeKey: "ws::main" });
+    dock.open("b", { scopeKey: "ws::main", sessionId: "s1" });
     expect(dock.snapshot().panels.map(panel => panel.kind)).toEqual(["terminal", "terminal"]);
   });
 
   it("keeps an explicit kind on the panel", () => {
     const dock = createDockState();
-    dock.open("arch-1", { kind: "arch", sessionId: "s1" });
+    dock.open("arch-1", { kind: "arch", scopeKey: "ws::main", sessionId: "s1" });
     const panel = dock.snapshot().panels[0];
     expect(panel?.kind).toBe("arch");
     expect(panel?.sessionId).toBe("s1");
+    expect(panel?.scopeKey).toBe("ws::main");
   });
 
   it("activates an explicit-kind panel without downgrading it", () => {
     const dock = createDockState();
-    dock.open("t-1");
-    dock.open("arch-1", { kind: "arch" });
+    dock.open("t-1", { scopeKey: "ws::main" });
+    dock.open("arch-1", { kind: "arch", scopeKey: "ws::main" });
     dock.activate("t-1");
     dock.activate("arch-1");
     const panel = dock.snapshot().panels.find(entry => entry.id === "arch-1");
@@ -44,7 +45,7 @@ describe("dock panel kind", () => {
 
   it("splits into a sibling of the same kind", () => {
     const dock = createDockState();
-    dock.open("arch-1", { kind: "arch", sessionId: "s1" });
+    dock.open("arch-1", { kind: "arch", scopeKey: "ws::main", sessionId: "s1" });
     dock.split();
     const panels = dock.snapshot().panels;
     expect(panels).toHaveLength(2);

@@ -15,6 +15,7 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import xtermStyles from "@xterm/xterm/css/xterm.css";
 import { useLayoutEffect, useRef } from "react";
 
+import { solidColor, watchSurfaceColors } from "../surface.ts";
 import type { TerminalScreenProps } from "../terminal-screen-contract.ts";
 
 /** Built-in stack placed after the user's configured fonts. */
@@ -31,9 +32,12 @@ const STYLE_ID = "dsh-term-dock/xterm.css";
  * spilling a scrollbar into the dock chrome.
  */
 const SCREEN_CSS = [
-  "[data-workbench-terminal-screen]{box-sizing:border-box;height:100%;min-height:0;padding:6px 8px;overflow:hidden;background:transparent}",
-  "[data-workbench-terminal-screen] .xterm{height:100%}",
-  "[data-workbench-terminal-screen] .xterm-viewport{background:transparent!important}",
+  // `overscroll-behavior:contain` on each scrollable layer is what keeps a
+  // wheel at the end of the terminal's scrollback from chaining into the
+  // conversation scroller the whole dock is nested in.
+  "[data-workbench-terminal-screen]{box-sizing:border-box;height:100%;min-height:0;padding:6px 8px;overflow:hidden;background:transparent;overscroll-behavior:contain}",
+  "[data-workbench-terminal-screen] .xterm{height:100%;overscroll-behavior:contain}",
+  "[data-workbench-terminal-screen] .xterm-viewport{background:transparent!important;overscroll-behavior:contain}",
 ].join("\n");
 
 /** How many mounted screens share the injected sheet. */
@@ -79,7 +83,13 @@ function installTerminalStyles(): () => void {
  */
 function readTheme(node: HTMLElement): ITheme {
   const style = getComputedStyle(node);
-  const background = style.getPropertyValue("--dsw-alias-bg-base").trim() || "#101014";
+  // `--dsh-dock-surface` is the dock's opaque panel colour (the host token with
+  // its alpha stripped). The raw tokens are the pre-measurement fallback, and
+  // they can be translucent when a skin is active — a terminal painted over a
+  // moving background is unreadable, so the alpha is stripped there too.
+  const surface = style.getPropertyValue("--dsh-dock-surface").trim();
+  const token = style.getPropertyValue("--dsw-alias-bg-base").trim();
+  const background = surface !== "" ? surface : solidColor(token === "" ? "#101014" : token);
   const foreground = style.getPropertyValue("--dsw-alias-label-primary").trim() || style.color || "#e6e6ea";
   return { background, foreground, cursor: foreground };
 }
@@ -96,7 +106,11 @@ function readTheme(node: HTMLElement): ITheme {
 export function TerminalScreen({ binding, label, readOnly, fontSize = 12, focusToken = 0 }: TerminalScreenProps) {
   const holder = useRef<HTMLDivElement | null>(null);
   const emulator = useRef<Terminal | null>(null);
-  const spentFocus = useRef(focusToken);
+  // Zero, not the first token: a pane can mount *because* of a focus request
+  // (split, new terminal), and initializing the spent marker to that token would
+  // mark the request as already handled. A screen that mounts while the dock is
+  // hidden receives zero and still starts inert.
+  const spentFocus = useRef(0);
   const measureRef = useRef<() => void>(() => {});
   const grid = useRef({ cols: 0, rows: 0 });
 
@@ -154,16 +168,11 @@ export function TerminalScreen({ binding, label, readOnly, fontSize = 12, focusT
     const repaint = (): void => {
       terminal.options.theme = readTheme(node);
     };
-    const themeWatcher =
-      typeof MutationObserver === "function" ? new MutationObserver(repaint) : undefined;
-    themeWatcher?.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class", "style", "data-theme", "data-color-scheme"],
-    });
+    const stopWatching = watchSurfaceColors(repaint);
 
     return () => {
       observer?.disconnect();
-      themeWatcher?.disconnect();
+      stopWatching();
       unsubscribe();
       render();
       input.dispose();

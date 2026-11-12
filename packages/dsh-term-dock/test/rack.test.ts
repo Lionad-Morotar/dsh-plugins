@@ -21,31 +21,31 @@ describe("terminal rack", () => {
     const { host, views } = createHost();
     const rack = createTerminalRack({ host });
 
-    rack.open("s1", "terminal-1");
-    rack.open("s1", "terminal-1");
+    rack.open("ws::main", "terminal-1", "s1");
+    rack.open("ws::main", "terminal-1", "s1");
 
     expect(views).toHaveLength(1);
-    expect(views[0]?.args).toEqual(["s1", "terminal-1", "dsh-term-dock:terminal-1"]);
+    expect(views[0]?.args).toEqual(["s1", "terminal-1", "dsh-term-dock:ws::main:terminal-1"]);
     expect(rack.size()).toBe(1);
   });
 
-  it("keeps the same panel id independent between sessions", () => {
+  it("keeps the same panel id independent between scopes", () => {
     const { host, views } = createHost();
     const rack = createTerminalRack({ host });
 
-    rack.open("s1", "terminal-1");
-    rack.open("s2", "terminal-1");
+    rack.open("ws::main", "terminal-1", "s1");
+    rack.open("ws::dev", "terminal-1", "s2");
 
     expect(views).toHaveLength(2);
-    expect(views[1]?.args).toEqual(["s2", "terminal-1", "dsh-term-dock:terminal-1"]);
+    expect(views[1]?.args).toEqual(["s2", "terminal-1", "dsh-term-dock:ws::dev:terminal-1"]);
   });
 
   it("terminates the process when a panel is released", () => {
     const { host, views } = createHost();
     const rack = createTerminalRack({ host });
-    rack.open("s1", "terminal-1");
+    rack.open("ws::main", "terminal-1", "s1");
 
-    rack.release("s1", "terminal-1");
+    rack.release("ws::main", "terminal-1");
 
     expect(views[0]?.view.calls).toEqual(["close"]);
     expect(rack.size()).toBe(0);
@@ -54,8 +54,8 @@ describe("terminal rack", () => {
   it("closes every view it owns on unload", () => {
     const { host, views } = createHost();
     const rack = createTerminalRack({ host });
-    rack.open("s1", "terminal-1");
-    rack.open("s1", "terminal-2");
+    rack.open("ws::main", "terminal-1", "s1");
+    rack.open("ws::main", "terminal-2", "s1");
 
     rack.closeAll();
 
@@ -65,7 +65,7 @@ describe("terminal rack", () => {
 
   it("answers undefined when the host has no terminal service", () => {
     const rack = createTerminalRack({ host: { terminals: () => undefined } });
-    expect(rack.open("s1", "terminal-1")).toBeUndefined();
+    expect(rack.open("ws::main", "terminal-1", "s1")).toBeUndefined();
   });
 
   it("answers undefined instead of throwing when the host refuses a view", () => {
@@ -78,6 +78,6 @@ describe("terminal rack", () => {
         }),
       },
     });
-    expect(rack.open("s1", "terminal-1")).toBeUndefined();
+    expect(rack.open("ws::main", "terminal-1", "s1")).toBeUndefined();
   });
 });

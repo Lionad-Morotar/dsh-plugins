@@ -20,6 +20,7 @@ import { createDockController } from "./dock-controller.ts";
 import { boot } from "./chunk-loader.ts";
 import { createDockHost, readDockVisibility, type WorkbenchFace } from "./host.ts";
 import { createTerminalRack } from "./rack.ts";
+import { createHttpScopeSource } from "./scope-client.ts";
 import { describeTerminal } from "./status.ts";
 import { createTermDockView } from "./view.tsx";
 import { DOCK_ID, DOCK_SLOT, LOCALE_NAMESPACE, PACKAGE_NAME } from "../shared.ts";
@@ -131,7 +132,10 @@ export function apply(ctx: ClientContextLike): () => void {
   const dock = createDockState();
   const host = createDockHost(ctx);
   const rack = createTerminalRack({ host });
-  const Dock = createTermDockView({ dock, rack, host, t, visibility });
+  // One source per apply: the host route is same-origin and stateless, and a
+  // reload of the row builds a fresh one with the rest of the mount.
+  const scopes = createHttpScopeSource();
+  const Dock = createTermDockView({ dock, rack, host, t, visibility, scopes });
   const offRowCss = installDockRowCss();
 
   let offSlot: (() => void) | undefined;

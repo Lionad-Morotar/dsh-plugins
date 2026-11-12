@@ -30,6 +30,11 @@ const TONE_COLOR: Record<StatusTone, string> = {
   error: "#c4483c",
 };
 
+// The panel is a solid surface, not a wash over the conversation: the dock can
+// hang over a skin's translucency or a moving picture, and a terminal needs one
+// stable ground behind its glyphs. `--dsh-dock-surface` is the host's own token
+// with any alpha stripped (see surface.ts); the raw token is the fallback for the
+// first frame, before the dock root has measured it.
 const panelStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
@@ -38,7 +43,8 @@ const panelStyle: CSSProperties = {
   border: "1px solid color-mix(in srgb, currentColor 12%, transparent)",
   borderRadius: 8,
   overflow: "hidden",
-  background: "color-mix(in srgb, currentColor 2%, transparent)",
+  background: "var(--dsh-dock-surface, var(--dsw-alias-bg-layer-1))",
+  overscrollBehavior: "contain",
 };
 const screenStyle: CSSProperties = { flex: 1, minHeight: 0, minWidth: 0 };
 const retryStyle: CSSProperties = {
@@ -57,7 +63,7 @@ const statusStyle: CSSProperties = {
   lineHeight: 1.5,
   padding: "4px 10px",
   borderTop: "1px solid color-mix(in srgb, currentColor 10%, transparent)",
-  background: "color-mix(in srgb, currentColor 4%, transparent)",
+  background: "color-mix(in srgb, currentColor 4%, var(--dsh-dock-surface, transparent))",
 };
 const loadingStyle: CSSProperties = { padding: "10px 12px", fontSize: 12, opacity: 0.68 };
 

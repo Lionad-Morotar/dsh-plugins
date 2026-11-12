@@ -2,9 +2,13 @@
  * The terminal dock's bottom surface.
  *
  * The slot is root-scoped and carries no session id, so the dock asks the core
- * service which conversation is on screen and renders only that session's
- * panels. Process lifetime stays with the host's `webTerminals` service: this file
- * decides layout, focus and which panel the keyboard acts on, nothing else.
+ * service which conversation is on screen, asks the host which workspace-branch
+ * that conversation belongs to, and renders the panels of that scope. Scope is
+ * the product decision this file implements: those terminals belong to a working
+ * tree on a branch, so every conversation in the same checkout shares them and a
+ * checkout shows a different set. Process lifetime stays with the host's
+ * `webTerminals` service under the scope's anchor session: this file decides
+ * layout, focus and which panel the keyboard acts on, nothing else.
  *
  * Keyboard discipline: the dock reads three keys, all scoped to the dock element.
  * `Cmd/Ctrl+D` (and `Cmd+Insert` on macOS) splits the current panel, `Cmd/Ctrl+W`
@@ -12,16 +16,26 @@
  * chat through the core's view seam. Everything else, including the workbench's
  * `Cmd/Ctrl+Shift+*` family, belongs to the core and is deliberately not read here.
  */
-import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 
 import { createTerminalPanel } from "./terminal-panel.tsx";
 import { bleedBetween, pickColumn, type Box } from "./bleed.ts";
 import { createDockController, type DockVisibilitySource } from "./dock-controller.ts";
 import { CLOSE_ARM_MS, IDLE_ARM, isArmed, pressClose, reconcileArm, type CloseArm } from "./close-arm.ts";
-import { initialFocusGate, noteClaim, noteShown, type FocusGate } from "./focus-request.ts";
+import { clearFocus, focusTokenFor, initialFocusState, noteShown, requestFocus, type FocusState } from "./focus-request.ts";
 import { dockAction, detectPlatform } from "./keyboard.ts";
-import { shouldOpenForSession, TERMINAL_PANEL_KIND, type DockPanel, type DockPanelKind, type DockState } from "./dock-state.ts";
+import {
+  activePanelOfScope,
+  panelsForScope,
+  shouldOpenForScope,
+  TERMINAL_PANEL_KIND,
+  type DockPanel,
+  type DockPanelKind,
+  type DockState,
+} from "./dock-state.ts";
 import { kindPickerChoices, planPanelBody, type PanelBodyPlan, type PanelKindDescriptor } from "./panel-body.ts";
+import { readSolidToken, watchSurfaceColors } from "./surface.ts";
+import { scopeLabel, sessionScope, type ScopeResolution, type ScopeSource } from "./scope-client.ts";
 import type { DockHost } from "./host.ts";
 import type { TerminalRack } from "./rack.ts";
 import type { Translate } from "./copy.ts";
@@ -46,6 +60,8 @@ export interface DockWiring {
   readonly t: Translate;
   /** The core's observable switch; the dock follows it for its whole life. */
   readonly visibility: DockVisibilitySource;
+  /** Resolves the workspace-branch scope of the session on screen. */
+  readonly scopes: ScopeSource;
 }
 
 /**
@@ -81,6 +97,16 @@ const DOCK_REST_HEIGHT = "clamp(120px, 32dvh, 300px)";
 /** Custom properties the injected rule reads to widen the dock row. */
 const BLEED_LEFT = "--dsh-dock-bleed-left";
 const BLEED_RIGHT = "--dsh-dock-bleed-right";
+
+/**
+ * Custom properties the dock publishes for its own surfaces.
+ *
+ * Read by every painted piece of chrome (including the lazy chunk's xterm theme)
+ * so one opaque colour defines the dock; `--dsw-alias-*` remains the fallback for
+ * the first frame, before the layout effect has measured the tokens.
+ */
+const SURFACE_BASE = "--dsh-dock-bg";
+const SURFACE_PANEL = "--dsh-dock-surface";
 
 /** Read one custom property as a pixel count; unset or garbage reads as zero. */
 function readBleed(wrap: HTMLElement, property: string): number {
@@ -156,6 +182,36 @@ function useDockBleed(ref: RefObject<HTMLDivElement | null>, visible: boolean): 
   }, [ref, visible]);
 }
 
+/**
+ * Publish the dock's opaque surfaces as custom properties.
+ *
+ * Reading the tokens happens here rather than in CSS because a skin's token is
+ * `#rrggbbaa`: computed styles hand the text back verbatim, and no CSS function
+ * removes an alpha. `readSolidToken` strips it, keeping the skin's hue, so the
+ * terminal is a solid panel of the skin's ground instead of a window onto the
+ * moving picture. The values are written to the dock root and inherited by the
+ * panels and the emulator's theme, so one measurement describes the whole dock.
+ * @param ref - the dock root.
+ * @param visible - whether the dock is on screen; a hidden dock still computes.
+ */
+function useDockSurface(ref: RefObject<HTMLDivElement | null>, visible: boolean): void {
+  useLayoutEffect(() => {
+    if (!visible) return;
+    const node = ref.current;
+    if (node === null) return;
+    const read = (): void => {
+      const base = readSolidToken(node, "--dsw-alias-bg-base", "");
+      if (base === "") return;
+      const panel = readSolidToken(node, "--dsw-alias-bg-layer-1", base);
+      const nextPanel = panel === "" ? base : panel;
+      if (node.style.getPropertyValue(SURFACE_BASE) !== base) node.style.setProperty(SURFACE_BASE, base);
+      if (node.style.getPropertyValue(SURFACE_PANEL) !== nextPanel) node.style.setProperty(SURFACE_PANEL, nextPanel);
+    };
+    read();
+    return watchSurfaceColors(read);
+  }, [ref, visible]);
+}
+
 const rootStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
@@ -167,9 +223,15 @@ const rootStyle: CSSProperties = {
   // full-width line of its own.
   width: "100%",
   borderTop: "1px solid color-mix(in srgb, currentColor 14%, transparent)",
-  background: "color-mix(in srgb, currentColor 3%, transparent)",
+  // Solid, not a wash: the dock can hang over a skin's moving background, and a
+  // terminal needs one stable ground. `--dsh-dock-bg` is the token with its
+  // alpha stripped; the token itself is only the first-frame fallback.
+  background: `var(${SURFACE_BASE}, var(--dsw-alias-bg-base))`,
   boxSizing: "border-box",
   overflow: "hidden",
+  // The dock body owns its scrolling; a wheel at an end must not chain into the
+  // conversation scroller this panel is nested in.
+  overscrollBehavior: "contain",
 };
 const headerStyle: CSSProperties = {
   display: "flex",
@@ -189,6 +251,17 @@ const tabStripStyle: CSSProperties = {
   minWidth: 0,
   overflow: "hidden",
 };
+const scopeChipStyle: CSSProperties = {
+  flex: "none",
+  maxWidth: 160,
+  marginRight: 2,
+  fontSize: 11,
+  lineHeight: 1.6,
+  opacity: 0.55,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
 const bodyStyle: CSSProperties = {
   display: "grid",
   gap: 8,
@@ -198,6 +271,7 @@ const bodyStyle: CSSProperties = {
   // the panel read as docked rather than as a card with a frame around it.
   padding: 0,
   boxSizing: "border-box",
+  overscrollBehavior: "contain",
 };
 const emptyStyle: CSSProperties = {
   flex: 1,
@@ -263,7 +337,7 @@ const menuStyle: CSSProperties = {
   padding: 4,
   borderRadius: 8,
   border: "1px solid color-mix(in srgb, currentColor 18%, transparent)",
-  background: "color-mix(in srgb, currentColor 6%, var(--dsh-bg, inherit))",
+  background: "color-mix(in srgb, currentColor 6%, var(--dsh-dock-surface, var(--dsh-bg, inherit)))",
   // The dock body scrolls its own panels; the picker must escape it, and the
   // dock root clips overflow so the popup also has to sit above it in paint.
   boxShadow: "0 8px 24px rgb(0 0 0 / 0.35)",
@@ -357,7 +431,7 @@ export function kindMountIdentity(
  * @param wiring - dock state, view rack, host seams and the translate seat.
  * @returns the component registered into the conversation dock slot.
  */
-export function createTermDockView({ dock, rack, host, t, visibility }: DockWiring): ComponentType {
+export function createTermDockView({ dock, rack, host, t, visibility, scopes }: DockWiring): ComponentType {
   const TerminalPanel = createTerminalPanel({ t });
   let panelSeq = 0;
   const nextPanelId = (kind: DockPanelKind): string => `${kind}-${(panelSeq += 1)}`;
@@ -394,9 +468,8 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
   }
 
   /** One panel body; owns the first `rack.open` for a terminal panel. */
-  function DockBody({ panel, sessionId, label, focusToken }: {
+  function DockBody({ panel, label, focusToken }: {
     panel: DockPanel;
-    sessionId: string;
     label: string;
     focusToken: number;
   }) {
@@ -407,9 +480,12 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
       );
     }
     if (plan.plan === "kind") {
+      const sessionId = panel.sessionId ?? "";
       return <KindPanelBody plan={plan} sessionId={sessionId} label={label} />;
     }
-    const [binding] = useState(() => rack.open(sessionId, panel.id));
+    const [binding] = useState(() =>
+      panel.sessionId === undefined ? undefined : rack.open(panel.scopeKey, panel.id, panel.sessionId),
+    );
     if (binding === undefined) {
       return (
         <div style={emptyStyle}>{t("dock.serviceMissing")}</div>
@@ -422,26 +498,114 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
     const visible = useDockVisible(visibility);
     const snapshot = useSyncExternalStore(dock.subscribe, dock.snapshot);
     const shown = visible && snapshot.mode !== "minimized";
-    const [focusGate, setFocusGate] = useState<FocusGate>(() => initialFocusGate(shown));
-    if (focusGate.shown !== shown) setFocusGate(noteShown(focusGate, shown));
+    const [focusState, setFocusState] = useState<FocusState>(() => initialFocusState(shown));
+    if (focusState.shown !== shown) setFocusState(noteShown(focusState, shown));
+
     const sessionId = host.currentSessionId();
     const terminals = host.terminals();
-    const panels = snapshot.panels.filter(panel => panel.sessionId === undefined || panel.sessionId === sessionId);
 
-    // A dock with no panel has nothing to show; opening one for the session the
-    // user just switched to is the dock's own responsibility (there is no session
-    // props to carry it). Only while the dock is open: a hidden dock that kept
-    // following the session would start a shell for every conversation browsed,
-    // and a reader who never opens the terminal must not pay that.
+    // The scope is fetched per (session, visible edge). The session id is kept
+    // beside the answer so the auto-open below never runs against the previous
+    // session's scope while the new one is in flight.
+    const [resolved, setResolved] = useState<{ sessionId: string; resolution: ScopeResolution } | null>(null);
     useEffect(() => {
-      if (!shouldOpenForSession({ visible, panels: dock.snapshot().panels, sessionId })) return;
-      dock.open(nextPanelId(TERMINAL_PANEL_KIND), { sessionId });
-    }, [dock, sessionId, visible]);
+      if (!visible || sessionId === undefined) return undefined;
+      const controller = new AbortController();
+      let live = true;
+      void scopes.resolve(sessionId, controller.signal).then(next => {
+        if (!live) return;
+        setResolved({ sessionId, resolution: next ?? sessionScope(sessionId) });
+      });
+      return () => {
+        live = false;
+        controller.abort();
+      };
+    }, [scopes, sessionId, visible]);
+
+    // The previous resolution keeps rendering while the next one is in flight:
+    // a session switch inside one checkout must not unmount the emulators, and a
+    // switch across scopes swaps the panels only once the answer is known.
+    const resolution = resolved?.resolution;
+    const scope = resolution?.scope;
+    const anchor = resolution?.anchor;
+    const resolvedForCurrent = resolved !== null && resolved.sessionId === sessionId;
+    const scopeKey = scope?.key;
+    const panels = panelsForScope(snapshot.panels, scopeKey);
+    const activeId = activePanelOfScope(snapshot.panels, snapshot.activeId, scopeKey);
+
+    const claimFocus = (panelId: string | undefined): void => {
+      if (panelId === undefined) return;
+      setFocusState(state => requestFocus(state, panelId));
+    };
+
+    // A scope switch must not carry a pending focus claim into the next scope's
+    // freshly mounted panes.
+    useEffect(() => {
+      setFocusState(state => clearFocus(state));
+    }, [scopeKey]);
+
+    // Opening the dock can create its first panel in the same commit: the
+    // visibility edge names no target, so the auto-open below takes the caret
+    // when it opens one. The row is only mounted while the core says the dock is
+    // visible, which is why the initial value is the first observation's state —
+    // the very first `⌘⇧M` has no hidden-to-shown edge to observe. A later
+    // session switch never sets this flag, which is what keeps it from dragging
+    // the caret out of the conversation.
+    const pendingOpenFocus = useRef(shown);
+    const previousShown = useRef(shown);
+    useEffect(() => {
+      const was = previousShown.current;
+      previousShown.current = shown;
+      if (!shown || was) return;
+      const target = activePanelOfScope(dock.snapshot().panels, dock.snapshot().activeId, scopeKey);
+      if (target !== undefined) claimFocus(target);
+      else pendingOpenFocus.current = true;
+    }, [shown, scopeKey, dock]);
+
+    // A dock with no panel for this scope has nothing to show; opening one is the
+    // dock's own responsibility (there is no session props to carry it). Only
+    // while the dock is open: a hidden dock that kept following the session
+    // would start a shell for every conversation browsed, and a reader who never
+    // opens the terminal must not pay that.
+    useEffect(() => {
+      if (!visible || scope === undefined || !resolvedForCurrent) return;
+      const current = dock.snapshot();
+      const key = scope.key;
+      if (!shouldOpenForScope({ visible, panels: current.panels, scopeKey: key })) {
+        pendingOpenFocus.current = false;
+        const target = activePanelOfScope(current.panels, current.activeId, key);
+        if (target !== undefined && current.activeId !== target) dock.activate(target);
+        return;
+      }
+      const id = nextPanelId(TERMINAL_PANEL_KIND);
+      dock.open(id, { scopeKey: key, ...(anchor === undefined ? {} : { sessionId: anchor }) });
+      if (pendingOpenFocus.current) {
+        pendingOpenFocus.current = false;
+        claimFocus(id);
+      }
+    }, [dock, visible, scope, resolvedForCurrent]);
+
+    const splitPanel = (): void => {
+      const current = dock.snapshot();
+      const target = activePanelOfScope(current.panels, current.activeId, scopeKey);
+      if (target === undefined) return;
+      dock.split(target);
+      const after = dock.snapshot();
+      if (after.panels.length === current.panels.length) return;
+      claimFocus(after.activeId ?? undefined);
+    };
+
+    const openPanel = (kind: string): void => {
+      if (scope === undefined) return;
+      const id = nextPanelId(kind);
+      dock.open(id, { scopeKey: scope.key, kind, ...(anchor === undefined ? {} : { sessionId: anchor }) });
+      claimFocus(id);
+    };
 
     const closePanel = (id: string): void => {
       const panel = dock.snapshot().panels.find(entry => entry.id === id);
-      const owner = panel?.sessionId ?? host.currentSessionId();
-      if (owner !== undefined) rack.release(owner, id);
+      if (panel === undefined) return;
+      rack.release(panel.scopeKey, panel.id);
       dock.close(id);
     };
 
@@ -481,14 +645,10 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
       event.preventDefault();
       event.stopPropagation();
       if (action === "split") {
-        const before = dock.snapshot().panels.length;
-        dock.split();
-        if (dock.snapshot().panels.length === before) return;
-        const opened = dock.snapshot().activeId;
-        if (opened !== null) setFocusGate(current => noteClaim(current));
+        splitPanel();
         return;
       }
-      const target = snapshot.activeId ?? panels[0]?.id;
+      const target = activePanelOfScope(dock.snapshot().panels, dock.snapshot().activeId, scopeKey);
       if (target === undefined) return;
       const pressed = pressClose(armRef.current, target, Date.now());
       setArm(pressed.arm);
@@ -497,6 +657,7 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
 
     const rootRef = useRef<HTMLDivElement | null>(null);
     useDockBleed(rootRef, visible);
+    useDockSurface(rootRef, visible);
     useEffect(() => {
       const root = rootRef.current;
       if (root === null) return undefined;
@@ -510,9 +671,29 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
       root.addEventListener("focusout", disarm);
       return () => root.removeEventListener("focusout", disarm);
     }, []);
+    useEffect(() => {
+      const root = rootRef.current;
+      if (root === null) return undefined;
+      // Wheel isolation: the dock sits inside the conversation's scroll body, so a
+      // wheel that no descendant consumed would scroll the conversation behind
+      // the terminal. xterm cancels the wheel when the emulator consumed it; what
+      // is left is the dock's own chrome and a terminal with nothing to scroll,
+      // and neither may move the page. Ctrl/Cmd+wheel is the browser's zoom
+      // gesture and is not scrolling, so it stays with the browser.
+      const isolate = (event: WheelEvent): void => {
+        if (event.defaultPrevented || event.ctrlKey || event.metaKey) return;
+        event.preventDefault();
+      };
+      root.addEventListener("wheel", isolate, { passive: false });
+      return () => root.removeEventListener("wheel", isolate);
+    }, []);
+
     const height = snapshot.mode === "minimized" ? "auto" : snapshot.mode === "fullscreen" ? "min(72vh, 900px)" : DOCK_REST_HEIGHT;
-    const activeId = snapshot.activeId;
     const minimized = snapshot.mode === "minimized";
+    const branch = scope === undefined ? undefined : scopeLabel(scope);
+    const scopeTitle = scope === undefined
+      ? undefined
+      : [scope.workspace, scope.branch ?? ""].filter(part => part !== "").join(" · ");
 
     // Hiding keeps the subtree mounted: display:none releases the height
     // without detaching a terminal or replaying its scrollback, which is what
@@ -525,12 +706,18 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
         data-dock-visible={visible ? "true" : "false"}
         data-panel-count={panels.length}
         data-dock-session={sessionId ?? ""}
+        data-dock-scope={scopeKey ?? ""}
         ref={rootRef}
         style={{ ...rootStyle, height, display: visible ? "flex" : "none" }}
         onKeyDownCapture={handleKeyDown}
       >
         <header style={headerStyle}>
           <div style={tabStripStyle}>
+            {branch === undefined ? null : (
+              <span data-dock-scope-label={scopeKey} title={scopeTitle} style={scopeChipStyle}>
+                {branch}
+              </span>
+            )}
             {panels.map((panel: DockPanel, index: number) => (
               <button
                 key={panel.id}
@@ -541,7 +728,7 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
                 data-active={panel.id === activeId ? "true" : "false"}
                 onClick={() => {
                   dock.activate(panel.id);
-                  setFocusGate(current => noteClaim(current));
+                  claimFocus(panel.id);
                 }}
                 style={panel.id === activeId ? tabActiveStyle : tabStyle}
               >
@@ -563,18 +750,13 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
                 </span>
               </button>
             ))}
-            <IconButton
-              label={t("dock.new")}
-              onClick={() => dock.open(nextPanelId(TERMINAL_PANEL_KIND), sessionId === undefined ? {} : { sessionId })}
-            >
+            <IconButton label={t("dock.new")} onClick={() => openPanel(TERMINAL_PANEL_KIND)}>
               +
             </IconButton>
             <PlusPicker
               choices={kindPickerChoices(host.panelKinds())}
               t={t}
-              onPick={kind =>
-                dock.open(nextPanelId(kind), { kind, ...(sessionId === undefined ? {} : { sessionId }) })
-              }
+              onPick={kind => openPanel(kind)}
             />
           </div>
           <div style={actionsStyle}>
@@ -587,7 +769,7 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
             >
               {snapshot.mode === "fullscreen" ? "⤡" : "⤢"}
             </IconButton>
-            <IconButton label={t("dock.split")} onClick={() => dock.split()}>
+            <IconButton label={t("dock.split")} onClick={splitPanel}>
               ◫
             </IconButton>
             <IconButton
@@ -610,6 +792,10 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
           <div style={emptyStyle} role="note">
             {t("dock.serviceMissing")}
           </div>
+        ) : scope === undefined ? (
+          <div style={emptyStyle} role="status">
+            {t("dock.resolving")}
+          </div>
         ) : (
           // Minimizing hides the body but keeps it mounted: unmounting would
           // detach every emulator and replay the session on restore, which costs
@@ -623,11 +809,10 @@ export function createTermDockView({ dock, rack, host, t, visibility }: DockWiri
           >
             {panels.map((panel: DockPanel, index: number) => (
               <DockBody
-                key={`${sessionId}:${panel.id}`}
+                key={`${panel.scopeKey}:${panel.id}`}
                 panel={panel}
-                sessionId={sessionId}
                 label={panelLabel(panel, index)}
-                focusToken={panel.id === activeId ? focusGate.token : 0}
+                focusToken={focusTokenFor(focusState, panel.id)}
               />
             ))}
           </div>

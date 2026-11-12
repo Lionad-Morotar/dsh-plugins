@@ -40,3 +40,38 @@ export const CONTENT_ID_PREFIX = "dsh-term-dock";
  * fails the build when the built entry no longer names the file it emitted.
  */
 export const TERMINAL_CHUNK = { chunk: "client.terminal.js" } as const;
+
+/**
+ * HTTP prefix the host half mounts the dock's read-only routes under.
+ *
+ * The client half asks one question of the host — which workspace and branch is
+ * this session on — because a browser cannot run Git. Same-origin relative paths
+ * only: the GUI port changes on every host boot.
+ */
+export const ROUTE_PREFIX = "/term-dock/api";
+
+/** The workspace-branch identity a terminal set belongs to. */
+export interface ScopePayload {
+  /** Opaque, stable key: canonical workspace path plus branch. */
+  readonly key: string;
+  /** Canonical workspace directory the session runs in. */
+  readonly workspace: string;
+  /** Checked-out branch, `detached@<sha>` for a detached HEAD, or null outside a repo. */
+  readonly branch: string | null;
+  /** Whether HEAD is detached; a detached scope still gets its own terminals. */
+  readonly detached: boolean;
+}
+
+/** One answer from `GET /term-dock/api/scope`. */
+export type ScopeResponse =
+  | {
+    readonly ok: true;
+    readonly scope: ScopePayload;
+    /** Session that owns this scope's host terminals; stable for the host lifetime. */
+    readonly anchor: string;
+  }
+  | {
+    readonly ok: false;
+    readonly code: "bad-request" | "no-session" | "no-cwd";
+    readonly message: string;
+  };
