@@ -1025,7 +1025,11 @@ body.tst-pane-resizing {
   padding: 4px;
   border: 1px solid var(--tst-rule);
   border-radius: 8px;
+  /* A popup is opaque even when the board's own surface is not: a skin may
+     publish the raised-surface token as a translucent ground colour, so the
+     menu pins the token's alpha instead of drawing the rows over the board. */
   background: var(--tst-surface);
+  background: rgb(from var(--tst-surface) r g b / 1);
   box-shadow: 0 12px 32px color-mix(in srgb, #000 18%, transparent);
   color: var(--tst-ink);
   font-size: var(--tst-fs-small);
@@ -1081,6 +1085,7 @@ body.tst-pane-resizing {
   border: 1px solid var(--tst-rule);
   border-radius: 999px;
   background: var(--tst-surface);
+  background: rgb(from var(--tst-surface) r g b / 1);
   color: var(--tst-ink-dim);
   font-size: var(--tst-fs-small);
   box-shadow: 0 8px 24px color-mix(in srgb, #000 14%, transparent);
