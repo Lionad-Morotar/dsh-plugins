@@ -40,6 +40,14 @@ export interface TabCopy {
   readonly heading: string;
   /** The fixed first slot's label, which the host renders on the chat tab. */
   readonly chatLabel: string;
+  /**
+   * The fixed slot's one-line note, under its label.
+   *
+   * A row without a checkbox reads as a broken row unless the page says why:
+   * this is the only copy on the page, and it names exactly the two controls
+   * the row does not have.
+   */
+  readonly chatNote: string;
   /** Shown in place of the list while no plugin has registered a view tab. */
   readonly empty: string;
   /** Accessible name of one row's checkbox, given the tab label. */
@@ -124,6 +132,20 @@ export const TABS_PAGE_CSS = `
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+[data-dsh-better-tabs] [data-dsh-better-tabs-notecol] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+[data-dsh-better-tabs] [data-dsh-better-tabs-note] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
+}
 [data-dsh-better-tabs] [data-dsh-better-tabs-check] {
   flex-shrink: 0;
   width: 16px;
@@ -205,7 +227,7 @@ export function paintRows(section: Element, props: TabPageProps): void {
   heading.textContent = copy.heading;
   section.append(heading);
 
-  section.append(fixedRow(doc, copy.chatLabel));
+  section.append(fixedRow(doc, copy));
 
   const rows = controller.rows();
   const positions = stripPositions(rows);
@@ -262,12 +284,12 @@ interface RowDrag {
   dragEnd(): void;
 }
 
-/** The fixed first slot: numbered, named, and carrying no control. */
-function fixedRow(doc: Document, chatLabel: string): HTMLElement {
+/** The fixed first slot: numbered, named, its note, and carrying no control. */
+function fixedRow(doc: Document, copy: Pick<TabCopy, "chatLabel" | "chatNote">): HTMLElement {
   const row = doc.createElement("div");
   row.setAttribute(ROW_ATTR, FIXED_VIEW_ID);
   row.setAttribute(FIXED_ATTR, "");
-  row.append(lead(doc, 1, chatLabel));
+  row.append(leadWithNote(doc, 1, copy.chatLabel, copy.chatNote));
   return row;
 }
 
@@ -282,7 +304,7 @@ function movableRow(
   const label = doc.createElement("label");
   label.setAttribute(ROW_ATTR, row.id);
   label.setAttribute("draggable", "true");
-  label.append(lead(doc, position, row.label));
+  label.append(leadWithNote(doc, position, row.label));
 
   const box = doc.createElement("input");
   box.setAttribute("data-dsh-better-tabs-check", row.id);
@@ -306,12 +328,15 @@ function movableRow(
 }
 
 /**
- * The lead cluster: the strip number when the row has one, then the name.
+ * The lead cluster: the strip number when the row has one, then the name, and
+ * — on the fixed row only — the one-line note under it.
  *
  * A hidden row takes no number. It is not in the strip, and printing the place
- * it would take would promise a position the reader cannot see.
+ * it would take would promise a position the reader cannot see. The note is
+ * the page's only explanatory copy: a row without a checkbox reads as a
+ * broken row unless the page says why it has none.
  */
-function lead(doc: Document, position: number | undefined, labelText: string): HTMLElement {
+function leadWithNote(doc: Document, position: number | undefined, labelText: string, note?: string): HTMLElement {
   const cluster = doc.createElement("span");
   cluster.setAttribute("data-dsh-better-tabs-lead", "");
   if (position !== undefined) {
@@ -323,7 +348,18 @@ function lead(doc: Document, position: number | undefined, labelText: string): H
   const name = doc.createElement("span");
   name.setAttribute("data-dsh-better-tabs-name", "");
   name.textContent = labelText;
-  cluster.append(name);
+  if (note === undefined) {
+    cluster.append(name);
+    return cluster;
+  }
+  const column = doc.createElement("span");
+  column.setAttribute("data-dsh-better-tabs-notecol", "");
+  column.append(name);
+  const noteLine = doc.createElement("span");
+  noteLine.setAttribute("data-dsh-better-tabs-note", "");
+  noteLine.textContent = note;
+  column.append(noteLine);
+  cluster.append(column);
   return cluster;
 }
 

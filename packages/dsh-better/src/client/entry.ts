@@ -1459,6 +1459,7 @@ function reactOf(require: LoaderRequire | null): PageReact | null {
 function tabCopy(ctx: ClientContextLike): {
   heading: string;
   chatLabel: string;
+  chatNote: string;
   empty: string;
   checkboxLabel(label: string, enabled: boolean): string;
 } {
@@ -1469,6 +1470,9 @@ function tabCopy(ctx: ClientContextLike): {
     // The fixed first slot's name, the same word the host renders on the chat
     // tab; a row the reader cannot configure still deserves its real name.
     chatLabel: text("tabs.chat", "Chat"),
+    // The page's only explanatory copy: without it, a control-less row reads
+    // as a broken one.
+    chatNote: text("tabs.chatNote", "Pinned to the front of the tab bar"),
     empty: text("tabs.empty", "No plugin has registered a conversation tab yet."),
     checkboxLabel: (label, enabled) => {
       const pattern = text(enabled ? "tabs.hide" : "tabs.show", "{label}");

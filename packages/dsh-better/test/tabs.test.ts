@@ -862,6 +862,7 @@ function pageSection(): FakeElement {
 const COPY: TabCopy = {
   heading: "Tab 管理",
   chatLabel: "对话",
+  chatNote: "固定在标签栏最前，不可隐藏或拖动",
   empty: "还没有插件注册会话标签。",
   checkboxLabel: (label, enabled) => (enabled ? `隐藏${label}` : `显示${label}`),
 };
@@ -903,7 +904,7 @@ describe("settings page paint", () => {
     expect(box?.checked).toBe(true);
   });
 
-  it("renders the fixed slot first: numbered 1, named, and carrying no control", () => {
+  it("renders the fixed slot first: numbered 1, named, noted, and carrying no control", () => {
     const controller = createTabController({ ledger: ledger([view("files", "文件")]) });
     const section = pageSection();
     paintRows(section as unknown as Element, { React: { createElement: () => null }, controller, copy: COPY });
@@ -912,11 +913,15 @@ describe("settings page paint", () => {
     expect(fixed?.getAttribute("draggable")).toBeNull();
     // The number is the slot Chat already holds, so the first movable tab is 2.
     expect(fixed?.querySelector("[data-dsh-better-tabs-pos]")?.textContent).toBe("1");
-    // A checkbox here would be a control that cannot do what it says.
+    // A checkbox here would be a control that cannot do what it says, and a
+    // control-less row reads as a broken one: the note is why it has none.
     expect(fixed?.querySelector("input")).toBeNull();
+    expect(fixed?.querySelector("[data-dsh-better-tabs-note]")?.textContent).toBe(COPY.chatNote);
     const files = section.querySelector("[data-dsh-better-tabs-row='files']");
     expect(files?.querySelector("[data-dsh-better-tabs-pos]")?.textContent).toBe("2");
     expect(files?.getAttribute("draggable")).toBe("true");
+    // The movable rows carry no note: the checkbox is its own explanation.
+    expect(files?.querySelector("[data-dsh-better-tabs-note]")).toBeNull();
   });
 
   it("gives a hidden row no number, and numbers the shown ones around it", () => {
@@ -1114,6 +1119,8 @@ describe("settings section placement", () => {
     expect(DICTIONARIES.en?.["tabs.nav"]).toBe("Tabs");
     expect(DICTIONARIES.zh?.["tabs.chat"]).toBe("对话");
     expect(DICTIONARIES.en?.["tabs.chat"]).toBe("Chat");
+    expect(DICTIONARIES.zh?.["tabs.chatNote"]).not.toBe("");
+    expect(DICTIONARIES.en?.["tabs.chatNote"]).not.toBe("");
     expect(DICTIONARIES.zh?.["tabs.empty"]).not.toBe("");
     expect(DICTIONARIES.en?.["tabs.show"]).toContain("{label}");
     expect(DICTIONARIES.en?.["tabs.hide"]).toContain("{label}");
