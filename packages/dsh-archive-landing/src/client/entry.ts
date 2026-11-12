@@ -171,39 +171,6 @@ function paintedOrder(): string[] {
 }
 
 /**
- * Build the pre-archive sidebar order from the group structure.
- *
- * Workspaces are groups in list order. Inside a group, the painted rows keep
- * their DOM order and members the host folded behind its watermark follow in
- * data order; the ungrouped group closes the list. Keeping every group's
- * unpainted part at that group's position is what makes "next" mean below and
- * "previous" mean above: appending the whole data order at the end would treat
- * a collapsed group above the current session as if it came after it.
- * @param before - the list snapshot from before this archive.
- * @param sessions - the `sessions.list` snapshot for ungrouped ids.
- * @returns session ids in pre-archive sidebar order.
- */
-function sidebarOrder(before: unknown, sessions: unknown): string[] {
-  const painted = unique(paintedOrder());
-  const paintedSet = new Set(painted);
-  const order: string[] = [];
-  const grouped = new Set<string>();
-  for (const item of itemsOf(before)) {
-    const members = asIds(item.sessionIds);
-    for (const id of members) grouped.add(id);
-    const visible = painted.filter((id) => members.includes(id));
-    const hidden = members.filter((id) => !paintedSet.has(id));
-    order.push(...visible, ...hidden);
-  }
-  const ungroupedVisible = painted.filter((id) => !grouped.has(id));
-  const ungroupedHidden = asIds(asRecord(sessions)?.ids).filter(
-    (id) => !grouped.has(id) && !paintedSet.has(id),
-  );
-  order.push(...ungroupedVisible, ...ungroupedHidden);
-  return unique(order);
-}
-
-/**
  * Drop repeated ids while keeping the first position.
  * @param ids - the candidate order.
  * @returns the same order without duplicates.
@@ -218,13 +185,32 @@ function unique(ids: readonly string[]): string[] {
 }
 
 /**
+ * The ids that belong to no workspace.
+ * @param snapshot - the `workspaces.list` snapshot.
+ * @param sessions - the `sessions.list` snapshot.
+ * @returns the ungrouped ids.
+ */
+function ungroupedIds(snapshot: unknown, sessions: unknown): string[] {
+  const grouped = new Set(itemsOf(snapshot).flatMap((item) => asIds(item.sessionIds)));
+  return asIds(asRecord(sessions)?.ids).filter((id) => !grouped.has(id));
+}
+
+/**
  * Build the pre-archive order the landing rule reads.
  *
- * The group structure decides where a session sits; the DOM supplies the
- * visible rows and their order. A session that is not in the pre-archive list
- * (a workspace that appeared between snapshots) is looked up in the after
- * snapshot instead. Already archived sessions are not landing targets; the
- * current one stays so its position resolves.
+ * The painted rows are the actual visible order, and they are the base: flat
+ * and tree groupings interleave the workspace groups in ways the list order
+ * cannot reproduce, and reading the visual order is the only way those stay
+ * right. What the painted order is missing are the members the host folded
+ * behind a group's watermark: those are inserted after the group's last
+ * painted row, or before the next painted group's first row when the group
+ * itself has no painted row. That keeps the hidden part of every group at the
+ * group's own position instead of treating an upper group as "next".
+ *
+ * The before snapshot decides membership; a workspace that first appears in
+ * the after snapshot is used when the current session was not in the before
+ * list at all. Already archived sessions are not landing targets; the current
+ * one stays so its position resolves.
  * @param before - the list snapshot from before this archive.
  * @param after - the list snapshot that announced the archive.
  * @param current - the session being archived.
@@ -239,9 +225,54 @@ function landingOrder(
   archived: ReadonlySet<string>,
   sessions: unknown,
 ): string[] {
-  const fromBefore = sidebarOrder(before, sessions);
-  const data = fromBefore.includes(current) ? fromBefore : sidebarOrder(after, sessions);
-  return unique(data).filter((id) => id === current || !archived.has(id));
+  const painted = unique(paintedOrder()).filter((id) => id === current || !archived.has(id));
+  const groupsOf = (snapshot: unknown): string[][] => [
+    ...itemsOf(snapshot).map((item) => asIds(item.sessionIds)),
+    ungroupedIds(snapshot, sessions),
+  ];
+  const beforeGroups = groupsOf(before);
+  const groups = beforeGroups.some((members) => members.includes(current)) ? beforeGroups : groupsOf(after);
+
+  // Nothing painted (a narrow rail, search, or a headless mount): the group
+  // data order is the documented fallback and still has to contain the current
+  // session for its neighbour to resolve.
+  if (!painted.includes(current)) {
+    return unique(groups.flatMap((members) => members)).filter(
+      (id) => id === current || !archived.has(id),
+    );
+  }
+
+  const order = painted.slice();
+  const placed = new Set(order);
+  for (const members of groups) {
+    const hidden = members.filter((id) => !placed.has(id) && !archived.has(id));
+    for (const id of members) placed.add(id);
+    if (hidden.length === 0) continue;
+    const paintedAt = members.map((id) => order.indexOf(id)).filter((index) => index >= 0);
+    if (paintedAt.length > 0) {
+      order.splice(Math.max(...paintedAt) + 1, 0, ...hidden);
+      continue;
+    }
+    // The group has no painted row: it sits above or below the painted rows
+    // as a whole. Put it before the next painted group's first row, or at the
+    // end when no later group is painted.
+    let insertAt = order.length;
+    const groupIndex = groups.indexOf(members);
+    for (let later = groupIndex + 1; later < groups.length; later += 1) {
+      const group = groups[later];
+      if (group === undefined) continue;
+      const first = group
+        .map((id) => order.indexOf(id))
+        .filter((index) => index >= 0)
+        .sort((a, b) => a - b)[0];
+      if (first !== undefined) {
+        insertAt = first;
+        break;
+      }
+    }
+    order.splice(insertAt, 0, ...hidden);
+  }
+  return order;
 }
 
 /**

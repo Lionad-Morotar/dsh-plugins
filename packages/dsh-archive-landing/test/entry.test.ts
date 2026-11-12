@@ -419,6 +419,34 @@ describe("landing after a current-session archive", () => {
     expect(mounted.openSession).toHaveBeenCalledWith("b4");
   });
 
+  it("follows the painted order when flat grouping interleaves workspaces", () => {
+    mounted = mount({
+      selection: "a1",
+      items: [
+        { workspaceId: "w1", sessionIds: ["a1", "a2"] },
+        { workspaceId: "w2", sessionIds: ["b1", "b2"] },
+      ],
+      rows: ["b1", "a1", "b2", "a2"],
+    });
+    mounted.archive("a1");
+    vi.advanceTimersByTime(0);
+    expect(mounted.openSession).toHaveBeenCalledWith("b2");
+  });
+
+  it("follows the painted order when a tree renders a child group before parent rows", () => {
+    mounted = mount({
+      selection: "c2",
+      items: [
+        { workspaceId: "p", sessionIds: ["p1", "p2"] },
+        { workspaceId: "c", sessionIds: ["c1", "c2"] },
+      ],
+      rows: ["c1", "c2", "p1", "p2"],
+    });
+    mounted.archive("c2");
+    vi.advanceTimersByTime(0);
+    expect(mounted.openSession).toHaveBeenCalledWith("p1");
+  });
+
   it("stops watching and drops the pending landing when disposed", () => {
     mounted = mount({
       selection: "b",
