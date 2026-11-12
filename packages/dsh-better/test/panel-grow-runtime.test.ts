@@ -212,6 +212,50 @@ describe("installPanelGrow", () => {
     expect(view.outerWidth).toBe(1200);
   });
 
+  it("does not shrink the frame when the window went fullscreen after an ordinary open", () => {
+    const { layout } = fakeLayout();
+    const { view, resizes } = fakeWindow(1200);
+    const { document, dataset } = fakeDocument({ panelWidth: 300 });
+    install({ layout, view, document });
+
+    layout.openRightbar(true, false);
+    dataset.fullscreen = "true";
+    layout.closeRightbar();
+
+    expect(resizes).toEqual([{ width: 1500, height: 800 }]);
+    expect(view.outerWidth).toBe(1500);
+  });
+
+  it("does not shrink the frame when the panel last reported its own fullscreen presentation", () => {
+    const { layout } = fakeLayout();
+    const { view, resizes } = fakeWindow(1200);
+    install({ layout, view });
+
+    layout.openRightbar(true, false);
+    layout.openRightbar(true, true);
+    layout.closeRightbar();
+
+    expect(resizes).toEqual([{ width: 1500, height: 800 }]);
+    expect(view.outerWidth).toBe(1500);
+  });
+
+  it("shrinks back once the panel returns to the ordinary presentation", () => {
+    const { layout } = fakeLayout();
+    const { view, resizes } = fakeWindow(1200);
+    install({ layout, view });
+
+    layout.openRightbar(true, false);
+    layout.openRightbar(true, true);
+    layout.openRightbar(true, false);
+    layout.closeRightbar();
+
+    expect(resizes).toEqual([
+      { width: 1500, height: 800 },
+      { width: 1200, height: 800 },
+    ]);
+    expect(view.outerWidth).toBe(1200);
+  });
+
   it("leaves a frame the user resized meanwhile", () => {
     const { layout } = fakeLayout();
     const { view, resizes } = fakeWindow(1200);

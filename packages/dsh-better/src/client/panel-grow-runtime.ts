@@ -7,6 +7,9 @@
  * sidebar-right seat reports every presentation it renders — normal, fullscreen
  * overlay, hidden — through that pair, so no polling of the layout store or the
  * DOM is needed, and no other panel state can be mistaken for an open. The
+ * panel's last reported presentation is the only fullscreen fact worth keeping:
+ * the frame's own flag is read off the document at each decision, because the
+ * window can enter or leave fullscreen while the panel stays open. The
  * rendered width is read off the panel element rather than off the store: the
  * store holds a preferred width, while the middle column loses the used width
  * after clamping.
@@ -125,8 +128,15 @@ export function installPanelGrow(deps: PanelGrowDeps): () => void {
 
   const originalOpen = layout.openRightbar;
   const originalClose = layout.closeRightbar;
-  /** The last frame-fullscreen state an open reported; a close has no dataset read of its own. */
-  let lastFullscreen = false;
+  /**
+   * The panel's own fullscreen presentation as the last open reported it.
+   *
+   * Only the presentation half is remembered. The frame's fullscreen flag is
+   * read again on close, because the window can enter or leave fullscreen while
+   * the panel stays open, and a close that reused the open-time reading would
+   * shrink a frame the user is seeing fullscreen.
+   */
+  let lastPresentationFullscreen = false;
   /** The width this install added, or null when the frame is not carrying one. */
   let growth: PanelGrowth | null = null;
   let disposed = false;
@@ -140,9 +150,11 @@ export function installPanelGrow(deps: PanelGrowDeps): () => void {
    */
   const openRightbar = (track: boolean, fullscreenPresentation: boolean): void => {
     originalOpen.call(layout, track, fullscreenPresentation);
+    // Recorded outside the try: a failing document read must not lose the
+    // presentation, and this assignment cannot fail.
+    lastPresentationFullscreen = fullscreenPresentation;
     try {
       const windowFullscreen = doc.documentElement.dataset.fullscreen === "true";
-      lastFullscreen = windowFullscreen;
       const decision = planOpen({
         enabled: readPanelGrow(deps.storage).expandWindow,
         desktop: deps.desktop,
@@ -159,13 +171,19 @@ export function installPanelGrow(deps: PanelGrowDeps): () => void {
     }
   };
 
-  /** Wrap a close: report to the host, then hand back exactly the width this install added. */
+  /**
+   * Wrap a close: report to the host, then hand back exactly the width this
+   * install added. Either fullscreen vetoes the call, and the frame's flag is
+   * read now rather than reused from the open: a window that went fullscreen
+   * while the panel stayed open would otherwise be shrunk.
+   */
   const closeRightbar = (): void => {
     originalClose.call(layout);
     try {
+      const windowFullscreen = doc.documentElement.dataset.fullscreen === "true";
       const decision = planClose({
         desktop: deps.desktop,
-        fullscreen: lastFullscreen,
+        fullscreen: windowFullscreen || lastPresentationFullscreen,
         geometry: geometryOf(view),
         growth,
       });
