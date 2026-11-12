@@ -39,6 +39,21 @@ describe("resolveMenuKit", () => {
     expect(kit.useAnchoredPosition).toBe(useAnchoredPosition);
   });
 
+  it("reads the toast members the notice presentation borrows", () => {
+    setMenuKitForTest(null);
+    const Toast = (): null => null;
+    const IconWarningOutlineRegular = (): null => null;
+    boot(
+      (specifier: string): unknown => {
+        if (specifier !== "@deepseek-ai/dsh-client-ui-primitives") throw new Error(`unexpected ${specifier}`);
+        return { Toast, IconWarningOutlineRegular };
+      },
+    );
+    const kit = resolveMenuKit();
+    expect(kit.Toast).toBe(Toast);
+    expect(kit.IconWarningOutlineRegular).toBe(IconWarningOutlineRegular);
+  });
+
   it("drops a member whose value is not renderable", () => {
     setMenuKitForTest(null);
     boot(() => ({ Menu: "not a component", useAnchoredPosition: 42 }));
