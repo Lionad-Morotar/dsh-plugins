@@ -73,6 +73,7 @@
     "@deepseek-ai/schemastery": "^3.18.5",
     "@lezer/highlight": "^1.2.5",
     "dsh-preview-viewers": "workspace:*",
+    "dsh-text-languages": "workspace:*",
     "dsh-workbench-core": "workspace:*",
     "mermaid": "^12.3.0",
     "react-markdown": "^10.1.0",
