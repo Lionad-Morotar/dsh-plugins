@@ -56,6 +56,8 @@ import {
 import { insertStyles } from "./styles.ts";
 import { createWidthWatcher, restoreLayoutWidths, type LayoutScopeLike } from "./layout-adapter.ts";
 import { readLayoutWidths } from "./layout-widths.ts";
+import { readPanelGrow, writePanelGrow } from "./panel-grow.ts";
+import { insertPanelGrowPageStyles, PanelGrowSettingsPage } from "./panel-grow-page.tsx";
 import { installPanelGrow, type PanelGrowLayoutFace } from "./panel-grow-runtime.ts";
 import { CompactionStat } from "./compaction-stat.tsx";
 import { COMPACTION_ID, COMPACTION_ORDER, COMPACTION_SLOT } from "./compaction-registration.ts";
@@ -93,6 +95,12 @@ const ALIAS_SECTION_ID = "aliases";
 
 /** Sits just after the tab page (55) and before the workbench page (60). */
 const ALIAS_SECTION_ORDER = 56;
+
+/** A fresh section id for the layout page, so it is its own nav entry. */
+const PANEL_GROW_SECTION_ID = "layout";
+
+/** Sits between the alias page (56) and the workbench page (60). */
+const PANEL_GROW_SECTION_ORDER = 57;
 
 /** The invisible overlay entry that opens the alias menu for bare keywords. */
 const ALIAS_WATCHER_ID = "alias-watcher";
@@ -1002,6 +1010,42 @@ export const clientPlugin = {
     // effect's disposer is the teardown. The host's pin seam is deliberately
     // not involved — see tabs.ts for why it cannot be reached.
     ctx.effect(() => tabs.attach(doc as unknown as StripHostDocument), "dsh-better: tab visibility");
+
+    // The layout page: the one switch over the window growth installed above.
+    // It is a page rather than a row in General because the effect it controls
+    // happens to the frame, not to the conversation, and the hint under the
+    // switch is where the desktop-only, non-fullscreen, room-on-the-right
+    // condition is spelled out. Both verbs go through the same document the
+    // runtime re-reads on every open, so the next panel open follows the click
+    // without a reload.
+    ctx.effect(
+      () =>
+        ctx.slots.inject("settings.section", () => {
+          const storage = deviceStorage();
+          const removeStyles = doc === undefined ? undefined : insertPanelGrowPageStyles(doc);
+          const removeSection = registerPlain(
+            ctx.slots,
+            {
+              name: "settings.section",
+              id: PANEL_GROW_SECTION_ID,
+              order: PANEL_GROW_SECTION_ORDER,
+              label: () => ctx.locale.bind?.(NS)?.("layout.nav") ?? "Layout",
+              locale: NS,
+            },
+            () =>
+              PanelGrowSettingsPage({
+                preference: () => readPanelGrow(storage),
+                save: next => writePanelGrow(storage, next),
+                translate: aliasText,
+              }),
+          );
+          return () => {
+            removeSection();
+            removeStyles?.();
+          };
+        }),
+      "dsh-better: layout settings page",
+    );
 
     // The focus chord: one host-registered command, so it appears in 设置 →
     // 快捷键 next to the built-in bindings and is rebound there. `inject` is the
