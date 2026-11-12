@@ -62,6 +62,7 @@ import { installCompactionStyles } from "./compaction-styles.ts";
 import { ContinueButton } from "./continue-button.tsx";
 import { CONTINUE_ID, CONTINUE_ORDER, CONTINUE_SLOT } from "./continue-turn.ts";
 import { installContinueStyles } from "./continue-styles.ts";
+import { installSettingsSurfaceStyles } from "./settings-surface.ts";
 import { installLinkHover } from "./link-hover.ts";
 import { submitContinue } from "./continue-submit.ts";
 import { createSeat, type SeatDeps, type SeatProps } from "./seat.tsx";
@@ -513,6 +514,11 @@ export const clientPlugin = {
       () => (doc === undefined ? () => undefined : installLinkHover(doc, { translate: aliasTranslator(ctx) })),
       "dsh-better: link address panel",
     );
+    // The settings dialog's opaque surface. A sheet alone is enough: the dialog
+    // mounts long after this effect returns, and a stylesheet applies whenever
+    // it does. See settings-surface.ts for why the token keeps the hue and only
+    // the alpha is removed.
+    ctx.effect(() => installSettingsSurfaceStyles(doc), "dsh-better: settings panel surface");
 
     // Skill aliases. One document is shared by three surfaces: the settings page
     // that edits it, the `/` source that lists it in the shipped slash menu, and
