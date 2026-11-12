@@ -525,10 +525,11 @@ body.tst-pane-resizing {
   position: absolute;
   top: 10px;
   bottom: 0;
-  /* 12px is the centre of the chevron's fixed box: padding (6) + half its
-     width (6). The triangle is drawn inside that box, so the rail and its
-     apex share one axis regardless of the glyph's side bearings. */
-  left: calc(var(--tst-dir-indent, 0px) + 12px);
+  /* 11.5px is half a pixel left of the chevron box's centre (6 + 6): the
+     optical centre of a downward triangle sits a hair left of its geometric
+     centre. The triangle is drawn inside a fixed box, so this offset does not
+     depend on the glyph's side bearings. */
+  left: calc(var(--tst-dir-indent, 0px) + 11.5px);
   width: 1px;
   background: color-mix(in srgb, var(--tst-ink) 18%, transparent);
   pointer-events: none;
