@@ -66,6 +66,14 @@ export interface LaneRowProps {
    * there; a suppressed package has no header and keeps it.
    */
   readonly showDirectory?: boolean;
+  /**
+   * Extra left padding for the row's depth in a directory tree.
+   *
+   * Applied to the row itself rather than a wrapper: the row's right edge must
+   * stay on the reading column, so the indent may only take width from the
+   * name/tick side.
+   */
+  readonly indentPx?: number;
   readonly onSelect: (path: string) => void;
   readonly onRun: (path: string) => void;
   /** Right-click on the row: the view anchors its menu at the pointer. */
@@ -88,6 +96,7 @@ export function LaneRow({
   reading,
   strings,
   showDirectory = true,
+  indentPx = 0,
   onSelect,
   onRun,
   onContextMenu,
@@ -107,6 +116,7 @@ export function LaneRow({
       data-has-failed={reading.kind === "failed" ? "true" : "false"}
       data-expanded={expanded ? "true" : "false"}
       data-selected={selected ? "true" : "false"}
+      style={indentPx === 0 ? undefined : { paddingLeft: `${String(6 + indentPx)}px` }}
       aria-selected={selected}
       aria-expanded={expanded}
       onClick={() => onSelect(row.path)}

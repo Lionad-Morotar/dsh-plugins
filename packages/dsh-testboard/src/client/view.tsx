@@ -1032,7 +1032,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
      * `showDirectory` is false inside a tree because the header above the row
      * already names the directory.
      */
-    const renderRow = (row: TestFileRow, showDirectory: boolean): ReactElement => {
+    const renderRow = (row: TestFileRow, showDirectory: boolean, indentPx: number): ReactElement => {
       const fileItem: NavSelection = { kind: "file", path: row.path };
       const isSelected = resolved?.kind === "file" && resolved.path === row.path;
       return (
@@ -1063,6 +1063,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
             })}
             strings={{ failed: strings.failed, runFile: strings.runFile }}
             showDirectory={showDirectory}
+            indentPx={indentPx}
             onSelect={onFileClick}
             onRun={onRunFile}
             onContextMenu={onFileMenu}
@@ -1339,7 +1340,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
                   {pkg.packageName === "." ? null : <h2 data-tst="package-name">{pkg.packageName}</h2>}
                   <LaneTree
                     pkg={pkg}
-                    renderRow={row => renderRow(row, !pkg.grouped)}
+                    renderRow={(row, indentPx) => renderRow(row, !pkg.grouped, indentPx)}
                     collapsed={effectiveCollapsed}
                     onToggle={onToggleDirectory}
                     strings={{

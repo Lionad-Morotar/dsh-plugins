@@ -512,6 +512,18 @@ describe("testboard view", () => {
       expect(own("tree:test/integration")).toEqual(["packages/tree/test/integration/c.test.ts"]);
     });
 
+    it("indents file rows under their directory and leaves root files at the package level", async () => {
+      await mountTree();
+      const row = (path: string) => rows(host).find(candidate => candidate.getAttribute("data-path") === path);
+      // The header is one step in; its files are one step further, so the left
+      // edge reads as a hierarchy rather than a stack of names.
+      expect(row("packages/tree/smoke.test.ts")?.style.paddingLeft).toBe("");
+      expect(row("packages/tree/test/unit/a.test.ts")?.style.paddingLeft).toBe("34px");
+      expect(row("packages/tree/test/unit/nested/b.test.ts")?.style.paddingLeft).toBe("48px");
+      expect(row("packages/tree/test/integration/c.test.ts")?.style.paddingLeft).toBe("34px");
+      expect(host.querySelector<HTMLElement>('[data-dir="tree:test/unit"]')?.style.paddingLeft).toBe("14px");
+    });
+
     it("drops the directory suffix from rows inside the tree", async () => {
       await mountTree();
       // The header above the row already says the directory; repeating it on

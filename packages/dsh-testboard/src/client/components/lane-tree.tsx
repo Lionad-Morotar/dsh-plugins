@@ -33,7 +33,7 @@ export interface LaneTreeStrings {
 export interface LaneTreeProps {
   readonly pkg: PackageTree;
   /** Draws one file row, wherever the tree decides it belongs. */
-  readonly renderRow: (row: PackageTree["rows"][number]) => ReactElement;
+  readonly renderRow: (row: PackageTree["rows"][number], indentPx: number) => ReactElement;
   /**
    * The folded directories, keyed `${packageName}:${dirPath}`.
    *
@@ -127,7 +127,7 @@ function DirectoryBranch({
           <>
             {node.files.map(row => (
               <div key={row.path} data-tst="lane-slot">
-                {renderRow(row)}
+                {renderRow(row, (node.depth + 1) * INDENT_PX)}
               </div>
             ))}
             {node.directories.map(child => (
@@ -158,7 +158,7 @@ export function LaneTree({ pkg, renderRow, collapsed, onToggle, strings }: LaneT
       <>
         {pkg.rows.map(row => (
           <div key={row.path} data-tst="lane-slot">
-            {renderRow(row)}
+            {renderRow(row, 0)}
           </div>
         ))}
       </>
@@ -168,7 +168,7 @@ export function LaneTree({ pkg, renderRow, collapsed, onToggle, strings }: LaneT
     <>
       {pkg.rootFiles.map(row => (
         <div key={row.path} data-tst="lane-slot">
-          {renderRow(row)}
+          {renderRow(row, 0)}
         </div>
       ))}
       {pkg.directories.map(node => (
