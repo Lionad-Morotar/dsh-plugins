@@ -19,7 +19,7 @@ import sourcesData from "./data/sources.json" with { type: "json" };
 import { createFixtureRuntime } from "./fixture-runtime.ts";
 import { summarize, throughputSeries } from "./model.ts";
 import type { TestboardRuntime } from "./runtime.ts";
-import type { RunProgress } from "../shared.ts";
+import type { RunProgress, RunSummary } from "../shared.ts";
 import { ensureStyles } from "./styles.ts";
 import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
 import type { EditorChunkModule } from "./code-contract.ts";
@@ -96,12 +96,16 @@ const STRINGS: TestboardViewStrings = {
   noticeCopied: "已复制路径",
   noticeCopyFailed: "复制失败",
   fromCache: "上次运行",
+  historyLabel: "测试数据",
+  historyLatest: "最新运行",
+  historyScoped: "文件级",
+  errorRunMissing: "这条历史结果已不存在。",
   expandDirectory: "展开目录",
   collapseDirectory: "收起目录",
 };
 
 /** Which static state the page should show instead of the demoting demo loop. */
-type PreviewState = "demo" | "empty" | "loading" | "cached" | "tree";
+type PreviewState = "demo" | "empty" | "loading" | "cached" | "tree" | "history";
 
 /**
  * Read the requested state from the query string.
@@ -115,7 +119,9 @@ type PreviewState = "demo" | "empty" | "loading" | "cached" | "tree";
  */
 function requestedState(search: string): PreviewState {
   const value = new URLSearchParams(search).get("state");
-  return value === "empty" || value === "loading" || value === "cached" || value === "tree" ? value : "demo";
+  return value === "empty" || value === "loading" || value === "cached" || value === "tree" || value === "history"
+    ? value
+    : "demo";
 }
 
 /**
@@ -242,6 +248,79 @@ function cachedRuntime(base: TestboardRuntime, snapshot: TestSnapshot): Testboar
 }
 
 /**
+ * A cached board with a few older readings to switch between.
+ *
+ * The history picker is a host feature, but the preview can stand in for the
+ * host: the runs are summaries of the committed snapshot, and picking one swaps
+ * in the preview's tree snapshot so the row list visibly changes. This is the
+ * only preview state whose point is the picker itself, which is why the picked
+ * data is different rather than the same board under another label.
+ * @param base - the fixture runtime.
+ * @param snapshot - the committed snapshot.
+ * @returns the hosting runtime with three cached runs.
+ */
+function historyRuntime(base: TestboardRuntime, snapshot: TestSnapshot): TestboardRuntime {
+  const cached = cachedRuntime(base, snapshot);
+  const summary = summarize(snapshot);
+  const files = snapshot.packages.reduce((count, pkg) => count + pkg.files.length, 0);
+  const now = Date.now();
+  const runs: RunSummary[] = [
+    {
+      id: "261112/103438",
+      savedAt: new Date(now - 2 * 60_000).toISOString(),
+      status: "passed",
+      phase: "finished",
+      scope: { kind: "all" },
+      runNumber: 4,
+      startedAt: new Date(now - 2 * 60_000 - summary.wallClockMs).toISOString(),
+      elapsedMs: summary.wallClockMs,
+      counts: { passed: summary.passed, failed: summary.failed, skipped: summary.skipped, total: summary.total },
+      files,
+      cases: summary.total,
+    },
+    {
+      id: "261112/101502",
+      savedAt: new Date(now - 25 * 60_000).toISOString(),
+      status: "failed",
+      phase: "finished",
+      scope: { kind: "file", path: "packages/dsh-arch/test/routes.test.ts" },
+      runNumber: 3,
+      startedAt: new Date(now - 25 * 60_000 - 8000).toISOString(),
+      elapsedMs: 8000,
+      counts: { passed: 12, failed: 2, skipped: 0, total: 14 },
+      files,
+      cases: summary.total,
+    },
+    {
+      id: "261111/235900",
+      savedAt: new Date(now - 19 * 60 * 60_000).toISOString(),
+      status: "failed",
+      phase: "finished",
+      scope: { kind: "all" },
+      runNumber: 2,
+      startedAt: new Date(now - 19 * 60 * 60_000 - summary.wallClockMs).toISOString(),
+      elapsedMs: summary.wallClockMs,
+      counts: { passed: summary.passed - 3, failed: summary.failed + 3, skipped: summary.skipped, total: summary.total },
+      files,
+      cases: summary.total,
+    },
+  ];
+  return {
+    ...cached,
+    async listRuns() {
+      return runs;
+    },
+    async loadState(_sessionId, runId) {
+      const state = await cached.loadState("preview");
+      if (runId === undefined) return state;
+      // The tree snapshot is a visibly different board; a picked entry that
+      // rendered the same rows would hide whether the switch landed.
+      return { ...state, snapshot: treeSnapshot(snapshot), selectedRun: runId };
+    },
+  };
+}
+
+/**
  * Read the requested theme from the query string.
  *
  * Dark is the default because it is the board's primary look; `?theme=light` is
@@ -308,7 +387,9 @@ function mount(host: HTMLElement, snapshot: TestSnapshot, sources: SourceBundle,
             // relighting cases under a screenshot, and the point of this state is
             // the directory headers.
             ? { ...fixture, loadState: async () => ({ snapshot: treeSnapshot(snapshot), workspaceName: "dsh-plugins" }) }
-            : fixture;
+            : state === "history"
+              ? historyRuntime(fixture, snapshot)
+              : fixture;
   const View = createTestboardView({
     strings: STRINGS,
     runtime,

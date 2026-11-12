@@ -64,7 +64,7 @@ const CLIENT_EXTERNALS = ["react", "react/jsx-runtime", "react-dom", "@deepseek-
  * stays in its own chunk, and the assertion below fails if it creeps in. That is
  * the megabyte; this bundle is tens of kilobytes, and gzipped it is under 21KB.
  */
-const CLIENT_MAX_BYTES = 80 * 1024;
+const CLIENT_MAX_BYTES = 84 * 1024;
 
 /** CodeMirror's view, state, language and JavaScript parser, minified. */
 const EDITOR_MAX_BYTES = 1_200_000;

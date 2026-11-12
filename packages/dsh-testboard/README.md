@@ -11,7 +11,9 @@
 | 路由 | 作用 |
 | --- | --- |
 | `GET /state?sessionId=` | 该会话工作区的看板状态（快照、当前/最近一轮 run、错误码） |
+| `GET /state?sessionId=&run=` | 该工作区的一份指定缓存运行，供历史切换读取 |
 | `GET /run?sessionId=` | 与 `state` 同体，供轮询 |
+| `GET /history?sessionId=` | 该工作区所有可读缓存运行的摘要，最新在前 |
 | `POST /run` `{sessionId, scope}` | 发起一轮；`scope` 是 `{kind:"all"}` 或 `{kind:"file", path}` |
 | `POST /cancel` `{sessionId}` | 取消该工作区正在跑的一轮 |
 | `GET /source?sessionId=&path=` | 一个测试文件的全文（2MB 上限，路径必须落在工作区内） |
@@ -23,7 +25,9 @@
 - **每工作区一轮**：第二次 `start` 返回 `busy`，不排队。取消走 `AbortSignal`，保留已收集的部分事件与既有快照。
 - **运行反馈**：还没出任何结果的首轮显示居中 `运行中` 加转圈与取消按钮，不是停在「尚未运行」；已有看板在跑时，面板顶边一条 2px 不定进度条持续扫过，配合计数与竖条动画。`prefers-reduced-motion: reduce` 下转圈与扫光都停住，只留静止的弱化标记。
 - **文件级重跑是补丁**：`scope` 为 `{kind:"file"}` 时只把该文件的新结果换进当前 snapshot，其余文件的行原样保留；同时保留上一次全量 run 的 run log（series、失败时刻、耗时），并把补跑文件的结论折回这份 log：修好的失败从图表里消失，新出现的失败补回原时刻。页头计数按补丁后的 snapshot 走，吞吐图与「上次运行」行仍讲全量 run 的故事。所以一轮全量跑出多处失败后，可以逐个文件补跑，看板逐步变绿而全量 run 的形态不被单个文件覆盖。
-- **结果缓存**：每轮跑完把这一轮的 run 与 snapshot 写到工作区 `<workspace>/logs/testboard/<YYMMDD>/<HHmmss>/result.json`（本地时间，同秒重名自动加 `-2` 后缀）。宿主进程里没有该工作区的状态时（重启、新会话、重载页面），`/state` 自动回退到最新一份可读结果，页头 meta 前缀「上次运行」。缓存同时保存 canonical run log，重载后补丁过的 snapshot 与全量 run 的图表叙事一起恢复。写盘是 best-effort：只读 checkout 或磁盘满不会把已完成的运行判失败；坏文件或旧版本 schema 会被跳过，而不是清空看板。缓存不自动清理，删 `logs/testboard` 即重置。
+- **结果缓存**：每轮跑完把这一轮的 run 与 snapshot 写到工作区 `<workspace>/logs/testboard/<YYMMDD>/<HHmmss>/result.json`（本地时间，同秒重名自动加 `-2` 后缀），旁边一份 `summary.json` 供历史列表读取。宿主进程里没有该工作区的状态时（重启、新会话、重载页面），`/state` 自动回退到最新一份可读结果，页头 meta 前缀「上次运行」。缓存同时保存 canonical run log，重载后补丁过的 snapshot 与全量 run 的图表叙事一起恢复。写盘是 best-effort：只读 checkout 或磁盘满不会把已完成的运行判失败；坏文件或旧版本 schema 会被跳过，而不是清空看板。缓存不自动清理，删 `logs/testboard` 即重置。
+- **历史运行**：页头与图表之间有一条「测试数据」选择器，列出缓存里每一轮（时间、用例数、失败数、是否文件级补跑），默认「最新运行」。选一轮就从磁盘读那一轮，而不是把旧结果伪装成最新；运行全部或重跑文件会先回到最新读数。面板挂载、运行结束与窗口重新获得焦点时刷新列表，所以在终端或 agent 里跑完的测试，切回面板就能看到。
+- **外部报告导入**：任何测试进程只要把 vitest JSON reporter 写到 `<workspace>/logs/testboard/*.vitest.json`，面板读取状态或历史时就会把它导成一条缓存运行（失败改名 `.bad`，成功后改名 `.imported`，不会重复导入）。一份报告覆盖的文件会替换旧读数，没覆盖的文件保留上一轮，所以 affected-only 的 `pnpm test` 也能作为补丁落进看板；例如 `pnpm exec vitest run --reporter=json --outputFile=logs/testboard/manual.vitest.json`。报告时间戳只到文件级，逐用例时刻按文件开始时间加用例耗时顺序重建。
 
 ### monorepo 内的目录树分组
 
@@ -44,6 +48,7 @@
 - **吞吐图悬停**：指针进图出竖向引导线，提示卡显示该秒的通过/失败真实计数；失败段被放大到 1/10 最小高度时会额外标注。离开图面即收起，不占布局。
 - **分隔条**：拖拽改左栏宽度（clamp 260–760px），双击回到 42% 流式默认；聚焦后左右方向键 ±16px、Home/End 到两端、Backspace/Delete 重置。
 - **右键引用**：文件行与展开后的用例行右键出菜单，三项：引用、运行此文件、复制路径。引用走宿主 `inputTriggers`，source 名 `lionad.testboard`：文件引用拼成 `@<path>`（复用宿主文件气泡规则），用例引用带文件和用例名、外观为 session chip。引用通道未就绪时该行灰显并给出原因，不会让点击落空。点引用 chip 回到看板并选中对应行：优先走 workbench 的会话级 `openView`，没有时先排队 focus 再切视图，切换失败撤回 focus。
+- **测试数据**：标题下的选择器切换历史运行；「最新运行」是默认读数，缓存里没有别的运行时选择器不出现。
 - **源码**：按需取并缓存，选中文件才请求，取不到显示「该文件的源码不在快照里」。编辑器 chunk 懒加载，第一次选中文件才拉。
 - **目录折叠**：目录标题是唯一的折叠入口，指针点击切换该分支，默认全展开，折叠状态只在组件内、不落 localStorage，切 session 时清空。折叠后该分支的标题与其整棵子树都不渲染，导航、选中归一与半屏步长都只按可见行计算。搜索框有内容或失败筛选打开时忽略折叠集合（否则会用一个折叠挡住刚搜到的文件），清空后恢复读者原来的折叠状态。chip 或 `viewRequest` 指向折叠分支里的文件时先展开其祖先目录再选中。折叠把当前选中文件藏起来时，选中迁移到其后最近可见行，没有则前一行，都没有则清空并让右栏回到提示态。
 - **主题**：底色、正文与分割线取宿主语义 token（`--dsw-alias-bg-base` / `--dsw-alias-label-*` / `--dsw-alias-border-*`），字号跟 `--dsh-content-font-size` 与 `--dsh-code-font-size`。通过 / 失败 / 未跑三个语义色由看板自己定义，暗亮两套各自调过。
@@ -72,7 +77,7 @@
 | `lib/client.js` | 浏览器半，CJS 包在 ModuleLoader factory 里 |
 | `lib/client.editor.js` | 懒 chunk：CodeMirror 与高亮代码视图 |
 
-启动包有 80KB 预算（gzip 后约 21.7KB，实测 79,032 B）。这条线抬过五次，都是因为面板不再是原型：40KB 时是分栏、键盘与拖拽落地，64KB 时是运行头、面积图与动效层成为启动代码，72KB 时是右键菜单与引用通道（输入框可能在首帧就持有 chip，source 必须从首帧注册），76KB 时是目录折叠（折叠集合、可见行推导与选中迁移都在首帧），80KB 时是目录树与堆叠吞吐图同处一个启动包（树渲染、折叠状态与图例/悬停读数都在首帧）。真正要守的是 CodeMirror 不进启动包，那条断言还在。
+启动包有 84KB 预算（gzip 后约 22.4KB，实测 81,751 B）。这条线抬过六次，都是因为面板不再是原型：40KB 时是分栏、键盘与拖拽落地，64KB 时是运行头、面积图与动效层成为启动代码，72KB 时是右键菜单与引用通道（输入框可能在首帧就持有 chip，source 必须从首帧注册），76KB 时是目录折叠（折叠集合、可见行推导与选中迁移都在首帧），80KB 时是目录树与堆叠吞吐图同处一个启动包（树渲染、折叠状态与图例/悬停读数都在首帧），84KB 时是历史运行选择器（缓存摘要、切换读数与外部报告入口常在首帧）。真正要守的是 CodeMirror 不进启动包，那条断言还在。
 
 `src/client/data/snapshot.json` 与 `sources.json` 由 `scripts/snapshot.mjs` 扫描本仓 `packages/*/test/**/*.test.{ts,tsx}` 生成。它们现在只服务两处：预览页的 fixture runtime，以及测试语料。线上看板不读它们。
 
@@ -118,7 +123,7 @@ cd packages/dsh-testboard
 node scripts/preview.mjs --out ../../temp/testboard-preview
 ```
 
-产出 `index.html` 与 `assets.js`，React 已内联，页面不引用外链，`file://` 直接打开或起静态服务器都能看。`?theme=dark|light` 选主题（缺省暗色），`?state=empty` 渲染首次打开时的等待态，`?state=loading` 渲染首轮运行中的等待态，`?state=cached` 渲染从磁盘缓存载入后的上一次结果，`?state=tree` 渲染一棵多级目录树供折叠演示。空态与 dsh-arch 的空界面同一套版式：内容区居中、文字弱化，只留一个动作入口。
+产出 `index.html` 与 `assets.js`，React 已内联，页面不引用外链，`file://` 直接打开或起静态服务器都能看。`?theme=dark|light` 选主题（缺省暗色），`?state=empty` 渲染首次打开时的等待态，`?state=loading` 渲染首轮运行中的等待态，`?state=cached` 渲染从磁盘缓存载入后的上一次结果，`?state=tree` 渲染一棵多级目录树供折叠演示，`?state=history` 渲染带三个历史运行的数据选择器供切换演示。空态与 dsh-arch 的空界面同一套版式：内容区居中、文字弱化，只留一个动作入口。
 
 预览页用 fixture runtime，与线上走同一个 `TestboardRuntime` 接口，所以渲染的是真实 tab 的代码路径。`?state=tree` 在已提交快照之外另加一个只用于演示的 `demo-tree` 包（`test/unit`、`test/unit/nested`、`test/integration` 三层，六个文件、通过失败混合），因为真实快照里只有 `dsh-arch` 一棵两层树，看不出多级折叠。这份演示数据只存在于 `preview.tsx`，不写进 `src/client/data/`，线上看板拿不到它。
 

@@ -162,7 +162,8 @@ export type TestboardError =
   | "no-subprocess"
   | "busy"
   | "bad-scope"
-  | "run-failed";
+  | "run-failed"
+  | "run-missing";
 
 /**
  * The preview demo's own stage.
@@ -217,9 +218,39 @@ export interface TestboardState {
    * numbers came from instead of presenting an old run as one that just landed.
    */
   readonly cached?: boolean;
+  /** Id of the cached run the reader picked, when not showing the latest. */
+  readonly selectedRun?: string;
   readonly error?: TestboardError;
   /** Present only on the preview's fixture runtime; never sent by the host. */
   readonly demo?: DemoStage;
+}
+
+/**
+ * One cached run, as the history picker needs it.
+ *
+ * Deliberately smaller than a {@link CachedResult}: the picker needs a label and
+ * enough to sort and tell runs apart, and shipping every snapshot to the browser
+ * to build that list would move megabytes for six columns of text.
+ */
+export interface RunSummary {
+  /** `<YYMMDD>/<HHmmss>`, the run's directory under `logs/testboard`. */
+  readonly id: string;
+  readonly savedAt: string;
+  readonly status: RunStatus;
+  readonly phase: RunPhase;
+  readonly scope: RunScope;
+  readonly runNumber: number;
+  readonly startedAt: string;
+  readonly elapsedMs: number;
+  readonly counts: RunCounts;
+  /** Test files and cases in the snapshot this run left behind. */
+  readonly files: number;
+  readonly cases: number;
+}
+
+/** `GET /history` answer: every cached run, newest first. */
+export interface WireHistoryResponse {
+  readonly runs: readonly RunSummary[];
 }
 
 /** `POST /run` answer: an accepted run, or the reason it was refused. */

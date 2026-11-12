@@ -599,6 +599,11 @@ export function createFixtureRuntime(options: FixtureRuntimeOptions): TestboardR
       return stateOf();
     },
 
+    async listRuns() {
+      // The preview has one synthetic reading; history is a host/cache feature.
+      return [];
+    },
+
     async startRun(_sessionId, scope) {
       if (run?.phase === "running") return { ok: false, error: "busy" };
       clearTimers();

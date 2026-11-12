@@ -41,7 +41,15 @@ import {
   type ThroughputBucket,
 } from "./model.ts";
 import type { TestboardRuntime } from "./runtime.ts";
-import { VIEW_ID, type DemoStage, type RunProgress, type RunScope, type TestboardError, type TestboardState } from "../shared.ts";
+import {
+  VIEW_ID,
+  type DemoStage,
+  type RunProgress,
+  type RunScope,
+  type RunSummary,
+  type TestboardError,
+  type TestboardState,
+} from "../shared.ts";
 import {
   caseTickStates,
   defaultMotion,
@@ -150,6 +158,10 @@ export interface TestboardViewStrings extends DetailPaneStrings {
   readonly noticeCopied: string;
   readonly noticeCopyFailed: string;
   readonly fromCache: string;
+  readonly historyLabel: string;
+  readonly historyLatest: string;
+  readonly historyScoped: string;
+  readonly errorRunMissing: string;
   readonly expandDirectory: string;
   readonly collapseDirectory: string;
 }
@@ -244,6 +256,8 @@ function errorText(error: TestboardError, strings: TestboardViewStrings): string
       return strings.errorBadScope;
     case "run-failed":
       return strings.errorRunFailed;
+    case "run-missing":
+      return strings.errorRunMissing;
   }
 }
 
@@ -356,6 +370,26 @@ function useHostTheme(): "dark" | "light" {
  * @param options - locale-bound strings and the two data loaders.
  * @returns the component the slot mounts.
  */
+/**
+ * One entry in the history picker.
+ *
+ * The label is what tells two runs apart at a glance: when, how many cases, and
+ * whether it was a whole run or one file patched. The exact counts stay in the
+ * board once picked.
+ * @param entry - the cached run's summary.
+ * @param strings - the locale table, for the units.
+ * @returns the option text.
+ */
+function historyLabel(entry: RunSummary, strings: TestboardViewStrings): string {
+  const at = new Date(entry.savedAt);
+  const stamp = Number.isNaN(at.getTime())
+    ? entry.id
+    : `${String(at.getMonth() + 1).padStart(2, "0")}/${String(at.getDate()).padStart(2, "0")} ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+  const failed = entry.counts.failed > 0 ? ` · ${String(entry.counts.failed)} ${strings.failed}` : "";
+  const scoped = entry.scope.kind === "file" ? ` · ${strings.historyScoped}` : "";
+  return `${stamp} · ${String(entry.counts.total)} ${strings.tests}${failed}${scoped}`;
+}
+
 export function createTestboardView(options: TestboardViewOptions): (props: ConversationViewProps) => ReactElement {
   const { strings, runtime, loadEditor, reference, referenceSourceAvailable } = options;
 
@@ -380,6 +414,11 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const [demo, setDemo] = useState<DemoStage | undefined>(undefined);
     // Whether the reading came from the on-disk cache instead of this process.
     const [cached, setCached] = useState(false);
+    // The cached runs the picker offers, and which one the reader picked. An
+    // empty id means "the latest": the live engine if it has anything, else the
+    // newest cache entry.
+    const [history, setHistory] = useState<readonly RunSummary[]>([]);
+    const [selectedRun, setSelectedRun] = useState<string | undefined>(undefined);
     const [loadError, setLoadError] = useState<string | undefined>(undefined);
     const [editor, setEditor] = useState<EditorChunkModule | undefined>(undefined);
     const [filter, setFilter] = useState<RowFilter>("all");
@@ -471,6 +510,8 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       setMenu(undefined);
       setNotice(undefined);
       setCached(false);
+      setHistory([]);
+      setSelectedRun(undefined);
       handledFocus.current = undefined;
       setSessionEpoch(epoch => epoch + 1);
     }, [sessionId]);
@@ -490,6 +531,9 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       // the board never invents a fixing stage.
       setDemo(state.demo);
       setCached(state.cached === true);
+      // A picked run answers with its own id; the latest answer has none, and
+      // must not clear a pick that is still loading behind it.
+      if (state.selectedRun !== undefined) setSelectedRun(state.selectedRun);
     }, []);
 
     // The first load, and every session change. No session id means the host
@@ -503,7 +547,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
         return undefined;
       }
       let live = true;
-      runtime.loadState(sessionId).then(
+      runtime.loadState(sessionId, selectedRun).then(
         state => {
           if (live) applyState(state);
         },
@@ -514,7 +558,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       return () => {
         live = false;
       };
-    }, [runtime, sessionId, sessionEpoch, applyState]);
+    }, [runtime, sessionId, sessionEpoch, selectedRun, applyState]);
 
     // A run is a process, not a value: while the host says one is going, the
     // board asks again until it settles. The timer is cleared whenever the phase
@@ -529,7 +573,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       if (!polling || sessionId === undefined || sessionId === "") return undefined;
       let live = true;
       const timer = setInterval(() => {
-        runtime.loadState(sessionId).then(
+        runtime.loadState(sessionId, selectedRun).then(
           state => {
             if (!live) return;
             applyState(state);
@@ -548,7 +592,28 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
         live = false;
         clearInterval(timer);
       };
-    }, [polling, runtime, sessionId, applyState]);
+    }, [polling, runtime, sessionId, selectedRun, applyState]);
+
+    // The picker's data. Loaded with the session, after every settled run (the
+    // run that just landed is a new entry), and when the window regains focus,
+    // which is when a run started elsewhere (a terminal, an agent) may have
+    // written a new cache entry.
+    const refreshHistory = useCallback((): void => {
+      if (sessionId === undefined || sessionId === "") return;
+      runtime.listRuns(sessionId).then(setHistory, () => undefined);
+    }, [runtime, sessionId]);
+    useEffect(() => {
+      refreshHistory();
+    }, [refreshHistory]);
+    useEffect(() => {
+      if (run !== undefined && run.phase !== "running") refreshHistory();
+    }, [run?.runId, run?.phase, refreshHistory]);
+    useEffect(() => {
+      if (typeof window === "undefined") return undefined;
+      const onFocus = (): void => refreshHistory();
+      window.addEventListener("focus", onFocus);
+      return () => window.removeEventListener("focus", onFocus);
+    }, [refreshHistory]);
 
     // Source text is fetched per file and kept: the board no longer ships every
     // test file's text, and re-selecting a file must not refetch it.
@@ -807,6 +872,10 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const startRun = useCallback(
       (scope: RunScope): void => {
         if (sessionId === undefined || sessionId === "") return;
+        // A run reads the live workspace, so a picked history entry cannot stay
+        // selected while it happens: the board would freeze on an older reading
+        // and the new run would be invisible.
+        setSelectedRun(undefined);
         runtime.startRun(sessionId, scope).then(
           result => {
             if (result.ok) {
@@ -830,10 +899,10 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     const onCancel = useCallback((): void => {
       if (sessionId === undefined || sessionId === "") return;
       runtime.cancelRun(sessionId).then(
-        () => runtime.loadState(sessionId).then(applyState, () => undefined),
+        () => runtime.loadState(sessionId, selectedRun).then(applyState, () => undefined),
         (error: unknown) => setLoadError(error instanceof Error ? error.message : String(error)),
       );
-    }, [runtime, sessionId, applyState]);
+    }, [runtime, sessionId, selectedRun, applyState]);
 
     /**
      * What the composer can take right now, read when a menu opens.
@@ -1163,6 +1232,33 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
           reduced={motion.reduced}
           strings={{ passed: strings.passed, failed: strings.failed, took: strings.took }}
         />
+        {history.length === 0 ? null : (
+          <div data-testid="run-picker" data-tst="run-picker">
+            <label data-tst="run-picker-label">
+              {strings.historyLabel}
+              <select
+                data-testid="run-picker-select"
+                data-tst="run-picker-select"
+                value={selectedRun ?? ""}
+                onChange={event => {
+                  const id = event.target.value;
+                  setSelectedRun(id === "" ? undefined : id);
+                  setSelection(undefined);
+                  setExpanded(new Set());
+                  setStateError(undefined);
+                  setLoadError(undefined);
+                }}
+              >
+                <option value="">{strings.historyLatest}</option>
+                {history.map(entry => (
+                  <option key={entry.id} value={entry.id}>
+                    {historyLabel(entry, strings)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
         <AreaChart
           series={chartSeries}
           reduced={motion.reduced}

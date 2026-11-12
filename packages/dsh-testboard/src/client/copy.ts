@@ -67,6 +67,10 @@ export const ZH: Record<string, string> = {
   "testboard.noticeCopied": "已复制路径",
   "testboard.noticeCopyFailed": "复制失败",
   "testboard.fromCache": "上次运行",
+  "testboard.historyLabel": "测试数据",
+  "testboard.historyLatest": "最新运行",
+  "testboard.historyScoped": "文件级",
+  "testboard.errorRunMissing": "这条历史结果已不存在。",
   "testboard.expandDirectory": "展开目录",
   "testboard.collapseDirectory": "收起目录",
 };
@@ -133,6 +137,10 @@ export const EN: Record<string, string> = {
   "testboard.noticeCopied": "Path copied",
   "testboard.noticeCopyFailed": "Copy failed",
   "testboard.fromCache": "Last run",
+  "testboard.historyLabel": "Test data",
+  "testboard.historyLatest": "Latest run",
+  "testboard.historyScoped": "file-scoped",
+  "testboard.errorRunMissing": "That cached run is no longer there.",
   "testboard.expandDirectory": "Expand directory",
   "testboard.collapseDirectory": "Collapse directory",
 };

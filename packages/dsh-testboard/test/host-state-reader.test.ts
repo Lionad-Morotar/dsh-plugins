@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { TestSnapshot } from "../src/client/model.ts";
 import type { CachedResult } from "../src/host/results-store.ts";
-import { createStateReader } from "../src/host/state-reader.ts";
+import { createSelectedStateReader, createStateReader } from "../src/host/state-reader.ts";
 import type { RunProgress, TestboardState } from "../src/shared.ts";
 
 const WORKSPACE = "/work/repo";
@@ -133,5 +133,45 @@ describe("createStateReader", () => {
 
     expect(state.error).toBe("run-failed");
     expect(state.snapshot).toBe(SNAPSHOT);
+  });
+});
+
+describe("createSelectedStateReader", () => {
+  it("answers the picked run from disk, even when the engine has a newer one", async () => {
+    const cached: CachedResult = {
+      savedAt: "2026-11-11T01:00:05.000Z",
+      run: run({ runNumber: 3 }),
+      snapshot: SNAPSHOT,
+      log: run({ runNumber: 2 }),
+    };
+    const load = vi.fn(async (_workspace: string, id: string) => (id === "261111/010000" ? cached : undefined));
+    const read = createSelectedStateReader({ results: { load }, isDirectory: async value => value === WORKSPACE });
+
+    const state = await read(WORKSPACE, "261111/010000");
+
+    expect(state.selectedRun).toBe("261111/010000");
+    expect(state.cached).toBe(true);
+    expect(state.run?.runNumber).toBe(3);
+    expect(state.log?.runNumber).toBe(2);
+  });
+
+  it("reports a missing run instead of falling back to the latest", async () => {
+    const read = createSelectedStateReader({
+      results: { load: async () => undefined },
+      isDirectory: async value => value === WORKSPACE,
+    });
+
+    await expect(read(WORKSPACE, "261111/010000")).resolves.toMatchObject({
+      error: "run-missing",
+      selectedRun: "261111/010000",
+    });
+  });
+
+  it("reports a workspace that no longer exists before looking at the cache", async () => {
+    const load = vi.fn(async () => undefined);
+    const read = createSelectedStateReader({ results: { load }, isDirectory: async () => false });
+
+    await expect(read(WORKSPACE, "261111/010000")).resolves.toMatchObject({ error: "unknown-workspace" });
+    expect(load).not.toHaveBeenCalled();
   });
 });

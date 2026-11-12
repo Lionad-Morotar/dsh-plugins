@@ -1,5 +1,5 @@
 /**
- * The five `/testboard/api` routes, driven through the pure handler.
+ * The `/testboard/api` routes, driven through the pure handler.
  *
  * `handleRequest` exists so the wire contract is testable without a live server:
  * the prefix registration is a thin adapter over it. Every case here is a
@@ -37,9 +37,13 @@ function makeDeps(overrides: Partial<TestboardRouteDeps> = {}): Harness {
       calls.push(`resolve:${sessionId}`);
       return sessionId === "known" ? WORKSPACE : undefined;
     },
-    readState: workspace => {
-      calls.push(`state:${workspace}`);
+    readState: (workspace, runId) => {
+      calls.push(runId === undefined ? `state:${workspace}` : `state:${workspace}:${runId}`);
       return {};
+    },
+    readHistory: async workspace => {
+      calls.push(`history:${workspace}`);
+      return { runs: [] };
     },
     startRun: (workspace, scope) => {
       calls.push(`start:${workspace}:${scope.kind}`);
@@ -360,5 +364,49 @@ describe("readWorkspaceFile: symlink escape", () => {
     const { workspace } = await makeWorkspace();
 
     expect(await readWorkspaceFile(workspace, ".")).toBeUndefined();
+  });
+});
+
+describe("GET /testboard/api/history", () => {
+  it("answers the cached runs for a known session", async () => {
+    const summary = {
+      id: "261112/080000",
+      savedAt: "2026-11-12T00:00:05.000Z",
+      status: "failed" as const,
+      phase: "finished" as const,
+      scope: { kind: "all" as const },
+      runNumber: 3,
+      startedAt: "2026-11-12T00:00:00.000Z",
+      elapsedMs: 5000,
+      counts: { passed: 4, failed: 1, skipped: 0, total: 5 },
+      files: 2,
+      cases: 5,
+    };
+    const harness = makeDeps({ readHistory: async workspace => ({ runs: [{ ...summary, id: `${workspace}:${summary.id}` }] }) });
+
+    const response = await get(harness.deps, "/testboard/api/history?sessionId=known");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ runs: [{ ...summary, id: `${WORKSPACE}:${summary.id}` }] });
+  });
+
+  it("answers an empty list for an unknown session", async () => {
+    const harness = makeDeps();
+    const response = await get(harness.deps, "/testboard/api/history?sessionId=nope");
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ runs: [] });
+  });
+
+  it("requires a session id", async () => {
+    const harness = makeDeps();
+    const response = await get(harness.deps, "/testboard/api/history");
+    expect(response.status).toBe(400);
+  });
+
+  it("passes a picked run id through to the state reader", async () => {
+    const harness = makeDeps();
+    const response = await get(harness.deps, "/testboard/api/state?sessionId=known&run=261112%2F080000");
+    expect(response.status).toBe(200);
+    expect(harness.calls).toContain(`state:${WORKSPACE}:261112/080000`);
   });
 });

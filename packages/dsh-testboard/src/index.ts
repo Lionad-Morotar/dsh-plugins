@@ -22,8 +22,9 @@ import type { Context } from "@deepseek-ai/cordis";
 
 import { createRunEngine, type SubprocessLike } from "./host/run-engine.ts";
 import { createResultsStore } from "./host/results-store.ts";
+import { importReports } from "./host/report-import.ts";
 import { planVitestRun } from "./host/run-plan.ts";
-import { createStateReader } from "./host/state-reader.ts";
+import { createSelectedStateReader, createStateReader } from "./host/state-reader.ts";
 import { registerTestboardRoutes, type TestboardRouteDeps, type WebServerFace } from "./host/routes.ts";
 import {
   resolveSessionRoot,
@@ -229,6 +230,22 @@ export function apply(ctx: Context): void {
     // In-memory state first, then the newest on-disk result: a fresh boot or a
     // new session for the same workspace opens on the last thing the reader saw.
     const readState = createStateReader({ engine, results, isDirectory });
+    const readSelectedState = createSelectedStateReader({ results, isDirectory });
+
+    /**
+     * Pull in reports other processes dropped in the workspace cache root.
+     *
+     * Best-effort: an unreadable report is not a reason to fail a board read,
+     * and the importer claims files by rename so concurrent polls cannot
+     * duplicate a run.
+     */
+    async function ingestReports(workspace: string): Promise<void> {
+      try {
+        await importReports(workspace, results);
+      } catch {
+        // A read-only checkout or a malformed report must not break the tab.
+      }
+    }
 
     async function startRun(workspace: string, scope: RunScope): Promise<WireRunStartResponse> {
       if (subprocess === undefined) return { ok: false, error: "no-subprocess" };
@@ -239,7 +256,14 @@ export function apply(ctx: Context): void {
 
     const deps: TestboardRouteDeps = {
       resolveWorkspaceRoot,
-      readState,
+      readState: async (workspace, runId) => {
+        await ingestReports(workspace);
+        return runId === undefined ? readState(workspace) : readSelectedState(workspace, runId);
+      },
+      readHistory: async workspace => {
+        await ingestReports(workspace);
+        return { runs: await results.list(workspace) };
+      },
       startRun,
       cancelRun: workspace => engine.cancel(workspace),
       readSource: (workspace, path) => readWorkspaceFile(workspace, path),

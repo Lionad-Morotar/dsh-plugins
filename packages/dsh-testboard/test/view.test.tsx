@@ -26,7 +26,7 @@ import { LEFT_PANE_MAX_WIDTH, LEFT_PANE_MIN_WIDTH, LEFT_PANE_WIDTH_KEY } from ".
 import type { TestboardRuntime } from "../src/client/runtime.ts";
 import { splitSourceLines, type SourceBundle } from "../src/client/source.ts";
 import { createTestboardView, type TestboardViewStrings } from "../src/client/view.tsx";
-import type { RunProgress, RunScope, TestboardState } from "../src/shared.ts";
+import type { RunProgress, RunScope, RunSummary, TestboardState } from "../src/shared.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -122,6 +122,10 @@ const STRINGS: TestboardViewStrings = {
   noticeCopied: "已复制路径",
   noticeCopyFailed: "复制失败",
   fromCache: "上次运行",
+  historyLabel: "测试数据",
+  historyLatest: "最新运行",
+  historyScoped: "文件级",
+  errorRunMissing: "这条历史结果已不存在。",
   expandDirectory: "展开目录",
   collapseDirectory: "收起目录",
 };
@@ -138,19 +142,35 @@ interface FakeRuntime extends TestboardRuntime {
   readonly calls: { readonly kind: string; readonly detail?: string }[];
   /** Replace what the next loadState answers, to drive a run to its end. */
   setState(state: TestboardState): void;
+  /** The cached runs the picker offers, and per-run answers for a pick. */
+  setHistory(runs: readonly RunSummary[], states?: Readonly<Record<string, TestboardState>>): void;
 }
 
 function makeRuntime(initial: TestboardState = { snapshot: SNAPSHOT, workspaceName: "dsh-plugins" }): FakeRuntime {
   const calls: { kind: string; detail?: string }[] = [];
   let state: TestboardState = initial;
+  let history: readonly RunSummary[] = [];
+  let picked: Readonly<Record<string, TestboardState>> = {};
   return {
     calls,
     setState(next) {
       state = next;
     },
-    async loadState(sessionId) {
-      calls.push({ kind: "loadState", detail: sessionId });
+    setHistory(runs, states = {}) {
+      history = runs;
+      picked = states;
+    },
+    async loadState(sessionId, runId) {
+      calls.push({ kind: "loadState", detail: runId ?? sessionId });
+      if (runId !== undefined) {
+        const answer = picked[runId];
+        if (answer !== undefined) return answer;
+      }
       return state;
+    },
+    async listRuns(sessionId) {
+      calls.push({ kind: "listRuns", detail: sessionId });
+      return history;
     },
     async startRun(sessionId, scope: RunScope) {
       calls.push({ kind: "startRun", detail: `${sessionId}:${scope.kind}` });
@@ -2133,4 +2153,171 @@ describe("testboard references", () => {
     expect(row?.getAttribute("data-selected")).toBe("true");
     expect(complete.calls).toBeGreaterThan(0);
   });
+});
+
+/**
+ * The history picker.
+ *
+ * The board's default reading is "the latest"; the picker exists so a reader can
+ * go back to any cached run without pretending it is the newest one. The fake
+ * runtime records which id the board asked for, which is the whole contract
+ * between the picker and the host.
+ */
+describe("testboard history picker", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    runtime = makeRuntime();
+    runtime.setHistory([
+      {
+        id: "261112/080000",
+        savedAt: "2026-11-12T00:00:05.000Z",
+        status: "failed",
+        phase: "finished",
+        scope: { kind: "all" },
+        runNumber: 1,
+        startedAt: "2026-11-12T00:00:00.000Z",
+        elapsedMs: 5000,
+        counts: { passed: 4, failed: 1, skipped: 0, total: 5 },
+        files: 2,
+        cases: 5,
+      },
+      {
+        id: "261111/235900",
+        savedAt: "2026-11-11T15:59:05.000Z",
+        status: "passed",
+        phase: "finished",
+        scope: { kind: "file", path: "test/a.test.ts" },
+        runNumber: 2,
+        startedAt: "2026-11-11T15:59:00.000Z",
+        elapsedMs: 3000,
+        counts: { passed: 3, failed: 0, skipped: 0, total: 3 },
+        files: 1,
+        cases: 3,
+      },
+    ]);
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+    window.localStorage.clear();
+  });
+
+  async function mount(): Promise<void> {
+    await act(async () => {
+      root.render(createElement(makeView(), { sessionId: "session-1" }));
+    });
+    await waitForBoard(host, '[data-testid="run-picker-select"]');
+  }
+
+  it("offers the cached runs and the latest reading", async () => {
+    await mount();
+    const select = host.querySelector<HTMLSelectElement>('[data-testid="run-picker-select"]');
+    expect(select).not.toBeNull();
+    expect([...select?.options ?? []].map(option => option.value)).toEqual(["", "261112/080000", "261111/235900"]);
+    expect(select?.options[1]?.textContent).toContain("5");
+    expect(select?.options[2]?.textContent).toContain(STRINGS.historyScoped);
+  });
+
+  it("loads the picked run by id and shows its cached reading", async () => {
+    await mount();
+    // The fake answers the picked id with a different snapshot; the board must
+    // ask for that id rather than patching the current reading client-side.
+    runtime.setHistory(
+      [
+        {
+          id: "261111/235900",
+          savedAt: "2026-11-11T15:59:05.000Z",
+          status: "passed",
+          phase: "finished",
+          scope: { kind: "all" },
+          runNumber: 2,
+          startedAt: "2026-11-11T15:59:00.000Z",
+          elapsedMs: 3000,
+          counts: { passed: 1, failed: 0, skipped: 0, total: 1 },
+          files: 1,
+          cases: 1,
+        },
+      ],
+      { "261111/235900": { snapshot: SNAPSHOT, workspaceName: "dsh-plugins", run: { ...historyRun() }, cached: true, selectedRun: "261111/235900" } },
+    );
+    await act(async () => {
+      root.render(createElement(makeView(), { sessionId: "session-1" }));
+    });
+    await waitForBoard(host, '[data-testid="run-picker-select"]');
+
+    const select = host.querySelector<HTMLSelectElement>('[data-testid="run-picker-select"]');
+    await act(async () => {
+      if (select !== null) {
+        select.value = "261111/235900";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(runtime.calls).toContainEqual({ kind: "loadState", detail: "261111/235900" });
+    expect(host.querySelector<HTMLSelectElement>('[data-testid="run-picker-select"]')?.value).toBe("261111/235900");
+  });
+
+  it("goes back to the latest reading when the empty option is picked", async () => {
+    await mount();
+    const select = host.querySelector<HTMLSelectElement>('[data-testid="run-picker-select"]');
+    await act(async () => {
+      if (select !== null) {
+        select.value = "261112/080000";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      if (select !== null) {
+        select.value = "";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(runtime.calls).toContainEqual({ kind: "loadState", detail: "session-1" });
+  });
+
+  it("leaves the picker out when the workspace has no cache", async () => {
+    runtime.setHistory([]);
+    await act(async () => {
+      root.render(createElement(makeView(), { sessionId: "session-1" }));
+    });
+    await waitForBoard(host, '[data-testid="file-row"]');
+    expect(host.querySelector('[data-testid="run-picker-select"]')).toBeNull();
+  });
+
+  /** A finished run for the picked-state fixture. */
+  function historyRun(): RunProgress {
+    return {
+      runId: "run-2",
+      scope: { kind: "all" },
+      status: "passed",
+      phase: "finished",
+      runNumber: 2,
+      startedAt: "2026-11-11T15:59:00.000Z",
+      finishedAt: "2026-11-11T15:59:03.000Z",
+      elapsedMs: 3000,
+      completedFiles: 1,
+      totalFiles: null,
+      counts: { passed: 1, failed: 0, skipped: 0, total: 1 },
+      series: [{ tMs: 0, finished: 1, passed: 1, failed: 0 }],
+      failures: [],
+      cases: [],
+    };
+  }
 });

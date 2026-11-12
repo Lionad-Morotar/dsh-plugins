@@ -1,7 +1,7 @@
 // src/index.ts
-import { access as access2, readFile as readFile4, realpath as realpath2, stat } from "node:fs/promises";
-import { readFileSync, realpathSync } from "node:fs";
-import { join as join4, sep } from "node:path";
+import { access as access2, readFile as readFile5, realpath as realpath2, stat } from "node:fs/promises";
+import { readFileSync as readFileSync2, realpathSync } from "node:fs";
+import { join as join5, sep } from "node:path";
 
 // src/host/run-engine.ts
 import { readFile, rm } from "node:fs/promises";
@@ -198,7 +198,7 @@ function createRunEngine(options) {
       carry: incomplete === 0 ? EMPTY_BUFFER : Buffer.from(chunk.subarray(chunk.length - incomplete))
     };
   }
-  function countsOf(cases) {
+  function countsOf2(cases) {
     let passed = 0;
     let failed = 0;
     let skipped = 0;
@@ -209,7 +209,7 @@ function createRunEngine(options) {
     }
     return { passed, failed, skipped, total: cases.length };
   }
-  function seriesOf(cases, elapsedMs) {
+  function seriesOf2(cases, elapsedMs) {
     if (cases.length === 0) return [];
     const spanMs = Math.max(elapsedMs, cases[cases.length - 1]?.atMs ?? 0);
     const buckets = Math.floor(spanMs / SERIES_BUCKET_MS) + 1;
@@ -242,8 +242,8 @@ function createRunEngine(options) {
       elapsedMs,
       completedFiles: live.completedFiles,
       totalFiles: base.totalFiles,
-      counts: countsOf(live.cases),
-      series: seriesOf(live.cases, elapsedMs),
+      counts: countsOf2(live.cases),
+      series: seriesOf2(live.cases, elapsedMs),
       failures: [...live.failures],
       cases: [...live.cases]
     };
@@ -307,7 +307,7 @@ function createRunEngine(options) {
         atMs: log.elapsedMs
       });
     }
-    const counts = countsOf(cases);
+    const counts = countsOf2(cases);
     const failures = cases.filter((event) => event.status === "failed").map((event) => ({ tMs: event.atMs, path: event.path, name: event.name }));
     return {
       ...log,
@@ -315,7 +315,7 @@ function createRunEngine(options) {
       counts,
       failures,
       cases,
-      series: seriesOf(cases, log.elapsedMs)
+      series: seriesOf2(cases, log.elapsedMs)
     };
   }
   async function execute(workspace, scope, runId, entry) {
@@ -376,7 +376,7 @@ function createRunEngine(options) {
         status,
         phase,
         elapsedMs,
-        series: seriesOf(live.cases, elapsedMs),
+        series: seriesOf2(live.cases, elapsedMs),
         ...phase === "running" ? {} : { finishedAt: new Date(now()).toISOString() },
         ...message === void 0 ? {} : { message }
       };
@@ -496,6 +496,11 @@ import { readdir, readFile as readFile2, rename, writeFile, mkdir } from "node:f
 import { dirname, join as join2 } from "node:path";
 var RESULT_ROOT = join2("logs", "testboard");
 var RESULT_FILE = "result.json";
+var SUMMARY_FILE = "summary.json";
+var RUN_ID = /^\d{6}\/\d{6}(?:-\d+)?$/;
+function isRunId(value) {
+  return RUN_ID.test(value);
+}
 var RESULT_VERSION = 1;
 function two(value) {
   return String(value).padStart(2, "0");
@@ -525,6 +530,35 @@ function readRecord(value) {
 }
 function descending(left, right) {
   return left < right ? 1 : left > right ? -1 : 0;
+}
+function summarize(id, savedAt, record) {
+  let files = 0;
+  let cases = 0;
+  for (const pkg of record.snapshot.packages) {
+    files += pkg.files.length;
+    for (const file of pkg.files) cases += file.cases.length;
+  }
+  return {
+    id,
+    savedAt,
+    status: record.run.status,
+    phase: record.run.phase,
+    scope: record.run.scope,
+    runNumber: record.run.runNumber,
+    startedAt: record.run.startedAt,
+    elapsedMs: record.run.elapsedMs,
+    counts: record.run.counts,
+    files,
+    cases
+  };
+}
+function readSummary(value) {
+  if (value === null || typeof value !== "object") return void 0;
+  const fields = value;
+  if (fields.version !== RESULT_VERSION) return void 0;
+  if (typeof fields.id !== "string" || typeof fields.startedAt !== "string") return void 0;
+  if (fields.counts === null || typeof fields.counts !== "object") return void 0;
+  return fields;
 }
 function createResultsStore() {
   const memory = /* @__PURE__ */ new Map();
@@ -577,6 +611,7 @@ function createResultsStore() {
       for (let attempt = 1; attempt <= 20; attempt += 1) {
         const suffix = attempt === 1 ? "" : `-${String(attempt)}`;
         const runDirectory = join2(workspace, `${directory}${suffix}`);
+        const id = `${directory.slice(RESULT_ROOT.length + 1)}${suffix}`;
         try {
           await mkdir(dirname(runDirectory), { recursive: true });
           await mkdir(runDirectory);
@@ -593,12 +628,18 @@ function createResultsStore() {
         } catch {
           continue;
         }
-        memory.set(workspace, {
+        const cached = {
           savedAt: now.toISOString(),
           run: result.run,
           snapshot: result.snapshot,
           ...result.log === void 0 ? {} : { log: result.log }
-        });
+        };
+        memory.set(workspace, cached);
+        void writeFile(
+          join2(runDirectory, SUMMARY_FILE),
+          JSON.stringify({ version: RESULT_VERSION, ...summarize(id, cached.savedAt, cached) }),
+          "utf8"
+        ).catch(() => void 0);
         return absolute;
       }
       return void 0;
@@ -608,19 +649,267 @@ function createResultsStore() {
       const record = await newestPath(workspace);
       memory.set(workspace, record);
       return record;
+    },
+    async list(workspace) {
+      const root = join2(workspace, RESULT_ROOT);
+      let days;
+      try {
+        days = (await readdir(root, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+      } catch {
+        return [];
+      }
+      days.sort(descending);
+      const runs = [];
+      for (const day of days.slice(0, 30)) {
+        let times;
+        try {
+          times = (await readdir(join2(root, day), { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+        } catch {
+          continue;
+        }
+        times.sort(descending);
+        for (const time of times.slice(0, 200)) {
+          const id = `${day}/${time}`;
+          if (!isRunId(id)) continue;
+          try {
+            const summary = readSummary(JSON.parse(await readFile2(join2(root, day, time, SUMMARY_FILE), "utf8")));
+            if (summary !== void 0) {
+              runs.push(summary);
+              continue;
+            }
+          } catch {
+          }
+          try {
+            const record = readRecord(JSON.parse(await readFile2(join2(root, day, time, RESULT_FILE), "utf8")));
+            if (record === void 0) continue;
+            const summary = summarize(id, record.savedAt, record);
+            runs.push(summary);
+            void writeFile(
+              join2(root, day, time, SUMMARY_FILE),
+              JSON.stringify({ version: RESULT_VERSION, ...summary }),
+              "utf8"
+            ).catch(() => void 0);
+          } catch {
+            continue;
+          }
+        }
+      }
+      runs.sort((left, right) => left.savedAt < right.savedAt ? 1 : left.savedAt > right.savedAt ? -1 : 0);
+      return runs;
+    },
+    async load(workspace, id) {
+      if (!isRunId(id)) return void 0;
+      try {
+        return readRecord(JSON.parse(await readFile2(join2(workspace, RESULT_ROOT, ...id.split("/"), RESULT_FILE), "utf8")));
+      } catch {
+        return void 0;
+      }
     }
   };
 }
 
-// src/host/run-plan.ts
-import { access, mkdtemp, readFile as readFile3, readdir as readdir2, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
-import { tmpdir as tmpdir2 } from "node:os";
+// src/host/report-import.ts
+import { readFileSync } from "node:fs";
+import { readdir as readdir2, readFile as readFile3, rename as rename2 } from "node:fs/promises";
 import { join as join3 } from "node:path";
+var REPORT_SUFFIX = ".vitest.json";
+var REPORT_ROOT = RESULT_ROOT;
+function timingsOf(raw) {
+  const results = raw?.testResults;
+  if (!Array.isArray(results)) return [];
+  return results.flatMap((entry) => {
+    if (entry === null || typeof entry !== "object") return [];
+    const record = entry;
+    if (typeof record.name !== "string") return [];
+    return [
+      {
+        name: record.name,
+        ...typeof record.startTime === "number" ? { startTime: record.startTime } : {},
+        ...typeof record.endTime === "number" ? { endTime: record.endTime } : {}
+      }
+    ];
+  });
+}
+function countsOf(cases) {
+  let passed = 0;
+  let failed = 0;
+  let skipped = 0;
+  for (const entry of cases) {
+    if (entry.status === "failed") failed += 1;
+    else if (entry.status === "skipped") skipped += 1;
+    else passed += 1;
+  }
+  return { passed, failed, skipped, total: passed + failed + skipped };
+}
+function seriesOf(cases, elapsedMs) {
+  const sorted = [...cases].sort((left, right) => left.atMs - right.atMs);
+  const last = sorted[sorted.length - 1]?.atMs ?? 0;
+  const seconds = Math.max(1, Math.ceil(Math.max(elapsedMs, last) / 1e3));
+  const series = [];
+  let index = 0;
+  let passed = 0;
+  let failed = 0;
+  let finished = 0;
+  for (let second = 0; second <= seconds; second += 1) {
+    const limit = second * 1e3;
+    while (index < sorted.length && (sorted[index]?.atMs ?? Infinity) <= limit) {
+      const entry = sorted[index];
+      if (entry === void 0) break;
+      finished += 1;
+      if (entry.status === "failed") failed += 1;
+      else if (entry.status !== "skipped") passed += 1;
+      index += 1;
+    }
+    series.push({ tMs: limit, finished, passed, failed });
+  }
+  return series;
+}
+function caseClock(snapshot, rawFiles, runStart) {
+  const bySuffix = new Map(rawFiles.map((file) => [file.name.split(/[\\/]/u).join("/"), file]));
+  const events = [];
+  for (const pkg of snapshot.packages) {
+    for (const file of pkg.files) {
+      let rawFile;
+      for (const [name2, candidate] of bySuffix) {
+        if (name2.endsWith(`/${file.path}`) || name2 === file.path) {
+          rawFile = candidate;
+          break;
+        }
+      }
+      const fileStart = rawFile?.startTime === void 0 || runStart === void 0 ? 0 : Math.max(0, rawFile.startTime - runStart);
+      let offset = 0;
+      for (const entry of file.cases) {
+        events.push({
+          path: file.path,
+          name: entry.name,
+          status: entry.status === "failed" ? "failed" : entry.status === "skipped" ? "skipped" : "passed",
+          durationMs: entry.durationMs,
+          atMs: fileStart + offset
+        });
+        offset += entry.durationMs;
+      }
+    }
+  }
+  return events;
+}
+function mergeSnapshot(snapshot, previous) {
+  if (previous === void 0) return snapshot;
+  const incoming = new Set(snapshot.packages.flatMap((pkg) => pkg.files.map((file) => file.path)));
+  const covered = previous.snapshot.packages.flatMap((pkg) => pkg.files).filter((file) => incoming.has(file.path)).length;
+  const all = previous.snapshot.packages.reduce((sum, pkg) => sum + pkg.files.length, 0);
+  if (covered >= all) return snapshot;
+  const order = [];
+  const files = /* @__PURE__ */ new Map();
+  for (const pkg of previous.snapshot.packages) {
+    order.push(pkg.name);
+    files.set(pkg.name, [...pkg.files]);
+  }
+  for (const pkg of snapshot.packages) {
+    let bucket = files.get(pkg.name);
+    if (bucket === void 0) {
+      bucket = [];
+      files.set(pkg.name, bucket);
+      order.push(pkg.name);
+    }
+    for (const file of pkg.files) {
+      const index = bucket.findIndex((candidate) => candidate.path === file.path);
+      if (index === -1) bucket.push(file);
+      else bucket[index] = file;
+    }
+  }
+  return { ...previous.snapshot, packages: order.map((name2) => ({ name: name2, files: files.get(name2) ?? [] })) };
+}
+function recordFromReport(workspace, raw, previous, now = /* @__PURE__ */ new Date()) {
+  const snapshot = parseVitestJson(raw, {
+    workspace,
+    fileTextOf: (path) => {
+      try {
+        return readFileSync(join3(workspace, path), "utf8");
+      } catch {
+        return void 0;
+      }
+    },
+    generatedAt: now.toISOString(),
+    wallClockMs: 0
+  });
+  if (snapshot.packages.length === 0) return void 0;
+  const rawFiles = timingsOf(raw);
+  const starts = rawFiles.flatMap((file) => typeof file.startTime === "number" ? [file.startTime] : []);
+  const ends = rawFiles.flatMap((file) => typeof file.endTime === "number" ? [file.endTime] : []);
+  const runStart = starts.length === 0 ? void 0 : Math.min(...starts);
+  const runEnd = ends.length === 0 ? void 0 : Math.max(...ends);
+  const events = caseClock(snapshot, rawFiles, runStart);
+  const summed = events.reduce((sum, entry) => sum + entry.durationMs, 0);
+  const elapsedMs = runStart !== void 0 && runEnd !== void 0 ? Math.max(1, runEnd - runStart) : Math.max(1, summed);
+  const counts = countsOf(events);
+  const failures = events.filter((entry) => entry.status === "failed").map((entry) => ({ tMs: entry.atMs, path: entry.path, name: entry.name }));
+  const run = {
+    runId: `import-${String(now.getTime())}`,
+    scope: { kind: "all" },
+    status: failures.length === 0 ? "passed" : "failed",
+    phase: "finished",
+    runNumber: (previous?.run.runNumber ?? 0) + 1,
+    startedAt: (runStart === void 0 ? now : new Date(runStart)).toISOString(),
+    finishedAt: now.toISOString(),
+    elapsedMs,
+    completedFiles: snapshot.packages.reduce((sum, pkg) => sum + pkg.files.length, 0),
+    totalFiles: null,
+    counts,
+    series: seriesOf(events, elapsedMs),
+    failures,
+    cases: events
+  };
+  return { run, snapshot: mergeSnapshot(snapshot, previous) };
+}
+async function importReports(workspace, results, now = /* @__PURE__ */ new Date()) {
+  const root = join3(workspace, REPORT_ROOT);
+  let names;
+  try {
+    names = (await readdir2(root, { withFileTypes: true })).filter((entry) => entry.isFile() && entry.name.endsWith(REPORT_SUFFIX)).map((entry) => entry.name);
+  } catch {
+    return 0;
+  }
+  let imported = 0;
+  let previous = await results.latest(workspace);
+  for (const name2 of names) {
+    const source = join3(root, name2);
+    const claimed = `${source}.importing`;
+    try {
+      await rename2(source, claimed);
+    } catch {
+      continue;
+    }
+    try {
+      const raw = JSON.parse(await readFile3(claimed, "utf8"));
+      const record = recordFromReport(workspace, raw, previous, now);
+      if (record === void 0) {
+        await rename2(claimed, `${source}.bad`);
+        continue;
+      }
+      const saved = await results.save(workspace, record, now);
+      if (saved === void 0) {
+        await rename2(claimed, source);
+        continue;
+      }
+      await rename2(claimed, `${source}.imported`);
+      imported += 1;
+      previous = { savedAt: now.toISOString(), ...record };
+    } catch {
+      await rename2(claimed, `${source}.bad`).catch(() => void 0);
+    }
+  }
+  return imported;
+}
+
+// src/host/run-plan.ts
+import { access, mkdtemp, readFile as readFile4, readdir as readdir3, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join4 } from "node:path";
 var CONFIG_NAMES = ["vitest.config.ts", "vitest.config.mts", "vitest.config.js", "vitest.config.mjs", "vitest.config.cts", "vitest.config.cjs"];
 async function hasConfig(directory) {
   for (const name2 of CONFIG_NAMES) {
     try {
-      await access(join3(directory, name2));
+      await access(join4(directory, name2));
       return true;
     } catch {
       continue;
@@ -629,19 +918,19 @@ async function hasConfig(directory) {
   return false;
 }
 async function discoverProjects(workspace) {
-  const packages = join3(workspace, "packages");
+  const packages = join4(workspace, "packages");
   let names;
   try {
-    names = (await readdir2(packages, { withFileTypes: true })).filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules").map((entry) => entry.name);
+    names = (await readdir3(packages, { withFileTypes: true })).filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules").map((entry) => entry.name);
   } catch {
     return [];
   }
   names.sort();
   const projects = [];
   for (const name2 of names) {
-    const directory = join3(packages, name2);
+    const directory = join4(packages, name2);
     try {
-      await access(join3(directory, "package.json"));
+      await access(join4(directory, "package.json"));
     } catch {
       continue;
     }
@@ -650,7 +939,7 @@ async function discoverProjects(workspace) {
       continue;
     }
     try {
-      const manifest = JSON.parse(await readFile3(join3(directory, "package.json"), "utf8"));
+      const manifest = JSON.parse(await readFile4(join4(directory, "package.json"), "utf8"));
       const script = manifest.scripts?.test;
       if (typeof script === "string" && script.includes("vitest")) projects.push(directory);
     } catch {
@@ -662,11 +951,11 @@ async function discoverProjects(workspace) {
 function packageOf(workspace, scope) {
   if (scope.kind !== "file") return void 0;
   const match = /^packages\/([^/]+)\//u.exec(scope.path);
-  return match?.[1] === void 0 ? void 0 : join3(workspace, "packages", match[1]);
+  return match?.[1] === void 0 ? void 0 : join4(workspace, "packages", match[1]);
 }
 async function writeProjectsConfig(workspace, projects) {
-  const directory = await mkdtemp(join3(tmpdir2(), "dsh-testboard-plan-"));
-  const file = join3(directory, "vitest.config.mjs");
+  const directory = await mkdtemp(join4(tmpdir2(), "dsh-testboard-plan-"));
+  const file = join4(directory, "vitest.config.mjs");
   const body = [
     "export default {",
     `  root: ${JSON.stringify(workspace)},`,
@@ -683,7 +972,7 @@ async function writeProjectsConfig(workspace, projects) {
 }
 async function planVitestRun(input) {
   const { workspace, scope, outputFile } = input;
-  const binary = join3(workspace, "node_modules", ".bin", "vitest");
+  const binary = join4(workspace, "node_modules", ".bin", "vitest");
   const rootConfig = await hasConfig(workspace);
   if (scope.kind === "file" && !rootConfig) {
     const directory = packageOf(workspace, scope);
@@ -721,6 +1010,17 @@ async function planVitestRun(input) {
 
 // src/host/state-reader.ts
 import { basename } from "node:path";
+function cachedState(workspace, cached, selectedRun) {
+  return {
+    workspace,
+    workspaceName: basename(workspace),
+    snapshot: cached.snapshot,
+    run: cached.run,
+    ...cached.log === void 0 ? {} : { log: cached.log },
+    cached: true,
+    ...selectedRun === void 0 ? {} : { selectedRun }
+  };
+}
 function createStateReader(deps) {
   return async (workspace) => {
     if (!await deps.isDirectory(workspace)) return { workspace, error: "unknown-workspace" };
@@ -729,14 +1029,7 @@ function createStateReader(deps) {
     if (empty) {
       const cached = await deps.results.latest(workspace);
       if (cached === void 0) return { workspace, workspaceName: basename(workspace) };
-      return {
-        workspace,
-        workspaceName: basename(workspace),
-        snapshot: cached.snapshot,
-        run: cached.run,
-        ...cached.log === void 0 ? {} : { log: cached.log },
-        cached: true
-      };
+      return cachedState(workspace, cached);
     }
     return {
       workspace,
@@ -746,6 +1039,14 @@ function createStateReader(deps) {
       // crashed run must still see why the numbers are stale.
       ...state.run?.status === "error" ? { error: "run-failed" } : {}
     };
+  };
+}
+function createSelectedStateReader(deps) {
+  return async (workspace, runId) => {
+    if (!await deps.isDirectory(workspace)) return { workspace, error: "unknown-workspace" };
+    const cached = await deps.results.load(workspace, runId);
+    if (cached === void 0) return { workspace, workspaceName: basename(workspace), error: "run-missing", selectedRun: runId };
+    return cachedState(workspace, cached, runId);
   };
 }
 
@@ -793,7 +1094,8 @@ async function handleRequest(deps, request) {
         if (sessionId === void 0) return fail(400, "sessionId query parameter is required");
         const workspace = await deps.resolveWorkspaceRoot(sessionId);
         if (workspace === void 0) return { status: 200, body: { error: "no-session" } };
-        return { status: 200, body: await deps.readState(workspace) };
+        const runId = url.searchParams.get("run");
+        return { status: 200, body: await deps.readState(workspace, runId === null || runId === "" ? void 0 : runId) };
       }
       if (method === "POST" && suffix === "run") {
         const body = request.body ?? {};
@@ -809,6 +1111,14 @@ async function handleRequest(deps, request) {
         return { status: 200, body: await deps.startRun(workspace, scope) };
       }
       return fail(405, `method ${method} is not allowed on ${suffix}`);
+    }
+    if (suffix === "history") {
+      if (method !== "GET") return fail(405, `method ${method} is not allowed on history`);
+      const sessionId = sessionIdOf(url);
+      if (sessionId === void 0) return fail(400, "sessionId query parameter is required");
+      const workspace = await deps.resolveWorkspaceRoot(sessionId);
+      if (workspace === void 0) return { status: 200, body: { runs: [] } };
+      return { status: 200, body: await deps.readHistory(workspace) };
     }
     if (suffix === "cancel") {
       if (method !== "POST") return fail(405, `method ${method} is not allowed on cancel`);
@@ -929,7 +1239,7 @@ function whenWebServer(host, register) {
 }
 async function hasVitest(workspace) {
   try {
-    await access2(join4(workspace, "node_modules", ".bin", "vitest"));
+    await access2(join5(workspace, "node_modules", ".bin", "vitest"));
     return true;
   } catch {
     return false;
@@ -948,9 +1258,9 @@ function withinWorkspace(root, target) {
 function readWorkspaceFileSync(workspace, path) {
   try {
     const root = realpathSync(workspace);
-    const target = realpathSync(join4(root, path));
+    const target = realpathSync(join5(root, path));
     if (!withinWorkspace(root, target)) return void 0;
-    return readFileSync(target, "utf8");
+    return readFileSync2(target, "utf8");
   } catch {
     return void 0;
   }
@@ -958,11 +1268,11 @@ function readWorkspaceFileSync(workspace, path) {
 async function readWorkspaceFile(workspace, path) {
   try {
     const root = await realpath2(workspace);
-    const target = await realpath2(join4(root, path));
+    const target = await realpath2(join5(root, path));
     if (!withinWorkspace(root, target)) return void 0;
     const info = await stat(target);
     if (!info.isFile()) return void 0;
-    return await readFile4(target, "utf8");
+    return await readFile5(target, "utf8");
   } catch {
     return void 0;
   }
@@ -990,6 +1300,13 @@ function apply(ctx) {
       return resolveSessionRoot(sessionId, sessions, sessionPersistence);
     }
     const readState = createStateReader({ engine, results, isDirectory });
+    const readSelectedState = createSelectedStateReader({ results, isDirectory });
+    async function ingestReports(workspace) {
+      try {
+        await importReports(workspace, results);
+      } catch {
+      }
+    }
     async function startRun(workspace, scope) {
       if (subprocess === void 0) return { ok: false, error: "no-subprocess" };
       if (!await hasVitest(workspace)) return { ok: false, error: "no-vitest" };
@@ -998,7 +1315,14 @@ function apply(ctx) {
     }
     const deps = {
       resolveWorkspaceRoot,
-      readState,
+      readState: async (workspace, runId) => {
+        await ingestReports(workspace);
+        return runId === void 0 ? readState(workspace) : readSelectedState(workspace, runId);
+      },
+      readHistory: async (workspace) => {
+        await ingestReports(workspace);
+        return { runs: await results.list(workspace) };
+      },
       startRun,
       cancelRun: (workspace) => engine.cancel(workspace),
       readSource: (workspace, path) => readWorkspaceFile(workspace, path)

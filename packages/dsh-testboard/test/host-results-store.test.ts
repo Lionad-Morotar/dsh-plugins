@@ -187,6 +187,53 @@ describe("createResultsStore", () => {
     expect(await createResultsStore().latest(workspace)).toBeUndefined();
   });
 
+  it("lists the cached runs newest first for the history picker", async () => {
+    const store = createResultsStore();
+    await store.save(workspace, { run: finishedRun(1), snapshot: SNAPSHOT }, new Date(2026, 10, 11, 9, 0, 0));
+    await store.save(workspace, { run: finishedRun(2), snapshot: SNAPSHOT }, new Date(2026, 10, 11, 10, 0, 0));
+    await store.save(workspace, { run: finishedRun(3), snapshot: SNAPSHOT }, new Date(2026, 10, 12, 8, 0, 0));
+
+    // A fresh store has no memory: the list is the disk's answer, which is the
+    // one a reloaded tab gets.
+    const runs = await createResultsStore().list(workspace);
+    expect(runs.map(entry => entry.runNumber)).toEqual([3, 2, 1]);
+    expect(runs[0]).toMatchObject({ id: "261112/080000", files: 1, cases: 1, status: "passed" });
+    expect(runs[1]?.id).toBe("261111/100000");
+  });
+
+  it("backfills a summary for a run written before summaries existed", async () => {
+    const directory = join(workspace, RESULT_ROOT, "261111", "100000");
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, RESULT_FILE),
+      JSON.stringify({ version: 1, savedAt: "2026-11-11T02:00:00.000Z", run: finishedRun(7), snapshot: SNAPSHOT }),
+      "utf8",
+    );
+
+    const runs = await createResultsStore().list(workspace);
+    expect(runs.map(entry => entry.runNumber)).toEqual([7]);
+    const summary = JSON.parse(await readFile(join(directory, "summary.json"), "utf8")) as { id?: string; runNumber?: number };
+    expect(summary.id).toBe("261111/100000");
+    expect(summary.runNumber).toBe(7);
+  });
+
+  it("loads one run by id, including a same-second suffix", async () => {
+    const store = createResultsStore();
+    const now = new Date(2026, 10, 11, 9, 5, 7);
+    await store.save(workspace, { run: finishedRun(1), snapshot: SNAPSHOT }, now);
+    await store.save(workspace, { run: finishedRun(2), snapshot: SNAPSHOT }, now);
+
+    expect((await store.load(workspace, "261111/090507"))?.run.runNumber).toBe(1);
+    expect((await store.load(workspace, "261111/090507-2"))?.run.runNumber).toBe(2);
+    expect(await store.load(workspace, "261111/090508")).toBeUndefined();
+  });
+
+  it("refuses an id that would leave the cache root", async () => {
+    const store = createResultsStore();
+    expect(await store.load(workspace, "../../etc/passwd")).toBeUndefined();
+    expect(await store.load(workspace, "261111/090507/extra")).toBeUndefined();
+  });
+
   it("answers undefined for a workspace that has never run anything", async () => {
     expect(await createResultsStore().latest(workspace)).toBeUndefined();
   });

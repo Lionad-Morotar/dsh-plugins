@@ -1,5 +1,5 @@
 /**
- * The five `/testboard/api` routes.
+ * The `/testboard/api` routes.
  *
  * Dispatch is split from transport on purpose: `handleRequest` is the wire
  * contract as a pure function, so every status code and body shape is testable
@@ -7,11 +7,12 @@
  * over it.
  *
  * Route map (the host registers one prefix, so the suffix is dispatched here):
- *   GET  /testboard/api/state?sessionId=          the workspace's board state
+ *   GET  /testboard/api/state?sessionId=&run=     the workspace's board state, or one cached run
  *   GET  /testboard/api/run?sessionId=            the same state, for polling
  *   POST /testboard/api/run    { sessionId, scope }  start a run
  *   POST /testboard/api/cancel { sessionId }         abort the active run
  *   GET  /testboard/api/source?sessionId=&path=      one test file's text
+ *   GET  /testboard/api/history?sessionId=           cached runs, newest first
  *
  * Every path is same-origin relative: the GUI port changes on every host boot,
  * so nothing here may compose an absolute URL.
@@ -26,6 +27,7 @@ import {
   type TestboardError,
   type TestboardState,
   type WireCancelResponse,
+  type WireHistoryResponse,
   type WireRunStartResponse,
   type WireSourceResponse,
 } from "../shared.ts";
@@ -43,8 +45,10 @@ export interface WebServerFace {
 export interface TestboardRouteDeps {
   /** Session id → canonical workspace path; undefined when the session is unknown. */
   resolveWorkspaceRoot(sessionId: string): Promise<string | undefined>;
-  /** The workspace's board state. */
-  readState(workspace: string): TestboardState | Promise<TestboardState>;
+  /** The workspace's board state, or one cached run when `runId` is given. */
+  readState(workspace: string, runId?: string): TestboardState | Promise<TestboardState>;
+  /** Every cached run for the workspace, newest first. */
+  readHistory(workspace: string): Promise<WireHistoryResponse>;
   /** Begin a run, or refuse it with the reason the board should show. */
   startRun(workspace: string, scope: RunScope): WireRunStartResponse | Promise<WireRunStartResponse>;
   /** Abort the workspace's active run; false when nothing was running. */
@@ -137,7 +141,8 @@ export async function handleRequest(deps: TestboardRouteDeps, request: RouteRequ
         // An unknown session is a board state, not a transport error: the client
         // renders "no workspace" from the same shape it renders everything else.
         if (workspace === undefined) return { status: 200, body: { error: "no-session" } satisfies TestboardState };
-        return { status: 200, body: await deps.readState(workspace) };
+        const runId = url.searchParams.get("run");
+        return { status: 200, body: await deps.readState(workspace, runId === null || runId === "" ? undefined : runId) };
       }
       if (method === "POST" && suffix === "run") {
         const body = (request.body ?? {}) as { sessionId?: unknown; scope?: unknown };
@@ -155,6 +160,15 @@ export async function handleRequest(deps: TestboardRouteDeps, request: RouteRequ
         return { status: 200, body: await deps.startRun(workspace, scope) };
       }
       return fail(405, `method ${method} is not allowed on ${suffix}`);
+    }
+
+    if (suffix === "history") {
+      if (method !== "GET") return fail(405, `method ${method} is not allowed on history`);
+      const sessionId = sessionIdOf(url);
+      if (sessionId === undefined) return fail(400, "sessionId query parameter is required");
+      const workspace = await deps.resolveWorkspaceRoot(sessionId);
+      if (workspace === undefined) return { status: 200, body: { runs: [] } satisfies WireHistoryResponse };
+      return { status: 200, body: await deps.readHistory(workspace) };
     }
 
     if (suffix === "cancel") {

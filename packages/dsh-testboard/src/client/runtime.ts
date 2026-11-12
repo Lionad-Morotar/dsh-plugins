@@ -19,16 +19,26 @@ import {
   ROUTE_PREFIX,
   type RunProgress,
   type RunScope,
+  type RunSummary,
   type TestboardState,
   type WireCancelResponse,
+  type WireHistoryResponse,
   type WireRunStartResponse,
   type WireSourceResponse,
 } from "../shared.ts";
 
 /** What the view asks of the host. */
 export interface TestboardRuntime {
-  /** The workspace's board state for one session. */
-  loadState(sessionId: string): Promise<TestboardState>;
+  /**
+   * The workspace's board state for one session.
+   *
+   * `runId` asks for one cached run by id instead of the live/newest reading;
+   * the host answers from disk, so the picker can show history without pretending
+   * a past run is the current one.
+   */
+  loadState(sessionId: string, runId?: string): Promise<TestboardState>;
+  /** Every cached run for the workspace, newest first. */
+  listRuns(sessionId: string): Promise<readonly RunSummary[]>;
   /** Begin a run, or learn why it was refused. */
   startRun(sessionId: string, scope: RunScope): Promise<WireRunStartResponse>;
   /** Abort the session's active run; false when nothing was running. */
@@ -66,10 +76,17 @@ async function requestJson(fetchImpl: typeof fetch, url: string, init?: RequestI
  */
 export function createHttpRuntime(fetchImpl: typeof fetch = fetch): TestboardRuntime {
   return {
-    async loadState(sessionId) {
+    async loadState(sessionId, runId) {
       const query = new URLSearchParams({ sessionId });
+      if (runId !== undefined) query.set("run", runId);
       const body = await requestJson(fetchImpl, `${ROUTE_PREFIX}/state?${query.toString()}`);
       return body as TestboardState;
+    },
+
+    async listRuns(sessionId) {
+      const query = new URLSearchParams({ sessionId });
+      const body = (await requestJson(fetchImpl, `${ROUTE_PREFIX}/history?${query.toString()}`)) as WireHistoryResponse;
+      return Array.isArray(body.runs) ? body.runs : [];
     },
 
     async startRun(sessionId, scope) {

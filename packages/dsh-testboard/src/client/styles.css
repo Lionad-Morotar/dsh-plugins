@@ -264,6 +264,38 @@ body[data-ds-dark-theme] [data-testid="testboard"] {
   font-size: var(--tst-fs-small);
 }
 
+/* History picker ---------------------------------------------------------- */
+
+/* A quiet row between the header and the chart: this is a reading control, not
+   a run control, so it must not compete with the toolbar's buttons. The native
+   select is kept because it is the platform's own picker on every host and
+   needs no popover layer of ours. */
+[data-tst="run-picker"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  margin: 0 0 12px;
+  color: var(--tst-ink-faint);
+  font-family: var(--tst-mono);
+  font-size: var(--tst-fs-small);
+}
+
+[data-tst="run-picker-label"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+[data-tst="run-picker-select"] {
+  max-width: 320px;
+  border: 1px solid var(--tst-rule);
+  border-radius: 5px;
+  padding: 2px 6px;
+  background: color-mix(in srgb, var(--tst-ink) 5%, transparent);
+  color: var(--tst-ink);
+  font: inherit;
+}
+
 /* Toolbar ----------------------------------------------------------------- */
 
 [data-tst="toolbar"] {

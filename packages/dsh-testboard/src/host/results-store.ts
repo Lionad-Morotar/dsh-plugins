@@ -16,13 +16,33 @@ import { readdir, readFile, rename, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { TestSnapshot } from "../client/model.ts";
-import type { RunProgress } from "../shared.ts";
+import type { RunProgress, RunSummary } from "../shared.ts";
 
 /** Directory under the workspace that holds every cached run. */
 export const RESULT_ROOT = join("logs", "testboard");
 
 /** The file name inside one run's directory. */
 export const RESULT_FILE = "result.json";
+
+/** The small sidecar the history picker reads instead of the whole result. */
+const SUMMARY_FILE = "summary.json";
+
+/**
+ * The only shape a run id may take.
+ *
+ * The id is a URL parameter that becomes two path segments under the cache root;
+ * anchoring it here keeps a caller from walking out of the workspace.
+ */
+const RUN_ID = /^\d{6}\/\d{6}(?:-\d+)?$/;
+
+/**
+ * Whether a string is a run id this store can serve.
+ * @param value - the candidate.
+ * @returns true when it is `<YYMMDD>/<HHmmss>` with an optional collision suffix.
+ */
+export function isRunId(value: string): boolean {
+  return RUN_ID.test(value);
+}
 
 /**
  * On-disk schema version.
@@ -75,6 +95,22 @@ export interface ResultsStore {
    * @returns the cached run, or undefined.
    */
   latest(workspace: string): Promise<CachedResult | undefined>;
+  /**
+   * Every readable cached run for one workspace, newest first.
+   *
+   * Reads the small `summary.json` sidecar each save leaves beside the result;
+   * a directory from before the sidecar existed is read once and backfilled.
+   * @param workspace - the canonical workspace root.
+   * @returns the summaries, newest first.
+   */
+  list(workspace: string): Promise<RunSummary[]>;
+  /**
+   * One cached run by id, or undefined when that run is unknown or unreadable.
+   * @param workspace - the canonical workspace root.
+   * @param id - `<YYMMDD>/<HHmmss>` as returned by {@link list}.
+   * @returns the cached result, or undefined.
+   */
+  load(workspace: string, id: string): Promise<CachedResult | undefined>;
 }
 
 /**
@@ -149,6 +185,49 @@ function descending(left: string, right: string): number {
 }
 
 /**
+ * The picker's view of one cached result.
+ * @param id - the run's directory under `logs/testboard`.
+ * @param savedAt - when the file was written.
+ * @param record - the full cached result.
+ * @returns the summary written beside it.
+ */
+function summarize(id: string, savedAt: string, record: CachedResult): RunSummary {
+  let files = 0;
+  let cases = 0;
+  for (const pkg of record.snapshot.packages) {
+    files += pkg.files.length;
+    for (const file of pkg.files) cases += file.cases.length;
+  }
+  return {
+    id,
+    savedAt,
+    status: record.run.status,
+    phase: record.run.phase,
+    scope: record.run.scope,
+    runNumber: record.run.runNumber,
+    startedAt: record.run.startedAt,
+    elapsedMs: record.run.elapsedMs,
+    counts: record.run.counts,
+    files,
+    cases,
+  };
+}
+
+/**
+ * Validate one summary sidecar.
+ * @param value - the parsed JSON.
+ * @returns the summary, or undefined when it is not ours.
+ */
+function readSummary(value: unknown): RunSummary | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const fields = value as Partial<RunSummary> & { readonly version?: unknown };
+  if (fields.version !== RESULT_VERSION) return undefined;
+  if (typeof fields.id !== "string" || typeof fields.startedAt !== "string") return undefined;
+  if (fields.counts === null || typeof fields.counts !== "object") return undefined;
+  return fields as RunSummary;
+}
+
+/**
  * Build the result cache.
  *
  * @returns the store; each instance keeps its own memory map.
@@ -216,6 +295,7 @@ export function createResultsStore(): ResultsStore {
       for (let attempt = 1; attempt <= 20; attempt += 1) {
         const suffix = attempt === 1 ? "" : `-${String(attempt)}`;
         const runDirectory = join(workspace, `${directory}${suffix}`);
+        const id = `${directory.slice(RESULT_ROOT.length + 1)}${suffix}`;
         try {
           await mkdir(dirname(runDirectory), { recursive: true });
           await mkdir(runDirectory);
@@ -236,12 +316,20 @@ export function createResultsStore(): ResultsStore {
           // attempt takes the next suffix rather than overwriting another run.
           continue;
         }
-        memory.set(workspace, {
+        const cached: CachedResult = {
           savedAt: now.toISOString(),
           run: result.run,
           snapshot: result.snapshot,
           ...(result.log === undefined ? {} : { log: result.log }),
-        });
+        };
+        memory.set(workspace, cached);
+        // The sidecar is an optimization, not the result: a failure to write it
+        // must not fail the run, and list() simply parses the full file instead.
+        void writeFile(
+          join(runDirectory, SUMMARY_FILE),
+          JSON.stringify({ version: RESULT_VERSION, ...summarize(id, cached.savedAt, cached) }),
+          "utf8",
+        ).catch(() => undefined);
         return absolute;
       }
       return undefined;
@@ -252,6 +340,69 @@ export function createResultsStore(): ResultsStore {
       const record = await newestPath(workspace);
       memory.set(workspace, record);
       return record;
+    },
+
+    async list(workspace) {
+      const root = join(workspace, RESULT_ROOT);
+      let days: string[];
+      try {
+        days = (await readdir(root, { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name);
+      } catch {
+        return [];
+      }
+      days.sort(descending);
+      const runs: RunSummary[] = [];
+      for (const day of days.slice(0, 30)) {
+        let times: string[];
+        try {
+          times = (await readdir(join(root, day), { withFileTypes: true }))
+            .filter(entry => entry.isDirectory())
+            .map(entry => entry.name);
+        } catch {
+          continue;
+        }
+        times.sort(descending);
+        for (const time of times.slice(0, 200)) {
+          const id = `${day}/${time}`;
+          if (!isRunId(id)) continue;
+          try {
+            const summary = readSummary(JSON.parse(await readFile(join(root, day, time, SUMMARY_FILE), "utf8")));
+            if (summary !== undefined) {
+              runs.push(summary);
+              continue;
+            }
+          } catch {
+            // No sidecar (a run from before this field existed): fall through to
+            // the full result and backfill the summary for next time.
+          }
+          try {
+            const record = readRecord(JSON.parse(await readFile(join(root, day, time, RESULT_FILE), "utf8")));
+            if (record === undefined) continue;
+            const summary = summarize(id, record.savedAt, record);
+            runs.push(summary);
+            void writeFile(
+              join(root, day, time, SUMMARY_FILE),
+              JSON.stringify({ version: RESULT_VERSION, ...summary }),
+              "utf8",
+            ).catch(() => undefined);
+          } catch {
+            continue;
+          }
+        }
+      }
+      // Directory names already sort newest-first, but two runs inside one
+      // second get suffixed (`-2`) after the plain name; savedAt is exact.
+      runs.sort((left, right) => (left.savedAt < right.savedAt ? 1 : left.savedAt > right.savedAt ? -1 : 0));
+      return runs;
+    },
+
+    async load(workspace, id) {
+      if (!isRunId(id)) return undefined;
+      try {
+        return readRecord(JSON.parse(await readFile(join(workspace, RESULT_ROOT, ...id.split("/"), RESULT_FILE), "utf8")));
+      } catch {
+        return undefined;
+      }
     },
   };
 }
