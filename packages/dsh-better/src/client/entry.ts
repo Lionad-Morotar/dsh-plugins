@@ -56,6 +56,7 @@ import {
 import { insertStyles } from "./styles.ts";
 import { createWidthWatcher, restoreLayoutWidths, type LayoutScopeLike } from "./layout-adapter.ts";
 import { readLayoutWidths } from "./layout-widths.ts";
+import { installPanelGrow, type PanelGrowLayoutFace } from "./panel-grow-runtime.ts";
 import { CompactionStat } from "./compaction-stat.tsx";
 import { COMPACTION_ID, COMPACTION_ORDER, COMPACTION_SLOT } from "./compaction-registration.ts";
 import { installCompactionStyles } from "./compaction-styles.ts";
@@ -548,6 +549,41 @@ export const clientPlugin = {
         detach?.();
       };
     }, "dsh-better: panel width memory");
+
+    // Why: the right panel's width is taken out of the middle column, so opening
+    // it squeezes the transcript instead of asking the frame for more room. The
+    // host's layout service reports that presentation but never touches the
+    // window, and the window is outside this plugin's reach in every host except
+    // the desktop shell, so this effect is the only place the panel's width and
+    // the frame meet. Soft probe, same as the width memory above: a host that
+    // moved the service still gets every other feature in this package.
+    ctx.effect(() => {
+      if (doc === undefined || globalThis.window === undefined) return () => {};
+      let uninstall: (() => void) | undefined;
+      let disposed = false;
+      const stop = ctx.inject?.<{ layout?: unknown }>(["layout"], scope => {
+        const layout = scope.layout as PanelGrowLayoutFace | undefined | null;
+        if (layout === undefined || layout === null) return;
+        if (typeof layout.openRightbar !== "function" || typeof layout.closeRightbar !== "function") return;
+        const remove = installPanelGrow({
+          layout,
+          window: globalThis.window,
+          document: doc,
+          storage: deviceStorage(),
+          desktop: (globalThis as { dshDesktop?: { protocolVersion?: unknown } }).dshDesktop?.protocolVersion === 1,
+        });
+        // The injection may resolve after this effect has already been torn down;
+        // installing then would leave a wrapper nothing owns.
+        if (disposed) remove();
+        else uninstall = remove;
+      });
+      return () => {
+        disposed = true;
+        uninstall?.();
+        uninstall = undefined;
+        if (typeof stop === "function") stop();
+      };
+    }, "dsh-better: right panel window growth");
 
     // The compression count beside the context meter. Nothing is injected: the
     // slot hands every entry `useProjection` and a namespace-bound `t`, which is
