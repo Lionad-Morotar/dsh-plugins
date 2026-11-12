@@ -50,6 +50,7 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     // as a thunk, so a locale change re-labels the entry without re-registering.
     "tabs.nav": "Tab 管理",
     "tabs.heading": "Tab 管理",
+    "tabs.chat": "对话",
     "tabs.empty": "还没有插件注册会话标签。",
     "tabs.show": "在标签栏显示{label}",
     "tabs.hide": "从标签栏隐藏{label}",
@@ -116,6 +117,7 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "compaction.tooltipWithFailures": "This session's context was compressed {count} time(s), with {failures} failed attempt(s)",
     "tabs.nav": "Tabs",
     "tabs.heading": "Tabs",
+    "tabs.chat": "Chat",
     "tabs.empty": "No plugin has registered a conversation tab yet.",
     "tabs.show": "Show {label} in the tab bar",
     "tabs.hide": "Hide {label} from the tab bar",

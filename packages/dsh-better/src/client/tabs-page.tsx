@@ -1,17 +1,25 @@
 /**
  * The Tab management page.
  *
- * One checkbox per conversation view the host is currently showing a tab for,
- * aside from Chat. The row is the whole explanation: the name is the tab's own
- * label, and the checkbox is whether that tab is in the strip. There is no
- * description under it, because the layout already says which view and which
- * state.
+ * One row per conversation view the host is currently showing a tab for, plus
+ * the fixed slot the host never lets leave the strip: Chat, rendered first as
+ * the numbered slot 1 without any control. A checkbox would be a control that
+ * cannot do what it says, and Chat is not draggable for the same reason — the
+ * host hard-codes it to lead, so every drag has to respect the slot it holds.
+ *
+ * The movable rows carry their strip number and are draggable. A drag reorders
+ * the page's own rows live (the way a native sortable does, by moving the node
+ * while the pointer crosses a row's midline), and the drop commits the row
+ * order to the controller in one write; a drag that ends without a drop
+ * repaints the page back to the stored order. The number is the place in the
+ * strip, so a hidden row shows none — it is not in the strip to have a place
+ * in.
  *
  * The host mounts one element and never re-renders it, so the page builds its
  * rows as DOM inside that element and replaces them whenever the ledger or the
  * choice changes. No React hook is involved at any point.
  */
-import type { TabController } from "./tabs.ts";
+import { FIXED_VIEW_ID, stripPositions, type TabController, type TabRow } from "./tabs.ts";
 
 /**
  * The slice of React the page uses.
@@ -30,6 +38,8 @@ export interface PageReact {
 export interface TabCopy {
   /** Page heading. */
   readonly heading: string;
+  /** The fixed first slot's label, which the host renders on the chat tab. */
+  readonly chatLabel: string;
   /** Shown in place of the list while no plugin has registered a view tab. */
   readonly empty: string;
   /** Accessible name of one row's checkbox, given the tab label. */
@@ -41,6 +51,15 @@ export interface TabPageProps {
   controller: TabController;
   copy: TabCopy;
 }
+
+/** The row attribute, carrying the view id; the fixed slot carries Chat's. */
+const ROW_ATTR = "data-dsh-better-tabs-row";
+
+/** The attribute that marks the fixed first slot. */
+const FIXED_ATTR = "data-dsh-better-tabs-fixed";
+
+/** The attribute a row carries while it is being dragged. */
+const DRAGGING_ATTR = "data-dsh-better-tabs-dragging";
 
 /** The page stylesheet, scoped to this plugin's section root. */
 export const TABS_PAGE_CSS = `
@@ -68,10 +87,35 @@ export const TABS_PAGE_CSS = `
   border-bottom: 0.5px solid var(--dsw-alias-border-l2);
   font-size: 14px;
   line-height: 22px;
-  cursor: pointer;
+  cursor: grab;
 }
 [data-dsh-better-tabs] [data-dsh-better-tabs-row]:last-of-type {
   border-bottom: none;
+}
+[data-dsh-better-tabs] [data-dsh-better-tabs-row="${FIXED_VIEW_ID}"] {
+  cursor: default;
+}
+[data-dsh-better-tabs] [data-dsh-better-tabs-row][data-dsh-better-tabs-dragging] {
+  opacity: 0.5;
+}
+[data-dsh-better-tabs] [data-dsh-better-tabs-lead] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+[data-dsh-better-tabs] [data-dsh-better-tabs-pos] {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  min-width: 22px;
+  padding: 0 5px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 [data-dsh-better-tabs] [data-dsh-better-tabs-name] {
   min-width: 0;
@@ -143,7 +187,9 @@ export function TabSettingsPage(props: TabPageProps): unknown {
  * handful of rows, and rebuilding is what keeps a row that disappeared from
  * staying on screen. The checkbox is the one piece of state, and it is set from
  * the controller before the node is attached, so the browser never gets to
- * disagree with it.
+ * disagree with it. During a drag the rebuild stays out of the way: the drag
+ * moves nodes itself, and only the drop (or a drag that ends elsewhere) writes
+ * the controller and repaints.
  *
  * Exported so a test can paint into a document and read the result back. The
  * host never calls it; the ref does.
@@ -158,33 +204,169 @@ export function paintRows(section: Element, props: TabPageProps): void {
   heading.textContent = copy.heading;
   section.append(heading);
 
+  section.append(fixedRow(doc, copy.chatLabel));
+
   const rows = controller.rows();
+  const positions = stripPositions(rows);
+  /** The id of the row a drag is carrying, cleared on drop and on dragend. */
+  let dragging: string | null = null;
+
+  for (const row of rows) {
+    section.append(movableRow(doc, props, row, positions.get(row.id), {
+      dragStart: () => {
+        dragging = row.id;
+      },
+      dragOver: event => {
+        if (dragging === null || dragging === row.id) return;
+        event.preventDefault();
+        moveRow(section, dragging, row.id, dropBefore(event, rowById(section, row.id)));
+      },
+      drop: event => {
+        event.preventDefault();
+        if (dragging === null) return;
+        dragging = null;
+        controller.setOrder(readRowOrder(section));
+      },
+      dragEnd: () => {
+        dragging = null;
+        paintRows(section, props);
+      },
+    }));
+  }
+
   if (rows.length === 0) {
     const empty = doc.createElement("p");
     empty.setAttribute("data-dsh-better-tabs-empty", "");
     empty.textContent = copy.empty;
     section.append(empty);
-    return;
   }
+}
 
-  for (const row of rows) {
-    const label = doc.createElement("label");
-    label.setAttribute("data-dsh-better-tabs-row", row.id);
+/** The drag surface one movable row wires, as plain closures over the section. */
+interface RowDrag {
+  dragStart(): void;
+  dragOver(event: DragEvent): void;
+  drop(event: DragEvent): void;
+  dragEnd(): void;
+}
 
-    const name = doc.createElement("span");
-    name.setAttribute("data-dsh-better-tabs-name", "");
-    name.textContent = row.label;
+/** The fixed first slot: numbered, named, and carrying no control. */
+function fixedRow(doc: Document, chatLabel: string): HTMLElement {
+  const row = doc.createElement("div");
+  row.setAttribute(ROW_ATTR, FIXED_VIEW_ID);
+  row.setAttribute(FIXED_ATTR, "");
+  row.append(lead(doc, 1, chatLabel));
+  return row;
+}
 
-    const box = doc.createElement("input");
-    box.setAttribute("data-dsh-better-tabs-check", row.id);
-    box.type = "checkbox";
-    box.checked = row.enabled;
-    box.setAttribute("aria-label", copy.checkboxLabel(row.label, row.enabled));
-    box.addEventListener("change", () => {
-      controller.setEnabled(row.id, box.checked);
-    });
+/** One movable row: the number chip when shown, the name, and the checkbox. */
+function movableRow(
+  doc: Document,
+  props: TabPageProps,
+  row: TabRow,
+  position: number | undefined,
+  drag: RowDrag,
+): HTMLElement {
+  const label = doc.createElement("label");
+  label.setAttribute(ROW_ATTR, row.id);
+  label.setAttribute("draggable", "true");
+  label.append(lead(doc, position, row.label));
 
-    label.append(name, box);
-    section.append(label);
+  const box = doc.createElement("input");
+  box.setAttribute("data-dsh-better-tabs-check", row.id);
+  box.type = "checkbox";
+  box.checked = row.enabled;
+  box.setAttribute("aria-label", props.copy.checkboxLabel(row.label, row.enabled));
+  box.addEventListener("change", () => {
+    props.controller.setEnabled(row.id, box.checked);
+  });
+  label.append(box);
+
+  label.addEventListener("dragstart", event => {
+    event.dataTransfer?.setData("text/plain", row.id);
+    label.setAttribute(DRAGGING_ATTR, "");
+    drag.dragStart();
+  });
+  label.addEventListener("dragover", event => drag.dragOver(event));
+  label.addEventListener("drop", event => drag.drop(event));
+  label.addEventListener("dragend", () => drag.dragEnd());
+  return label;
+}
+
+/**
+ * The lead cluster: the strip number when the row has one, then the name.
+ *
+ * A hidden row takes no number. It is not in the strip, and printing the place
+ * it would take would promise a position the reader cannot see.
+ */
+function lead(doc: Document, position: number | undefined, labelText: string): HTMLElement {
+  const cluster = doc.createElement("span");
+  cluster.setAttribute("data-dsh-better-tabs-lead", "");
+  if (position !== undefined) {
+    const chip = doc.createElement("span");
+    chip.setAttribute("data-dsh-better-tabs-pos", "");
+    chip.textContent = String(position);
+    cluster.append(chip);
   }
+  const name = doc.createElement("span");
+  name.setAttribute("data-dsh-better-tabs-name", "");
+  name.textContent = labelText;
+  cluster.append(name);
+  return cluster;
+}
+
+/** The row element a drag names, found by attribute rather than by index. */
+function rowById(section: Element, id: string): Element | null {
+  for (const row of section.querySelectorAll(`[${ROW_ATTR}]`)) {
+    if (row.getAttribute(ROW_ATTR) === id) return row;
+  }
+  return null;
+}
+
+/**
+ * Move the dragged row across the row it now hovers, live.
+ *
+ * The DOM is the only thing that moves here: the controller is written once, on
+ * the drop, so a repaint cannot land in the middle of a drag and detach the
+ * node the browser is carrying. A row the section no longer has — the roster
+ * changed under the drag — is a move that does not happen.
+ */
+function moveRow(section: Element, dragId: string, overId: string, before: boolean): void {
+  const dragged = rowById(section, dragId);
+  const target = rowById(section, overId);
+  if (dragged === null || target === null) return;
+  const parent = dragged.parentElement;
+  if (parent === null) return;
+  parent.insertBefore(dragged, before ? target : target.nextSibling);
+}
+
+/**
+ * Which side of the hovered row the pointer is on.
+ *
+ * The midline is the whole decision: above it the drag lands before the row,
+ * below it after. An event without coordinates — which is what a hostile
+ * dispatch would be — reads as "before", the choice that cannot overshoot the
+ * list.
+ */
+function dropBefore(event: DragEvent, row: Element | null): boolean {
+  if (row === null || typeof event.clientY !== "number") return true;
+  const rect = row.getBoundingClientRect();
+  if (rect === undefined || rect === null) return true;
+  return event.clientY < rect.top + rect.height / 2;
+}
+
+/**
+ * The movable rows' ids in the order the page shows them.
+ *
+ * The fixed slot carries the same row attribute but is not draggable, so it
+ * never enters the sequence a drop commits — Chat is the host's to place.
+ */
+export function readRowOrder(section: Element): readonly string[] {
+  const ids: string[] = [];
+  for (const row of section.querySelectorAll(`[${ROW_ATTR}]`)) {
+    if (row.getAttribute("draggable") !== "true") continue;
+    const id = row.getAttribute(ROW_ATTR);
+    if (id !== null && id !== FIXED_VIEW_ID) ids.push(id);
+  }
+  return ids;
 }

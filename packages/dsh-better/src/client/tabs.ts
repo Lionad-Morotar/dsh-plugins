@@ -20,6 +20,12 @@
  * all stay. A stylesheet also survives the host re-rendering buttons, and it
  * re-asserts itself on every load, which is what makes the choice durable.
  *
+ * Order is the same story one layer down. The strip is a flex row, so a
+ * button's place is its `order` value, and an inline style sets exactly that —
+ * Chat is never touched, which keeps it leading. An inline style does not
+ * survive the host re-rendering the header any more than a marker attribute
+ * does, so the same watcher that restamps hidden markers restamps orders.
+ *
  * Withdrawing the registration was the obvious alternative and the wrong one.
  * The content area renders whichever view id the session last selected, whether
  * or not that id still has a tab; removing the entry blanks the open view and
@@ -28,7 +34,9 @@
  *
  * `chat` is never a row. The host hard-codes it as the view that always shows,
  * always leads the strip, and is the fallback a session returns to. A checkbox
- * for it would be a control that cannot do what it says.
+ * for it would be a control that cannot do what it says. The settings page
+ * therefore renders it itself: a fixed first slot, numbered 1, without any
+ * control — the slot every drag has to respect.
  *
  * Positions are verified against the DOM before a rule is emitted, because the
  * host may render fewer buttons than the ledger advertises (it drops the
@@ -36,7 +44,10 @@
  * hide a neighbour. When the positional walk disagrees, planning falls back to
  * matching each hidden id's resolved label against the button texts, and hides
  * only an unambiguous single match — a relabelled strip hides nothing rather
- * than the wrong thing.
+ * than the wrong thing. Ordering plans by the same labels, and is stricter:
+ * one label that no single button owns (two views sharing it, or a view named
+ * like Chat) skips the whole reorder, because half the strip moving is worse
+ * than none of it.
  */
 
 /** The slot every conversation view tab registers into. */
@@ -128,40 +139,72 @@ export function resolveViewLabel(label: unknown, id: string): string {
 }
 
 /**
- * Read the hidden set.
+ * The choice the settings page edits, read back from storage.
  *
- * Anything that is not a list of strings is treated as "nothing hidden": a
- * corrupt document must not hide every tab on the next launch, and an absent
- * one must not either. `chat` is dropped on read so a hand-edited document
- * cannot ask for the one hide the host refuses.
+ * `hidden` is the set of view ids kept out of the strip; `order` is the
+ * sequence the movable tabs take, Chat excluded. Ids in `order` that no live
+ * view claims are kept rather than pruned: a plugin whose registration comes
+ * back should find its slot as it left it.
  */
-export function readHidden(storage: TabStorage | undefined): ReadonlySet<string> {
-  if (storage === undefined) return new Set();
+export interface TabPrefs {
+  readonly hidden: ReadonlySet<string>;
+  readonly order: readonly string[];
+}
+
+/** Drop every entry that is not a usable view id, `chat` included. */
+function sanitizeIds(values: readonly unknown[]): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (typeof value !== "string" || value === "" || value === FIXED_VIEW_ID || seen.has(value)) continue;
+    seen.add(value);
+    ids.push(value);
+  }
+  return ids;
+}
+
+/**
+ * Read the preference document.
+ *
+ * Two shapes are accepted. The original document is a bare array of hidden ids;
+ * the current one is an object carrying both lists. Anything else is treated as
+ * "no choice": a corrupt document must not hide every tab on the next launch,
+ * and an absent one must not either. `chat` is dropped from both lists on read
+ * so a hand-edited document cannot ask for the one thing the host refuses.
+ */
+export function readPrefs(storage: TabStorage | undefined): TabPrefs {
+  if (storage === undefined) return { hidden: new Set(), order: [] };
   let raw: string | null;
   try {
     raw = storage.getItem(TABS_STORAGE_KEY);
   } catch {
-    return new Set();
+    return { hidden: new Set(), order: [] };
   }
-  if (raw === null || raw === "") return new Set();
+  if (raw === null || raw === "") return { hidden: new Set(), order: [] };
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return new Set();
-    const hidden = new Set<string>();
-    for (const item of parsed) {
-      if (typeof item === "string" && item !== "" && item !== FIXED_VIEW_ID) hidden.add(item);
-    }
-    return hidden;
+    if (Array.isArray(parsed)) return { hidden: new Set(sanitizeIds(parsed)), order: [] };
+    if (parsed === null || typeof parsed !== "object") return { hidden: new Set(), order: [] };
+    const document = parsed as { hidden?: unknown; order?: unknown };
+    return {
+      hidden: new Set(sanitizeIds(Array.isArray(document.hidden) ? document.hidden : [])),
+      order: sanitizeIds(Array.isArray(document.order) ? document.order : []),
+    };
   } catch {
-    return new Set();
+    return { hidden: new Set(), order: [] };
   }
 }
 
-/** Persist the hidden set. A storage that throws keeps the in-memory choice. */
-export function writeHidden(storage: TabStorage | undefined, hidden: ReadonlySet<string>): void {
+/** Persist the preference document. A storage that throws keeps the in-memory choice. */
+export function writePrefs(storage: TabStorage | undefined, prefs: TabPrefs): void {
   if (storage === undefined) return;
+  const document = {
+    version: 2,
+    hidden: [...prefs.hidden].sort(),
+    order: [...prefs.order],
+  };
   try {
-    storage.setItem(TABS_STORAGE_KEY, JSON.stringify([...hidden].sort()));
+    storage.setItem(TABS_STORAGE_KEY, JSON.stringify(document));
   } catch {
     // Quota and privacy modes refuse the write. The choice still holds until
     // reload, which is the failure a settings page can survive.
@@ -169,23 +212,63 @@ export function writeHidden(storage: TabStorage | undefined, hidden: ReadonlySet
 }
 
 /**
- * The rows a settings page should show, in the strip's own order.
- *
- * One row per winning cell. A shadowed cell has one tab, and listing every
- * priority would offer a checkbox for a view the strip does not show. `chat` is
- * dropped rather than rendered disabled, because a disabled row still implies
- * the choice exists.
+ * The sequence the movable tabs take: the remembered order first, in the order
+ * it names, then any view the ledger has that the memory does not, in ledger
+ * order. Ids the ledger no longer has are skipped, not dropped — they stay in
+ * storage for a plugin that comes back.
  */
-export function tabRows(entries: readonly ViewEntry[], hidden: ReadonlySet<string>): readonly TabRow[] {
-  const rows: TabRow[] = [];
+export function composedOrder(entries: readonly ViewEntry[], order: readonly string[]): readonly string[] {
+  const ledgerIds: string[] = [];
   const seen = new Set<string>();
   for (const entry of entries) {
     const id = entry.options.id;
     if (id === undefined || id === FIXED_VIEW_ID || seen.has(id)) continue;
     seen.add(id);
-    rows.push({ id, label: resolveViewLabel(entry.options.label, id), enabled: !hidden.has(id) });
+    ledgerIds.push(id);
+  }
+  const remembered = order.filter(id => seen.has(id));
+  const rest = ledgerIds.filter(id => !order.includes(id));
+  return [...remembered, ...rest];
+}
+
+/**
+ * The rows a settings page should show, in the order the strip takes them.
+ *
+ * One row per winning cell. A shadowed cell has one tab, and listing every
+ * priority would offer a checkbox for a view the strip does not show. `chat` is
+ * dropped rather than rendered disabled, because a disabled row still implies
+ * the choice exists — the page renders that fixed slot itself.
+ */
+export function tabRows(entries: readonly ViewEntry[], prefs: TabPrefs): readonly TabRow[] {
+  const rows: TabRow[] = [];
+  const labels = new Map<string, string>();
+  for (const entry of entries) {
+    const id = entry.options.id;
+    if (id === undefined || id === FIXED_VIEW_ID || labels.has(id)) continue;
+    labels.set(id, resolveViewLabel(entry.options.label, id));
+  }
+  for (const id of composedOrder(entries, prefs.order)) {
+    const label = labels.get(id);
+    if (label === undefined) continue;
+    rows.push({ id, label, enabled: !prefs.hidden.has(id) });
   }
   return rows;
+}
+
+/**
+ * The strip position of every shown row: Chat is 1, and each enabled row that
+ * follows takes the next number. Hidden rows take none — they are not in the
+ * strip, and a number would claim a place the reader cannot see.
+ */
+export function stripPositions(rows: readonly TabRow[]): ReadonlyMap<string, number> {
+  const positions = new Map<string, number>();
+  let next = 2;
+  for (const row of rows) {
+    if (!row.enabled) continue;
+    positions.set(row.id, next);
+    next += 1;
+  }
+  return positions;
 }
 
 /**
@@ -245,6 +328,66 @@ export function planHiddenButtons(
 }
 
 /**
+ * The `order` value each strip button should carry, Chat untouched.
+ *
+ * Numbering walks the shown rows (Chat is 1, so the first movable tab is 2) and
+ * addresses buttons by their label, which is the only name the strip offers.
+ * The plan is all-or-nothing: one label that no single button owns — two views
+ * sharing it, or a view named exactly like Chat — voids the whole plan, because
+ * a half-applied reorder puts the wrong tabs in the wrong places with nothing
+ * on screen explaining why. `null` clears a stamp rather than writing one.
+ *
+ * @returns one entry per button: the order value, or null to leave it be.
+ */
+export function planStripOrders(
+  entries: readonly ViewEntry[],
+  prefs: TabPrefs,
+  buttons: readonly StripButton[],
+): readonly (number | null)[] {
+  const rows = tabRows(entries, prefs);
+  const positions = stripPositions(rows);
+  // The host hard-codes Chat to lead the strip, so the first button is the one
+  // tab this feature must never stamp. A movable view named like it would be
+  // addressed by the same label — the whole plan is void rather than risk it.
+  const chatLabel = buttons[0]?.label;
+  // A label is only an address when exactly one button carries it; two views
+  // sharing one cannot be told apart any better than hiding could.
+  const shown = new Map<string, number>();
+  for (const button of buttons) shown.set(button.label, (shown.get(button.label) ?? 0) + 1);
+  for (const row of rows) {
+    if ((shown.get(row.label) ?? 0) > 1) return buttons.map(() => null);
+    if (chatLabel !== undefined && row.label === chatLabel) return buttons.map(() => null);
+  }
+  return buttons.map(button => {
+    const row = rows.find(candidate => candidate.label === button.label);
+    if (row === undefined) return null;
+    return positions.get(row.id) ?? null;
+  });
+}
+
+/**
+ * Move the strip to the planned ordering.
+ *
+ * Writes only the buttons whose order disagrees with the plan, and clears a
+ * stamp the plan no longer names — a stale `order` on a rebuilt button is a
+ * tab stuck in a place the reader did not choose. Returns whether anything
+ * moved.
+ */
+export function applyStripOrders(
+  buttons: readonly ReadableStripButton[],
+  planned: readonly (number | null)[],
+): boolean {
+  let changed = false;
+  for (const [index, button] of buttons.entries()) {
+    const want = planned[index] === undefined || planned[index] === null ? "" : String(planned[index]);
+    if (want === button.order) continue;
+    button.setOrder(want);
+    changed = true;
+  }
+  return changed;
+}
+
+/**
  * The controller the settings page reads.
  *
  * It is the one place that knows both the ledger and the preference, so the
@@ -262,6 +405,16 @@ export interface TabController {
    * @returns whether the choice changed.
    */
   setEnabled(id: string, enabled: boolean): boolean;
+  /**
+   * Take the sequence the movable tabs run in, Chat excluded.
+   *
+   * The list is the page's own row order after a drag. Ids are sanitized the
+   * way the document is read — strings only, `chat` dropped, duplicates keep
+   * their first place — so a page that painted a stale roster cannot write a
+   * document that hides a view or reorders by an id the ledger never had.
+   * @returns whether the sequence changed.
+   */
+  setOrder(order: readonly string[]): boolean;
   subscribe(listener: () => void): () => void;
   /**
    * Own the strip stylesheet for one document.
@@ -275,10 +428,16 @@ export interface TabController {
   attach(doc: StripHostDocument): () => void;
 }
 
-/** A tab button as the reader sees it: its label and its marker. */
+/** A tab button as the reader sees it: its label, its marker and its order. */
 export interface ReadableStripButton extends StripButton {
+  /** Whether this button is currently marked hidden. */
+  readonly hidden: boolean;
+  /** The inline `order` the controller last stamped, or the empty string. */
+  readonly order: string;
   /** Set or clear the hidden marker. The host re-renders the button without it. */
   mark(hidden: boolean): void;
+  /** Stamp or clear the inline order. The host re-renders the button without it. */
+  setOrder(order: string): void;
 }
 
 /** The slice of `Document` the strip reader needs, so tests can stand in. */
@@ -377,9 +536,14 @@ export function readStripButtons(doc: StripDocument): readonly ReadableStripButt
     read.push({
       label: buttonLabel(button),
       hidden: button.hasAttribute(HIDDEN_TAB_ATTR),
+      order: button.style?.order ?? "",
       mark: hidden => {
         if (hidden) button.setAttribute(HIDDEN_TAB_ATTR, "");
         else button.removeAttribute(HIDDEN_TAB_ATTR);
+      },
+      setOrder: order => {
+        if (button.style === undefined) return;
+        button.style.order = order;
       },
     });
   }
@@ -390,6 +554,8 @@ export function readStripButtons(doc: StripDocument): readonly ReadableStripButt
 interface StripButtonElement {
   textContent?: string | null;
   querySelector?(selector: string): { textContent?: string | null } | null;
+  /** The inline style face the ordering stamps; absent on old test doubles. */
+  style?: { order?: string };
   hasAttribute(name: string): boolean;
   setAttribute(name: string, value: string): void;
   removeAttribute(name: string): void;
@@ -449,7 +615,11 @@ export function createTabController(deps: {
   const { ledger, storage } = deps;
   const readButtons = deps.readButtons ?? readStripButtons;
   const watch = deps.watch ?? watchStrip;
-  const hidden = new Set(readHidden(storage));
+  const remembered = readPrefs(storage);
+  const prefs: { hidden: Set<string>; order: string[] } = {
+    hidden: new Set(remembered.hidden),
+    order: [...remembered.order],
+  };
   const listeners = new Set<() => void>();
   /** The attached document's planner, so a checkbox flip re-emits rules at once. */
   let replan: (() => void) | undefined;
@@ -462,14 +632,25 @@ export function createTabController(deps: {
   const RENDER_ATTEMPTS = 30;
 
   return {
-    rows: () => tabRows(ledger.entriesOfSlot(VIEW_SLOT), hidden),
+    rows: () => tabRows(ledger.entriesOfSlot(VIEW_SLOT), prefs),
     setEnabled(id, enabled) {
       if (id === FIXED_VIEW_ID) return false;
-      const wasHidden = hidden.has(id);
+      const wasHidden = prefs.hidden.has(id);
       if (enabled === !wasHidden) return false;
-      if (enabled) hidden.delete(id);
-      else hidden.add(id);
-      writeHidden(storage, hidden);
+      if (enabled) prefs.hidden.delete(id);
+      else prefs.hidden.add(id);
+      writePrefs(storage, prefs);
+      replan?.();
+      notify();
+      return true;
+    },
+    setOrder(order) {
+      const sequence = sanitizeIds(order);
+      const same =
+        sequence.length === prefs.order.length && sequence.every((id, index) => prefs.order[index] === id);
+      if (same) return false;
+      prefs.order = sequence;
+      writePrefs(storage, prefs);
       replan?.();
       notify();
       return true;
@@ -509,7 +690,8 @@ export function createTabController(deps: {
         // takes it down while it swaps sessions and puts it back afterwards.
         attempts = RENDER_ATTEMPTS;
         frame = undefined;
-        applyHiddenButtons(buttons, planHiddenButtons(entries, hidden, buttons));
+        applyHiddenButtons(buttons, planHiddenButtons(entries, prefs.hidden, buttons));
+        applyStripOrders(buttons, planStripOrders(entries, prefs, buttons));
       };
 
       const unsubscribe = ledger.subscribe(VIEW_SLOT, refresh);
