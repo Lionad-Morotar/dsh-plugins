@@ -11,6 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DetailPane } from "../src/client/detail-pane.tsx";
+import { GIT_STYLES } from "../src/client/styles.ts";
 import { ZH } from "../src/client/copy.ts";
 import type { GitBlobPage, GitCommitFile, GitShowRequest, GitShowResult } from "../src/host/types.ts";
 import type { GitRemoteFace } from "../src/client/wire.ts";
@@ -65,6 +66,12 @@ async function flush(): Promise<void> {
 }
 
 describe("DetailPane hover preview", () => {
+  it("keeps the hover card opaque when the host publishes no surface token", () => {
+    expect(GIT_STYLES).toMatch(/--gx-panel-2: var\(--dsw-alias-bg-layer-2, Canvas\)/u);
+    expect(GIT_STYLES).toMatch(/\.gx-preview \{[^}]*background-color: var\(--dsw-alias-bg-base, Canvas\)/u);
+    expect(GIT_STYLES).toMatch(/\.gx-preview \{[^}]*background-image: linear-gradient\(var\(--gx-panel-2\), var\(--gx-panel-2\)\)/u);
+  });
+
   let host: HTMLDivElement;
   let root: Root;
 

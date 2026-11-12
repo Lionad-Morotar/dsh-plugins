@@ -32,7 +32,10 @@ export const GIT_STYLES = `
   --gx-border: var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 18%, transparent));
   --gx-border-soft: var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 10%, transparent));
   --gx-panel: var(--dsw-alias-bg-layer-1, transparent);
-  --gx-panel-2: var(--dsw-alias-bg-layer-2, transparent);
+  /* The hover card portals out of the panel and can be read over another
+     surface, so its fallback must be opaque: Canvas is the system surface
+     colour, which keeps the card solid on a host that publishes no layer-2. */
+  --gx-panel-2: var(--dsw-alias-bg-layer-2, Canvas);
   --gx-hover: var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 8%, transparent));
   --gx-active: var(--dsw-alias-interactive-bg-active, color-mix(in srgb, currentColor 12%, transparent));
   --gx-accent: var(--dsw-alias-brand-primary, currentColor);
@@ -635,7 +638,12 @@ body.gx-col-resizing { user-select: none; cursor: col-resize; }
   z-index: 40;
   border: 1px solid var(--gx-border);
   border-radius: 8px;
-  background: var(--gx-panel-2);
+  /* The card floats over other rows, so it must be opaque even when the host's
+     layer-2 token is translucent or absent. The base colour is the solid
+     underlay; the layer tint sits on top as an image so the composite cannot
+     fall through. */
+  background-color: var(--dsw-alias-bg-base, Canvas);
+  background-image: linear-gradient(var(--gx-panel-2), var(--gx-panel-2));
   color: var(--gx-text);
   box-shadow: 0 10px 28px color-mix(in srgb, var(--gx-text) 22%, transparent);
   overflow: hidden;
