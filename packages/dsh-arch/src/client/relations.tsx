@@ -53,8 +53,12 @@ const paneStyle =
   "gap:6px;padding:10px 12px;border-radius:10px;overflow:auto;max-height:420px;" +
   // A raised surface from the host's own tokens: the pane used to be a dark
   // card, which on a light host read as a foreign overlay rather than part of
-  // the panel it belongs to.
-  "background:color-mix(in srgb, var(--dsw-alias-bg-layer-2,#ffffff) 97%, transparent);" +
+  // the panel it belongs to. The alpha is pinned to 1 because the pane floats
+  // over the diagram and a skin may publish layer-2 as a translucent ground
+  // colour; the 97% mix this used to carry kept 3% of the diagram visible for
+  // no gain, and under that skin it let the whole map read through.
+  "background:var(--dsw-alias-bg-layer-2,#ffffff);" +
+  "background:rgb(from var(--dsw-alias-bg-layer-2,#ffffff) r g b / 1);" +
   "color:var(--dsw-alias-label-primary,#0f1115);" +
   "border:1px solid var(--dsw-alias-border-l3,rgba(0,0,0,0.12));" +
   "box-shadow:0 12px 32px color-mix(in srgb, var(--dsw-alias-label-primary,#0f1115) 16%, transparent);" +
