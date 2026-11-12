@@ -518,12 +518,12 @@ describe("testboard view", () => {
       // The header is one step in; its files are one step further, so the left
       // edge reads as a hierarchy rather than a stack of names.
       expect(row("packages/tree/smoke.test.ts")?.style.getPropertyValue("--tst-row-indent")).toBe("0px");
-      expect(row("packages/tree/test/unit/a.test.ts")?.style.getPropertyValue("--tst-row-indent")).toBe("25px");
-      expect(row("packages/tree/test/unit/nested/b.test.ts")?.style.getPropertyValue("--tst-row-indent")).toBe("39px");
-      expect(row("packages/tree/test/integration/c.test.ts")?.style.getPropertyValue("--tst-row-indent")).toBe("25px");
+      expect(row("packages/tree/test/unit/a.test.ts")?.style.getPropertyValue("--tst-row-indent")).toBe("26px");
+      expect(row("packages/tree/test/unit/nested/b.test.ts")?.style.getPropertyValue("--tst-row-indent")).toBe("36px");
+      expect(row("packages/tree/test/integration/c.test.ts")?.style.getPropertyValue("--tst-row-indent")).toBe("26px");
       // The header's own padding includes the chevron's breathing room, so the
       // rail and the file names share one axis.
-      expect(host.querySelector<HTMLElement>('[data-dir="tree:test/unit"]')?.style.paddingLeft).toBe("20px");
+      expect(host.querySelector<HTMLElement>('[data-dir="tree:test/unit"]')?.style.paddingLeft).toBe("16px");
     });
 
     it("gives every branch with children its own guide rail offset", async () => {
@@ -538,8 +538,8 @@ describe("testboard view", () => {
       // as a CSS variable; a leaf with no children is not a fold worth guiding.
       expect(branch("tree:test").getAttribute("data-has-children")).toBe("true");
       expect(branch("tree:test").style.getPropertyValue("--tst-dir-indent")).toBe("0px");
-      expect(branch("tree:test/unit").style.getPropertyValue("--tst-dir-indent")).toBe("14px");
-      expect(branch("tree:test/unit/nested").style.getPropertyValue("--tst-dir-indent")).toBe("28px");
+      expect(branch("tree:test/unit").style.getPropertyValue("--tst-dir-indent")).toBe("10px");
+      expect(branch("tree:test/unit/nested").style.getPropertyValue("--tst-dir-indent")).toBe("20px");
     });
 
     it("drops the directory suffix from rows inside the tree", async () => {

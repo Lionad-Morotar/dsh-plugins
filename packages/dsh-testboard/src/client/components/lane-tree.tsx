@@ -48,19 +48,21 @@ export interface LaneTreeProps {
 }
 
 /** How far one nesting level indents its header, in pixels. */
-const INDENT_PX = 14;
+const INDENT_PX = 10;
 
 /** The header's own breathing room before the chevron. */
 const HEADER_PADDING_X = 6;
 
+/** The chevron's fixed box, which is also the guide rail's axis. */
+const CHEVRON_PX = 12;
+
 /**
  * Where a file's name starts relative to its directory's chevron column.
  *
- * The chevron is one character wide plus the header's gap, so a file has to sit
- * roughly 11px in to line up under the directory's name rather than under the
- * chevron itself.
+ * The chevron box plus the header's gap, so a file lines up under the
+ * directory's name rather than under the chevron itself.
  */
-const FILE_INDENT_PX = 11;
+const FILE_INDENT_PX = CHEVRON_PX + 4;
 
 /**
  * Render one directory and everything below it.
@@ -89,6 +91,7 @@ function DirectoryBranch({
     <div
       data-tst="directory-branch"
       data-has-children={children > 0 ? "true" : "false"}
+      data-collapsed={folded ? "true" : "false"}
       style={{ "--tst-dir-indent": `${String(node.depth * INDENT_PX)}px` } as CSSProperties}
     >
       <div

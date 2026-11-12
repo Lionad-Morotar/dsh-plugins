@@ -520,12 +520,15 @@ body.tst-pane-resizing {
    by the parent, so a folded branch (no children rendered) has no rail to
    nowhere, and nesting produces one rail per level instead of a single
    ambiguous gutter. */
-[data-tst="directory-branch"][data-has-children="true"]::before {
+[data-tst="directory-branch"][data-has-children="true"]:not([data-collapsed="true"])::before {
   content: "";
   position: absolute;
-  top: 13px;
+  top: 10px;
   bottom: 0;
-  left: calc(var(--tst-dir-indent, 0px) + 9px);
+  /* 12px is the centre of the chevron's fixed box: padding (6) + half its
+     width (6). The triangle is drawn inside that box, so the rail and its
+     apex share one axis regardless of the glyph's side bearings. */
+  left: calc(var(--tst-dir-indent, 0px) + 12px);
   width: 1px;
   background: color-mix(in srgb, var(--tst-ink) 18%, transparent);
   pointer-events: none;
@@ -567,7 +570,35 @@ body.tst-pane-resizing {
 
 [data-tst="directory-toggle"]:hover [data-tst="directory-name"] {color: var(--tst-ink-dim)}
 
-[data-tst="directory-chevron"] {flex: 0 0 auto;width: 1ch;color: var(--tst-ink-faint)}
+[data-tst="directory-chevron"] {
+  flex: 0 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 12px;
+  height: 12px;
+  color: var(--tst-ink-faint);
+  font-size: 0;
+  line-height: 1;
+}
+
+/* A border triangle instead of a text glyph: the glyph's ink sits off its
+   advance width by a font-dependent amount, which is why the rail kept missing
+   the apex. A drawn triangle has a known centre, and it can be made legible at
+   this size without depending on the mono font's metrics. */
+[data-tst="directory-chevron"]::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid currentColor;
+}
+
+[data-collapsed="true"] [data-tst="directory-chevron"]::before {
+  transform: rotate(-90deg);
+}
 
 [data-tst="directory-failed"] {flex: 0 0 auto;color: var(--tst-fail);white-space: nowrap}
 
