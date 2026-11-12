@@ -81,6 +81,7 @@ import {
   resetLeftPaneWidth,
   type PaneWidthStorage,
 } from "./pane-width.ts";
+import { createTestboardMemoryRegistry } from "./view-memory.ts";
 import type { EditorChunkModule } from "./code-contract.ts";
 import { CaseList } from "./components/case-list.tsx";
 import { ContextMenu } from "./components/context-menu.tsx";
@@ -392,6 +393,10 @@ function historyLabel(entry: RunSummary, strings: TestboardViewStrings): string 
 
 export function createTestboardView(options: TestboardViewOptions): (props: ConversationViewProps) => ReactElement {
   const { strings, runtime, loadEditor, reference, referenceSourceAvailable } = options;
+  // The browsing state per session: the host unmounts this view on every tab
+  // switch, so the picked run, filter and selection live in this factory closure
+  // instead of the component.
+  const memoryRegistry = createTestboardMemoryRegistry();
 
   return function TestboardView({
     sessionId,
@@ -400,6 +405,9 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     inputActions,
   }: ConversationViewProps): ReactElement {
     const theme = useHostTheme();
+    // What this conversation remembers from its last mount. Mutated in place,
+    // so the next mount of the same session reads exactly what this one left.
+    const memory = useMemo(() => memoryRegistry.forSession(sessionId), [memoryRegistry, sessionId]);
     const [snapshot, setSnapshot] = useState<TestSnapshot | undefined>(undefined);
     const [workspaceName, setWorkspaceName] = useState<string | undefined>(undefined);
     const [run, setRun] = useState<RunProgress | undefined>(undefined);
@@ -418,18 +426,57 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     // empty id means "the latest": the live engine if it has anything, else the
     // newest cache entry.
     const [history, setHistory] = useState<readonly RunSummary[]>([]);
-    const [selectedRun, setSelectedRun] = useState<string | undefined>(undefined);
+    const [selectedRun, setSelectedRun] = useState<string | undefined>(() => memory.selectedRun);
     const [loadError, setLoadError] = useState<string | undefined>(undefined);
     const [editor, setEditor] = useState<EditorChunkModule | undefined>(undefined);
-    const [filter, setFilter] = useState<RowFilter>("all");
-    const [query, setQuery] = useState("");
-    const [sort, setSort] = useState<RowSort>("fail-first");
-    const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
-    // Folded directories, keyed `${packageName}:${dirPath}`. Never persisted: a
-    // fold is a reading gesture, and a workspace that remembered one would open
-    // with rows the reader did not hide this time.
-    const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
-    const [selection, setSelection] = useState<NavSelection | undefined>(undefined);
+    const [filter, setFilter] = useState<RowFilter>(() => memory.filter ?? "all");
+    const [query, setQuery] = useState(() => memory.query ?? "");
+    const [sort, setSort] = useState<RowSort>(() => memory.sort ?? "fail-first");
+    const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(memory.expanded));
+    // Folded directories, keyed `${packageName}:${dirPath}`. The in-memory
+    // record keeps a fold across tab switches; it is still not written to disk,
+    // so a fresh page opens with every directory unfolded.
+    const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set(memory.collapsed));
+    const [selection, setSelection] = useState<NavSelection | undefined>(() => memory.selection);
+    // Everything below mirrors a reading gesture into the session record. These
+    // writes are effects rather than handlers because a gesture here never
+    // switches the conversation, so there is no unmount racing the flush.
+    useEffect(() => {
+      memory.filter = filter;
+    }, [memory, filter]);
+    useEffect(() => {
+      memory.query = query;
+    }, [memory, query]);
+    useEffect(() => {
+      memory.sort = sort;
+    }, [memory, sort]);
+    useEffect(() => {
+      if (selectedRun === undefined) delete memory.selectedRun;
+      else memory.selectedRun = selectedRun;
+    }, [memory, selectedRun]);
+    useEffect(() => {
+      memory.expanded = [...expanded];
+    }, [memory, expanded]);
+    useEffect(() => {
+      memory.collapsed = [...collapsed];
+    }, [memory, collapsed]);
+    useEffect(() => {
+      if (selection === undefined) delete memory.selection;
+      else memory.selection = selection;
+    }, [memory, selection]);
+    // A remembered run that the cache no longer holds falls back to the latest
+    // once: the picker's label would otherwise name a board the host refuses to
+    // load, and the reader would see an error they did not cause.
+    const restoringRun = useRef(memory.selectedRun !== undefined);
+    useEffect(() => {
+      if (!restoringRun.current) return;
+      if (stateError === "run-missing") {
+        restoringRun.current = false;
+        setSelectedRun(undefined);
+        return;
+      }
+      if (snapshot !== undefined) restoringRun.current = false;
+    }, [stateError, snapshot]);
     const [menu, setMenu] = useState<
       { readonly target: TestboardReferenceTarget; readonly anchor: { readonly x: number; readonly y: number } } | undefined
     >(undefined);
@@ -512,6 +559,7 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
       setCached(false);
       setHistory([]);
       setSelectedRun(undefined);
+      restoringRun.current = false;
       handledFocus.current = undefined;
       setSessionEpoch(epoch => epoch + 1);
     }, [sessionId]);
@@ -748,10 +796,13 @@ export function createTestboardView(options: TestboardViewOptions): (props: Conv
     // the list no longer shows.
     useEffect(() => {
       if (selection === undefined) return;
+      // Before the first snapshot the list is empty because nothing has been
+      // read yet, not because the remembered row is gone.
+      if (snapshot === undefined) return;
       if (rows.some(row => row.path === selection.path)) return;
       const next = nearestVisiblePath(allRows, rows, selection.path);
       setSelection(next === undefined ? undefined : { kind: "file", path: next });
-    }, [selection, rows, allRows]);
+    }, [selection, rows, allRows, snapshot]);
 
     const resolved = normalizeSelection(selection, rows, expanded);
     const selectedRow = resolved === undefined ? undefined : rows.find(row => row.path === resolved.path);
