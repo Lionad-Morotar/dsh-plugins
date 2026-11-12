@@ -336,6 +336,12 @@ export interface TreeBodyProps {
   readonly cursorRequest?: TreeCursorRequest;
   /** Reports the row the cursor rests on, so an outside field can activate it. */
   readonly onCursorMove?: (path: string | undefined) => void;
+  /** The row to put the cursor on once it exists, for a returning mount. */
+  readonly initialCursorPath?: string;
+  /** The scroll offset to restore before the cursor's reveal runs. */
+  readonly initialScrollTop?: number;
+  /** Reports scroll changes, so a returning mount can restore the offset. */
+  readonly onScrollTopChange?: (top: number) => void;
 }
 
 /**
@@ -355,6 +361,9 @@ export function TreeBody({
   onContextMenu,
   cursorRequest,
   onCursorMove,
+  initialCursorPath,
+  initialScrollTop,
+  onScrollTopChange,
 }: TreeBodyProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -387,6 +396,41 @@ export function TreeBody({
     () => rows.flatMap((row, index) => (row.type === "entry" ? [index] : [])),
     [rows],
   );
+  // The returning mount's place. Both refs are spent once, and only after the
+  // list can carry a row: before the root listing lands, an empty list is
+  // "nothing read yet", not "the row is gone".
+  const initialCursor = useRef(initialCursorPath);
+  const restoredScroll = useRef(initialScrollTop === undefined);
+  const scrollReporter = useRef(onScrollTopChange);
+  scrollReporter.current = onScrollTopChange;
+
+  // Scroll first, then cursor: the cursor's reveal reads the element's offset,
+  // and restoring the offset afterwards would undo the reveal or scroll away
+  // from the row it just made visible.
+  useEffect(() => {
+    if (restoredScroll.current) return;
+    const element = scroller.current;
+    if (element === null || rows.length === 0) return;
+    restoredScroll.current = true;
+    if (initialScrollTop === undefined) return;
+    element.scrollTop = initialScrollTop;
+    setScrollTop(element.scrollTop);
+    scrollReporter.current?.(element.scrollTop);
+  }, [rows, initialScrollTop]);
+
+  useEffect(() => {
+    if (entryFocus !== undefined) {
+      // An explicit arrival outranks a remembered place.
+      initialCursor.current = undefined;
+      return;
+    }
+    const path = initialCursor.current;
+    if (path === undefined) return;
+    const index = rows.findIndex(row => row.type === "entry" && row.path === path);
+    if (index < 0) return;
+    initialCursor.current = undefined;
+    setCursor(index);
+  }, [rows, entryFocus]);
 
   // A click or an outside jump keeps the cursor honest so the very first arrow
   // key press continues from where the user is looking. A rebuilt row list is
@@ -724,7 +768,9 @@ export function TreeBody({
   }, [entryFocus, rows, onEntryFocusSettled, rowHeight]);
 
   const handleScroll = (event: UIEvent<HTMLDivElement>): void => {
-    setScrollTop(event.currentTarget.scrollTop);
+    const top = event.currentTarget.scrollTop;
+    setScrollTop(top);
+    scrollReporter.current?.(top);
   };
 
   const window = computeTreeWindow(rows, {

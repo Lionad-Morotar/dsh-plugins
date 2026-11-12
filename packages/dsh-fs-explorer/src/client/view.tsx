@@ -84,6 +84,7 @@ import {
 } from "./pane-width.ts";
 import { CloseConfirm, PanelEmpty, PanelTabs } from "./panel-tabs.tsx";
 import { closeBatch, consumeViewRequest, createPanelStackRegistry, panelTitle } from "./panels.ts";
+import { createFsViewMemoryRegistry } from "./view-memory.ts";
 import { headLabel, joinChangeStats, parseStatusZ, type FsGitHead, type StatusMap } from "./status.ts";
 import { PreviewPane, saveFailureReason } from "./preview-pane.tsx";
 import type { RendererRegistry } from "./renderer-registry.ts";
@@ -444,11 +445,18 @@ export function createFsExplorerView({
   // One registry per registered view: the host mounts and unmounts this
   // component on every view switch, while the factory itself lives on.
   const stacks = createPanelStackRegistry();
+  // The tree position per session: the host unmounts this view on every tab
+  // switch, so the cursor, the expanded folders and the scroll offset live in
+  // this factory closure instead of the component.
+  const memories = createFsViewMemoryRegistry();
 
   function FsExplorerView(props: ConversationViewProps) {
     const sessionId = props.sessionId ?? workbench.currentSessionId();
     const sessionRef = useRef(sessionId);
     sessionRef.current = sessionId;
+    // What this conversation remembers from its last mount. Mutated in place,
+    // so the next mount of the same session reads exactly what this one left.
+    const memory = useMemo(() => memories.forSession(sessionId), [memories, sessionId]);
 
     // Resolve once per mount: the host service is stable, and a fresh face
     // identity on every render would restart the root listing.
@@ -553,7 +561,7 @@ export function createFsExplorerView({
     const [workspaceTags, setWorkspaceTags] = useState<ReadonlyMap<string, WorkspaceTag>>(EMPTY_TAGS);
     const levelsRef = useRef(levels);
     levelsRef.current = levels;
-    const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+    const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(memory.expanded));
     const stack = useMemo(() => stacks.forSession(sessionId), [stacks, sessionId]);
     const panels = useSyncExternalStore(stack.subscribe, stack.snapshot, stack.snapshot);
     const activeEntry = panels.panels.find(panel => panel.key === panels.active);
@@ -814,18 +822,41 @@ export function createFsExplorerView({
 
     // Reset every piece of session state and list the new root. A reload token
     // is the refresh gesture: it drops cached levels and starts from the root.
+    // The first load keeps the expanded set the session memory seeded; only a
+    // session change or an explicit refresh replaces it.
+    const lastSessionId = useRef(sessionId);
+    const lastReload = useRef(reloadToken);
     useEffect(() => {
       for (const controller of controllers.current.values()) controller.abort();
       controllers.current.clear();
       setLevels(new Map());
-      setExpanded(new Set());
+      const sessionChanged = lastSessionId.current !== sessionId;
+      const reloaded = lastReload.current !== reloadToken;
+      lastSessionId.current = sessionId;
+      lastReload.current = reloadToken;
+      if (sessionChanged) setExpanded(new Set(memory.expanded));
+      else if (reloaded) setExpanded(new Set());
       handledRequest.current = undefined;
       if (sessionId !== undefined && files !== undefined) void loadLevel("", sessionId, files);
       return () => {
         for (const controller of controllers.current.values()) controller.abort();
         controllers.current.clear();
       };
-    }, [sessionId, files, reloadToken, loadLevel]);
+    }, [sessionId, memory, files, reloadToken, loadLevel]);
+
+    // The expanded set is part of the reading, so it is written back as it
+    // changes; a refresh clears it above, which the same effect publishes.
+    useEffect(() => {
+      memory.expanded = [...expanded];
+    }, [memory, expanded]);
+
+    // Restored folders have to be listed before their children can exist: the
+    // tree renders a directory's rows only from its level in the ledger.
+    useEffect(() => {
+      if (!rootReady || sessionId === undefined || files === undefined) return;
+      const missing = [...expanded].filter(path => levelsRef.current.get(path) === undefined);
+      for (const path of missing) void loadLevel(path, sessionId, files);
+    }, [expanded, rootReady, sessionId, files, loadLevel]);
 
     // Working-tree colours are an enhancement, never a failure: a missing Git
     // namespace, a plain directory or a broken snapshot all read as "no status"
@@ -2269,6 +2300,7 @@ export function createFsExplorerView({
                   focusSignal={focusSignal}
                 />
                 <TreeBody
+                  key={sessionId ?? ""}
                   rows={shownRows}
                   selectedPath={activeRevision === undefined ? activePath : undefined}
                   entryFocus={searching ? undefined : entryFocus}
@@ -2279,8 +2311,15 @@ export function createFsExplorerView({
                   onEntryFocusSettled={releaseEntryFocus}
                   onContextMenu={openContextMenu}
                   cursorRequest={cursorRequest}
+                  initialCursorPath={memory.cursor}
+                  initialScrollTop={memory.scrollTop}
                   onCursorMove={path => {
                     cursorPath.current = path;
+                    if (path === undefined) delete memory.cursor;
+                    else memory.cursor = path;
+                  }}
+                  onScrollTopChange={top => {
+                    memory.scrollTop = top;
                   }}
                 />
               </div>
