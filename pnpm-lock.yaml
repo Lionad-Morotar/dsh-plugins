@@ -297,6 +297,9 @@ importers:
       dsh-preview-viewers:
         specifier: workspace:*
         version: link:../dsh-preview-viewers
+      dsh-text-languages:
+        specifier: workspace:*
+        version: link:../dsh-text-languages
       dsh-workbench-core:
         specifier: workspace:*
         version: link:../dsh-workbench-core
@@ -388,6 +391,9 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.5
         version: 1.2.5
+      dsh-text-languages:
+        specifier: workspace:*
+        version: link:../dsh-text-languages
     devDependencies:
       esbuild:
         specifier: ^0.28.2
