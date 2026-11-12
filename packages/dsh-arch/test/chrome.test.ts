@@ -565,6 +565,55 @@ describe("centerOnNode", () => {
   });
 });
 
+describe("selection memory", () => {
+  it("restores a remembered element once the first view mounts", async () => {
+    const { fetch } = fakeFetch({
+      "/arch/api/views": () => jsonResponse(viewsResponse()),
+      "/arch/api/state": () => jsonResponse({ state: null, degraded: false }),
+      "/arch/api/model": () => jsonResponse({ workspace: "/w", projectId: "p", elements: {}, relations: {}, specification: null }),
+    });
+    const { host } = mountHost();
+    const dispose = mountArchChrome(host, {
+      sessionId: "s1",
+      fetchImpl: fetch,
+      load: loadRealChunk,
+      mountView,
+      initialSelection: "dshPlugins",
+    });
+    await until(() => host.querySelector('[data-arch-body] g[data-id="dshPlugins"] rect[display="inline"]') !== null);
+    expect(host.querySelector('[data-arch-body] g[data-id="dshPlugins"] rect[display="inline"]')).not.toBeNull();
+    expect(host.querySelector("[data-arch-details]")).not.toBeNull();
+    dispose();
+  });
+
+  it("reports the reader's selection and its clearing", async () => {
+    const changes: Array<string | null> = [];
+    const { fetch } = fakeFetch({
+      "/arch/api/views": () => jsonResponse(viewsResponse()),
+      "/arch/api/state": () => jsonResponse({ state: null, degraded: false }),
+      "/arch/api/model": () => jsonResponse({ workspace: "/w", projectId: "p", elements: {}, relations: {}, specification: null }),
+    });
+    const { host } = mountHost();
+    const dispose = mountArchChrome(host, {
+      sessionId: "s1",
+      fetchImpl: fetch,
+      load: loadRealChunk,
+      mountView,
+      onSelectionChange: id => changes.push(id),
+    });
+    await until(() => host.querySelector("[data-arch-body] svg") !== null);
+    const node = host.querySelector('[data-arch-body] g[data-id="dshPlugins"]') as SVGGElement;
+    node.dispatchEvent(new PointerEvent("pointerdown", { clientX: 10, clientY: 10, cancelable: true, bubbles: true }));
+    node.dispatchEvent(new PointerEvent("pointerup", {}));
+    await until(() => changes.includes("dshPlugins"));
+    await until(() => host.querySelector("[data-arch-details-close]") !== null);
+    (host.querySelector("[data-arch-details-close]") as HTMLElement).click();
+    await until(() => changes.at(-1) === null);
+    expect(changes).toEqual(["dshPlugins", null]);
+    dispose();
+  });
+});
+
 describe("fitViewport", () => {
   it("scales to the limiting side and centers the bounds", () => {
     const bounds = { x: 100, y: 50, width: 400, height: 200 };

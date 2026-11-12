@@ -111,6 +111,17 @@ export interface ArchChromeOptions {
    * defined.
    */
   readonly focusSeam?: ArchFocusSeam;
+  /**
+   * An element to select once the first view has mounted, restoring the row a
+   * returning tab left selected.
+   *
+   * Applied only when the element still exists in the view that opens, and
+   * without moving the viewport: the framing is already restored from the
+   * workspace state, and centring again would turn a restore into a jump.
+   */
+  readonly initialSelection?: string;
+  /** Reports the reader's selection, including a cleared one. */
+  readonly onSelectionChange?: (elementId: string | null) => void;
 }
 
 /**
@@ -246,6 +257,10 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
   let chain: Promise<void> = Promise.resolve();
   // An element a chip click asked for before the views were loaded.
   let pendingFocus: string | undefined;
+  // The initial selection is restored once per mount, not on every model
+  // refresh: a refresh rebuilds the diagram, and re-selecting the remembered
+  // element there would undo the reader's newer click.
+  let restoredSelection = false;
 
   // Escape closes the relations pane from anywhere in the panel, including
   // from a row inside the pane itself, so it is bound to the document rather
@@ -590,6 +605,7 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
       ? {}
       : { nodeReference: { available: options.nodeReference.available } }),
     onSelect: id => {
+      options.onSelectionChange?.(id);
       if (id === null) {
         detailsPane.render(null);
         // A blank-canvas press is one of the three ways to dismiss the
@@ -757,6 +773,19 @@ export function mountArchChrome(host: HTMLElement, options: ArchChromeOptions): 
     // cannot leave its viewport on the replacement, while a fallback view that
     // was framed before keeps its own framing.
     if (initial !== "") select(initial);
+    // The remembered element rides the same chain as the mount: selecting it
+    // before the handle exists would have nowhere to land. A pending chip click
+    // outranks it and is applied right below.
+    if (!restoredSelection && options.initialSelection !== undefined && pendingFocus === undefined) {
+      restoredSelection = true;
+      const wanted = options.initialSelection;
+      chain = chain.then(() => {
+        if (disposed || handle === undefined) return;
+        const owner = views?.find(candidate => candidate.nodes.some(node => node.id === wanted));
+        if (owner === undefined || owner.id !== view?.id) return;
+        handle.select(wanted);
+      });
+    }
     // A chip click that caused this mount left its element here; the views are
     // loaded now, so it can finally be applied.
     if (pendingFocus !== undefined) {

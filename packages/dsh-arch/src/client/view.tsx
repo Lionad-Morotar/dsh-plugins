@@ -9,13 +9,14 @@
  * The shell remounts the component on every tab entry and unmounts it on exit,
  * which is the chrome's own lifecycle: load on mount, flush on unmount.
  */
-import { useEffect, useRef, type ReactElement } from "react";
+import { useEffect, useMemo, useRef, type ReactElement } from "react";
 
 import type { ArchChromeOptions, ArchFocusSeam, NodeReferenceSeam } from "./chrome.tsx";
 import { mountArchChrome } from "./chrome.tsx";
 import { subscribeArchFocus, takeArchFocus } from "./focus-store.ts";
 import { archReferenceFromModel, type ArchInsertionResult, type ArchReferencePayload } from "./reference.ts";
 import { ROUTE_PREFIX } from "../shared.ts";
+import { createArchViewMemoryRegistry } from "./view-memory.ts";
 
 /** Owner props the host passes to a `conversation.view` entry. */
 export interface ConversationViewProps {
@@ -107,9 +108,16 @@ export function consumeArchFocus(seam: ArchFocusSeam): void {
  * @returns a component the slot registry can mount.
  */
 export function createArchView({ chrome, insertReference, referenceSourceAvailable }: ArchViewWiring) {
+  // The selection per session: the host unmounts this view on every tab switch,
+  // so the element the reader picked lives in this factory closure instead of
+  // the chrome, which is rebuilt from scratch on each mount.
+  const memoryRegistry = createArchViewMemoryRegistry();
   function ArchView(props: ConversationViewProps): ReactElement {
     const hostRef = useRef<HTMLDivElement>(null);
     const sessionId = props.sessionId;
+    // What this conversation remembers from its last mount. Mutated in place,
+    // so the next mount of the same session reads exactly what this one left.
+    const memory = useMemo(() => memoryRegistry.forSession(sessionId), [memoryRegistry, sessionId]);
     // The composer face is recreated by the host on every render, so it is
     // held in a ref: putting it in the effect's dependencies would remount the
     // whole chrome (and re-fetch the model) on every keystroke in the composer.
@@ -145,8 +153,18 @@ export function createArchView({ chrome, insertReference, referenceSourceAvailab
           insertReference(sessionId, payload, actions, referenceSourceAvailable?.() === true);
         },
       };
-      return mountArchChrome(host, { ...chromeRef.current, sessionId, nodeReference: seam, focusSeam });
-    }, [sessionId, hasComposer, insertReference, referenceSourceAvailable]);
+      return mountArchChrome(host, {
+        ...chromeRef.current,
+        sessionId,
+        nodeReference: seam,
+        focusSeam,
+        initialSelection: memory.selectedId,
+        onSelectionChange: id => {
+          if (id === null) delete memory.selectedId;
+          else memory.selectedId = id;
+        },
+      });
+    }, [sessionId, memory, hasComposer, insertReference, referenceSourceAvailable]);
 
     // The chip click that caused this mount filed its element before the tab
     // was pressed, so the request is already waiting here. The subscription
