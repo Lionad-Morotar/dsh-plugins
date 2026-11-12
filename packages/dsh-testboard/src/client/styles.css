@@ -608,12 +608,17 @@ body.tst-pane-resizing {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  flex: 0 0 auto;
+  /* A fixed name column is what keeps the tick matrices on one vertical axis:
+     indenting the row itself moved every file's ticks right by its depth. The
+     clamp keeps the column usable in the narrow pane without letting it grow
+     with the window. */
+  flex: 0 0 min(180px, 42%);
+  box-sizing: border-box;
   min-width: 0;
-  max-width: 46%;
+  padding-left: var(--tst-row-indent, 0px);
 }
 
-[data-tst="lane-file"] {color: var(--tst-ink);overflow: hidden;text-overflow: ellipsis;white-space: nowrap}
+[data-tst="lane-file"] {flex: 0 1 auto;min-width: 0;color: var(--tst-ink);overflow: hidden;text-overflow: ellipsis;white-space: nowrap}
 
 [data-tst="ticks"] {
   display: flex;

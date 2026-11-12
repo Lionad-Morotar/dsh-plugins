@@ -17,7 +17,7 @@
  * click, which is why it is only reachable by pointer for now; the keyboard's
  * run affordance is the toolbar's "run all".
  */
-import type { MouseEvent, ReactElement } from "react";
+import type { CSSProperties, MouseEvent, ReactElement } from "react";
 
 import { fileNameOf, fileDirectoryOf, formatDuration } from "../format.ts";
 import type { CaseTick, RowReading } from "../motion.ts";
@@ -116,7 +116,7 @@ export function LaneRow({
       data-has-failed={reading.kind === "failed" ? "true" : "false"}
       data-expanded={expanded ? "true" : "false"}
       data-selected={selected ? "true" : "false"}
-      style={indentPx === 0 ? undefined : { paddingLeft: `${String(6 + indentPx)}px` }}
+      style={{ "--tst-row-indent": `${String(indentPx)}px` } as CSSProperties}
       aria-selected={selected}
       aria-expanded={expanded}
       onClick={() => onSelect(row.path)}

@@ -517,10 +517,10 @@ describe("testboard view", () => {
       const row = (path: string) => rows(host).find(candidate => candidate.getAttribute("data-path") === path);
       // The header is one step in; its files are one step further, so the left
       // edge reads as a hierarchy rather than a stack of names.
-      expect(row("packages/tree/smoke.test.ts")?.style.paddingLeft).toBe("");
-      expect(row("packages/tree/test/unit/a.test.ts")?.style.paddingLeft).toBe("31px");
-      expect(row("packages/tree/test/unit/nested/b.test.ts")?.style.paddingLeft).toBe("45px");
-      expect(row("packages/tree/test/integration/c.test.ts")?.style.paddingLeft).toBe("31px");
+      expect(row("packages/tree/smoke.test.ts")?.style.getPropertyValue("--tst-row-indent")).toBe("0px");
+      expect(row("packages/tree/test/unit/a.test.ts")?.style.getPropertyValue("--tst-row-indent")).toBe("25px");
+      expect(row("packages/tree/test/unit/nested/b.test.ts")?.style.getPropertyValue("--tst-row-indent")).toBe("39px");
+      expect(row("packages/tree/test/integration/c.test.ts")?.style.getPropertyValue("--tst-row-indent")).toBe("25px");
       // The header's own padding includes the chevron's breathing room, so the
       // rail and the file names share one axis.
       expect(host.querySelector<HTMLElement>('[data-dir="tree:test/unit"]')?.style.paddingLeft).toBe("20px");
