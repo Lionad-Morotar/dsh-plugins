@@ -62,6 +62,9 @@ export const ZH: Record<string, string> = {
   "pr-explorer.commitDate": "日期",
   "pr-explorer.commitSubject": "标题",
   "pr-explorer.commitRefs": "引用",
+  "pr-explorer.commitFiles": "改动 {count} 个文件",
+  "pr-explorer.commitRoot": "初始提交没有父提交，无法显示差异",
+  "pr-explorer.commitEmpty": "这个提交没有改动",
   "pr-explorer.openInFiles": "在文件面板打开",
   "pr-explorer.openInGit": "在 Git 面板打开",
 
@@ -125,6 +128,9 @@ export const EN: Record<string, string> = {
   "pr-explorer.commitDate": "Date",
   "pr-explorer.commitSubject": "Subject",
   "pr-explorer.commitRefs": "Refs",
+  "pr-explorer.commitFiles": "{count} changed files",
+  "pr-explorer.commitRoot": "This is the root commit; there is no parent to diff against",
+  "pr-explorer.commitEmpty": "This commit changed no files",
   "pr-explorer.openInFiles": "Open in the file panel",
   "pr-explorer.openInGit": "Open in the Git panel",
 

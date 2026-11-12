@@ -5,7 +5,8 @@
  * "how big is it" (ahead, behind, files, lines). Below it the left pane is one
  * list with two tabs, because a range is read two ways: by commit, to follow the
  * story, and by file, to review the result. The right pane is whatever the
- * selected row is about: a file's diff, or a commit's metadata.
+ * selected row is about: a file's diff, or the changed files of a commit and
+ * the diff of the one the reader picked.
  *
  * The view owns only the reading state: which refs are selected, which tab is
  * showing, which row is selected, and the last answer for each. Every decision
@@ -125,6 +126,12 @@ export interface PrExplorerViewStrings {
   readonly commitDate: string;
   readonly commitSubject: string;
   readonly commitRefs: string;
+  /** Heading over the changed-file list inside a commit. `{count}` is filled. */
+  readonly commitFiles: string;
+  /** Shown for a commit with no parent, where there is no old side to diff. */
+  readonly commitRoot: string;
+  /** Shown for a commit that has a parent but changed no files. */
+  readonly commitEmpty: string;
   readonly openInFiles: string;
   readonly openInGit: string;
   readonly errorNotARepo: string;
@@ -161,10 +168,29 @@ type Phase =
   | { readonly kind: "ready"; readonly listing: RefListing; readonly compare: CompareSnapshot }
   | { readonly kind: "error"; readonly code: PrErrorCode };
 
+/** What the commit detail is doing with the selected changed file. */
+type CommitDiffState =
+  | { readonly kind: "idle" }
+  | { readonly kind: "loading"; readonly path: string }
+  | { readonly kind: "ready"; readonly diff: PrFileDiff }
+  | { readonly kind: "error"; readonly code: PrErrorCode }
+  /** The commit has no parent, so there is no old side to diff against. */
+  | { readonly kind: "root" }
+  /** The commit has a parent but changed no files. */
+  | { readonly kind: "empty" };
+
 /** What the right pane is showing right now. */
 type DetailPhase =
   | { readonly kind: "none" }
-  | { readonly kind: "commit"; readonly commit: CommitEntry }
+  | {
+      readonly kind: "commit";
+      readonly commit: CommitEntry;
+      readonly files: readonly PrChangedFile[];
+      /** False while the change list is still being read. */
+      readonly filesReady: boolean;
+      readonly selectedPath?: string;
+      readonly diff: CommitDiffState;
+    }
   | { readonly kind: "loading"; readonly path: string }
   | { readonly kind: "file"; readonly diff: PrFileDiff }
   | { readonly kind: "error"; readonly code: PrErrorCode };
@@ -356,6 +382,7 @@ function DetailPane({
   bodyRef,
   onOpenInFiles,
   onOpenInGit,
+  onSelectCommitFile,
 }: {
   readonly phase: DetailPhase;
   readonly strings: PrExplorerViewStrings;
@@ -363,6 +390,7 @@ function DetailPane({
   /** Absent when the host publishes no workbench to switch to. */
   readonly onOpenInFiles?: (path: string) => void;
   readonly onOpenInGit?: (hash: string) => void;
+  readonly onSelectCommitFile: (path: string) => void;
 }): ReactElement {
   return (
     <div data-rm="detail">
@@ -371,7 +399,17 @@ function DetailPane({
         {phase.kind === "loading" ? <p data-rm="detail-loading">{strings.loading}</p> : null}
         {phase.kind === "error" ? <p data-rm="detail-error">{errorText(phase.code, strings)}</p> : null}
         {phase.kind === "commit" ? (
-          <CommitDetail commit={phase.commit} strings={strings} onOpenInGit={onOpenInGit} />
+          <CommitDetail
+            commit={phase.commit}
+            files={phase.files}
+            filesReady={phase.filesReady}
+            diff={phase.diff}
+            strings={strings}
+            onSelectFile={onSelectCommitFile}
+            {...(phase.selectedPath === undefined ? {} : { selectedPath: phase.selectedPath })}
+            {...(onOpenInGit === undefined ? {} : { onOpenInGit })}
+            {...(onOpenInFiles === undefined ? {} : { onOpenInFiles })}
+          />
         ) : null}
         {phase.kind === "file" ? (
           <FileDetail diff={phase.diff} strings={strings} onOpenInFiles={onOpenInFiles} />
@@ -382,18 +420,36 @@ function DetailPane({
 }
 
 /**
- * One commit's metadata.
- * @param props - the commit and the bound copy.
+ * One commit's changed files and the diff of the selected one.
+ *
+ * A commit in a range is usually read to see what it did, not only who wrote
+ * it, so the metadata is a compact header rather than the whole pane. The file
+ * list reuses the same status/churn vocabulary as the range file list; picking
+ * a file loads its diff under the list.
+ *
+ * @param props - the commit, its files, the selected diff and the handlers.
  * @returns the detail.
  */
 function CommitDetail({
   commit,
+  files,
+  filesReady,
+  selectedPath,
+  diff,
   strings,
+  onSelectFile,
   onOpenInGit,
+  onOpenInFiles,
 }: {
   readonly commit: CommitEntry;
+  readonly files: readonly PrChangedFile[];
+  readonly filesReady: boolean;
+  readonly selectedPath?: string;
+  readonly diff: CommitDiffState;
   readonly strings: PrExplorerViewStrings;
+  readonly onSelectFile: (path: string) => void;
   readonly onOpenInGit?: (hash: string) => void;
+  readonly onOpenInFiles?: (path: string) => void;
 }): ReactElement {
   return (
     <div data-testid="commit-detail">
@@ -424,6 +480,64 @@ function CommitDetail({
         <div data-rm="commit-detail-row">
           <span data-rm="commit-detail-label">{strings.commitRefs}</span>
           <span data-rm="commit-detail-value">{commit.refs}</span>
+        </div>
+      )}
+
+      {filesReady ? (
+        <div data-rm="commit-files">
+          <div data-rm="commit-files-head">{fill(strings.commitFiles, { count: String(files.length) })}</div>
+          {files.length === 0 ? null : (
+            <div
+              data-rm="commit-files-list"
+              role="listbox"
+              aria-label={fill(strings.commitFiles, { count: String(files.length) })}
+            >
+              {files.map(file => {
+                const parts = splitPath(file.path);
+                const churn = churnOf(file);
+                const note = noteText(churn.note, strings);
+                const selected = file.path === selectedPath;
+                return (
+                  <button
+                    key={file.path}
+                    type="button"
+                    data-testid="commit-file-row"
+                    data-path={file.path}
+                    data-status={file.status}
+                    data-selected={selected ? "true" : "false"}
+                    role="option"
+                    aria-selected={selected}
+                    onClick={() => onSelectFile(file.path)}
+                  >
+                    <span data-rm="mark" data-status={file.status} title={statusWord(file.status, strings)}>
+                      {statusMark(file.status)}
+                    </span>
+                    <span data-rm="path">
+                      {parts.dir === "" ? null : <span data-rm="path-dir">{parts.dir}</span>}
+                      <span data-rm="path-name">{parts.name}</span>
+                    </span>
+                    <span data-rm="churn" data-note={churn.note ?? undefined}>
+                      {note ?? churnText(churn)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : (
+        <p data-rm="detail-loading">{strings.loading}</p>
+      )}
+
+      {diff.kind === "idle" ? null : (
+        <div data-rm="commit-diff">
+          {diff.kind === "loading" ? <p data-rm="detail-loading">{strings.loading}</p> : null}
+          {diff.kind === "root" ? <p data-rm="detail-empty">{strings.commitRoot}</p> : null}
+          {diff.kind === "empty" ? <p data-rm="detail-empty">{strings.commitEmpty}</p> : null}
+          {diff.kind === "error" ? <p data-rm="detail-error">{errorText(diff.code, strings)}</p> : null}
+          {diff.kind === "ready" ? (
+            <FileDetail diff={diff.diff} strings={strings} {...(onOpenInFiles === undefined ? {} : { onOpenInFiles })} />
+          ) : null}
         </div>
       )}
     </div>
@@ -639,6 +753,122 @@ export function createPrExplorerView({
       [runtime],
     );
 
+    /**
+     * Load one commit's changed files and the first file's diff.
+     *
+     * A commit is diffed against its first parent. The range routes already
+     * express that as `<hash>^..<hash>`, so no new host route is needed; a root
+     * commit has no parent and is answered as such rather than shown an empty
+     * patch that would read as "this commit changed nothing".
+     * @param session - the conversation to read.
+     * @param commit - the commit the reader picked.
+     */
+    const loadCommit = useCallback(
+      (session: string, commit: CommitEntry): void => {
+        detailRequest.current += 1;
+        const mine = detailRequest.current;
+        setDetail({ kind: "commit", commit, files: [], filesReady: false, diff: { kind: "idle" } });
+        const base = `${commit.hash}^`;
+        runtime.loadCompare(session, base, commit.hash).then(
+          result => {
+            if (detailRequest.current !== mine) return;
+            if (!result.ok) {
+              const root = result.error.code === "invalid-ref";
+              setDetail({
+                kind: "commit",
+                commit,
+                files: [],
+                filesReady: true,
+                diff: root ? { kind: "root" } : { kind: "error", code: result.error.code },
+              });
+              return;
+            }
+            const files = sortFiles(result.compare.files.files);
+            const first = files[0];
+            if (first === undefined) {
+              setDetail({ kind: "commit", commit, files, filesReady: true, diff: { kind: "empty" } });
+              return;
+            }
+            setDetail({
+              kind: "commit",
+              commit,
+              files,
+              filesReady: true,
+              selectedPath: first.path,
+              diff: { kind: "loading", path: first.path },
+            });
+            runtime.loadDiff(session, base, commit.hash, first.path).then(
+              detailResult => {
+                if (detailRequest.current !== mine) return;
+                setDetail({
+                  kind: "commit",
+                  commit,
+                  files,
+                  filesReady: true,
+                  selectedPath: first.path,
+                  diff: detailResult.ok
+                    ? { kind: "ready", diff: detailResult.diff }
+                    : { kind: "error", code: detailResult.error.code },
+                });
+              },
+              () => {
+                if (detailRequest.current !== mine) return;
+                setDetail({
+                  kind: "commit",
+                  commit,
+                  files,
+                  filesReady: true,
+                  selectedPath: first.path,
+                  diff: { kind: "error", code: "unreadable" },
+                });
+              },
+            );
+          },
+          () => {
+            if (detailRequest.current !== mine) return;
+            setDetail({ kind: "commit", commit, files: [], filesReady: true, diff: { kind: "error", code: "unreadable" } });
+          },
+        );
+      },
+      [runtime],
+    );
+
+    /**
+     * Load one changed file of the commit already open in the detail pane.
+     * @param path - the repository-relative path picked from the commit's list.
+     */
+    const selectCommitFile = useCallback(
+      (path: string): void => {
+        if (
+          sessionId === undefined ||
+          sessionId === "" ||
+          detail.kind !== "commit" ||
+          detail.commit === undefined
+        ) {
+          return;
+        }
+        const commit = detail.commit;
+        detailRequest.current += 1;
+        const mine = detailRequest.current;
+        setDetail({ ...detail, selectedPath: path, diff: { kind: "loading", path } });
+        runtime.loadDiff(sessionId, `${commit.hash}^`, commit.hash, path).then(
+          result => {
+            if (detailRequest.current !== mine) return;
+            setDetail({
+              ...detail,
+              selectedPath: path,
+              diff: result.ok ? { kind: "ready", diff: result.diff } : { kind: "error", code: result.error.code },
+            });
+          },
+          () => {
+            if (detailRequest.current !== mine) return;
+            setDetail({ ...detail, selectedPath: path, diff: { kind: "error", code: "unreadable" } });
+          },
+        );
+      },
+      [detail, runtime, sessionId],
+    );
+
     useEffect(() => {
       if (sessionId === undefined || sessionId === "") {
         // Nothing to ask about. Bumping the counters drops any answer still in
@@ -747,7 +977,11 @@ export function createPrExplorerView({
     // the click handler keeps it tied to the render that changed the content.
     useEffect(() => {
       if (detailBody.current !== null) detailBody.current.scrollTop = 0;
-    }, [detail.kind === "file" ? detail.diff.path : "", detail.kind]);
+    }, [
+      detail.kind === "file" ? detail.diff.path : "",
+      detail.kind === "commit" ? (detail.selectedPath ?? "") : "",
+      detail.kind,
+    ]);
 
     const ready = phase.kind === "ready" ? phase.compare : undefined;
     const listing = phase.kind === "ready" ? phase.listing : undefined;
@@ -807,10 +1041,12 @@ export function createPrExplorerView({
         setSelectedCommit(key);
         const commit = commits.find(entry => entry.hash === key);
         if (commit !== undefined) {
-          // A commit's metadata is already in the list answer, so there is
-          // nothing to fetch and nothing to wait for.
-          detailRequest.current += 1;
-          setDetail({ kind: "commit", commit });
+          if (sessionId === undefined || sessionId === "") {
+            detailRequest.current += 1;
+            setDetail({ kind: "commit", commit, files: [], filesReady: false, diff: { kind: "idle" } });
+            return;
+          }
+          loadCommit(sessionId, commit);
         }
         return;
       }
@@ -1042,6 +1278,7 @@ export function createPrExplorerView({
                 phase={detail}
                 strings={strings}
                 bodyRef={detailBody}
+                onSelectCommitFile={selectCommitFile}
                 {...(jumpToFiles === undefined ? {} : { onOpenInFiles: openInFiles })}
                 {...(jumpToGit === undefined ? {} : { onOpenInGit: openInGit })}
               />

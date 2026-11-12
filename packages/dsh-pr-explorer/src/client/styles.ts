@@ -372,6 +372,60 @@ const STYLESHEET = `[data-testid="pr-explorer"] {
   padding-bottom: 4px;
 }
 
+/* Commit detail: a compact header, its changed-file list and the picked diff. */
+[data-testid="pr-explorer"] [data-rm="commit-files"] {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.05));
+}
+
+[data-testid="pr-explorer"] [data-rm="commit-files-head"] {
+  margin: 0 0 2px;
+  font-size: var(--rm-code);
+  color: var(--dsw-alias-label-tertiary, #a39c91);
+}
+
+[data-testid="pr-explorer"] [data-rm="commit-files-list"] {
+  display: flex;
+  flex-direction: column;
+  max-height: min(34vh, 320px);
+  overflow: auto;
+}
+
+[data-testid="pr-explorer"] [data-testid="commit-file-row"] {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 4px;
+  font-family: var(--rm-mono);
+  font-size: var(--rm-code);
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.05));
+  text-align: left;
+  cursor: pointer;
+}
+
+[data-testid="pr-explorer"] [data-testid="commit-file-row"]:hover {
+  background: var(--dsw-alias-bg-layer-2, rgba(0, 0, 0, 0.03));
+}
+
+[data-testid="pr-explorer"] [data-testid="commit-file-row"][data-selected="true"] {
+  background: var(--dsw-alias-bg-layer-3, rgba(0, 0, 0, 0.06));
+}
+
+[data-testid="pr-explorer"] [data-testid="commit-file-row"]:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary, #14110d);
+  outline-offset: -2px;
+}
+
+[data-testid="pr-explorer"] [data-rm="commit-diff"] {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.05));
+}
+
 /* Commit metadata: a label column and a value column. */
 [data-testid="pr-explorer"] [data-rm="commit-detail-row"] {
   display: grid;

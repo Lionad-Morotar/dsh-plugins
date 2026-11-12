@@ -82,6 +82,23 @@ describe("the commit list", () => {
     expect(newest?.date).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
   });
 
+  it("reads one commit as parent..commit for the commit detail", async () => {
+    await diverged();
+    const { runner } = realRunner(repo!.root);
+    const head = repo!.git(["rev-parse", "feature"]).trim();
+
+    // The PR view's commit detail does not add a route; it asks the existing
+    // range reader for <hash>^..<hash>, which is the same first-parent diff git
+    // shows for that commit.
+    const result = await collectCommits(runner, repo!.root, { base: `${head}^`, head });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.list.commits).toHaveLength(1);
+    expect(result.list.commits[0]?.hash).toBe(head);
+    expect(result.list.commits[0]?.subject).toBe("feature two");
+  });
+
   it("keeps a subject that contains the field separator's characters", async () => {
     repo = await createRepoWithCommit({ "a.txt": "one\n" });
     repo.git(["checkout", "-q", "-b", "feature"]);

@@ -67,6 +67,9 @@ const STRINGS: PrExplorerViewStrings = {
   commitDate: "日期",
   commitSubject: "标题",
   commitRefs: "引用",
+  commitFiles: "改动 {count} 个文件",
+  commitRoot: "初始提交没有父提交，无法显示差异",
+  commitEmpty: "这个提交没有改动",
   openInFiles: "在文件面板打开",
   openInGit: "在 Git 面板打开",
   errorNotARepo: "这个目录不是 git 仓库",
@@ -610,6 +613,113 @@ describe("the PR view", () => {
     expect(detail?.textContent).toContain("Lionad");
     expect(detail?.textContent).toContain("2026-03-04");
     expect(detail?.textContent).toContain("HEAD -> feature");
+  });
+
+  it("shows the commit's changed files and the first file's diff", async () => {
+    const { runtime, diffCalls } = fakeRuntime({
+      compare: (base) =>
+        base.endsWith("^")
+          ? ({
+              ok: true,
+              compare: snapshot({
+                commits: { commits: [commit({ hash: "d".repeat(40), subject: "fix: the thing" })], truncated: false },
+                files: {
+                  files: [file({ path: "a.ts", additions: 1, deletions: 1 })],
+                  summary: { files: 1, additions: 1, deletions: 1 },
+                },
+              }),
+            } satisfies CompareSnapshotResult)
+          : ({
+              ok: true,
+              compare: snapshot({
+                commits: { commits: [commit({ hash: "d".repeat(40), subject: "fix: the thing" })], truncated: false },
+              }),
+            } satisfies CompareSnapshotResult),
+      diff: () => TEXT_DIFF,
+    });
+    await mount(runtime);
+
+    await click(commitRows()[0] ?? null);
+    await settle();
+
+    const detail = host.querySelector<HTMLElement>('[data-testid="commit-detail"]');
+    expect(detail?.textContent).toContain("改动 1 个文件");
+    expect(detail?.querySelector('[data-testid="commit-file-row"]')?.textContent).toContain("a.ts");
+    expect(detail?.textContent).toContain("after");
+    expect(diffCalls.at(-1)).toEqual({
+      sessionId: "session-1",
+      base: `${"d".repeat(40)}^`,
+      head: "d".repeat(40),
+      path: "a.ts",
+    });
+  });
+
+  it("loads the diff of another changed file when its row is clicked", async () => {
+    const second = {
+      ok: true,
+      diff: {
+        kind: "text",
+        path: "b.ts",
+        truncated: false,
+        hunks: [
+          {
+            oldStart: 1,
+            oldLines: 0,
+            newStart: 1,
+            newLines: 1,
+            lines: [{ kind: "add", oldLine: null, newLine: 1, text: "second-file" }],
+          },
+        ],
+      },
+    } satisfies PrFileDiffResult;
+    const { runtime, diffCalls } = fakeRuntime({
+      compare: (base) =>
+        base.endsWith("^")
+          ? ({
+              ok: true,
+              compare: snapshot({
+                commits: { commits: [commit({ hash: "d".repeat(40) })], truncated: false },
+                files: {
+                  files: [file({ path: "a.ts" }), file({ path: "b.ts", status: "added" })],
+                  summary: { files: 2, additions: 2, deletions: 0 },
+                },
+              }),
+            } satisfies CompareSnapshotResult)
+          : ({
+              ok: true,
+              compare: snapshot({ commits: { commits: [commit({ hash: "d".repeat(40) })], truncated: false } }),
+            } satisfies CompareSnapshotResult),
+      diff: path => (path === "b.ts" ? second : TEXT_DIFF),
+    });
+    await mount(runtime);
+    await click(commitRows()[0] ?? null);
+    await settle();
+
+    const rows = [...host.querySelectorAll<HTMLElement>('[data-testid="commit-file-row"]')];
+    await click(rows[1] ?? null);
+
+    expect(diffCalls.at(-1)?.path).toBe("b.ts");
+    expect(host.querySelector('[data-testid="commit-detail"]')?.textContent).toContain("second-file");
+  });
+
+  it("says the root commit has no parent instead of showing an empty diff", async () => {
+    const { runtime } = fakeRuntime({
+      compare: (base) =>
+        base.endsWith("^")
+          ? ({
+              ok: false,
+              error: { code: "invalid-ref", message: "d^ does not name a commit" },
+            } satisfies CompareSnapshotResult)
+          : ({
+              ok: true,
+              compare: snapshot({ commits: { commits: [commit({ hash: "d".repeat(40) })], truncated: false } }),
+            } satisfies CompareSnapshotResult),
+    });
+    await mount(runtime);
+    await click(commitRows()[0] ?? null);
+    await settle();
+
+    expect(host.querySelector('[data-testid="commit-detail"]')?.textContent).toContain("初始提交没有父提交");
   });
 
   it("swaps the two refs and reloads", async () => {
