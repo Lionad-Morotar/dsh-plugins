@@ -27,6 +27,7 @@ import { createGitRunner, type SubprocessLike } from "./host/git.ts";
 import { collectFileDiff } from "./host/diff.ts";
 import { registerReviewRoutes, type ReviewRouteDeps, type WebServerFace } from "./host/routes.ts";
 import { collectSnapshot } from "./host/snapshot.ts";
+import { collectIndex } from "./host/structure.ts";
 import { PACKAGE_NAME, type ReviewScope } from "./shared.ts";
 
 export { PACKAGE_NAME };
@@ -171,6 +172,7 @@ export function apply(ctx: Context): void {
     loadSnapshot: (workspace, scope: ReviewScope, signal) => collectSnapshot({ runner, cwd: workspace }, scope, signal),
     loadDiff: (workspace, scope: ReviewScope, path, signal) =>
       collectFileDiff({ runner, cwd: workspace }, { scope, path }, signal),
+    loadIndex: (workspace, scope: ReviewScope, signal) => collectIndex({ runner, cwd: workspace }, scope, undefined, signal),
   };
 
   whenWebServer(host, webServer => {

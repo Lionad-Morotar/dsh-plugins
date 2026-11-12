@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import { createHttpRuntime } from "../src/client/runtime.ts";
 import { ROUTE_PREFIX } from "../src/shared.ts";
-import type { ReviewSnapshotResult } from "../src/shared.ts";
+import type { ReviewIndexResult, ReviewSnapshotResult } from "../src/shared.ts";
 
 const SNAPSHOT: ReviewSnapshotResult = {
   ok: true,
@@ -174,5 +174,74 @@ describe("the state request", () => {
 
     // A GET with no init at all: the route reads the query and nothing else.
     expect(calls[0]?.init).toBeUndefined();
+  });
+});
+
+describe("the index request", () => {
+  /** A minimal successful index answer. */
+  const INDEX: ReviewIndexResult = {
+    ok: true,
+    index: {
+      files: [],
+      dirs: [],
+      changed: [],
+      edges: [],
+      imports: { newImports: 0, droppedImports: 0 },
+      unresolved: { count: 0, files: [] },
+      indexed: { files: 0, parsed: 0, complete: true, note: null },
+      snapshotId: "worktree:HEAD..HEAD",
+    },
+  };
+
+  it("asks the index route with the session and the range", async () => {
+    const { impl, calls } = fakeFetch(INDEX);
+    const runtime = createHttpRuntime(impl);
+
+    await runtime.loadIndex?.("session-1", { kind: "worktree" });
+
+    const url = calls[0]?.url ?? "";
+    expect(url.startsWith(`${ROUTE_PREFIX}/index?`)).toBe(true);
+    expect(queryOf(url)).toEqual({ sessionId: "session-1", scope: "worktree" });
+  });
+
+  it("sends the base ref for a branch review", async () => {
+    const { impl, calls } = fakeFetch(INDEX);
+    const runtime = createHttpRuntime(impl);
+
+    await runtime.loadIndex?.("session-1", { kind: "branch", baseRef: "origin/main" });
+
+    expect(queryOf(calls[0]?.url ?? "")).toEqual({
+      sessionId: "session-1",
+      scope: "branch",
+      base: "origin/main",
+    });
+  });
+
+  it("omits the base when a branch review names none", async () => {
+    const { impl, calls } = fakeFetch(INDEX);
+    const runtime = createHttpRuntime(impl);
+
+    await runtime.loadIndex?.("session-1", { kind: "branch" });
+
+    // An empty `base=` would read as "resolve it yourself" on the host, which is
+    // a different request than the one this caller made.
+    expect(queryOf(calls[0]?.url ?? "")).toEqual({ sessionId: "session-1", scope: "branch" });
+  });
+
+  it("passes a domain failure through instead of throwing", async () => {
+    const failure: ReviewIndexResult = { ok: false, error: { code: "not-a-repo", message: "nope" } };
+    const { impl } = fakeFetch(failure);
+    const runtime = createHttpRuntime(impl);
+
+    const result = await runtime.loadIndex?.("session-1", { kind: "worktree" });
+
+    expect(result).toEqual(failure);
+  });
+
+  it("throws on a non-2xx answer", async () => {
+    const { impl } = fakeFetch({ ok: false }, 500);
+    const runtime = createHttpRuntime(impl);
+
+    await expect(runtime.loadIndex?.("session-1", { kind: "worktree" })).rejects.toThrow(/500/u);
   });
 });

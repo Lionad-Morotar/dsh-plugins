@@ -10,7 +10,16 @@
  * No React and no DOM import: this module is the part a future preview, a test
  * and the tab all share.
  */
-import type { ChangedFile, ChangedFileStatus, DiffHunk, FileDiff, ReviewSnapshot } from "../shared.ts";
+import type {
+  ChangedFile,
+  ChangedFileStatus,
+  ChangedMapEntry,
+  DiffHunk,
+  FileDiff,
+  ReviewIndex,
+  ReviewSnapshot,
+} from "../shared.ts";
+import type { MapData, MapDirInput, MapEdgeInput, MapFileInput, MapLevelInput } from "./map/contract.ts";
 
 /** The minus sign for a deletion count. U+2212, not a hyphen. */
 const MINUS = "\u2212";
@@ -104,6 +113,22 @@ export function churnOf(file: ChangedFile): Churn {
  * @param churn - the projection.
  * @returns the column's text, or "" when there is nothing to say.
  */
+/**
+ * One side of a churn reading, with the zero case spelled out.
+ *
+ * `+0` and `−0` are the failure this exists to prevent: a sign in front of a zero
+ * reads as "a tiny amount of something" when the truth is "none", and a reader
+ * scanning a row of numbers takes the sign as the fact. A zero side prints as a
+ * bare `0` instead, and the other side keeps its sign.
+ * @param sign - the side's sign, `+` or `−`.
+ * @param value - the count.
+ * @returns the label for that side.
+ */
+export function signedCount(sign: "+" | "-", value: number): string {
+  if (value === 0) return "0";
+  return `${sign === "+" ? PLUS : MINUS}${String(value)}`;
+}
+
 export function churnText(churn: Churn): string {
   const parts: string[] = [];
   if (churn.additions !== null) parts.push(`${PLUS}${String(churn.additions)}`);
@@ -314,4 +339,231 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${String(bytes)} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * One reading of the index, as the four cards and their annotations need it.
+ *
+ * `partial` is null when the index finished, and otherwise the "320/400" pair
+ * the card prints beside its number. It is a separate field rather than a
+ * formatted string so the view can decide where it goes and a test can assert
+ * the numbers rather than a sentence.
+ *
+ * `unresolved` is a lower bound and is carried as one: a count of zero means
+ * "nothing failed to resolve", which is a fact, while a count above zero means
+ * "at least this many", because the index may not have looked at everything.
+ */
+export interface IndexReadings {
+  readonly additions: number;
+  readonly deletions: number;
+  readonly files: number;
+  readonly newImports: number;
+  readonly droppedImports: number;
+  readonly unresolved: number;
+  /** Parsed-of-total, when the index stopped before finishing. */
+  readonly partial: { readonly parsed: number; readonly total: number } | null;
+  /** Why the index stopped, when it did; the host's own words. */
+  readonly note: string | null;
+  /** Every file the index covered, including the ones nothing happened to. */
+  readonly indexedFiles: number;
+}
+
+/**
+ * Project the four headline readings off one index.
+ *
+ * The line counts come from the change entries rather than from the directory
+ * totals: the totals sum the same numbers, but a directory aggregate is a
+ * subtree sum and the headline is about the change set. Reading them from the
+ * entries keeps the card and the list on one source.
+ *
+ * A file count of zero is a real zero — the change set is empty — while an
+ * unfinished index is reported through `partial` instead, so the card never has
+ * to guess which of the two it is looking at.
+ * @param index - the host's index answer.
+ * @returns the readings.
+ */
+export function indexReadings(index: ReviewIndex): IndexReadings {
+  let additions = 0;
+  let deletions = 0;
+  for (const entry of index.changed) {
+    additions += entry.additions ?? 0;
+    deletions += entry.deletions ?? 0;
+  }
+  return {
+    additions,
+    deletions,
+    files: index.changed.length,
+    newImports: index.imports.newImports,
+    droppedImports: index.imports.droppedImports,
+    unresolved: index.unresolved.count,
+    partial: index.indexed.complete
+      ? null
+      : { parsed: index.indexed.parsed, total: index.indexed.files },
+    note: index.indexed.note,
+    indexedFiles: index.indexed.files,
+  };
+}
+
+/**
+ * The directory a path sits in, as the map keys its levels.
+ * @param path - a repository-relative path.
+ * @returns the parent directory, with the root as the empty string.
+ */
+function parentOf(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash);
+}
+
+/**
+ * Every directory between the root and one path, root first.
+ *
+ * A level exists for a directory even when it holds no files of its own: a
+ * folder that only contains other folders is still a place the reader can drill
+ * into, and without a level for it the drill would land on nothing.
+ * @param path - a directory path.
+ * @returns the ancestors, root first, including the path itself.
+ */
+function ancestorsOf(path: string): string[] {
+  const chain = [""];
+  if (path === "") return chain;
+  let cursor = "";
+  for (const part of path.split("/")) {
+    if (part === "") continue;
+    cursor = cursor === "" ? part : `${cursor}/${part}`;
+    chain.push(cursor);
+  }
+  return chain;
+}
+
+/**
+ * Build the map's level index from one review index.
+ *
+ * The map draws one shelf at a time, so this is the conversion from "a flat list
+ * of files and a flat list of directory totals" to "one entry per directory,
+ * holding its direct children". Three decisions are worth naming:
+ *
+ * - **Directories carry their subtree totals, files carry their own.** The host
+ *   already aggregated each directory over everything below it, and re-summing
+ *   here would be a second implementation of the same number.
+ * - **A directory's `changed` flag is derived from its changed count**, not from
+ *   whether any child is on this level: a folder whose only change is three
+ *   levels down still has to light up, or the reader drills into the wrong one.
+ * - **Nothing is filtered by extension.** A `.md`, a `.png` and a `.ts` are all
+ *   files on the map; the requirement is explicit that the map shows the whole
+ *   tree, and an extension filter would quietly make it a code-only view.
+ * @param index - the host's index answer.
+ * @param repoName - the root breadcrumb's label.
+ * @returns the levels, keyed by directory path, with the root present.
+ */
+export function buildMapData(index: ReviewIndex, repoName: string): MapData {
+  const changedByPath = new Map<string, ChangedMapEntry>(index.changed.map(entry => [entry.path, entry]));
+  const levels = new Map<string, MapLevelInput>();
+
+  const levelOf = (path: string): { dirs: MapDirInput[]; files: MapFileInput[] } => {
+    const existing = levels.get(path);
+    if (existing !== undefined) return { dirs: [...existing.dirs], files: [...existing.files] };
+    return { dirs: [], files: [] };
+  };
+
+  // Every directory gets a level, deepest last, so a folder that holds only
+  // folders still has somewhere to drill to.
+  for (const dir of index.dirs) {
+    const level = levelOf(dir.path);
+    levels.set(dir.path, { path: dir.path, dirs: level.dirs, files: level.files });
+  }
+  if (!levels.has("")) levels.set("", { path: "", dirs: [], files: [] });
+
+  for (const dir of index.dirs) {
+    if (dir.path === "") continue;
+    const parent = parentOf(dir.path);
+    const level = levelOf(parent);
+    level.dirs.push({
+      path: dir.path,
+      lines: dir.lines,
+      changed: dir.changed > 0,
+      files: dir.files,
+      changedFiles: dir.changed,
+      additions: dir.additions,
+      deletions: dir.deletions,
+    });
+    levels.set(parent, { path: parent, dirs: level.dirs, files: level.files });
+  }
+
+  for (const file of index.files) {
+    const parent = parentOf(file.path);
+    const level = levelOf(parent);
+    const entry = changedByPath.get(file.path);
+    level.files.push({
+      path: file.path,
+      lines: file.lines,
+      changed: entry !== undefined,
+      // Carried through so the map can tell "no reading" from "no lines".
+      ...(file.unindexed === true ? { unindexed: true as const } : {}),
+      ...(entry === undefined
+        ? {}
+        : {
+            status: entry.status,
+            additions: entry.additions,
+            deletions: entry.deletions,
+            binary: entry.binary || file.binary,
+            hunks: entry.hunks.map(hunk => ({
+              newStart: hunk.newStart,
+              newLines: hunk.newLines,
+              oldLines: hunk.oldLines,
+            })),
+          }),
+    });
+    levels.set(parent, { path: parent, dirs: level.dirs, files: level.files });
+  }
+
+  // Sorted by path so the layout is deterministic regardless of the order the
+  // host listed things in.
+  for (const [path, level] of levels) {
+    levels.set(path, {
+      path,
+      dirs: [...level.dirs].sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)),
+      files: [...level.files].sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)),
+    });
+  }
+
+  // Only edges with an end in the change set are carried: the map draws
+  // dependencies of what changed, and an edge between two untouched files is a
+  // fact about the repository rather than about this review.
+  const changedPaths = new Set(index.changed.map(entry => entry.path));
+  const edges: MapEdgeInput[] = index.edges
+    .filter(edge => changedPaths.has(edge.from) || changedPaths.has(edge.to))
+    .map(edge => ({ from: edge.from, to: edge.to, state: edge.state }));
+
+  // Per-file unresolved counts. The host reports the files, not a per-file
+  // number, so each listed file counts as at least one: the list is the
+  // evidence, and a file on it has something the map could not draw.
+  const unresolvedFiles: Record<string, number> = {};
+  for (const path of index.unresolved.files) {
+    unresolvedFiles[path] = (unresolvedFiles[path] ?? 0) + 1;
+  }
+
+  return {
+    levels,
+    rootPath: "",
+    edges,
+    unresolvedFiles,
+    indexed: {
+      parsed: index.indexed.parsed,
+      total: index.indexed.files,
+      complete: index.indexed.complete,
+      note: index.indexed.note,
+    },
+  };
+}
+
+/**
+ * The directories a path's ancestors name, for a breadcrumb of a file.
+ *
+ * Exported because the view needs it to say where a file lives without
+ * re-deriving the split.
+ * @param path - a repository-relative path.
+ * @returns the ancestor directories, root first.
+ */
+export function directoryChain(path: string): string[] {
+  return ancestorsOf(parentOf(path));
 }

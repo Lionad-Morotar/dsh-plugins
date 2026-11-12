@@ -19,7 +19,7 @@ import {
   type WebServerFace,
 } from "../src/host/routes.ts";
 import { ROUTE_PREFIX } from "../src/shared.ts";
-import type { FileDiffResult, ReviewScope, ReviewSnapshotResult } from "../src/shared.ts";
+import type { FileDiffResult, ReviewIndexResult, ReviewScope, ReviewSnapshotResult } from "../src/shared.ts";
 
 const SNAPSHOT_OK: ReviewSnapshotResult = {
   ok: true,
@@ -39,9 +39,23 @@ const DIFF_OK: FileDiffResult = {
   diff: { kind: "text", path: "a.txt", hunks: [], truncated: false },
 };
 
+const INDEX_OK: ReviewIndexResult = {
+  ok: true,
+  index: {
+    files: [{ path: "a.txt", lines: 1, binary: false, deleted: false }],
+    dirs: [{ path: "", lines: 1, files: 1, changed: 1, additions: 1, deletions: 0 }],
+    changed: [{ path: "a.txt", status: "modified", additions: 1, deletions: 0, binary: false, hunks: [] }],
+    edges: [],
+    imports: { newImports: 0, droppedImports: 0 },
+    unresolved: { count: 0, files: [] },
+    indexed: { files: 1, parsed: 0, complete: true, note: null },
+    snapshotId: "worktree:HEAD..HEAD",
+  },
+};
+
 /** One recorded call into the data layer. */
 interface Call {
-  readonly kind: "snapshot" | "diff";
+  readonly kind: "snapshot" | "diff" | "index";
   readonly workspace: string;
   readonly scope: ReviewScope;
   readonly path?: string;
@@ -60,6 +74,10 @@ function deps(overrides: Partial<ReviewRouteDeps> = {}) {
     async loadDiff(workspace, scope, path) {
       calls.push({ kind: "diff", workspace, scope, path });
       return DIFF_OK;
+    },
+    async loadIndex(workspace, scope) {
+      calls.push({ kind: "index", workspace, scope });
+      return INDEX_OK;
     },
     ...overrides,
   };
@@ -265,6 +283,75 @@ describe("the diff route", () => {
 
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({ ok: false, error: { code: "no-session" } });
+  });
+});
+
+describe("the index route", () => {
+  it("answers a worktree index for the session's workspace", async () => {
+    const { deps: d, calls } = deps();
+
+    const response = await handleReviewRequest(d, get(`${ROUTE_PREFIX}/index?sessionId=known`));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(INDEX_OK);
+    expect(calls).toEqual([{ kind: "index", workspace: "/ws/project", scope: { kind: "worktree" } }]);
+  });
+
+  it("passes a branch scope and its base through", async () => {
+    const { deps: d, calls } = deps();
+
+    await handleReviewRequest(d, get(`${ROUTE_PREFIX}/index?sessionId=known&scope=branch&base=origin/main`));
+
+    expect(calls[0]?.scope).toEqual({ kind: "branch", baseRef: "origin/main" });
+  });
+
+  it("rejects a missing session id with 400", async () => {
+    const { deps: d, calls } = deps();
+
+    const response = await handleReviewRequest(d, get(`${ROUTE_PREFIX}/index`));
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ ok: false, error: { code: "bad-request" } });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects a bad scope with 400", async () => {
+    const { deps: d } = deps();
+
+    const response = await handleReviewRequest(d, get(`${ROUTE_PREFIX}/index?sessionId=known&scope=everything`));
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ ok: false, error: { code: "bad-request" } });
+  });
+
+  it("answers an unknown session with 404 and the no-session code", async () => {
+    const { deps: d } = deps();
+
+    const response = await handleReviewRequest(d, get(`${ROUTE_PREFIX}/index?sessionId=unknown`));
+
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({ ok: false, error: { code: "no-session" } });
+  });
+
+  it("passes a domain failure through with 200", async () => {
+    const { deps: d } = deps({
+      async loadIndex() {
+        return { ok: false, error: { code: "not-a-repo", message: "/ws/project is not a repository" } };
+      },
+    });
+
+    const response = await handleReviewRequest(d, get(`${ROUTE_PREFIX}/index?sessionId=known`));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ ok: false, error: { code: "not-a-repo" } });
+  });
+
+  it("ignores a path parameter, which belongs to the diff route", async () => {
+    const { deps: d, calls } = deps();
+
+    await handleReviewRequest(d, get(`${ROUTE_PREFIX}/index?sessionId=known&path=a.txt`));
+
+    expect(calls).toEqual([{ kind: "index", workspace: "/ws/project", scope: { kind: "worktree" } }]);
   });
 });
 

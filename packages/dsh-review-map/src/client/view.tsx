@@ -35,16 +35,21 @@
  * keys on to give the conversation view a definite height and to float the
  * composer over it. Without it the panel collapses to its content height.
  */
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 
 import { createHttpRuntime, type ReviewRuntime } from "./runtime.ts";
+import { loadMapChunk, type MapChunkModule } from "./chunk-loader.ts";
+import type { MapData, MapHandle, MapHandlers, MapOptions } from "./map/contract.ts";
 import {
+  buildMapData,
   churnOf,
   churnText,
   diffRows,
   fill,
   formatBytes,
+  indexReadings,
   shortRef,
+  signedCount,
   sortFiles,
   splitPath,
   statusMark,
@@ -55,6 +60,7 @@ import type {
   ChangedFileStatus,
   FileDiff,
   ReviewErrorCode,
+  ReviewIndex,
   ReviewScope,
   ReviewSnapshot,
 } from "../shared.ts";
@@ -73,6 +79,28 @@ export interface ReviewMapViewStrings {
   readonly refresh: string;
   readonly statLines: string;
   readonly statFiles: string;
+  /**
+   * The map's copy.
+   *
+   * Optional because the map is an addition to a view that already worked, and a
+   * harness written before it should not have to grow eight keys to keep
+   * compiling. The entry always supplies them; the fallbacks below are the
+   * English words, which is the same thing the dictionaries say.
+   */
+  readonly statNewImports?: string;
+  readonly statDroppedImports?: string;
+  readonly indexPartial?: string;
+  readonly unresolved?: string;
+  readonly unresolvedHint?: string;
+  readonly mapTitle?: string;
+  readonly mapLoading?: string;
+  readonly mapEmpty?: string;
+  readonly mapError?: string;
+  readonly flowImports?: string;
+  readonly flowImportedBy?: string;
+  readonly flowUnresolved?: string;
+  readonly mapUnresolved?: string;
+  readonly mapPartial?: string;
   readonly uncommitted: string;
   readonly listMetaWorktree: string;
   readonly listMetaBranch: string;
@@ -118,6 +146,15 @@ export interface ReviewMapViewOptions {
   readonly strings: ReviewMapViewStrings;
   /** The host seam; absent means the real HTTP runtime. */
   readonly runtime?: ReviewRuntime;
+  /**
+   * How the map chunk is fetched.
+   *
+   * Injected rather than imported directly so a test can hand over a fake
+   * renderer: the real one goes through the loader's `require.async`, which only
+   * exists inside the host's module factory, and a test that needed it would be
+   * testing the loader rather than the view.
+   */
+  readonly mapLoader?: () => Promise<MapChunkModule>;
 }
 
 /** The two ranges a review can be about. */
@@ -128,6 +165,20 @@ type Phase =
   | { readonly kind: "idle" }
   | { readonly kind: "loading" }
   | { readonly kind: "ready"; readonly snapshot: ReviewSnapshot }
+  | { readonly kind: "error"; readonly code: ReviewErrorCode };
+
+/**
+ * What the map's index is doing right now.
+ *
+ * A phase of its own rather than a field on the list's: the index is the slow
+ * half and the list must not wait for it. `error` is separate from `idle` for
+ * the same reason the list's is — a failed index and a session with no index are
+ * different sentences.
+ */
+type IndexPhase =
+  | { readonly kind: "idle" }
+  | { readonly kind: "loading" }
+  | { readonly kind: "ready"; readonly index: ReviewIndex }
   | { readonly kind: "error"; readonly code: ReviewErrorCode };
 
 /** What the detail panel is showing right now. */
@@ -241,8 +292,10 @@ interface RowProps {
   readonly file: ChangedFile;
   readonly strings: ReviewMapViewStrings;
   readonly selected: boolean;
+  readonly hovered: boolean;
   readonly onSelect: (path: string) => void;
   readonly onOpen: (path: string) => void;
+  readonly onHover: (path: string | null) => void;
   readonly onKey: (event: KeyboardEvent<HTMLElement>, path: string) => void;
 }
 
@@ -255,7 +308,7 @@ interface RowProps {
  * @param props - the file, its strings, its selection and the handlers.
  * @returns the row.
  */
-function ReviewRow({ file, strings, selected, onSelect, onOpen, onKey }: RowProps): ReactElement {
+function ReviewRow({ file, strings, selected, hovered, onSelect, onOpen, onHover, onKey }: RowProps): ReactElement {
   const parts = splitPath(file.path);
   const churn = churnOf(file);
   const note = noteText(churn.note, strings);
@@ -270,6 +323,7 @@ function ReviewRow({ file, strings, selected, onSelect, onOpen, onKey }: RowProp
       data-status={file.status}
       data-deleted={deleted ? "true" : undefined}
       data-selected={selected ? "true" : "false"}
+      data-hovered={hovered ? "true" : undefined}
       role="option"
       aria-selected={selected}
       // Roving tabindex: the list is one tab stop, and the arrow keys move
@@ -283,6 +337,11 @@ function ReviewRow({ file, strings, selected, onSelect, onOpen, onKey }: RowProp
         onOpen(file.path);
       }}
       onKeyDown={event => onKey(event, file.path)}
+      // `pointerenter`/`pointerleave` rather than `mouseover`/`mouseout`: the
+      // latter bubble again for every child the pointer crosses, so a row with
+      // three spans would report four entries for one visit.
+      onPointerEnter={() => onHover(file.path)}
+      onPointerLeave={() => onHover(null)}
     >
       <span data-rm="mark" data-status={file.status} title={statusWord(file.status, strings)}>
         {statusMark(file.status)}
@@ -383,6 +442,7 @@ function DetailBody({ diff, strings }: { readonly diff: FileDiff; readonly strin
 export function createReviewMapView({
   strings,
   runtime = createHttpRuntime(),
+  mapLoader = loadMapChunk,
 }: ReviewMapViewOptions): (props: ConversationViewProps) => ReactElement {
   return function ReviewMapView({ sessionId }: ConversationViewProps): ReactElement {
     const [scopeKind, setScopeKind] = useState<ScopeKind>("worktree");
@@ -390,12 +450,23 @@ export function createReviewMapView({
     const [selectedPath, setSelectedPath] = useState<string | undefined>(undefined);
     const [openPath, setOpenPath] = useState<string | undefined>(undefined);
     const [detailPhase, setDetailPhase] = useState<DetailPhase | undefined>(undefined);
+    const [indexPhase, setIndexPhase] = useState<IndexPhase>({ kind: "idle" });
+    // The path the pointer is over, from either side of the linkage. One state
+    // for both directions: a row hovered in the list and a card hovered on the
+    // map are the same fact, and two states would let them disagree.
+    const [hoveredPath, setHoveredPath] = useState<string | null>(null);
     // The identity of the newest list request. A response whose id is not this
     // one is an answer to a question the reader has already moved on from.
     const listRequest = useRef(0);
     // The same, for the panel: opening two files quickly must not let the first
     // answer land on the second file's panel.
     const detailRequest = useRef(0);
+    // The same, for the index: it is the slowest of the three, so it is the one
+    // most likely to answer after the reader has moved on.
+    const indexRequest = useRef(0);
+    // The element the map chunk draws into, and the handle it handed back.
+    const mapHost = useRef<HTMLDivElement | null>(null);
+    const mapHandle = useRef<MapHandle | null>(null);
     // A session change resets the range, so the reset and the load have to be
     // one effect: two effects would let the first load run against the old range.
     const lastSession = useRef<string | undefined>(sessionId);
@@ -444,14 +515,53 @@ export function createReviewMapView({
       [runtime],
     );
 
+    /**
+     * Ask for the structure index.
+     *
+     * Separate from `load` because it answers a different question and is
+     * allowed to fail on its own: a review whose map cannot be drawn is still a
+     * usable review, so an index failure never touches the list's phase.
+     * @param session - the session whose workspace to index.
+     * @param kind - which comparison to index.
+     */
+    const loadIndex = useCallback(
+      (session: string, kind: ScopeKind): void => {
+        const ask = runtime.loadIndex;
+        if (ask === undefined) {
+          // A runtime without an index route serves the list and nothing else.
+          setIndexPhase({ kind: "idle" });
+          return;
+        }
+        indexRequest.current += 1;
+        const mine = indexRequest.current;
+        setIndexPhase({ kind: "loading" });
+        const scope: ReviewScope = kind === "branch" ? { kind: "branch" } : { kind: "worktree" };
+        ask.call(runtime, session, scope).then(
+          result => {
+            // The generational check: an answer for a range the reader has left
+            // is dropped rather than painted over the new map.
+            if (indexRequest.current !== mine) return;
+            setIndexPhase(result.ok ? { kind: "ready", index: result.index } : { kind: "error", code: result.error.code });
+          },
+          () => {
+            if (indexRequest.current !== mine) return;
+            setIndexPhase({ kind: "error", code: "unreadable" });
+          },
+        );
+      },
+      [runtime],
+    );
+
     useEffect(() => {
       if (sessionId === undefined || sessionId === "") {
         // Nothing to ask about. Bumping the counters drops any answer still in
         // flight for the session that just went away.
         listRequest.current += 1;
         detailRequest.current += 1;
+        indexRequest.current += 1;
         lastSession.current = sessionId;
         setPhase({ kind: "idle" });
+        setIndexPhase({ kind: "idle" });
         setSelectedPath(undefined);
         setOpenPath(undefined);
         setDetailPhase(undefined);
@@ -467,10 +577,12 @@ export function createReviewMapView({
         setDetailPhase(undefined);
         setSelectedPath(undefined);
         load(sessionId, "worktree");
+        loadIndex(sessionId, "worktree");
         return;
       }
       load(sessionId, scopeKind);
-    }, [sessionId, scopeKind, load]);
+      loadIndex(sessionId, scopeKind);
+    }, [sessionId, scopeKind, load, loadIndex]);
 
     // A new file starts at its first line. Doing it in an effect rather than in
     // the click handler keeps it tied to the render that actually changed the
@@ -479,11 +591,159 @@ export function createReviewMapView({
       if (detailBody.current !== null) detailBody.current.scrollTop = 0;
     }, [openPath, detailPhase?.kind === "ready" ? detailPhase.diff.path : ""]);
 
+    // The map is mounted once per ready index and torn down when that index is
+    // replaced. It is deliberately NOT re-mounted on selection or on opening a
+    // detail: the map is a place, and rebuilding it would throw away the level
+    // the reader had drilled into every time they clicked a card.
+    // The map's copy, with the dictionary's own wording as the fallback.
+    // Memoized because it is a dependency of the map's mount effect: a fresh
+    // object every render would remount the map on every hover.
+    const mapCopy = useMemo(() => ({
+      statNewImports: strings.statNewImports ?? "New imports",
+      statDroppedImports: strings.statDroppedImports ?? "Dropped imports",
+      indexPartial: strings.indexPartial ?? "indexed {parsed}/{total}",
+      unresolved: strings.unresolved ?? "≥{count} unresolved (incl. external)",
+      unresolvedHint:
+        strings.unresolvedHint ??
+        "External packages and dynamic imports are counted here and are not drawn as edges.",
+      mapTitle: strings.mapTitle ?? "Directory map",
+      mapLoading: strings.mapLoading ?? "Indexing the map",
+      mapEmpty: strings.mapEmpty ?? "No structure to lay out",
+      mapError: strings.mapError ?? "The map index failed",
+      flowImports: strings.flowImports ?? "imports",
+      flowImportedBy: strings.flowImportedBy ?? "imported by",
+      flowUnresolved: strings.flowUnresolved ?? "unresolved",
+      mapUnresolved: strings.mapUnresolved ?? "≥{count} unresolved",
+      mapPartial: strings.mapPartial ?? "indexed {parsed}/{total}",
+    }), [
+      strings.statNewImports,
+      strings.statDroppedImports,
+      strings.indexPartial,
+      strings.unresolved,
+      strings.mapTitle,
+      strings.mapLoading,
+      strings.mapEmpty,
+      strings.mapError,
+      strings.flowImports,
+      strings.flowImportedBy,
+      strings.flowUnresolved,
+      strings.mapUnresolved,
+      strings.mapPartial,
+    ]);
+
+    const readyIndex = indexPhase.kind === "ready" ? indexPhase.index : undefined;
+    // Read from the phase rather than from `snapshot`: that binding is derived
+    // further down, and a hook dependency may not reach forward past its own
+    // declaration.
+    const repoName = (phase.kind === "ready" ? phase.snapshot.repo : undefined) ?? strings.repoFallback;
+    const openFromMap = useCallback(
+      (path: string): void => {
+        if (sessionId === undefined || sessionId === "") return;
+        setSelectedPath(path);
+        openDetail(sessionId, scopeKind, path);
+      },
+      [sessionId, scopeKind, openDetail],
+    );
+
+    /**
+     * The pointer entered or left a card on the map.
+     *
+     * Only the hover state moves: no level change, no re-layout, no scroll. The
+     * list row is lit by a render, and the scroll is handled separately below so
+     * a hover over a visible row costs nothing.
+     */
+    const hoverFromMap = useCallback((path: string | null): void => {
+      setHoveredPath(path);
+    }, []);
+
+    useEffect(() => {
+      const host = mapHost.current;
+      if (host === null || readyIndex === undefined) return;
+      // Nothing to draw: fetching the renderer to paint an empty box would be a
+      // request spent on a state the pane already says in words.
+      if (readyIndex.files.length === 0) return;
+      let cancelled = false;
+      let handle: MapHandle | null = null;
+      mapLoader().then(
+        chunk => {
+          // A chunk that arrives after the index was replaced (or after the
+          // component unmounted) must not paint: the host may already hold a
+          // newer map.
+          if (cancelled) return;
+          const createMap = chunk.createMap as (
+            host: HTMLElement,
+            data: MapData,
+            handlers?: MapHandlers,
+            options?: MapOptions,
+          ) => MapHandle;
+          handle = createMap(host, buildMapData(readyIndex, repoName), {
+            onOpenFile: openFromMap,
+            onHover: hoverFromMap,
+          }, {
+            title: repoName,
+            strings: {
+              imports: mapCopy.flowImports,
+              importedBy: mapCopy.flowImportedBy,
+              unresolved: mapCopy.flowUnresolved,
+              unresolvedTemplate: mapCopy.mapUnresolved,
+              partialTemplate: mapCopy.mapPartial,
+            },
+          });
+          mapHandle.current = handle;
+        },
+        () => {
+          if (cancelled) return;
+          setIndexPhase({ kind: "error", code: "unreadable" });
+        },
+      );
+      return () => {
+        cancelled = true;
+        handle?.destroy();
+        if (mapHandle.current === handle) mapHandle.current = null;
+      };
+    }, [readyIndex, repoName, mapLoader, openFromMap, hoverFromMap, mapCopy]);
+
+    /**
+     * The pointer entered or left a list row.
+     *
+     * Synchronous: the handle is called in the event, not from an effect, so the
+     * map lights up in the same frame as the row. The handle's own contract
+     * decides what a target outside the current level means — it highlights the
+     * nearest visible ancestor and flags the breadcrumb rather than drilling.
+     */
+    const hoverRow = useCallback((path: string | null): void => {
+      setHoveredPath(path);
+      mapHandle.current?.setHighlight(path);
+    }, []);
+
+    // A map hover can point at a row that is scrolled out of the list. Only then
+    // does the list move, and only as far as it must: `block: "nearest"` leaves a
+    // row that is already visible exactly where it is, which is what keeps the
+    // reader's place while they sweep the map.
+    useEffect(() => {
+      if (hoveredPath === null) return;
+      const row = document.querySelector<HTMLElement>(
+        `[data-testid="review-row"][data-path="${CSS.escape(hoveredPath)}"]`,
+      );
+      if (row === null) return;
+      const list = row.closest<HTMLElement>('[data-rm="list"]');
+      if (list === null) return;
+      const rowBox = row.getBoundingClientRect();
+      const listBox = list.getBoundingClientRect();
+      const visible = rowBox.top >= listBox.top && rowBox.bottom <= listBox.bottom;
+      if (visible) return;
+      row.scrollIntoView({ block: "nearest" });
+    }, [hoveredPath]);
+
     const selectScope = (kind: ScopeKind): void => {
       if (kind === scopeKind) return;
       // The panel is about a file in the previous comparison; the two ranges can
       // disagree about which files exist at all.
       detailRequest.current += 1;
+      // The index is about the same two revisions, so a range switch makes the
+      // answer in flight stale for exactly the same reason the list's does.
+      indexRequest.current += 1;
+      setIndexPhase({ kind: "loading" });
       setOpenPath(undefined);
       setDetailPhase(undefined);
       setSelectedPath(undefined);
@@ -493,9 +753,11 @@ export function createReviewMapView({
     const refresh = (): void => {
       if (sessionId === undefined || sessionId === "") return;
       load(sessionId, scopeKind);
+      loadIndex(sessionId, scopeKind);
     };
 
     const hasSession = sessionId !== undefined && sessionId !== "";
+    const readings = readyIndex === undefined ? undefined : indexReadings(readyIndex);
     const snapshot = phase.kind === "ready" ? phase.snapshot : undefined;
     const summary = snapshot === undefined ? undefined : summaryOf(snapshot);
     const files = snapshot === undefined ? [] : sortFiles(snapshot.files);
@@ -548,12 +810,19 @@ export function createReviewMapView({
         return;
       }
       if (event.key === "Escape") {
-        // Escape closes the panel and leaves the row selected, so the reader's
-        // place in the list survives.
-        if (openPath === undefined) return;
-        event.preventDefault();
-        setOpenPath(undefined);
-        setDetailPhase(undefined);
+        // Escape is layered, and the layers are in the order a reader would undo
+        // them: the panel first, then the map's level. Closing the panel leaves
+        // the row selected, so the reader's place in the list survives.
+        if (openPath !== undefined) {
+          event.preventDefault();
+          setOpenPath(undefined);
+          setDetailPhase(undefined);
+          return;
+        }
+        // No panel: the map goes up one level, and only if it actually moved is
+        // the key consumed. At the root `up()` returns false and Escape is left
+        // alone for whatever else might want it.
+        if (mapHandle.current?.up() === true) event.preventDefault();
         return;
       }
       if (event.key === "ArrowDown") {
@@ -617,15 +886,63 @@ export function createReviewMapView({
               <div data-rm="stat" data-stat="lines">
                 <span data-rm="stat-label">{strings.statLines}</span>
                 <span data-rm="stat-value">
-                  <span data-rm="stat-add">+{summary.additions}</span>{" "}
-                  <span data-rm="stat-del">−{summary.deletions}</span>
+                  {/* Once the index is ready its change entries are the source
+                      for every reading on this row, so the four cards cannot
+                      disagree with each other. Before that the snapshot's own
+                      summary is the only answer there is. */}
+                  <span data-rm="stat-add">{signedCount("+", readings?.additions ?? summary.additions)}</span>{" "}
+                  <span data-rm="stat-del">{signedCount("-", readings?.deletions ?? summary.deletions)}</span>
                 </span>
               </div>
               <div data-rm="stat" data-stat="files">
                 <span data-rm="stat-label">{strings.statFiles}</span>
-                <span data-rm="stat-value">{summary.files}</span>
+                <span data-rm="stat-value">{readings?.files ?? summary.files}</span>
                 <span data-rm="uncommitted">{fill(strings.uncommitted, { count: String(snapshot.uncommitted) })}</span>
               </div>
+              {/* The import readings come from the index, so they are absent
+                  until it answers: a card showing a definite 0 before the
+                  index has run would be the "unknown drawn as zero" failure. */}
+              {readings === undefined ? null : (
+                <>
+                  <div data-rm="stat" data-stat="new-imports">
+                    <span data-rm="stat-label">{mapCopy.statNewImports}</span>
+                    <span data-rm="stat-value" data-rm-value="new-imports">
+                      {signedCount("+", readings.newImports)}
+                    </span>
+                  </div>
+                  <div data-rm="stat" data-stat="dropped-imports">
+                    <span data-rm="stat-label">{mapCopy.statDroppedImports}</span>
+                    <span data-rm="stat-value" data-rm-value="dropped-imports">
+                      {signedCount("-", readings.droppedImports)}
+                    </span>
+                    {readings.unresolved > 0 ? (
+                      <span
+                        data-rm="unresolved"
+                        data-count={readings.unresolved}
+                        // The count is a lower bound and includes external
+                        // packages, so the tooltip states the rule rather than
+                        // leaving the reader to guess what was counted.
+                        title={mapCopy.unresolvedHint}
+                      >
+                        {fill(mapCopy.unresolved, { count: String(readings.unresolved) })}
+                      </span>
+                    ) : null}
+                    {readings.partial === null ? null : (
+                      <span
+                        data-rm="index-partial"
+                        data-parsed={readings.partial.parsed}
+                        data-total={readings.partial.total}
+                        title={readings.note ?? undefined}
+                      >
+                        {fill(mapCopy.indexPartial, {
+                          parsed: String(readings.partial.parsed),
+                          total: String(readings.partial.total),
+                        })}
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
 
             <div data-rm="split" data-open={panelPath === undefined ? "false" : "true"}>
@@ -643,12 +960,39 @@ export function createReviewMapView({
                       file={file}
                       strings={strings}
                       selected={file.path === selected}
+                      hovered={file.path === hoveredPath}
                       onSelect={setSelectedPath}
                       onOpen={open}
+                      onHover={hoverRow}
                       onKey={onKey}
                     />
                   ))
                 )}
+              </div>
+              <div
+                data-rm="map-pane"
+                data-state={indexPhase.kind}
+                aria-label={mapCopy.mapTitle}
+                role="group"
+              >
+                {/* The title names the repository, not the word "repo": the map
+                    is a picture of one tree, and the reader needs to know which
+                    one without looking back at the header. */}
+                <p data-rm="map-title">
+                  <span data-rm="map-title-label">{mapCopy.mapTitle}</span>{" "}
+                  <span data-rm="map-title-repo">{repoName}</span>
+                </p>
+                {indexPhase.kind === "loading" ? (
+                  <p data-rm="map-loading">{mapCopy.mapLoading}</p>
+                ) : null}
+                {indexPhase.kind === "error" ? <p data-rm="map-error">{mapCopy.mapError}</p> : null}
+                {indexPhase.kind === "ready" && (readyIndex?.files.length ?? 0) === 0 ? (
+                  <p data-rm="map-empty">{mapCopy.mapEmpty}</p>
+                ) : null}
+                {/* The chunk draws here. The element stays mounted across index
+                    changes so the effect can tear one map down and mount the
+                    next into the same box. */}
+                <div data-rm="map-host" ref={mapHost} />
               </div>
               {panelPath === undefined || detailPhase === undefined ? null : (
                 <DetailPanel

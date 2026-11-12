@@ -18,7 +18,19 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createReviewMapView, type ReviewMapViewStrings } from "../src/client/view.tsx";
 import type { ReviewRuntime } from "../src/client/runtime.ts";
-import type { ChangedFile, ReviewScope, ReviewSnapshot, ReviewSnapshotResult } from "../src/shared.ts";
+import type {
+  ChangedFile,
+  ChangedMapEntry,
+  ReviewIndex,
+  ReviewIndexResult,
+  ReviewScope,
+  ReviewSnapshot,
+  ReviewSnapshotResult,
+  StructureDir,
+  StructureFile,
+} from "../src/shared.ts";
+import type { MapChunkModule } from "../src/client/chunk-loader.ts";
+import type { MapData, MapHandlers } from "../src/client/map/contract.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -31,6 +43,14 @@ const STRINGS: ReviewMapViewStrings = {
   refresh: "重新读取",
   statLines: "源码行",
   statFiles: "改动文件",
+  statNewImports: "新增导入",
+  statDroppedImports: "丢失导入",
+  indexPartial: "索引 {parsed}/{total}",
+  unresolved: "≥{count} 未解析",
+  mapTitle: "目录地图",
+  mapLoading: "地图索引中",
+  mapEmpty: "没有可铺开的结构",
+  mapError: "地图索引失败",
   uncommitted: "未提交 {count}",
   listMetaWorktree: "未提交改动",
   listMetaBranch: "对比 {base}",
@@ -565,5 +585,325 @@ describe("the review list", () => {
     // A transport failure is not a domain answer, so it gets the generic
     // unreadable sentence rather than a fabricated empty list.
     expect(part("error")?.textContent).toBe("读取失败");
+  });
+});
+
+/** One structure file, with the fields a case does not care about defaulted. */
+function structureFile(overrides: Partial<StructureFile> & { path: string }): StructureFile {
+  return { lines: 10, binary: false, deleted: false, ...overrides };
+}
+
+/** One directory aggregate. */
+function structureDir(overrides: Partial<StructureDir> & { path: string }): StructureDir {
+  return { lines: 0, files: 0, changed: 0, additions: 0, deletions: 0, ...overrides };
+}
+
+/** One change entry. */
+function changedEntry(overrides: Partial<ChangedMapEntry> & { path: string }): ChangedMapEntry {
+  return { status: "modified", additions: 1, deletions: 0, binary: false, hunks: [], ...overrides };
+}
+
+/** A whole index over the given parts. */
+function indexOf(parts: {
+  files?: StructureFile[];
+  dirs?: StructureDir[];
+  changed?: ChangedMapEntry[];
+  newImports?: number;
+  droppedImports?: number;
+  unresolved?: number;
+  complete?: boolean;
+  parsed?: number;
+  total?: number;
+}): ReviewIndex {
+  return {
+    files: parts.files ?? [],
+    dirs: parts.dirs ?? [],
+    changed: parts.changed ?? [],
+    edges: [],
+    imports: { newImports: parts.newImports ?? 0, droppedImports: parts.droppedImports ?? 0 },
+    unresolved: { count: parts.unresolved ?? 0, files: [] },
+    indexed: {
+      files: parts.total ?? parts.files?.length ?? 0,
+      parsed: parts.parsed ?? parts.files?.length ?? 0,
+      complete: parts.complete ?? true,
+      note: null,
+    },
+    snapshotId: "worktree:HEAD..HEAD",
+  };
+}
+
+/** A map chunk stub that records what it was handed. */
+function fakeMapLoader() {
+  const mounts: { host: HTMLElement; data: MapData; handlers: MapHandlers | undefined }[] = [];
+  const destroys: number[] = [];
+  let calls = 0;
+  const loader = async (): Promise<MapChunkModule> => {
+    calls += 1;
+    return {
+      createMap(host, data, handlers) {
+        mounts.push({ host, data, handlers });
+        return {
+          destroy() {
+            destroys.push(mounts.length - 1);
+          },
+          path: () => "",
+          setHighlight: () => {},
+          reveal: () => {},
+          up: () => false,
+        };
+      },
+    };
+  };
+  return { loader, mounts, destroys, callCount: () => calls };
+}
+
+describe("the map pane", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  /** A runtime whose index answer the test controls. */
+  function runtimeWithIndex(answer: ReviewIndexResult | Promise<ReviewIndexResult>, snap: ReviewSnapshot) {
+    const indexCalls: Call[] = [];
+    const runtime: ReviewRuntime = {
+      async loadSnapshot(sessionId, scope) {
+        void sessionId;
+        void scope;
+        return { ok: true, snapshot: snap };
+      },
+      async loadDiff() {
+        throw new Error("not used");
+      },
+      async loadIndex(sessionId, scope) {
+        indexCalls.push({ sessionId, scope });
+        return answer;
+      },
+    };
+    return { runtime, indexCalls };
+  }
+
+  /** Mount the view with a fake map chunk. */
+  async function mount(
+    runtime: ReviewRuntime,
+    mapLoader: () => Promise<MapChunkModule>,
+    sessionId = "session-1",
+  ): Promise<void> {
+    const View = createReviewMapView({ strings: STRINGS, runtime, mapLoader });
+    await act(async () => {
+      root.render(createElement(View, { sessionId }));
+    });
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+  }
+
+  /** One element by its data-rm name. */
+  function part(name: string): HTMLElement | null {
+    return host.querySelector(`[data-rm="${name}"]`);
+  }
+
+  it("shows the skeleton while the index is loading", async () => {
+    const gate = deferred<ReviewIndexResult>();
+    const { runtime } = runtimeWithIndex(gate.promise, snapshot([file({ path: "a.ts" })]));
+    const map = fakeMapLoader();
+
+    await mount(runtime, map.loader);
+
+    expect(part("map-loading")?.textContent).toBe("地图索引中");
+    expect(part("map-pane")?.getAttribute("data-state")).toBe("loading");
+    // The chunk is not asked for until there is an index to draw.
+    expect(map.callCount()).toBe(0);
+    await act(async () => {
+      gate.resolve({ ok: true, index: indexOf({ files: [structureFile({ path: "a.ts" })] }) });
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+  });
+
+  it("mounts the map once the index arrives, with the built data", async () => {
+    const index = indexOf({
+      files: [structureFile({ path: "src/a.ts", lines: 40 })],
+      dirs: [structureDir({ path: "", lines: 40, files: 1 }), structureDir({ path: "src", lines: 40, files: 1, changed: 1 })],
+      changed: [changedEntry({ path: "src/a.ts", additions: 3, deletions: 1 })],
+    });
+    const { runtime } = runtimeWithIndex({ ok: true, index }, snapshot([file({ path: "src/a.ts" })]));
+    const map = fakeMapLoader();
+
+    await mount(runtime, map.loader);
+
+    expect(map.callCount()).toBe(1);
+    expect(map.mounts).toHaveLength(1);
+    const mounted = map.mounts[0];
+    expect(mounted?.host.getAttribute("data-rm")).toBe("map-host");
+    // The root level is present and the nested file sits on its own level.
+    expect(mounted?.data.rootPath).toBe("");
+    expect(mounted?.data.levels.get("")?.dirs.map(dir => dir.path)).toEqual(["src"]);
+    expect(mounted?.data.levels.get("src")?.files[0]?.path).toBe("src/a.ts");
+    expect(mounted?.data.levels.get("src")?.files[0]?.status).toBe("modified");
+    expect(part("map-loading")).toBeNull();
+  });
+
+  it("selects the file and opens its detail when a card is clicked", async () => {
+    const index = indexOf({
+      files: [structureFile({ path: "a.ts" })],
+      changed: [changedEntry({ path: "a.ts" })],
+    });
+    const diffCalls: string[] = [];
+    const runtime: ReviewRuntime = {
+      async loadSnapshot() {
+        return { ok: true, snapshot: snapshot([file({ path: "a.ts" })]) };
+      },
+      async loadDiff(_sessionId, _scope, path) {
+        diffCalls.push(path);
+        return { ok: true, diff: { kind: "text", path, hunks: [], truncated: false } };
+      },
+      async loadIndex() {
+        return { ok: true, index };
+      },
+    };
+    const map = fakeMapLoader();
+    await mount(runtime, map.loader);
+
+    await act(async () => {
+      map.mounts[0]?.handlers?.onOpenFile?.("a.ts");
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    // The same path state a list click sets: the row is selected and the panel
+    // is open on the same file.
+    expect(host.querySelector('[data-testid="review-row"][data-path="a.ts"]')?.getAttribute("data-selected")).toBe("true");
+    expect(host.querySelector('[data-testid="review-detail"]')).not.toBeNull();
+    expect(diffCalls).toEqual(["a.ts"]);
+  });
+
+  it("shows the map error without taking the list down", async () => {
+    const { runtime } = runtimeWithIndex(
+      { ok: false, error: { code: "not-a-repo", message: "nope" } },
+      snapshot([file({ path: "a.ts" })]),
+    );
+    const map = fakeMapLoader();
+
+    await mount(runtime, map.loader);
+
+    expect(part("map-error")?.textContent).toBe("地图索引失败");
+    expect(part("map-pane")?.getAttribute("data-state")).toBe("error");
+    // The list is the product; the map is an enhancement.
+    expect(host.querySelectorAll('[data-testid="review-row"]')).toHaveLength(1);
+    expect(map.callCount()).toBe(0);
+  });
+
+  it("drops an index answer for a range the reader has left", async () => {
+    const slow = deferred<ReviewIndexResult>();
+    const indexCalls: ReviewScope[] = [];
+    const runtime: ReviewRuntime = {
+      async loadSnapshot() {
+        return { ok: true, snapshot: snapshot([file({ path: "a.ts" })]) };
+      },
+      async loadDiff() {
+        throw new Error("not used");
+      },
+      async loadIndex(_sessionId, scope) {
+        indexCalls.push(scope);
+        // The first (worktree) answer is held; the branch one answers at once.
+        if (indexCalls.length === 1) return slow.promise;
+        return { ok: true, index: indexOf({ files: [structureFile({ path: "branch.ts" })] }) };
+      },
+    };
+    const map = fakeMapLoader();
+    await mount(runtime, map.loader);
+
+    await act(async () => {
+      host.querySelector<HTMLElement>('[data-rm="scope-branch"]')?.click();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    // The stale worktree answer lands after the branch one.
+    await act(async () => {
+      slow.resolve({ ok: true, index: indexOf({ files: [structureFile({ path: "stale.ts" })] }) });
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    const drawn = map.mounts[map.mounts.length - 1];
+    expect(drawn?.data.levels.get("")?.files.map(entry => entry.path)).toEqual(["branch.ts"]);
+  });
+
+  it("shows the empty state when the index covers no files", async () => {
+    const { runtime } = runtimeWithIndex({ ok: true, index: indexOf({}) }, snapshot([]));
+    const map = fakeMapLoader();
+
+    await mount(runtime, map.loader);
+
+    expect(part("map-empty")?.textContent).toBe("没有可铺开的结构");
+    expect(map.callCount()).toBe(0);
+  });
+
+  it("shows the four readings and the partial and unresolved markers", async () => {
+    const index = indexOf({
+      files: [structureFile({ path: "a.ts" })],
+      changed: [changedEntry({ path: "a.ts", additions: 9, deletions: 4 })],
+      newImports: 3,
+      droppedImports: 1,
+      unresolved: 12,
+      complete: false,
+      parsed: 320,
+      total: 400,
+    });
+    const { runtime } = runtimeWithIndex({ ok: true, index }, snapshot([file({ path: "a.ts" })]));
+    const map = fakeMapLoader();
+
+    await mount(runtime, map.loader);
+
+    // The line readings come from the index once it is ready, so this card and
+    // the import cards beside it are one source.
+    expect(host.querySelector('[data-stat="lines"]')?.textContent).toContain("+9");
+    expect(host.querySelector('[data-stat="lines"]')?.textContent).toContain("−4");
+    expect(host.querySelector('[data-stat="new-imports"]')?.textContent).toContain("+3");
+    expect(host.querySelector('[data-stat="dropped-imports"]')?.textContent).toContain("−1");
+    expect(part("unresolved")?.textContent).toBe("≥12 未解析");
+    expect(part("index-partial")?.textContent).toBe("索引 320/400");
+    expect(part("index-partial")?.getAttribute("data-parsed")).toBe("320");
+  });
+
+  it("shows no import cards before the index answers", async () => {
+    const gate = deferred<ReviewIndexResult>();
+    const { runtime } = runtimeWithIndex(gate.promise, snapshot([file({ path: "a.ts" })]));
+    const map = fakeMapLoader();
+
+    await mount(runtime, map.loader);
+
+    // A card showing a definite 0 before the index ran would be the "unknown
+    // drawn as zero" failure the requirement forbids.
+    expect(host.querySelector('[data-stat="new-imports"]')).toBeNull();
+    expect(part("unresolved")).toBeNull();
+    await act(async () => {
+      gate.resolve({ ok: true, index: indexOf({}) });
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+  });
+
+  it("keeps the list usable when the runtime has no index route", async () => {
+    const runtime: ReviewRuntime = {
+      async loadSnapshot() {
+        return { ok: true, snapshot: snapshot([file({ path: "a.ts" })]) };
+      },
+      async loadDiff() {
+        throw new Error("not used");
+      },
+    };
+    const map = fakeMapLoader();
+
+    await mount(runtime, map.loader);
+
+    expect(host.querySelectorAll('[data-testid="review-row"]')).toHaveLength(1);
+    expect(part("map-pane")?.getAttribute("data-state")).toBe("idle");
+    expect(map.callCount()).toBe(0);
   });
 });

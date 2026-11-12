@@ -46,6 +46,9 @@ const READ_ONLY_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "diff",
   "cat-file",
   "ls-tree",
+  // The structure index lists the working tree with `ls-files`, which reads the
+  // index and the untracked set and writes neither.
+  "ls-files",
 ]);
 
 /** Flags that turn a read into a write, or make git run a program. */
@@ -79,9 +82,12 @@ export function readOnlyViolation(args: readonly string[]): string | null {
  *
  * The check sits in front of the spawn rather than in each caller, so a new
  * caller cannot forget it.
+ * `stdinData` is here for `cat-file --batch`, which reads its object names from
+ * stdin rather than from argv. It carries only object names this module built
+ * from paths it already listed, so it cannot widen what the command reads.
  * @param runner - the argv-only runner.
  * @param args - the argv entries after `git`.
- * @param options - cwd and signal for this call.
+ * @param options - cwd, signal and stdin for this call.
  * @returns the run result, or a refusal when the command is not read-only.
  * @throws TypeError when an argv entry is malformed; that is a programming
  *   error, not a repository state.
@@ -89,7 +95,7 @@ export function readOnlyViolation(args: readonly string[]): string | null {
 export async function runReadOnly(
   runner: GitRunner,
   args: readonly string[],
-  options: { readonly cwd?: string; readonly signal?: AbortSignal } = {},
+  options: { readonly cwd?: string; readonly signal?: AbortSignal; readonly stdinData?: string } = {},
 ): Promise<GitRunResult | { readonly refused: string }> {
   const violation = readOnlyViolation(args);
   if (violation !== null) return { refused: violation };

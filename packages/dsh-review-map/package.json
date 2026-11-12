@@ -36,12 +36,14 @@
     }
   },
   "scripts": {
+    "bench": "node scripts/bench-index.mjs --json",
     "build": "node scripts/build.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
+    "typescript": "^5.9.3",
     "vitest": "^3.2.0"
   },
   "peerDependencies": {

@@ -19,6 +19,15 @@ import { EN, ZH } from "./copy.ts";
 import { ensureStyles } from "./styles.ts";
 import { createReviewMapView, type ReviewMapViewStrings } from "./view.tsx";
 
+/**
+ * The loader hand-over, re-exported so the ModuleLoader factory can call it.
+ *
+ * The build appends `module.exports.boot?.(require)` to this bundle, and the
+ * optional call is what keeps the entry loadable when this export is missing.
+ * Re-exporting rather than defining it here keeps the chunk route in one file.
+ */
+export { boot } from "./chunk-loader.ts";
+
 /** The slice of the client context this entry uses. */
 export interface ReviewMapClientContext {
   readonly slots: {
@@ -90,6 +99,20 @@ export function apply(ctx: ReviewMapClientContext): () => void {
       refresh: t("review-map.refresh"),
       statLines: t("review-map.statLines"),
       statFiles: t("review-map.statFiles"),
+      statNewImports: t("review-map.statNewImports"),
+      statDroppedImports: t("review-map.statDroppedImports"),
+      indexPartial: t("review-map.indexPartial"),
+      unresolved: t("review-map.unresolved"),
+      unresolvedHint: t("review-map.unresolvedHint"),
+      mapTitle: t("review-map.mapTitle"),
+      mapLoading: t("review-map.mapLoading"),
+      mapEmpty: t("review-map.mapEmpty"),
+      mapError: t("review-map.mapError"),
+      flowImports: t("review-map.flowImports"),
+      flowImportedBy: t("review-map.flowImportedBy"),
+      flowUnresolved: t("review-map.flowUnresolved"),
+      mapUnresolved: t("review-map.mapUnresolved"),
+      mapPartial: t("review-map.mapPartial"),
       uncommitted: t("review-map.uncommitted"),
       listMetaWorktree: t("review-map.listMetaWorktree"),
       listMetaBranch: t("review-map.listMetaBranch"),
