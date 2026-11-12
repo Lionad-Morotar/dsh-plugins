@@ -5,6 +5,7 @@ import { basename, statusLetter, type ChangeEntry, type ChangeGroup } from "./mo
 import { cursorActionOf, pageRowCount, stepCursor } from "./cursor.ts";
 import { filterChangeGroups } from "./filter.ts";
 import type { Translate } from "./copy.ts";
+import type { ChangesMemory } from "./view-memory.ts";
 
 /** Line counts for one path, absent for untracked files. */
 export interface ChangeStatFace {
@@ -22,6 +23,14 @@ export interface ChangesPaneProps {
   readonly claimFocus: boolean;
   /** Called once the claim is spent, so a reload cannot replay it. */
   readonly onFocusClaimed: () => void;
+  /**
+   * The session's remembered browsing state.
+   *
+   * The host unmounts the whole view on a tab switch, so the filter, the cursor
+   * row and the scroll offset live in the view's per-session record: the pane
+   * reads them on mount and writes every change back. Omitted by tests.
+   */
+  readonly memory?: ChangesMemory;
 }
 
 /**
@@ -85,6 +94,24 @@ export function focusFirstChangeRow(pane: HTMLElement | null): void {
   row.scrollIntoView?.({ block: "nearest" });
 }
 
+/**
+ * Focus the row at one mounted index, restoring a remembered cursor.
+ *
+ * Unlike the first-file claim this may land on a directory header, which only
+ * labels a group: the header is not focusable, so the scroll container takes the
+ * keyboard there while the row still scrolls into view.
+ * @param scroller - the scrolling list, or null before its first render.
+ * @param index - the row index in render order; negative leaves focus alone.
+ */
+export function focusChangeRow(scroller: HTMLElement | null, index: number): void {
+  if (scroller === null || index < 0) return;
+  const row = scroller.querySelectorAll<HTMLElement>(".gx-file, .gx-group-head")[index];
+  if (row === undefined) return;
+  if (row.tagName === "BUTTON") row.focus({ preventScroll: true });
+  else scroller.focus({ preventScroll: true });
+  row.scrollIntoView?.({ block: "nearest" });
+}
+
 function Stat({ stat }: { readonly stat: ChangeStatFace | undefined }) {
   if (stat === undefined) return null;
   if (stat.additions === null && stat.deletions === null) return <span className="gx-stat-muted">bin</span>;
@@ -101,10 +128,10 @@ function Stat({ stat }: { readonly stat: ChangeStatFace | undefined }) {
  * @param props - grouped changes, line stats, copy, the jump callback and the focus claim.
  * @returns the pane element.
  */
-export function ChangesPane({ groups, stats, t, onOpen, claimFocus, onFocusClaimed }: ChangesPaneProps) {
+export function ChangesPane({ groups, stats, t, onOpen, claimFocus, onFocusClaimed, memory }: ChangesPaneProps) {
   const pane = useRef<HTMLElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => memory?.query ?? "");
   const visible = useMemo(() => filterChangeGroups(groups, query), [groups, query]);
   const rows = useMemo(() => changeRows(visible), [visible]);
   const rowKeys = useMemo(() => rows.map(rowKey), [rows]);
@@ -114,11 +141,29 @@ export function ChangesPane({ groups, stats, t, onOpen, claimFocus, onFocusClaim
 
   // The cursor names a row by key, not by index: the filter replaces the row
   // list underneath it, and an index would quietly come to mean a different row.
-  const [cursorKey, setCursorKey] = useState<string | undefined>(undefined);
+  const [cursorKey, setCursorKey] = useState<string | undefined>(() => memory?.cursor);
   const cursor = useMemo(() => {
     if (cursorKey === undefined) return -1;
     return rowKeys.indexOf(cursorKey);
   }, [cursorKey, rowKeys]);
+  /**
+   * Move the cursor and record it in one step.
+   *
+   * The write is synchronous on purpose: a click on a file row also switches
+   * the conversation to the file panel, and the unmount can land before a
+   * passive effect would have run. Writing through the setter is what keeps the
+   * remembered row the row the reader actually left on.
+   */
+  const rememberCursor = useCallback(
+    (key: string | undefined): void => {
+      if (memory !== undefined) {
+        if (key === undefined) delete memory.cursor;
+        else memory.cursor = key;
+      }
+      setCursorKey(key);
+    },
+    [memory],
+  );
   // Where the cursor last stood, so a filter that hides it can land in the same
   // neighbourhood instead of snapping to the top of the list.
   const resting = useRef(0);
@@ -133,31 +178,52 @@ export function ChangesPane({ groups, stats, t, onOpen, claimFocus, onFocusClaim
   rowsRef.current = rows;
 
   // A claim that spans a re-render must not drag the cursor back to the first
-  // row afterwards, so it is spent before it is served: a snapshot reload
-  // unmounts and remounts this pane, and a claim kept here would fire again and
-  // pull a keyboard reader off whatever row they had moved on to since.
+  // row afterwards, so it is served exactly once: a snapshot reload unmounts and
+  // remounts this pane, and a claim kept here would fire again and pull a
+  // keyboard reader off whatever row they had moved on to since. The local guard
+  // also covers a host that leaves the claim prop set after the callback.
+  const claimed = useRef(false);
   useEffect(() => {
-    if (!claimFocus) return;
+    if (!claimFocus || claimed.current) return;
+    claimed.current = true;
     onFocusClaimed();
+    // A returning mount remembers the row the reader left on: the claim takes
+    // them back to it instead of landing on the first file like a fresh entry.
+    if (cursor >= 0) {
+      focusChangeRow(scroller.current, cursor);
+      return;
+    }
     focusFirstChangeRow(pane.current);
     // The claim is about a row that opens something, so a header cannot hold it.
     const first = rowsRef.current.find(row => row.kind === "file");
-    if (first !== undefined) setCursorKey(rowKey(first));
-  }, [claimFocus, onFocusClaimed]);
+    if (first !== undefined) rememberCursor(rowKey(first));
+  }, [claimFocus, cursor, onFocusClaimed]);
+
+  // The remembered offset is applied once, before the reveal below can move it
+  // to keep the restored cursor on screen.
+  const pendingScroll = useRef<number | undefined>(memory?.scrollTop);
+  useEffect(() => {
+    const element = scroller.current;
+    const offset = pendingScroll.current;
+    if (element === null || offset === undefined) return;
+    pendingScroll.current = undefined;
+    element.scrollTop = offset;
+  }, []);
 
   // A cursor whose row the filter removed has to move somewhere visible; keeping
-  // it would leave Enter aimed at a row nobody can see.
+  // it would leave Enter aimed at a row nobody can see. The move also lands in
+  // the session record, so the restored filter and the restored cursor agree.
   useEffect(() => {
     if (cursorKey === undefined || cursor >= 0 || rows.length === 0) return;
     const landed = rows[Math.min(resting.current, rows.length - 1)];
-    if (landed !== undefined) setCursorKey(rowKey(landed));
+    if (landed !== undefined) rememberCursor(rowKey(landed));
   }, [cursor, cursorKey, rows]);
 
   const moveCursor = useCallback(
     (index: number): void => {
       const key = rowKeys[index];
       if (key === undefined) return;
-      setCursorKey(key);
+      rememberCursor(key);
       scroller.current?.focus({ preventScroll: true });
     },
     [rowKeys],
@@ -224,7 +290,14 @@ export function ChangesPane({ groups, stats, t, onOpen, claimFocus, onFocusClaim
           placeholder={t("changes.filter")}
           aria-label={t("changes.filter")}
           data-testid="gx-changes-filter"
-          onChange={event => setQuery(event.currentTarget.value)}
+          onChange={event => {
+            const next = event.currentTarget.value;
+            if (memory !== undefined) {
+              if (next === "") delete memory.query;
+              else memory.query = next;
+            }
+            setQuery(next);
+          }}
         />
       </header>
       <div
@@ -234,6 +307,9 @@ export function ChangesPane({ groups, stats, t, onOpen, claimFocus, onFocusClaim
         data-testid="git-changes-scroll"
         data-page-keys="own"
         onKeyDown={handleKeyDown}
+        onScroll={event => {
+          if (memory !== undefined) memory.scrollTop = event.currentTarget.scrollTop;
+        }}
       >
         {total === 0 ? (
           <div className="gx-empty gx-empty-inline">
@@ -266,7 +342,7 @@ export function ChangesPane({ groups, stats, t, onOpen, claimFocus, onFocusClaim
                     : `${t(`status.${row.file.status}`)} · ${t("changes.jump")}`
                 }
                 onClick={() => {
-                  setCursorKey(rowKey(row));
+                  rememberCursor(rowKey(row));
                   scroller.current?.focus({ preventScroll: true });
                   if (!row.file.isDirectory) onOpen(row.file.path, 1);
                 }}

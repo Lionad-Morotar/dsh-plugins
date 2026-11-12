@@ -29,6 +29,7 @@ import {
   type HistoryColumnWidths,
 } from "./history-columns.ts";
 import type { PaneWidthStorage } from "./pane-width.ts";
+import type { HistoryMemory } from "./view-memory.ts";
 
 export { HISTORY_ROW_HEIGHT };
 /** How close to the last loaded row a cursor may walk before the list fetches. */
@@ -49,6 +50,31 @@ export interface WorkingTreeSummary {
   readonly groups: readonly ChangeGroup[];
   readonly stats: ReadonlyMap<string, { readonly additions: number | null; readonly deletions: number | null }>;
   readonly fileCount: number;
+}
+
+/**
+ * Resolve a remembered row identity against the rows this mount loaded.
+ *
+ * A page can replace the list under a remembered hash, so the identity is not an
+ * index: the working tree is the sentinel and commits are their hashes. The row
+ * only resolves when the row is actually present; a hash on a page not fetched
+ * yet keeps waiting, which is what lets a restored search land its cursor after
+ * its own page arrives.
+ * @param id - a commit hash or the working-tree sentinel.
+ * @param commits - the commits currently loaded.
+ * @param hasUncommitted - whether row 0 is the working tree.
+ * @returns the row index, or undefined when the row is not in this page.
+ */
+export function resolveRowIndex(
+  id: string | undefined,
+  commits: readonly GitCommitNode[],
+  hasUncommitted: boolean,
+  rowOffset: number,
+): number | undefined {
+  if (id === undefined) return undefined;
+  if (id === UNCOMMITTED) return hasUncommitted ? 0 : undefined;
+  const index = commits.findIndex(commit => commit.hash === id);
+  return index < 0 ? undefined : index + rowOffset;
 }
 
 /**
@@ -112,6 +138,15 @@ export interface HistoryPaneProps {
   readonly workingTree?: WorkingTreeSummary;
   /** Select the working tree; the view swaps the detail column for its summary. */
   readonly onSelectUncommitted?: () => void;
+  /**
+   * The session's remembered browsing state.
+   *
+   * The host unmounts the whole view on a tab switch, so the cursor and the
+   * scroll offset live in the view's per-session record rather than in this
+   * component: the pane reads them on mount and writes every movement back.
+   * Omitted by tests and by any mount that has nothing to restore.
+   */
+  readonly memory?: HistoryMemory;
 }
 
 function CommitRow({
@@ -352,7 +387,7 @@ function ColumnHeader({
  * @returns the pane element.
  */
 export function HistoryPane(props: HistoryPaneProps) {
-  const { commits, graph, selectedHash, headHash, total, hasMore, loadingMore, loadError, searching, search, t, onSelect, onLoadMore, onSearch, onSelectUncommitted } = props;
+  const { commits, graph, selectedHash, headHash, total, hasMore, loadingMore, loadError, searching, search, t, onSelect, onLoadMore, onSearch, onSelectUncommitted, memory } = props;
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
@@ -393,6 +428,55 @@ export function HistoryPane(props: HistoryPaneProps) {
         : commits.findIndex(commit => commit.hash === selectedHash) + (hasUncommitted ? 1 : 0);
   const cursorPath = cursor === undefined ? undefined : cursor < rowOffset ? UNCOMMITTED : commits[cursor - rowOffset]?.hash;
   const seenSelection = useRef<string | undefined>(undefined);
+  /**
+   * Move the cursor and record it in one step.
+   *
+   * The write is synchronous because a click may switch the conversation to the
+   * file panel as part of the same gesture, and the unmount can beat a passive
+   * effect; the record must already name the row the reader left on.
+   */
+  const rememberCursor = useCallback(
+    (index: number | undefined): void => {
+      if (memory !== undefined) {
+        const path =
+          index === undefined ? undefined : index < rowOffset ? UNCOMMITTED : commits[index - rowOffset]?.hash;
+        if (path === undefined) delete memory.cursor;
+        else memory.cursor = path;
+      }
+      setCursor(index);
+    },
+    [memory, commits, rowOffset],
+  );
+
+  // Restoring a returning mount: the remembered cursor is resolved against the
+  // rows this mount actually loaded. A restored search lands its own page a beat
+  // later, so the attempt keeps waiting instead of giving up on the first paint.
+  const pendingCursor = useRef<string | undefined>(memory?.cursor);
+  const pendingScroll = useRef<number | undefined>(memory?.scrollTop);
+
+  useEffect(() => {
+    if (pendingCursor.current === undefined) return;
+    // A key press before the remembered row loaded owns the cursor from then on.
+    if (cursor !== undefined) {
+      pendingCursor.current = undefined;
+      return;
+    }
+    const index = resolveRowIndex(pendingCursor.current, commits, hasUncommitted, rowOffset);
+    if (index === undefined) return;
+    pendingCursor.current = undefined;
+    rememberCursor(index);
+  }, [commits, cursor, hasUncommitted, rowOffset]);
+
+  useEffect(() => {
+    const element = scroller.current;
+    const offset = pendingScroll.current;
+    if (element === null || offset === undefined) return;
+    pendingScroll.current = undefined;
+    // The browser clamps an offset past the end of this page; the state reads
+    // back what actually landed, not what was remembered.
+    element.scrollTop = offset;
+    setScrollTop(element.scrollTop);
+  }, []);
 
   useEffect(() => {
     const element = scroller.current;
@@ -423,6 +507,7 @@ export function HistoryPane(props: HistoryPaneProps) {
   const handleScroll = (event: UIEvent<HTMLDivElement>): void => {
     const element = event.currentTarget;
     setScrollTop(element.scrollTop);
+    if (memory !== undefined) memory.scrollTop = element.scrollTop;
     if (element.scrollTop + element.clientHeight >= element.scrollHeight - 160) maybeLoad();
   };
 
@@ -436,8 +521,8 @@ export function HistoryPane(props: HistoryPaneProps) {
     const path = cursorPath;
     if (path === undefined) return;
     const index = path === UNCOMMITTED ? (hasUncommitted ? 0 : -1) : commits.findIndex(commit => commit.hash === path) + rowOffset;
-    if (index !== cursor && index >= 0) setCursor(index);
-    else if (index < 0) setCursor(undefined);
+    if (index !== cursor && index >= 0) rememberCursor(index);
+    else if (index < 0) rememberCursor(undefined);
   }, [commits, cursor, cursorPath, hasUncommitted, rowOffset]);
 
   // A click or a cross-panel jump moves the selection without the keyboard, and
@@ -450,7 +535,7 @@ export function HistoryPane(props: HistoryPaneProps) {
     const moved = seenSelection.current !== selectedHash;
     seenSelection.current = selectedHash;
     if (!moved || cursor === undefined || selectedHash === undefined) return;
-    if (selectedIndex >= 0 && selectedIndex !== cursor) setCursor(selectedIndex);
+    if (selectedIndex >= 0 && selectedIndex !== cursor) rememberCursor(selectedIndex);
   }, [selectedHash, commits, cursor, selectedIndex]);
 
   // Minimum-movement reveal, computed from the same row height the virtual
@@ -470,7 +555,8 @@ export function HistoryPane(props: HistoryPaneProps) {
     if (next === element.scrollTop) return;
     element.scrollTop = next;
     setScrollTop(next);
-  }, [cursor, rowCount, rowHeight]);
+    if (memory !== undefined) memory.scrollTop = next;
+  }, [cursor, rowCount, rowHeight, memory]);
 
   // Walking into the tail asks for the next page, so the cursor keeps going
   // instead of stopping at the last loaded row. The scroll path above does the
@@ -501,7 +587,7 @@ export function HistoryPane(props: HistoryPaneProps) {
       const seed = cursor ?? (selectedIndex >= 0 ? selectedIndex : undefined);
       const next = stepCursor(seed, action, rowCount, pageRowCount(height === 0 ? 480 : height, rowHeight));
       if (next === undefined) return;
-      setCursor(next);
+      rememberCursor(next);
       // Moving the cursor is selecting: the detail pane is what the reader is
       // reading, and it must not need a second Enter to catch up.
       if (next === 0 && hasUncommitted) {
@@ -711,7 +797,7 @@ export function HistoryPane(props: HistoryPaneProps) {
                     cursor={cursor === 0}
                     t={t}
                     onSelect={() => {
-                      setCursor(0);
+                      rememberCursor(0);
                       onSelectUncommitted?.();
                     }}
                   />
@@ -732,7 +818,7 @@ export function HistoryPane(props: HistoryPaneProps) {
                   head={commit.hash === headHash}
                   cursor={rowIndex === cursor}
                   onSelect={hash => {
-                    setCursor(rowIndex);
+                    rememberCursor(rowIndex);
                     onSelect(hash);
                   }}
                 />

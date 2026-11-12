@@ -26,6 +26,7 @@ import { WorkingTreePane } from "./working-tree-pane.tsx";
 import { HistoryPane, UNCOMMITTED } from "./history-pane.tsx";
 import { pageQuery } from "./history-query.ts";
 import type { Translate } from "./copy.ts";
+import { createViewMemoryRegistry } from "./view-memory.ts";
 import {
   createCommitJump,
   createJump,
@@ -307,10 +308,19 @@ export function createGitExplorerView(wiring: ViewWiring) {
   // and rebuilding it would remount the popover on every snapshot refresh.
   const WorkspaceMenu = workspaces === undefined ? undefined : createWorkspaceMenu({ t, ...workspaces });
 
+  // The browsing state per session: the host unmounts this view on every tab
+  // switch, so selection and list positions live in this factory closure
+  // instead of the component. Created once per registered view, never per mount.
+  const memoryRegistry = createViewMemoryRegistry();
+
   function GitExplorerView(props: ConversationViewProps) {
     const sessionId = props.sessionId ?? workbench.currentSessionId();
     const sessionRef = useRef(sessionId);
     sessionRef.current = sessionId;
+    // What this conversation remembers from its last mount. The record is
+    // mutated in place by the view and its panes, so the host's next mount of
+    // the same session reads back exactly what the previous one left.
+    const memory = useMemo(() => memoryRegistry.forSession(sessionId), [memoryRegistry, sessionId]);
     // The composer's phase, read through the host's own selector hook so a
     // sending composer repaints the button. The hook is a standard prop of this
     // slot, but a host or a test that omits it must not break the mount: the
@@ -330,11 +340,11 @@ export function createGitExplorerView(wiring: ViewWiring) {
     const [hasMore, setHasMore] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const [loadError, setLoadError] = useState<string | undefined>(undefined);
-    const [selected, setSelected] = useState<string | undefined>(undefined);
+    const [selected, setSelected] = useState<string | undefined>(() => memory.history.selected);
     // The history search. It is a *source* switch, not a filter: the host greps
     // the whole repository, because filtering the loaded page would report an
     // empty list whenever the only match sits on a page not fetched yet.
-    const [search, setSearch] = useState("");
+    const [search, setSearch] = useState(() => memory.history.search ?? "");
     const [searching, setSearching] = useState(false);
     // What the loaded `commits` are actually a page of. `loadMore` must repeat
     // this query and not the input box's current text, or a page in flight while
@@ -346,6 +356,11 @@ export function createGitExplorerView(wiring: ViewWiring) {
     // A focus consumed while the snapshot is still in flight must survive the
     // snapshot's default selection, so it parks here until the page arrives.
     const pendingFocus = useRef<string | undefined>(undefined);
+    // The selection and search a returning mount carries in. They outrank the
+    // snapshot's default of "newest commit" and are spent on the first load; a
+    // refresh later in the mount's life keeps the existing rules.
+    const restoringSelection = useRef<string | undefined>(memory.history.selected);
+    const restoringSearch = useRef(memory.history.search !== undefined && memory.history.search !== "");
     const handledRequest = useRef<string | undefined>(undefined);
     // Entering the view owes the left column one focus claim, served the moment
     // the first snapshot paints it. The claim lives here rather than in the pane
@@ -380,13 +395,32 @@ export function createGitExplorerView(wiring: ViewWiring) {
       restHeight: number | null;
     } | null>(null);
 
-    const selectFromFocus = useCallback((hash: string): void => {
-      pendingFocus.current = hash;
-      setSelected(hash);
-      // An explicit jump outranks the entry claim: the caller asked for one
-      // commit, so the pane must not also move focus to the changes list.
-      setClaimFocus(false);
-    }, []);
+    /**
+     * Select a row and record it in one step.
+     *
+     * A history click can be followed by a view switch inside the same gesture
+     * (the changes pane opens the file panel on click), and the unmount may land
+     * before a passive effect would have run; the record is therefore written
+     * with the state, not after it.
+     */
+    const selectRow = useCallback(
+      (hash: string): void => {
+        memory.history.selected = hash;
+        setSelected(hash);
+      },
+      [memory],
+    );
+
+    const selectFromFocus = useCallback(
+      (hash: string): void => {
+        pendingFocus.current = hash;
+        selectRow(hash);
+        // An explicit jump outranks the entry claim: the caller asked for one
+        // commit, so the pane must not also move focus to the changes list.
+        setClaimFocus(false);
+      },
+      [selectRow],
+    );
 
     // Stable identity, or the pane's effect would see a fresh callback on every
     // render and re-run its claim path after the claim was already spent.
@@ -639,9 +673,12 @@ export function createGitExplorerView(wiring: ViewWiring) {
       // A refresh returns the list to the snapshot's page, so any search the
       // reader had typed is dropped with it: leaving the box filled while the
       // rows underneath are unfiltered would describe a list that is not there.
+      // A returning mount is the exception: it re-runs the remembered search
+      // once this page paints, so the box and the rows stay one statement.
       queryToken.current += 1;
       loadedQuery.current = "";
-      setSearch("");
+      if (restoringSearch.current) restoringSearch.current = false;
+      else setSearch("");
       setSearching(false);
       Promise.resolve()
         .then(() => remote.snapshot({ sessionId }))
@@ -661,19 +698,31 @@ export function createGitExplorerView(wiring: ViewWiring) {
           setLoad({ kind: "ready", snapshot });
           setCommits(snapshot.commits);
           setHasMore(snapshot.commits.length < snapshot.counts.commits);
-          // Read the parked focus at resolution time: a request consumed after
-          // this effect ran (or while the request was in flight) is honoured by
-          // this page instead of being reset to the newest commit.
+          // Read the parked focus and the remembered selection at resolution
+          // time: a request consumed after this effect ran (or while the
+          // request was in flight) is honoured by this page instead of being
+          // reset to the newest commit.
           const focusHash = pendingFocus.current;
           pendingFocus.current = undefined;
+          const restored = restoringSelection.current;
+          restoringSelection.current = undefined;
           setSelected(previous => {
             if (focusHash !== undefined) return focusHash;
+            const dirty = groupChanges(snapshot.status).length > 0;
+            // A remembered selection is kept exactly, even when it is not on the
+            // page just loaded: the detail pane reads any hash on its own, and
+            // rewriting it to the newest commit is the reset this memory exists
+            // to prevent. A remembered working tree that is now clean has no
+            // row to point at and falls back like the sentinel always did.
+            if (restored !== undefined) {
+              if (restored === UNCOMMITTED) return dirty ? restored : snapshot.commits[0]?.hash;
+              return restored;
+            }
             // The sentinel names the working tree, which this snapshot may have
             // just found clean. It cannot survive that: the row it pointed at is
             // gone, so the detail column falls back to a commit instead of
             // summarising an empty tree. The test is the same one the row is
             // built from, so the two cannot disagree about whether it exists.
-            const dirty = groupChanges(snapshot.status).length > 0;
             if (previous === UNCOMMITTED) return dirty ? previous : snapshot.commits[0]?.hash;
             return previous !== undefined && snapshot.commits.some(commit => commit.hash === previous)
               ? previous
@@ -687,6 +736,20 @@ export function createGitExplorerView(wiring: ViewWiring) {
         alive = false;
       };
     }, [sessionId, remote, reloadToken]);
+
+    // Every change writes straight into the session record: a tab switch can
+    // unmount this component at any moment, so there is no later point that
+    // could still read React state. The guards keep a not-yet-loaded view from
+    // erasing what the previous mount left.
+    useEffect(() => {
+      if (selected === undefined) return;
+      memory.history.selected = selected;
+    }, [memory, selected]);
+
+    useEffect(() => {
+      if (search === "") delete memory.history.search;
+      else memory.history.search = search;
+    }, [memory, search]);
 
     // The command panel jumps with `commit:<hash>`: consume the shell's request
     // once and select the commit. The host clears its request only after the
@@ -1060,6 +1123,7 @@ export function createGitExplorerView(wiring: ViewWiring) {
               onOpen={onOpenFile}
               claimFocus={claimFocus}
               onFocusClaimed={releaseFocusClaim}
+              memory={memory.changes}
             />
             <div
               ref={handleRef}
@@ -1101,11 +1165,12 @@ export function createGitExplorerView(wiring: ViewWiring) {
                 searching={searching}
                 search={search}
                 t={t}
-                onSelect={setSelected}
+                onSelect={selectRow}
                 onLoadMore={loadMore}
                 onSearch={setSearch}
                 workingTree={workingTree}
-                onSelectUncommitted={() => setSelected(UNCOMMITTED)}
+                onSelectUncommitted={() => selectRow(UNCOMMITTED)}
+                memory={memory.history}
                 {...(load.snapshot.counts.commits === 0
                   ? {
                       emptyTitle: t("state.emptyRepository.title"),
@@ -1143,7 +1208,7 @@ export function createGitExplorerView(wiring: ViewWiring) {
                   hash={selected}
                   remote={remote}
                   t={t}
-                  onSelect={setSelected}
+                  onSelect={selectRow}
                   onOpenFile={onOpenCommitFile}
                   {...(onCompareToHead === undefined ? {} : { onCompareToHead })}
                   refs={selectedRefs}
