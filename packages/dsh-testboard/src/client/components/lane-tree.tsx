@@ -50,6 +50,18 @@ export interface LaneTreeProps {
 /** How far one nesting level indents its header, in pixels. */
 const INDENT_PX = 14;
 
+/** The header's own breathing room before the chevron. */
+const HEADER_PADDING_X = 6;
+
+/**
+ * Where a file's name starts relative to its directory's chevron column.
+ *
+ * The chevron is one character wide plus the header's gap, so a file has to sit
+ * roughly 11px in to line up under the directory's name rather than under the
+ * chevron itself.
+ */
+const FILE_INDENT_PX = 11;
+
 /**
  * Render one directory and everything below it.
  * @param props - the node, its package, the row renderer and the strings.
@@ -86,7 +98,7 @@ function DirectoryBranch({
         // the path inside its package: `test/unit` exists in a dozen packages.
         data-dir={key}
         data-depth={node.depth}
-        style={{ paddingLeft: `${String(node.depth * INDENT_PX)}px` }}
+        style={{ paddingLeft: `${String(HEADER_PADDING_X + node.depth * INDENT_PX)}px` }}
       >
         <button
           type="button"
@@ -132,7 +144,7 @@ function DirectoryBranch({
           <>
             {node.files.map(row => (
               <div key={row.path} data-tst="lane-slot">
-                {renderRow(row, (node.depth + 1) * INDENT_PX)}
+                {renderRow(row, node.depth * INDENT_PX + FILE_INDENT_PX)}
               </div>
             ))}
             {node.directories.map(child => (
