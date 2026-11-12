@@ -94,7 +94,7 @@ describe("tree restore", () => {
   });
 
   it("lets an explicit arrival outrank the remembered cursor", async () => {
-    await show(props({ initialCursorPath: "docs", entryFocus: { path: "README.md", serial: 0 } }));
+    await show(props({ initialCursorPath: "docs", entryFocus: { path: "README.md" } }));
     expect(cursorPath()).toBe("README.md");
   });
 });
