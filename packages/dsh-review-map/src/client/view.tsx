@@ -39,6 +39,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, 
 
 import { createHttpRuntime, type ReviewRuntime } from "./runtime.ts";
 import { loadMapChunk, type MapChunkModule } from "./chunk-loader.ts";
+import { createReviewMapMemoryRegistry, type ReviewScopeKind } from "./view-memory.ts";
 import type { MapData, MapHandle, MapHandlers, MapOptions } from "./map/contract.ts";
 import {
   buildMapData,
@@ -158,7 +159,7 @@ export interface ReviewMapViewOptions {
 }
 
 /** The two ranges a review can be about. */
-type ScopeKind = "worktree" | "branch";
+type ScopeKind = ReviewScopeKind;
 
 /** What the list is showing right now. */
 type Phase =
@@ -444,11 +445,18 @@ export function createReviewMapView({
   runtime = createHttpRuntime(),
   mapLoader = loadMapChunk,
 }: ReviewMapViewOptions): (props: ConversationViewProps) => ReactElement {
+  // The browsing state per session: the host unmounts this view on every tab
+  // switch, so the range and the two selected paths live in this factory
+  // closure instead of the component.
+  const memoryRegistry = createReviewMapMemoryRegistry();
   return function ReviewMapView({ sessionId }: ConversationViewProps): ReactElement {
-    const [scopeKind, setScopeKind] = useState<ScopeKind>("worktree");
+    // What this conversation remembers from its last mount. Mutated in place,
+    // so the next mount of the same session reads exactly what this one left.
+    const memory = useMemo(() => memoryRegistry.forSession(sessionId), [memoryRegistry, sessionId]);
+    const [scopeKind, setScopeKind] = useState<ScopeKind>(() => memory.scopeKind ?? "worktree");
     const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-    const [selectedPath, setSelectedPath] = useState<string | undefined>(undefined);
-    const [openPath, setOpenPath] = useState<string | undefined>(undefined);
+    const [selectedPath, setSelectedPath] = useState<string | undefined>(() => memory.selectedPath);
+    const [openPath, setOpenPath] = useState<string | undefined>(() => memory.openPath);
     const [detailPhase, setDetailPhase] = useState<DetailPhase | undefined>(undefined);
     const [indexPhase, setIndexPhase] = useState<IndexPhase>({ kind: "idle" });
     // The path the pointer is over, from either side of the linkage. One state
@@ -780,6 +788,37 @@ export function createReviewMapView({
     // this rather than clearing it in an effect also covers the scope and session
     // switches, which change the list for the same reason.
     const panelPath = openFile === undefined ? undefined : openPath;
+
+    // The detail of a remembered panel is loaded once the list that proves the
+    // file still exists has arrived. The range came back with the same record,
+    // so the request is made against the comparison the panel is about.
+    const restoredDetail = useRef<string | undefined>(memory.openPath);
+    useEffect(() => {
+      const path = restoredDetail.current;
+      if (path === undefined || snapshot === undefined) return;
+      restoredDetail.current = undefined;
+      if (sessionId === undefined || sessionId === "" || !files.some(file => file.path === path)) return;
+      openDetail(sessionId, scopeKind, path);
+    }, [snapshot, files, sessionId, scopeKind, openDetail]);
+
+    // Every change writes straight into the session record. The writes wait for
+    // the first snapshot because before it the list is empty, and persisting
+    // that empty derivation would erase what the previous mount left.
+    useEffect(() => {
+      memory.scopeKind = scopeKind;
+    }, [memory, scopeKind]);
+
+    useEffect(() => {
+      if (snapshot === undefined) return;
+      if (selected === undefined) delete memory.selectedPath;
+      else memory.selectedPath = selected;
+    }, [memory, selected, snapshot]);
+
+    useEffect(() => {
+      if (snapshot === undefined) return;
+      if (panelPath === undefined) delete memory.openPath;
+      else memory.openPath = panelPath;
+    }, [memory, panelPath, snapshot]);
 
     const open = (path: string): void => {
       if (sessionId === undefined || sessionId === "") return;

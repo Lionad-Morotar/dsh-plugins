@@ -5,6 +5,7 @@
 ## 当前交付范围
 
 - 两个比较范围：`未提交`（旧侧 HEAD，新侧工作区，暂存与未暂存合并）与`分支对比`（旧侧为与 HEAD 的 merge-base，新侧 HEAD，未提交改动不计入）。
+- 按会话记住评审位置：宿主切换会话标签时会卸载视图，所以比较范围、选中行与打开的详情记在视图工厂闭包的 per-session 记录里（`view-memory.ts`），切到别的标签再回来仍停在原来的范围与文件上；两个会话各记各的。恢复详情时按记下的范围重新读取 diff，文件已不在清单里则只保留范围与清单；记录只在内存里，页面重载回到`未提交`。
 - 仓库状态：仓库名、HEAD（分支名加短哈希，detached 时显示 `HEAD`）、范围切换、重新读取。
 - 四项读数：源码行增删、改动文件数（含未提交文件数）、新增导入、丢失导入。导入两项来自结构索引，索引未就绪时不渲染，避免把未知画成确定的 0。
 - 目录地图：三栏布局（清单 | 地图 | 详情），地图是懒加载 chunk，见下文「目录地图」。
@@ -149,6 +150,7 @@ node scripts/bench-index.mjs --json --cwd <dir> --scope worktree|branch --budget
 | `src/client/runtime.ts` | 同源相对取数 |
 | `src/client/model.ts` | 纯读模型：排序、状态字母、churn 投影、路径拆分、diff 行投影 |
 | `src/client/view.tsx` | 视图：仓库状态、四项读数、三栏布局、清单、地图挂载、详情面板、键盘 |
+| `src/client/view-memory.ts` | 按会话保存比较范围、选中行与打开详情的记录与其注册表 |
 | `src/client/chunk-loader.ts` | 地图 chunk 的 loader 交接、路由记录与缓存 |
 | `src/client/map/contract.ts` | 地图的输入/输出形状（层级、边、未解析计数、handle） |
 | `src/client/map/layout.ts` | squarified treemap 纯函数：面积∝行数、最小可点击尺寸、确定性 |
