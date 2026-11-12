@@ -1,0 +1,5 @@
+# Mount dsh-archive-landing: the row exists only so the bundle has a Loader
+# entry. The landing policy is a browser-half concern and holds no Host state.
+- insert:
+    - id: archive-landing
+      name: 'dsh-archive-landing'

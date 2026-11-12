@@ -77,6 +77,24 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.19.2)(jsdom@30.1.3)(yaml@2.9.1)
 
+  packages/dsh-archive-landing:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.19.2
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
+      jsdom:
+        specifier: ^30.1.3
+        version: 30.1.3
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@24.19.2)(jsdom@30.1.3)(yaml@2.9.1)
+
   packages/dsh-better:
     dependencies:
       '@deepseek-ai/cordis':
@@ -279,6 +297,9 @@ importers:
       dsh-preview-viewers:
         specifier: workspace:*
         version: link:../dsh-preview-viewers
+      dsh-text-languages:
+        specifier: workspace:*
+        version: link:../dsh-text-languages
       dsh-workbench-core:
         specifier: workspace:*
         version: link:../dsh-workbench-core
@@ -370,6 +391,9 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.5
         version: 1.2.5
+      dsh-text-languages:
+        specifier: workspace:*
+        version: link:../dsh-text-languages
     devDependencies:
       esbuild:
         specifier: ^0.28.2
