@@ -92,6 +92,14 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "link.copied": "已复制",
     "link.copyFailed": "复制失败",
     "link.copyAria": "复制链接地址",
+    // The layout section. The nav entry shares the page heading because the
+    // page holds one switch; the hint is the only place the conditions for the
+    // growth are written down.
+    "layout.nav": "布局",
+    "layout.heading": "布局",
+    "layout.expandWindow": "打开右侧栏时窗口向右扩展",
+    "layout.expandWindowHint":
+      "仅在桌面端、右侧栏以普通方式打开且屏幕右侧有空间时生效；全屏与浏览器端保持原生布局。",
   },
   en: {
     "overlay.aria": "Select a model",
@@ -152,5 +160,10 @@ export const DICTIONARIES: Readonly<Record<string, Readonly<Record<string, strin
     "link.copied": "Copied",
     "link.copyFailed": "Copy failed",
     "link.copyAria": "Copy link address",
+    "layout.nav": "Layout",
+    "layout.heading": "Layout",
+    "layout.expandWindow": "Expand the window when the right panel opens",
+    "layout.expandWindowHint":
+      "Desktop only, for the normal right-panel presentation, and only when the screen has room on the right. Fullscreen and the browser keep the native layout.",
   },
 });
