@@ -18,7 +18,7 @@
  * DOM would put the rows inside elements the list's own traversal does not know
  * about.
  */
-import type { ReactElement } from "react";
+import type { CSSProperties, ReactElement } from "react";
 
 import type { DirectoryNode, PackageTree } from "../model.ts";
 
@@ -72,8 +72,13 @@ function DirectoryBranch({
 }): ReactElement {
   const key = `${packageName}:${node.key}`;
   const folded = collapsed.has(key);
+  const children = node.files.length + node.directories.length;
   return (
-    <div data-tst="directory-branch">
+    <div
+      data-tst="directory-branch"
+      data-has-children={children > 0 ? "true" : "false"}
+      style={{ "--tst-dir-indent": `${String(node.depth * INDENT_PX)}px` } as CSSProperties}
+    >
       <div
         data-testid="directory-section"
         data-tst="directory"

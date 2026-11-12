@@ -166,8 +166,10 @@
             {"name":"does nothing for an element the model does not have","line":540,"status":"passed","durationMs":1037},
             {"name":"puts the node centre in the middle of the box and keeps the scale","line":554,"status":"passed","durationMs":660},
             {"name":"leaves the viewport alone against a box with no size","line":562,"status":"passed","durationMs":468},
-            {"name":"scales to the limiting side and centers the bounds","line":569,"status":"passed","durationMs":1018},
-            {"name":"keeps a positive scale against an empty host box","line":577,"status":"passed","durationMs":870}
+            {"name":"restores a remembered element once the first view mounts","line":569,"status":"passed","durationMs":930},
+            {"name":"reports the reader's selection and its clearing","line":589,"status":"passed","durationMs":1124},
+            {"name":"scales to the limiting side and centers the bounds","line":618,"status":"passed","durationMs":1018},
+            {"name":"keeps a positive scale against an empty host box","line":626,"status":"passed","durationMs":870}
           ]
         },
         {
@@ -480,6 +482,13 @@
             {"name":"replaces only the slices the writer touched and keeps the rest stored","line":145,"status":"passed","durationMs":610},
             {"name":"follows the reader's selection when the writer changed it","line":162,"status":"passed","durationMs":917},
             {"name":"ignores touched ids the incoming state does not carry","line":167,"status":"passed","durationMs":270}
+          ]
+        },
+        {
+          "path": "packages/dsh-arch/test/view-remount.test.ts",
+          "cases": [
+            {"name":"restores the selected element and its details pane","line":126,"status":"passed","durationMs":243},
+            {"name":"keeps each session's selection apart","line":140,"status":"passed","durationMs":363}
           ]
         },
         {
@@ -1085,6 +1094,16 @@
           ]
         },
         {
+          "path": "packages/dsh-better/test/settings-surface.test.ts",
+          "cases": [
+            {"name":"addresses the host's own dialog marker, not a hashed class","line":38,"status":"passed","durationMs":717},
+            {"name":"keeps the token as the hue and only removes the alpha","line":45,"status":"passed","durationMs":975},
+            {"name":"installs one sheet under a stable id, once per document","line":55,"status":"passed","durationMs":843},
+            {"name":"does not reinstall over a sheet a previous mount left behind","line":64,"status":"passed","durationMs":843},
+            {"name":"does nothing without a document","line":72,"status":"skipped","durationMs":462}
+          ]
+        },
+        {
           "path": "packages/dsh-better/test/skill-enhancer.test.ts",
           "cases": [
             {"name":"separates the flag from a token that ends without whitespace","line":42,"status":"passed","durationMs":400},
@@ -1398,36 +1417,57 @@
         {
           "path": "packages/dsh-better/test/tabs.test.ts",
           "cases": [
-            {"name":"treats a missing, empty, or corrupt document as nothing hidden","line":88,"status":"passed","durationMs":919},
-            {"name":"keeps only real view ids and refuses chat","line":95,"status":"passed","durationMs":471},
-            {"name":"round-trips through a sorted document","line":100,"status":"passed","durationMs":1118},
-            {"name":"keeps the in-memory choice when storage refuses the write","line":107,"status":"passed","durationMs":409},
-            {"name":"lists registered views in ledger order and never offers chat","line":119,"status":"passed","durationMs":460},
-            {"name":"falls back to the id when a label throws or is empty","line":129,"status":"passed","durationMs":452},
-            {"name":"collapses a shadowed cell to one row","line":137,"status":"passed","durationMs":1087},
-            {"name":"projects the same roster onto the strip, chat excluded there too","line":142,"status":"passed","durationMs":35},
-            {"name":"reads the nested label rather than the tooltip's fallback text","line":174,"status":"passed","durationMs":1183},
-            {"name":"falls back to the button's own text when the host renders the label bare","line":184,"status":"passed","durationMs":475},
-            {"name":"hides the one button whose label the preference names","line":204,"status":"passed","durationMs":721},
-            {"name":"never hides chat, even when the preference names it","line":214,"status":"passed","durationMs":773},
-            {"name":"plans nothing for an empty strip","line":220,"status":"passed","durationMs":1010},
-            {"name":"still finds the button when the host dropped a view the ledger has","line":224,"status":"passed","durationMs":249},
-            {"name":"hides nothing when a label is shared by two buttons","line":236,"status":"passed","durationMs":51},
-            {"name":"hides nothing when the strip shows labels the ledger does not","line":246,"status":"passed","durationMs":642},
-            {"name":"notices a change inside the tab strip","line":266,"status":"passed","durationMs":820},
-            {"name":"ignores a change that never touches the tab strip","line":271,"status":"passed","durationMs":425},
-            {"name":"notices the header being replaced, which takes the strip with it","line":277,"status":"passed","durationMs":571},
-            {"name":"marks only the buttons whose state disagrees with the plan","line":284,"status":"passed","durationMs":790},
-            {"name":"applies a stored choice once the strip renders, and follows a plugin that registers later","line":388,"status":"passed","durationMs":1072},
-            {"name":"hides and restores a tab without touching the ledger","line":413,"status":"passed","durationMs":534},
-            {"name":"restamps a hidden tab after the host rebuilds the strip, and stops once detached","line":433,"status":"passed","durationMs":534},
-            {"name":"stops following the ledger once detached, and removes the sheet","line":470,"status":"passed","durationMs":775},
-            {"name":"names the sheet so a reload cannot stack a second copy","line":494,"status":"passed","durationMs":1162},
-            {"name":"writes one row per registered view, and never calls a hook","line":597,"status":"passed","durationMs":634},
-            {"name":"says so when nothing has registered, and repaints when a view arrives","line":624,"status":"passed","durationMs":371},
-            {"name":"stops repainting once the host unmounts the section","line":637,"status":"passed","durationMs":839},
-            {"name":"takes a fresh section id ahead of the workbench page","line":655,"status":"passed","durationMs":871},
-            {"name":"has a nav label in both dictionaries","line":664,"status":"passed","durationMs":215}
+            {"name":"treats a missing, empty, or corrupt document as no choice","line":101,"status":"passed","durationMs":425},
+            {"name":"reads the original array document as a hidden set only","line":110,"status":"passed","durationMs":1055},
+            {"name":"reads the current document as both lists, and refuses chat in either","line":115,"status":"passed","durationMs":240},
+            {"name":"round-trips both lists through one document","line":122,"status":"passed","durationMs":123},
+            {"name":"keeps the in-memory choice when storage refuses the write","line":133,"status":"passed","durationMs":409},
+            {"name":"lists registered views in ledger order when no order is remembered","line":145,"status":"passed","durationMs":602},
+            {"name":"takes the remembered order first and appends views the memory never named","line":155,"status":"passed","durationMs":562},
+            {"name":"falls back to the id when a label throws or is empty","line":168,"status":"passed","durationMs":452},
+            {"name":"collapses a shadowed cell to one row","line":176,"status":"passed","durationMs":1087},
+            {"name":"projects the same roster onto the strip, chat excluded there too","line":181,"status":"passed","durationMs":35},
+            {"name":"numbers the shown rows from 2, Chat being 1, and skips hidden ones","line":188,"status":"passed","durationMs":439},
+            {"name":"reads the nested label rather than the tooltip's fallback text","line":229,"status":"passed","durationMs":1183},
+            {"name":"falls back to the button's own text when the host renders the label bare","line":239,"status":"passed","durationMs":475},
+            {"name":"hides the one button whose label the preference names","line":266,"status":"passed","durationMs":721},
+            {"name":"never hides chat, even when the preference names it","line":276,"status":"passed","durationMs":773},
+            {"name":"plans nothing for an empty strip","line":282,"status":"passed","durationMs":1010},
+            {"name":"still finds the button when the host dropped a view the ledger has","line":286,"status":"passed","durationMs":249},
+            {"name":"hides nothing when a label is shared by two buttons","line":298,"status":"passed","durationMs":51},
+            {"name":"hides nothing when the strip shows labels the ledger does not","line":308,"status":"passed","durationMs":642},
+            {"name":"numbers every movable button after Chat, in the remembered order","line":315,"status":"passed","durationMs":259},
+            {"name":"leaves Chat and unknown buttons unstamped","line":326,"status":"passed","durationMs":22},
+            {"name":"gives a hidden view no number and compacts the ones after it","line":338,"status":"passed","durationMs":627},
+            {"name":"voids the whole plan when two views share a label the strip shows","line":350,"status":"passed","durationMs":448},
+            {"name":"voids the whole plan when a view is named like Chat","line":356,"status":"passed","durationMs":847},
+            {"name":"tolerates a ledger view the strip does not show","line":364,"status":"skipped","durationMs":499},
+            {"name":"stamps only the buttons whose order disagrees with the plan","line":396,"status":"passed","durationMs":687},
+            {"name":"clears a stamp the plan no longer names","line":403,"status":"passed","durationMs":5},
+            {"name":"changes nothing when the strip already agrees","line":412,"status":"passed","durationMs":647},
+            {"name":"notices a change inside the tab strip","line":433,"status":"passed","durationMs":820},
+            {"name":"ignores a change that never touches the tab strip","line":438,"status":"passed","durationMs":425},
+            {"name":"notices the header being replaced, which takes the strip with it","line":444,"status":"passed","durationMs":571},
+            {"name":"marks only the buttons whose state disagrees with the plan","line":451,"status":"passed","durationMs":790},
+            {"name":"applies a stored choice once the strip renders, and follows a plugin that registers later","line":586,"status":"passed","durationMs":1072},
+            {"name":"hides and restores a tab without touching the ledger","line":611,"status":"passed","durationMs":534},
+            {"name":"stamps the remembered order onto the strip, Chat untouched","line":631,"status":"passed","durationMs":703},
+            {"name":"restamps a hidden tab after the host rebuilds the strip, and stops once detached","line":659,"status":"passed","durationMs":534},
+            {"name":"stops following the ledger once detached, and removes the sheet","line":702,"status":"passed","durationMs":775},
+            {"name":"names the sheet so a reload cannot stack a second copy","line":726,"status":"passed","durationMs":1162},
+            {"name":"writes one row per registered view, and never calls a hook","line":880,"status":"passed","durationMs":634},
+            {"name":"renders the fixed slot first: numbered 1, named, noted, and carrying no control","line":907,"status":"passed","durationMs":157},
+            {"name":"gives a hidden row no number, and numbers the shown ones around it","line":927,"status":"passed","durationMs":332},
+            {"name":"says so when nothing has registered, and repaints when a view arrives","line":941,"status":"passed","durationMs":371},
+            {"name":"stops repainting once the host unmounts the section","line":956,"status":"passed","durationMs":839},
+            {"name":"moves the dragged node live across the hovered row's midline","line":1009,"status":"passed","durationMs":1005},
+            {"name":"commits on the dragend, the one end-of-drag event the browser always fires","line":1023,"status":"passed","durationMs":275},
+            {"name":"keeps the drop deliverable over the dragged row itself","line":1045,"status":"skipped","durationMs":275},
+            {"name":"commits exactly once when a drop precedes the dragend","line":1062,"status":"passed","durationMs":271},
+            {"name":"leaves the stored order untouched when the drag never moved a node","line":1080,"status":"passed","durationMs":66},
+            {"name":"never moves the fixed slot, however the drag crosses it","line":1089,"status":"passed","durationMs":993},
+            {"name":"takes a fresh section id ahead of the workbench page","line":1108,"status":"passed","durationMs":871},
+            {"name":"has a nav label in both dictionaries","line":1117,"status":"passed","durationMs":215}
           ]
         },
         {
@@ -3459,6 +3499,15 @@
           ]
         },
         {
+          "path": "packages/dsh-fs-explorer/test/tree-restore.test.ts",
+          "cases": [
+            {"name":"lands the cursor on the remembered row","line":75,"status":"passed","durationMs":432},
+            {"name":"restores the scroll offset","line":80,"status":"passed","durationMs":1118},
+            {"name":"reports scroll changes","line":85,"status":"passed","durationMs":314},
+            {"name":"lets an explicit arrival outrank the remembered cursor","line":96,"status":"passed","durationMs":911}
+          ]
+        },
+        {
           "path": "packages/dsh-fs-explorer/test/tree-search-view.test.ts",
           "cases": [
             {"name":"puts the search input inside the tree pane but outside the tree's scroll container","line":121,"status":"passed","durationMs":1167},
@@ -3570,6 +3619,14 @@
           "path": "packages/dsh-fs-explorer/test/view-preview-stability.test.ts",
           "cases": [
             {"name":"resolves the session locator once across parent renders","line":39,"status":"passed","durationMs":429}
+          ]
+        },
+        {
+          "path": "packages/dsh-fs-explorer/test/view-remount.test.ts",
+          "cases": [
+            {"name":"restores the expanded folder and the cursor","line":126,"status":"passed","durationMs":845},
+            {"name":"restores the scroll offset","line":150,"status":"passed","durationMs":1041},
+            {"name":"keeps each session's tree position apart","line":165,"status":"passed","durationMs":72}
           ]
         },
         {
@@ -4465,6 +4522,22 @@
           ]
         },
         {
+          "path": "packages/dsh-git-explorer/test/pane-memory.test.tsx",
+          "cases": [
+            {"name":"resolves a hash against the loaded page and the sentinel against a dirty tree","line":51,"status":"passed","durationMs":1113},
+            {"name":"answers undefined for rows this page does not hold","line":58,"status":"passed","durationMs":20},
+            {"name":"restores the remembered cursor row on mount","line":109,"status":"failed","durationMs":216},
+            {"name":"restores the remembered scroll offset on mount","line":114,"status":"passed","durationMs":659},
+            {"name":"writes the cursor and the offset back as the reader moves","line":119,"status":"passed","durationMs":547},
+            {"name":"keeps a cursor on a page the first paint did not hold until that page arrives","line":132,"status":"failed","durationMs":361},
+            {"name":"leaves an unresolvable remembered cursor alone so a later mount can retry","line":148,"status":"passed","durationMs":524},
+            {"name":"restores the remembered filter, cursor row and offset","line":190,"status":"passed","durationMs":1053},
+            {"name":"writes the filter and the cursor back as the reader changes them","line":199,"status":"passed","durationMs":1101},
+            {"name":"writes the scroll offset back when the list is scrolled","line":221,"status":"passed","durationMs":351},
+            {"name":"clears an emptied filter from the record instead of storing an empty string","line":231,"status":"passed","durationMs":82}
+          ]
+        },
+        {
           "path": "packages/dsh-git-explorer/test/pane-width.test.ts",
           "cases": [
             {"name":"treats a landing on the start width, sub-pixel jitter included, as no new intent","line":36,"status":"passed","durationMs":505},
@@ -4671,6 +4744,26 @@
             {"name":"still renders the list header and scroller for that one row","line":509,"status":"passed","durationMs":952},
             {"name":"keeps the empty state when a search matched nothing","line":515,"status":"passed","durationMs":701},
             {"name":"keeps the empty state when the working tree is clean","line":523,"status":"passed","durationMs":264}
+          ]
+        },
+        {
+          "path": "packages/dsh-git-explorer/test/view-memory.test.ts",
+          "cases": [
+            {"name":"returns the same record for one session across lookups","line":14,"status":"passed","durationMs":70},
+            {"name":"never shares a record between two sessions","line":24,"status":"passed","durationMs":1141},
+            {"name":"starts empty so a first mount has nothing to restore","line":33,"status":"passed","durationMs":418},
+            {"name":"keeps the session-less record apart from a real session","line":38,"status":"passed","durationMs":578},
+            {"name":"writes are visible to the next lookup because the record is live","line":48,"status":"passed","durationMs":890}
+          ]
+        },
+        {
+          "path": "packages/dsh-git-explorer/test/view-restore.test.tsx",
+          "cases": [
+            {"name":"restores the selected commit after an unmount and remount","line":148,"status":"passed","durationMs":1060},
+            {"name":"keeps each session's selection apart","line":164,"status":"passed","durationMs":487},
+            {"name":"restores the selection of the working-tree row","line":179,"status":"passed","durationMs":742},
+            {"name":"restores the changes filter and the cursor row","line":194,"status":"passed","durationMs":1152},
+            {"name":"restores the history search and the commit picked from its page","line":212,"status":"passed","durationMs":123}
           ]
         },
         {
@@ -5136,6 +5229,14 @@
             {"name":"opens a commit in the Git workbench","line":324,"status":"passed","durationMs":818},
             {"name":"leaves the request queued when the switch only changed tabs","line":340,"status":"passed","durationMs":866},
             {"name":"renders no jump actions without a workbench","line":354,"status":"passed","durationMs":350}
+          ]
+        },
+        {
+          "path": "packages/dsh-pr-explorer/test/view-remount.test.tsx",
+          "cases": [
+            {"name":"restores the pair, the tab, the selected row and the open detail","line":179,"status":"passed","durationMs":998},
+            {"name":"keeps each session's review apart","line":204,"status":"passed","durationMs":201},
+            {"name":"falls back to the default pair when the remembered ref disappeared","line":220,"status":"passed","durationMs":235}
           ]
         },
         {
@@ -6168,6 +6269,13 @@
             {"name":"goes up one map level when no detail is open","line":442,"status":"passed","durationMs":825},
             {"name":"leaves Escape alone at the root","line":450,"status":"passed","durationMs":168},
             {"name":"takes two presses to leave both layers","line":460,"status":"passed","durationMs":52}
+          ]
+        },
+        {
+          "path": "packages/dsh-review-map/test/view-remount.test.tsx",
+          "cases": [
+            {"name":"restores the range, the selected row and the open detail","line":136,"status":"passed","durationMs":256},
+            {"name":"keeps each session's review apart","line":165,"status":"passed","durationMs":507}
           ]
         },
         {
@@ -7668,6 +7776,17 @@
           ]
         },
         {
+          "path": "packages/dsh-testboard/test/view-remount.test.tsx",
+          "cases": [
+            {"name":"${path}","line":84,"status":"passed","durationMs":722},
+            {"name":"restores the filter, search, sort and selected row","line":150,"status":"passed","durationMs":299},
+            {"name":"restores a picked history run","line":192,"status":"passed","durationMs":1190},
+            {"name":"falls back to the latest run when the remembered run is gone","line":211,"status":"passed","durationMs":940},
+            {"name":"restores a folded directory","line":232,"status":"failed","durationMs":75},
+            {"name":"keeps each session's board apart","line":252,"status":"passed","durationMs":157}
+          ]
+        },
+        {
           "path": "packages/dsh-testboard/test/view.test.tsx",
           "cases": [
             {"name":"renders one row per test file in the snapshot","line":301,"status":"passed","durationMs":891},
@@ -7682,93 +7801,94 @@
             {"name":"keeps a compressed header's fold key at the outer directory","line":487,"status":"passed","durationMs":355},
             {"name":"hangs each file under its own directory","line":501,"status":"passed","durationMs":848},
             {"name":"indents file rows under their directory and leaves root files at the package level","line":515,"status":"passed","durationMs":1065},
-            {"name":"drops the directory suffix from rows inside the tree","line":527,"status":"passed","durationMs":961},
-            {"name":"keeps a single-directory package flat, suffix and all","line":535,"status":"passed","durationMs":600},
-            {"name":"hides the package title for the root group but keeps its section","line":549,"status":"passed","durationMs":65},
-            {"name":"shows a directory's failure count beside its title","line":558,"status":"passed","durationMs":936},
-            {"name":"still renders every file exactly once","line":565,"status":"passed","durationMs":457},
-            {"name":"keeps a tree row selectable and expandable","line":572,"status":"passed","durationMs":413},
-            {"name":"renders a package-root file under its package heading","line":581,"status":"passed","durationMs":637},
-            {"name":"starts fully expanded","line":608,"status":"passed","durationMs":274},
-            {"name":"hides a directory's files and its subtree on click, and restores them","line":616,"status":"passed","durationMs":994},
-            {"name":"does not select a row when the header is clicked","line":636,"status":"passed","durationMs":556},
-            {"name":"keeps the toggle out of the listbox keyboard order","line":643,"status":"passed","durationMs":698},
-            {"name":"does not let Enter or Space on the toggle reach the listbox","line":654,"status":"skipped","durationMs":640},
-            {"name":"keeps arrow-key navigation alive after a click puts focus on the toggle","line":685,"status":"passed","durationMs":1130},
-            {"name":"shows every match while a search is running, then restores the fold","line":698,"status":"passed","durationMs":935},
-            {"name":"moves the selection to the next visible row when its file is folded away","line":723,"status":"passed","durationMs":1040},
-            {"name":"moves the selection into the next package when its own is folded away","line":737,"status":"passed","durationMs":868},
-            {"name":"expands the ancestors of a chip's target before selecting it","line":751,"status":"passed","durationMs":426},
-            {"name":"marks the root as the composer overlay so the host gives it a fixed height","line":781,"status":"passed","durationMs":408},
-            {"name":"declares the list as the owner of the page keys","line":790,"status":"passed","durationMs":820},
-            {"name":"puts the list, a separator and the detail pane in one split region","line":798,"status":"passed","durationMs":210},
-            {"name":"shows the hint instead of a file while nothing is selected","line":810,"status":"passed","durationMs":219},
-            {"name":"no longer floats a card over the rows","line":816,"status":"passed","durationMs":961},
-            {"name":"shows the clicked file's source, numbered from line 1","line":830,"status":"passed","durationMs":129},
-            {"name":"shows the clicked case's name, status, duration and line","line":849,"status":"passed","durationMs":931},
-            {"name":"highlights the selected case's own line","line":871,"status":"passed","durationMs":421},
-            {"name":"shows the synthetic assertion text for a failed case","line":890,"status":"passed","durationMs":332},
-            {"name":"moves the selection down and up through the flat order","line":921,"status":"passed","durationMs":393},
-            {"name":"walks into an open file's cases and back out again","line":934,"status":"passed","durationMs":305},
-            {"name":"expands on ArrowRight and collapses on ArrowLeft","line":951,"status":"passed","durationMs":904},
-            {"name":"toggles a file with Enter and Space","line":963,"status":"passed","durationMs":13},
-            {"name":"steps from a case back to its file on Escape, then clears the selection","line":976,"status":"passed","durationMs":323},
-            {"name":"jumps to the first and last row with Home and End","line":994,"status":"passed","durationMs":348},
-            {"name":"stops at both ends instead of wrapping","line":1004,"status":"passed","durationMs":1181},
-            {"name":"leaves the search box's own keys to the input","line":1016,"status":"passed","durationMs":626},
-            {"name":"leaves modified chords to the host","line":1029,"status":"passed","durationMs":339},
-            {"name":"exposes the list as a listbox with an active option","line":1035,"status":"passed","durationMs":154},
-            {"name":"moves down by half the visible rows","line":1081,"status":"passed","durationMs":219},
-            {"name":"moves up by half the visible rows","line":1094,"status":"passed","durationMs":485},
-            {"name":"stops at the ends instead of wrapping","line":1105,"status":"passed","durationMs":1127},
-            {"name":"selects the first row when nothing is selected yet","line":1117,"status":"passed","durationMs":871},
-            {"name":"still advances one row when the layout reports nothing","line":1127,"status":"passed","durationMs":710},
-            {"name":"swallows the stroke it handles so the list does not also scroll","line":1135,"status":"passed","durationMs":1096},
-            {"name":"leaves a modified PageDown to the host","line":1146,"status":"passed","durationMs":965},
-            {"name":"pages through an open file's cases as part of the flat order","line":1160,"status":"passed","durationMs":795},
-            {"name":"is a focusable vertical separator with the bounds announced","line":1206,"status":"passed","durationMs":889},
-            {"name":"widens the left pane while dragging and persists the width","line":1217,"status":"passed","durationMs":461},
-            {"name":"clamps a drag past the bounds","line":1234,"status":"passed","durationMs":663},
-            {"name":"leaves the store untouched when a drag lands back where it began","line":1247,"status":"passed","durationMs":61},
-            {"name":"nudges with the arrow keys, jumps to the bounds and resets","line":1263,"status":"passed","durationMs":873},
-            {"name":"resets to the fluid default on double click","line":1290,"status":"passed","durationMs":698},
-            {"name":"restores a stored width on mount","line":1305,"status":"passed","durationMs":874},
-            {"name":"swaps the plain fallback for the loaded editor and forwards the selected line","line":1320,"status":"passed","durationMs":847},
-            {"name":"asks the runtime for the session's state on mount","line":1411,"status":"passed","durationMs":958},
-            {"name":"starts a full run from the toolbar","line":1418,"status":"passed","durationMs":549},
-            {"name":"starts a single-file run from a row without selecting it","line":1426,"status":"passed","durationMs":249},
-            {"name":"polls while a run is going and stops once it settles","line":1441,"status":"passed","durationMs":721},
-            {"name":"turns the run button into a cancel while a run is going","line":1480,"status":"passed","durationMs":357},
-            {"name":"loads a file's source on selection and caches it","line":1511,"status":"failed","durationMs":1093},
-            {"name":"says the source is missing when the host cannot serve it","line":1534,"status":"passed","durationMs":1169},
-            {"name":"reloads and resets when the session changes","line":1547,"status":"passed","durationMs":607},
-            {"name":"says a board restored from disk is the last run, not a fresh one","line":1568,"status":"passed","durationMs":1110},
-            {"name":"shows the loading state while a first run has no result yet","line":1593,"status":"passed","durationMs":564},
-            {"name":"marks the whole board as loading while a run is going","line":1622,"status":"passed","durationMs":970},
-            {"name":"renders the no-session state when the tab has no session id","line":1651,"status":"passed","durationMs":153},
-            {"name":"maps a host error to readable copy and disables the run button","line":1665,"status":"passed","durationMs":807},
-            {"name":"shows the not-run-yet state when the workspace has no snapshot","line":1673,"status":"passed","durationMs":435},
-            {"name":"carries the phase on the run-phase element, which is what a recorder samples","line":1742,"status":"passed","durationMs":183},
-            {"name":"shows a tick per case with its state on the element","line":1758,"status":"passed","durationMs":661},
-            {"name":"greys a row's ticks while a run has not reported them","line":1771,"status":"passed","durationMs":1067},
-            {"name":"stacks the chart's passed and failed bands from the run's own series","line":1797,"status":"passed","durationMs":414},
-            {"name":"reads out the real counts when the pointer is over the chart","line":1815,"status":"passed","durationMs":85},
-            {"name":"keeps the last full run's chart and line after a file-scoped rerun","line":1846,"status":"passed","durationMs":1009},
-            {"name":"prints the run's own line under the chart","line":1874,"status":"passed","durationMs":572},
-            {"name":"counts the run's progress while it is going, and the board once it settles","line":1888,"status":"passed","durationMs":993},
-            {"name":"counts the whole board once a run has settled","line":1913,"status":"passed","durationMs":995},
-            {"name":"renders the fixing card when the demo reports that stage","line":1931,"status":"passed","durationMs":186},
-            {"name":"never shows the fixing card without a demo stage","line":1954,"status":"passed","durationMs":980},
-            {"name":"opens a menu on a file row and writes a file reference chip","line":2064,"status":"passed","durationMs":1146},
-            {"name":"references one case with the case's own name and a session chip","line":2087,"status":"passed","durationMs":1185},
-            {"name":"disables the reference row with a reason when the source is not registered","line":2110,"status":"passed","durationMs":516},
-            {"name":"copies a row's path from the context menu","line":2123,"status":"passed","durationMs":583},
-            {"name":"runs the file a row names from the context menu","line":2137,"status":"passed","durationMs":1116},
-            {"name":"selects the row a view request names when the tab is opened from a chip","line":2151,"status":"passed","durationMs":659},
-            {"name":"offers the cached runs and the latest reading","line":2231,"status":"passed","durationMs":1116},
-            {"name":"loads the picked run by id and shows its cached reading","line":2240,"status":"passed","durationMs":1170},
-            {"name":"goes back to the latest reading when the empty option is picked","line":2282,"status":"passed","durationMs":810},
-            {"name":"leaves the picker out when the workspace has no cache","line":2307,"status":"passed","durationMs":489}
+            {"name":"gives every branch with children its own guide rail offset","line":527,"status":"passed","durationMs":700},
+            {"name":"drops the directory suffix from rows inside the tree","line":543,"status":"passed","durationMs":961},
+            {"name":"keeps a single-directory package flat, suffix and all","line":551,"status":"passed","durationMs":600},
+            {"name":"hides the package title for the root group but keeps its section","line":565,"status":"passed","durationMs":65},
+            {"name":"shows a directory's failure count beside its title","line":574,"status":"passed","durationMs":936},
+            {"name":"still renders every file exactly once","line":581,"status":"passed","durationMs":457},
+            {"name":"keeps a tree row selectable and expandable","line":588,"status":"passed","durationMs":413},
+            {"name":"renders a package-root file under its package heading","line":597,"status":"passed","durationMs":637},
+            {"name":"starts fully expanded","line":624,"status":"passed","durationMs":274},
+            {"name":"hides a directory's files and its subtree on click, and restores them","line":632,"status":"passed","durationMs":994},
+            {"name":"does not select a row when the header is clicked","line":652,"status":"passed","durationMs":556},
+            {"name":"keeps the toggle out of the listbox keyboard order","line":659,"status":"passed","durationMs":698},
+            {"name":"does not let Enter or Space on the toggle reach the listbox","line":670,"status":"skipped","durationMs":640},
+            {"name":"keeps arrow-key navigation alive after a click puts focus on the toggle","line":701,"status":"passed","durationMs":1130},
+            {"name":"shows every match while a search is running, then restores the fold","line":714,"status":"passed","durationMs":935},
+            {"name":"moves the selection to the next visible row when its file is folded away","line":739,"status":"passed","durationMs":1040},
+            {"name":"moves the selection into the next package when its own is folded away","line":753,"status":"passed","durationMs":868},
+            {"name":"expands the ancestors of a chip's target before selecting it","line":767,"status":"passed","durationMs":426},
+            {"name":"marks the root as the composer overlay so the host gives it a fixed height","line":797,"status":"passed","durationMs":408},
+            {"name":"declares the list as the owner of the page keys","line":806,"status":"passed","durationMs":820},
+            {"name":"puts the list, a separator and the detail pane in one split region","line":814,"status":"passed","durationMs":210},
+            {"name":"shows the hint instead of a file while nothing is selected","line":826,"status":"passed","durationMs":219},
+            {"name":"no longer floats a card over the rows","line":832,"status":"passed","durationMs":961},
+            {"name":"shows the clicked file's source, numbered from line 1","line":846,"status":"passed","durationMs":129},
+            {"name":"shows the clicked case's name, status, duration and line","line":865,"status":"passed","durationMs":931},
+            {"name":"highlights the selected case's own line","line":887,"status":"passed","durationMs":421},
+            {"name":"shows the synthetic assertion text for a failed case","line":906,"status":"passed","durationMs":332},
+            {"name":"moves the selection down and up through the flat order","line":937,"status":"passed","durationMs":393},
+            {"name":"walks into an open file's cases and back out again","line":950,"status":"passed","durationMs":305},
+            {"name":"expands on ArrowRight and collapses on ArrowLeft","line":967,"status":"passed","durationMs":904},
+            {"name":"toggles a file with Enter and Space","line":979,"status":"passed","durationMs":13},
+            {"name":"steps from a case back to its file on Escape, then clears the selection","line":992,"status":"passed","durationMs":323},
+            {"name":"jumps to the first and last row with Home and End","line":1010,"status":"passed","durationMs":348},
+            {"name":"stops at both ends instead of wrapping","line":1020,"status":"passed","durationMs":1181},
+            {"name":"leaves the search box's own keys to the input","line":1032,"status":"passed","durationMs":626},
+            {"name":"leaves modified chords to the host","line":1045,"status":"passed","durationMs":339},
+            {"name":"exposes the list as a listbox with an active option","line":1051,"status":"passed","durationMs":154},
+            {"name":"moves down by half the visible rows","line":1097,"status":"passed","durationMs":219},
+            {"name":"moves up by half the visible rows","line":1110,"status":"passed","durationMs":485},
+            {"name":"stops at the ends instead of wrapping","line":1121,"status":"passed","durationMs":1127},
+            {"name":"selects the first row when nothing is selected yet","line":1133,"status":"passed","durationMs":871},
+            {"name":"still advances one row when the layout reports nothing","line":1143,"status":"passed","durationMs":710},
+            {"name":"swallows the stroke it handles so the list does not also scroll","line":1151,"status":"passed","durationMs":1096},
+            {"name":"leaves a modified PageDown to the host","line":1162,"status":"passed","durationMs":965},
+            {"name":"pages through an open file's cases as part of the flat order","line":1176,"status":"passed","durationMs":795},
+            {"name":"is a focusable vertical separator with the bounds announced","line":1222,"status":"passed","durationMs":889},
+            {"name":"widens the left pane while dragging and persists the width","line":1233,"status":"passed","durationMs":461},
+            {"name":"clamps a drag past the bounds","line":1250,"status":"passed","durationMs":663},
+            {"name":"leaves the store untouched when a drag lands back where it began","line":1263,"status":"passed","durationMs":61},
+            {"name":"nudges with the arrow keys, jumps to the bounds and resets","line":1279,"status":"passed","durationMs":873},
+            {"name":"resets to the fluid default on double click","line":1306,"status":"passed","durationMs":698},
+            {"name":"restores a stored width on mount","line":1321,"status":"passed","durationMs":874},
+            {"name":"swaps the plain fallback for the loaded editor and forwards the selected line","line":1336,"status":"passed","durationMs":847},
+            {"name":"asks the runtime for the session's state on mount","line":1427,"status":"passed","durationMs":958},
+            {"name":"starts a full run from the toolbar","line":1434,"status":"passed","durationMs":549},
+            {"name":"starts a single-file run from a row without selecting it","line":1442,"status":"passed","durationMs":249},
+            {"name":"polls while a run is going and stops once it settles","line":1457,"status":"passed","durationMs":721},
+            {"name":"turns the run button into a cancel while a run is going","line":1496,"status":"passed","durationMs":357},
+            {"name":"loads a file's source on selection and caches it","line":1527,"status":"failed","durationMs":1093},
+            {"name":"says the source is missing when the host cannot serve it","line":1550,"status":"passed","durationMs":1169},
+            {"name":"reloads and resets when the session changes","line":1563,"status":"passed","durationMs":607},
+            {"name":"says a board restored from disk is the last run, not a fresh one","line":1584,"status":"passed","durationMs":1110},
+            {"name":"shows the loading state while a first run has no result yet","line":1609,"status":"passed","durationMs":564},
+            {"name":"marks the whole board as loading while a run is going","line":1638,"status":"passed","durationMs":970},
+            {"name":"renders the no-session state when the tab has no session id","line":1667,"status":"passed","durationMs":153},
+            {"name":"maps a host error to readable copy and disables the run button","line":1681,"status":"passed","durationMs":807},
+            {"name":"shows the not-run-yet state when the workspace has no snapshot","line":1689,"status":"passed","durationMs":435},
+            {"name":"carries the phase on the run-phase element, which is what a recorder samples","line":1758,"status":"passed","durationMs":183},
+            {"name":"shows a tick per case with its state on the element","line":1774,"status":"passed","durationMs":661},
+            {"name":"greys a row's ticks while a run has not reported them","line":1787,"status":"passed","durationMs":1067},
+            {"name":"stacks the chart's passed and failed bands from the run's own series","line":1813,"status":"passed","durationMs":414},
+            {"name":"reads out the real counts when the pointer is over the chart","line":1831,"status":"passed","durationMs":85},
+            {"name":"keeps the last full run's chart and line after a file-scoped rerun","line":1862,"status":"passed","durationMs":1009},
+            {"name":"prints the run's own line under the chart","line":1890,"status":"passed","durationMs":572},
+            {"name":"counts the run's progress while it is going, and the board once it settles","line":1904,"status":"passed","durationMs":993},
+            {"name":"counts the whole board once a run has settled","line":1929,"status":"passed","durationMs":995},
+            {"name":"renders the fixing card when the demo reports that stage","line":1947,"status":"passed","durationMs":186},
+            {"name":"never shows the fixing card without a demo stage","line":1970,"status":"passed","durationMs":980},
+            {"name":"opens a menu on a file row and writes a file reference chip","line":2080,"status":"passed","durationMs":1146},
+            {"name":"references one case with the case's own name and a session chip","line":2103,"status":"passed","durationMs":1185},
+            {"name":"disables the reference row with a reason when the source is not registered","line":2126,"status":"passed","durationMs":516},
+            {"name":"copies a row's path from the context menu","line":2139,"status":"passed","durationMs":583},
+            {"name":"runs the file a row names from the context menu","line":2153,"status":"passed","durationMs":1116},
+            {"name":"selects the row a view request names when the tab is opened from a chip","line":2167,"status":"passed","durationMs":659},
+            {"name":"offers the cached runs and the latest reading","line":2247,"status":"passed","durationMs":1116},
+            {"name":"loads the picked run by id and shows its cached reading","line":2256,"status":"passed","durationMs":1170},
+            {"name":"goes back to the latest reading when the empty option is picked","line":2298,"status":"passed","durationMs":810},
+            {"name":"leaves the picker out when the workspace has no cache","line":2323,"status":"passed","durationMs":489}
           ]
         }
       ]

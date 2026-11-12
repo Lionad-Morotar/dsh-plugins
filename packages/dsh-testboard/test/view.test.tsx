@@ -524,6 +524,22 @@ describe("testboard view", () => {
       expect(host.querySelector<HTMLElement>('[data-dir="tree:test/unit"]')?.style.paddingLeft).toBe("14px");
     });
 
+    it("gives every branch with children its own guide rail offset", async () => {
+      await mountTree();
+      const branch = (dir: string) => {
+        const header = host.querySelector<HTMLElement>(`[data-dir="${dir}"]`);
+        const parent = header?.parentElement;
+        if (parent === null || parent === undefined) throw new Error(`no branch for ${dir}`);
+        return parent;
+      };
+      // The rail is drawn by the branch, so the geometry it needs is the depth
+      // as a CSS variable; a leaf with no children is not a fold worth guiding.
+      expect(branch("tree:test").getAttribute("data-has-children")).toBe("true");
+      expect(branch("tree:test").style.getPropertyValue("--tst-dir-indent")).toBe("0px");
+      expect(branch("tree:test/unit").style.getPropertyValue("--tst-dir-indent")).toBe("14px");
+      expect(branch("tree:test/unit/nested").style.getPropertyValue("--tst-dir-indent")).toBe("28px");
+    });
+
     it("drops the directory suffix from rows inside the tree", async () => {
       await mountTree();
       // The header above the row already says the directory; repeating it on

@@ -511,6 +511,26 @@ body.tst-pane-resizing {
 /* A directory header is a label, not a row: it carries no ticks, no reading and
    no selection, so it stays quieter than the files under it. The indent comes
    from an inline padding because the depth is data, not a style choice. */
+[data-tst="directory-branch"] {
+  position: relative;
+}
+
+/* The guide rail is the branch's own chimney: one hairline under the chevron,
+   running past the files and child headers until the branch ends. It is drawn
+   by the parent, so a folded branch (no children rendered) has no rail to
+   nowhere, and nesting produces one rail per level instead of a single
+   ambiguous gutter. */
+[data-tst="directory-branch"][data-has-children="true"]::before {
+  content: "";
+  position: absolute;
+  top: 13px;
+  bottom: 0;
+  left: calc(var(--tst-dir-indent, 0px) + 10px);
+  width: 1px;
+  background: color-mix(in srgb, var(--tst-ink) 18%, transparent);
+  pointer-events: none;
+}
+
 [data-tst="directory"] {
   display: flex;
   align-items: baseline;
