@@ -48,8 +48,13 @@ export const LINK_HOVER_SHEET = `
   border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.08));
   border-radius: var(--dsw-radius-md, 12px);
   /* Opaque on purpose: the panel floats over arbitrary transcript content and
-     must not pick it up through a translucent fill. */
+     must not pick it up through a translucent fill. Layer-2 is opaque on a stock
+     theme; a skin may publish it as a translucent ground colour so its picture
+     shows through the shell's panels, so the solid twin restores alpha 1 while
+     keeping the skin's hue. A browser without relative-colour syntax drops it
+     and keeps the previous declaration. */
   background: var(--dsw-alias-bg-layer-2, #ffffff);
+  background: rgb(from var(--dsw-alias-bg-layer-2, #ffffff) r g b / 1);
   box-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0, 0, 0, 0.16));
   color: var(--dsw-alias-label-primary);
   font-size: 12px;

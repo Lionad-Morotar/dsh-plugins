@@ -32,6 +32,10 @@ describe("skill enhancer sheet", () => {
     // design: either one leaves the panel see-through over page content.
     const panel = block(".dsh-better-skill-panel");
     expect(panel).toContain("background: var(--dsw-alias-bg-layer-2");
+    // A skin may publish layer-2 itself as a translucent ground colour, so the
+    // panel restates the same hue at alpha 1 rather than trust the token's alpha.
+    expect(panel).toContain("background: rgb(from var(--dsw-alias-bg-layer-2");
+    expect(panel).toContain("r g b / 1)");
     expect(panel).not.toContain("menu-surface-fill");
     expect(panel).not.toContain("bg-elevated");
   });
@@ -57,6 +61,7 @@ describe("skill enhancer sheet", () => {
     // as a glitch when one hands over to the other.
     const params = block(".dsh-better-skill-params");
     expect(params).toContain("background: var(--dsw-alias-bg-layer-2");
+    expect(params).toContain("background: rgb(from var(--dsw-alias-bg-layer-2");
     expect(params).toContain("var(--dsw-alias-border-l2");
     expect(params).toContain("var(--dsw-elevation-prominent");
     expect(params).toContain("position: fixed");

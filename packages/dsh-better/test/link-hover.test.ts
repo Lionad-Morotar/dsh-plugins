@@ -509,6 +509,8 @@ describe("the panel as a surface", () => {
     const block = sheet.slice(index, sheet.indexOf("}", index));
     expect(block).toContain("position: fixed");
     expect(block).toContain("background: var(--dsw-alias-bg-layer-2");
+    // The skin can make that token translucent; the panel pins its own alpha.
+    expect(block).toContain("background: rgb(from var(--dsw-alias-bg-layer-2");
     expect(block).toContain("var(--dsw-alias-border-l2");
     expect(block).toContain("var(--dsw-elevation-prominent");
     expect(block).toContain("var(--dsw-alias-label-primary");
