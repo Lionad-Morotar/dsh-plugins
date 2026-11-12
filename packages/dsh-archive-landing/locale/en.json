@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Archive landing",
+    "description": "Archiving the current session moves the main view to its neighbour in the sidebar, or starts a new conversation when there is none."
+  }
+}
