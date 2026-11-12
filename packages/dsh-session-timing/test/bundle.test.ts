@@ -42,14 +42,15 @@ function evaluate(): LoadCall {
 }
 
 /** The platform module table a browser boot seeds. */
-function platform(): (specifier: string) => unknown {
-  const primitives = {
+function platform({ placement = true }: { placement?: boolean } = {}): (specifier: string) => unknown {
+  const primitives: Record<string, unknown> = {
     IconGaugeOutlineRegular: () => null,
-    useAnchoredPosition: () => null,
     useDismissOnOutsidePointer: () => undefined,
   };
+  // 0.2.2-rc.2 removed the shared placement hook; older hosts still seed it.
+  if (placement) primitives.useAnchoredPosition = () => null;
   return (specifier) => {
-    if (specifier === "react") return { createElement: () => null, useCallback: () => {}, useEffect: () => {}, useMemo: () => {}, useRef: () => ({}), useState: () => [null, () => {}] };
+    if (specifier === "react") return { createElement: () => null, useCallback: () => {}, useEffect: () => {}, useLayoutEffect: () => {}, useMemo: () => {}, useRef: () => ({}), useState: () => [null, () => {}] };
     if (specifier === "react/jsx-runtime") return { jsx: () => null, jsxs: () => null, Fragment: "fragment" };
     if (specifier === "react-dom") return { createPortal: () => null };
     if (specifier === "@deepseek-ai/dsh-client-ui-primitives") return primitives;
@@ -77,11 +78,12 @@ interface Dictionaries {
 
 /**
  * Run the plugin's apply against a context double and report what it registered.
+ * @param require - platform module table, defaulting to an old host with the hook.
  * @returns the registration plus the dictionary it registered.
  */
-function mount(): { registered: Registered; dictionaries: Dictionaries; slots: string[] } {
+function mount(require: (specifier: string) => unknown = platform()): { registered: Registered; dictionaries: Dictionaries; slots: string[] } {
   const call = evaluate();
-  const plugin = call.factory(platform()) as { apply(ctx: unknown): () => void; inject: string[]; name: string };
+  const plugin = call.factory(require) as { apply(ctx: unknown): () => void; inject: string[]; name: string };
   expect(plugin.name).toBe("dsh-session-timing");
   expect(plugin.inject).toEqual(["slots", "locale", "configForms"]);
   const registered: Registered[] = [];
@@ -151,6 +153,15 @@ describe("client bundle", () => {
       "useAnchoredPosition",
       "useDismissOnOutsidePointer",
     ]);
+  });
+
+  it("mounts on a host whose primitives dropped the placement hook", () => {
+    const { registered, slots } = mount(platform({ placement: false }));
+    expect(slots).toEqual(["conversation.composer.dock"]);
+    expect(typeof registered.component).toBe("function");
+    const inject = registered.options.inject as () => Record<string, unknown>;
+    const kit = inject().kit as Record<string, unknown>;
+    expect(Object.keys(kit).sort()).toEqual(["IconGauge", "createPortal", "useDismissOnOutsidePointer"]);
   });
 
   it("registers both dictionaries for its own namespace", () => {

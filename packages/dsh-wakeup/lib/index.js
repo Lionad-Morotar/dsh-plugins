@@ -85,6 +85,10 @@ function hasDeliverPrompt(ctx) {
   const subagents = readService(ctx, "subagents");
   return subagents !== void 0 && typeof subagents[DELIVER_SUBAGENT_PROMPT] === "function";
 }
+function hasSendMessage(ctx) {
+  const subagents = readService(ctx, "subagents");
+  return subagents !== void 0 && typeof subagents.sendMessage === "function";
+}
 async function readSessionHeader(ctx, sessionId, signal) {
   const query = readService(ctx, "sessionQuery");
   if (query === void 0 || typeof query.observeSession !== "function") {
@@ -154,19 +158,29 @@ async function deliver(ctx, request, fallbackSource) {
   }
   const parentId = await readParentSessionId(ctx, targetId, signal);
   const subagents = readService(ctx, "subagents");
-  const deliverPrompt = subagents?.[DELIVER_SUBAGENT_PROMPT];
-  if (parentId !== null && subagents !== void 0 && typeof deliverPrompt === "function") {
-    const parent = await ensureLiveAgent(ctx, parentId, signal);
-    await deliverPrompt.call(
-      subagents,
-      parent,
-      targetId,
-      [{ type: "text", text }],
-      buildSource(source, request.meta),
-      signal,
-      "steer"
+  if (parentId !== null) {
+    const deliverPrompt = subagents?.[DELIVER_SUBAGENT_PROMPT];
+    if (subagents !== void 0 && typeof deliverPrompt === "function") {
+      const parent = await ensureLiveAgent(ctx, parentId, signal);
+      await deliverPrompt.call(
+        subagents,
+        parent,
+        targetId,
+        [{ type: "text", text }],
+        buildSource(source, request.meta),
+        signal,
+        "steer"
+      );
+      return { sessionId: targetId, via: "cold-resume" };
+    }
+    if (subagents !== void 0 && typeof subagents.sendMessage === "function") {
+      const parent = await ensureLiveAgent(ctx, parentId, signal);
+      await subagents.sendMessage(parent, targetId, [{ type: "text", text }], { signal });
+      return { sessionId: targetId, via: "cold-resume" };
+    }
+    throw new Error(
+      `session ${targetId} is a subagent session (parent ${parentId}) but the host exposes neither the deliverPrompt symbol nor subagents.sendMessage; refusing to root-resume it`
     );
-    return { sessionId: targetId, via: "cold-resume" };
   }
   const resumed = await resumeAgent(ctx, targetId, signal);
   resumed.steer(buildMessage(text, source, request.meta));
@@ -203,8 +217,13 @@ async function probeTarget(ctx, source, configured, signal) {
   }
   const header = await readSessionHeader(ctx, sessionId, signal);
   const parentLive = header.parentSession !== null && findLiveAgent(ctx, header.parentSession) !== null;
-  const canColdResume = header.parentSession !== null && hasDeliverPrompt(ctx) && (parentLive || hasResume(ctx));
-  const via = canColdResume ? "cold-resume" : hasResume(ctx) ? "root-resume" : "unreachable";
+  const deliverPrompt = hasDeliverPrompt(ctx);
+  const sendMessage = hasSendMessage(ctx);
+  const canColdDeliver = deliverPrompt || sendMessage;
+  const canResume = hasResume(ctx);
+  const canColdResume = header.parentSession !== null && canColdDeliver && (parentLive || canResume);
+  const via = canColdResume ? "cold-resume" : header.parentSession !== null ? "unreachable" : canResume ? "root-resume" : "unreachable";
+  const error = via !== "unreachable" ? void 0 : header.parentSession !== null && !canColdDeliver ? "target is a subagent session but the host exposes neither the deliverPrompt symbol nor subagents.sendMessage; root-resume is refused" : header.parentSession !== null ? "target is a subagent session whose parent is not live and cannot be resumed" : "target is not live and the host cannot resume it";
   return {
     source,
     configured,
@@ -215,7 +234,7 @@ async function probeTarget(ctx, source, configured, signal) {
     headerReadable: header.readable,
     via,
     deliverable: via !== "unreachable",
-    ...via === "unreachable" ? { error: "target is not live and the host can neither cold-resume nor resume it" } : {}
+    ...error === void 0 ? {} : { error }
   };
 }
 async function buildStatus(ctx, routes) {
@@ -254,7 +273,8 @@ async function buildStatus(ctx, routes) {
       agents: readService(ctx, "agents") !== void 0,
       sessionQuery: readService(ctx, "sessionQuery") !== void 0,
       subagents: readService(ctx, "subagents") !== void 0,
-      deliverPrompt: hasDeliverPrompt(ctx)
+      deliverPrompt: hasDeliverPrompt(ctx),
+      sendMessage: hasSendMessage(ctx)
     },
     probedAt: (/* @__PURE__ */ new Date()).toISOString()
   };

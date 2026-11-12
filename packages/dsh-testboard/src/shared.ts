@@ -192,7 +192,24 @@ export interface TestboardState {
   readonly workspace?: string;
   readonly workspaceName?: string;
   readonly snapshot?: TestSnapshot;
+  /**
+   * The latest run, which is what the board narrates live.
+   *
+   * A file-scoped rerun lands here too, so the reader sees it start and finish;
+   * it must not replace {@link log}, or the full run's story would disappear the
+   * first time one file is re-run.
+   */
   readonly run?: RunProgress;
+  /**
+   * The canonical run log: the last all-scope run, or the first run if no full
+   * run has happened yet.
+   *
+   * The throughput chart and the "last run" line read this, so patching one file
+   * after a full run changes the rows and the header counts without rewriting
+   * the run that produced the board. Persisted with the result so the same story
+   * survives a reload.
+   */
+  readonly log?: RunProgress;
   /**
    * The snapshot and run came from the on-disk cache rather than this process.
    *

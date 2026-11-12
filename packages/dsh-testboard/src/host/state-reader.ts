@@ -50,6 +50,7 @@ export function createStateReader(deps: StateReaderDeps): (workspace: string) =>
         workspaceName: basename(workspace),
         snapshot: cached.snapshot,
         run: cached.run,
+        ...(cached.log === undefined ? {} : { log: cached.log }),
         cached: true,
       };
     }

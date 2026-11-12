@@ -87,6 +87,27 @@ describe("createStateReader", () => {
     expect(state.workspaceName).toBe("repo");
   });
 
+  it("hands the cached canonical log through, so a patched board keeps its full run", async () => {
+    const full = run({ runId: "full-1" });
+    const scoped = run({
+      runId: "patch-2",
+      runNumber: 2,
+      scope: { kind: "file", path: "packages/beta/test/two.test.ts" },
+    });
+    const cached: CachedResult = {
+      savedAt: "2026-11-11T01:00:05.000Z",
+      run: scoped,
+      snapshot: SNAPSHOT,
+      log: full,
+    };
+    const { read } = reader({}, cached);
+
+    const state = await read(WORKSPACE);
+
+    expect(state.run?.runId).toBe("patch-2");
+    expect(state.log?.runId).toBe("full-1");
+  });
+
   it("leaves the board empty when there is neither memory nor a cache", async () => {
     const { read } = reader({});
 

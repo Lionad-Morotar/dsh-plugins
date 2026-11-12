@@ -67,6 +67,14 @@ const manifest = require(join(packageRoot, "package.json"));
 const PREVIEW_CHUNK = "client.preview.js";
 
 /**
+ * The diagram renderer's chunk; must match `MERMAID_CHUNK.chunk` in src/shared.ts.
+ *
+ * Its own file rather than part of the preview chunk because mermaid is about
+ * 5.4 MB raw: a document with no diagram in it has to pay nothing for it.
+ */
+const MERMAID_CHUNK = "client.mermaid.js";
+
+/**
  * Where the language chunk entries live.
  *
  * The ids come from the catalogue, not from a list here: the catalogue is the
@@ -138,6 +146,17 @@ const STARTUP_BANNED = ["@codemirror", "codemirror", "react-markdown", "remark-g
 const CHUNK_MARKERS = [/codemirror/iu, /remark|markdown/iu];
 
 /**
+ * Symbols that only appear when mermaid is bundled.
+ *
+ * The bare word `mermaid` is deliberately not one of them: the route table names
+ * the file `client.mermaid.js`, so the startup bundle and the preview chunk both
+ * contain it by design. These are mermaid's own internal vocabulary — its
+ * namespace, the layout engine it bundles, and two of its dependencies — which
+ * survive minification as property names and string literals.
+ */
+const MERMAID_MARKERS = ["@mermaid-js", "cytoscape", "dagre", "mermaidAPI"];
+
+/**
  * Gzipped size ceilings per emitted family chunk.
  *
  * The route transfers these gzipped, so that is what a reader pays. The ceiling
@@ -153,6 +172,10 @@ const SIZE_BUDGETS = {
   "client.image.js": 40 * 1024,
   // pdf.js main library plus its inlined worker.
   "client.pdf.js": 600 * 1024,
+  // mermaid 12 with every diagram type it ships, measured at about 1.54 MB
+  // gzipped. The ceiling leaves roughly a tenth of headroom for a minor upgrade
+  // while still failing if a second engine is pulled in beside it.
+  [MERMAID_CHUNK]: 1700000,
 };
 
 /**
@@ -354,6 +377,35 @@ function assertArtifacts(entryText, texts) {
   for (const marker of CHUNK_MARKERS) {
     if (!marker.test(previewText)) throw new Error(`${PREVIEW_CHUNK} does not look like the preview renderer (${String(marker)})`);
   }
+  // The diagram chunk is fetched from inside the preview chunk, not from the
+  // entry: the entry only names the preview chunk, and the preview chunk is what
+  // asks for the renderer the first time a document fences a diagram. So this
+  // name is checked against the bundle that actually fetches it.
+  if (!previewText.includes(`"${MERMAID_CHUNK}"`)) {
+    throw new Error(`${PREVIEW_CHUNK} no longer names ${MERMAID_CHUNK}; a diagram would fetch a file nobody built`);
+  }
+  // The diagram renderer must be the file it claims, and neither bundle a reader
+  // always parses may carry it: that split is why a document without a diagram
+  // costs nothing extra.
+  //
+  // The marker is checked as the exported module object rather than as the string
+  // `"mermaid"`: minification folds the `renderer` constant into the object
+  // literal, so the literal survives exactly here and nowhere else. Matching the
+  // object shape also proves the chunk exports a renderer at all, which a bare
+  // string would not.
+  const mermaidText = texts[MERMAID_CHUNK] ?? "";
+  if (!/\{renderer:\w+,renderDiagram:\w+\}/u.test(mermaidText)) {
+    throw new Error(`${MERMAID_CHUNK} does not export { renderer, renderDiagram }; it is not the diagram renderer`);
+  }
+  for (const marker of MERMAID_MARKERS) {
+    if (!mermaidText.includes(marker)) {
+      throw new Error(`${MERMAID_CHUNK} does not carry ${marker}; mermaid is not inlined in it`);
+    }
+    if (entryText.includes(marker)) throw new Error(`client.js contains ${marker}; it must stay in the diagram chunk`);
+    if (previewText.includes(marker)) {
+      throw new Error(`${PREVIEW_CHUNK} contains ${marker}; the diagram renderer must stay in ${MERMAID_CHUNK}`);
+    }
+  }
   for (const [family, file] of Object.entries(FAMILY_CHUNKS)) {
     const marker = ENGINE_MARKERS[family];
     if (!(texts[file] ?? "").includes(marker)) {
@@ -427,6 +479,15 @@ async function main(checkOnly) {
   const chunkText = wrap(manifest.name, preview, { chunk: PREVIEW_CHUNK });
   await emit(PREVIEW_CHUNK, chunkText);
 
+  // The diagram renderer is its own bundle because mermaid is about 5.4 MB raw.
+  // Built before the family chunks so the most expensive bundle fails first.
+  const mermaidCode = await bundle(join(packageRoot, "src", "client", "chunk", "mermaid.tsx"), {
+    external: CLIENT_EXTERNALS,
+    minify: true,
+  });
+  const mermaidText = wrap(manifest.name, mermaidCode, { chunk: MERMAID_CHUNK });
+  await emit(MERMAID_CHUNK, mermaidText);
+
   // The payloads are resolved through the shared package so the inlined decoder
   // matches the three version esbuild inlines from those same sources. A payload
   // resolved from this package would need a second three dependency here, and the
@@ -439,8 +500,8 @@ async function main(checkOnly) {
   // protocol cannot be allowed to drift apart at the next upgrade.
   const pdfWorker = await loadPdfWorkerPayload(specifier => viewersRequire.resolve(specifier));
 
-  const texts = { [PREVIEW_CHUNK]: chunkText };
-  const written = ["index.js", "client.js", PREVIEW_CHUNK];
+  const texts = { [PREVIEW_CHUNK]: chunkText, [MERMAID_CHUNK]: mermaidText };
+  const written = ["index.js", "client.js", PREVIEW_CHUNK, MERMAID_CHUNK];
   for (const [family, file] of Object.entries(FAMILY_CHUNKS)) {
     const code = await bundle(join(packageRoot, "src", "client", "chunks", `${family}.tsx`), {
       external: CLIENT_EXTERNALS,

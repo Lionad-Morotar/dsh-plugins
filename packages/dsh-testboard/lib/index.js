@@ -271,6 +271,53 @@ function createRunEngine(options) {
     }));
     return { ...incoming, packages };
   }
+  function patchLog(log, incoming, scopePath) {
+    const replacement = incoming.packages.flatMap((pkg) => pkg.files).find((file) => file.path === scopePath);
+    if (replacement === void 0) return log;
+    const verdictQueues = /* @__PURE__ */ new Map();
+    for (const verdict of replacement.cases) {
+      const queue = verdictQueues.get(verdict.name);
+      const entry = { status: verdict.status, durationMs: verdict.durationMs };
+      if (queue === void 0) verdictQueues.set(verdict.name, [entry]);
+      else queue.push(entry);
+    }
+    const used = /* @__PURE__ */ new Map();
+    const cases = [];
+    for (const event of log.cases) {
+      if (event.path !== scopePath) {
+        cases.push(event);
+        continue;
+      }
+      const verdict = verdictQueues.get(event.name)?.shift();
+      if (verdict === void 0) continue;
+      used.set(event.name, (used.get(event.name) ?? 0) + 1);
+      cases.push({ ...event, status: verdict.status, durationMs: verdict.durationMs });
+    }
+    for (const verdict of replacement.cases) {
+      const matched = used.get(verdict.name) ?? 0;
+      if (matched > 0) {
+        used.set(verdict.name, matched - 1);
+        continue;
+      }
+      cases.push({
+        path: scopePath,
+        name: verdict.name,
+        status: verdict.status,
+        durationMs: verdict.durationMs,
+        atMs: log.elapsedMs
+      });
+    }
+    const counts = countsOf(cases);
+    const failures = cases.filter((event) => event.status === "failed").map((event) => ({ tMs: event.atMs, path: event.path, name: event.name }));
+    return {
+      ...log,
+      status: failures.length === 0 ? "passed" : "failed",
+      counts,
+      failures,
+      cases,
+      series: seriesOf(cases, log.elapsedMs)
+    };
+  }
   async function execute(workspace, scope, runId, entry) {
     const controller = new AbortController();
     entry.controller = controller;
@@ -401,8 +448,14 @@ function createRunEngine(options) {
       });
       entry.snapshot = scope.kind === "file" ? mergeScoped(entry.snapshot, parsed, scope.path) : parsed;
       settle("finished", runFailed(parsed, exitCode) ? "failed" : "passed");
+      if (scope.kind === "all" || entry.log === void 0) entry.log = entry.run;
+      else entry.log = patchLog(entry.log, parsed, scope.path);
       if (entry.snapshot !== void 0 && entry.run !== void 0) {
-        options.onSettled?.(workspace, { snapshot: entry.snapshot, run: entry.run });
+        options.onSettled?.(workspace, {
+          snapshot: entry.snapshot,
+          run: entry.run,
+          ...entry.log === void 0 ? {} : { log: entry.log }
+        });
       }
     } catch (error) {
       settle("error", "error", error instanceof Error ? error.message : String(error));
@@ -417,7 +470,8 @@ function createRunEngine(options) {
       if (entry === void 0) return {};
       return {
         ...entry.snapshot === void 0 ? {} : { snapshot: entry.snapshot },
-        ...entry.run === void 0 ? {} : { run: entry.run }
+        ...entry.run === void 0 ? {} : { run: entry.run },
+        ...entry.log === void 0 ? {} : { log: entry.log }
       };
     },
     start(workspace, scope) {
@@ -463,7 +517,10 @@ function readRecord(value) {
   return {
     savedAt,
     run,
-    snapshot: fields.snapshot
+    snapshot: fields.snapshot,
+    // Older records predate the canonical log; the reader then falls back to
+    // `run`, which is all they had.
+    ...fields.log === null || typeof fields.log !== "object" ? {} : { log: fields.log }
   };
 }
 function descending(left, right) {
@@ -514,7 +571,8 @@ function createResultsStore() {
         version: RESULT_VERSION,
         savedAt: now.toISOString(),
         run: result.run,
-        snapshot: result.snapshot
+        snapshot: result.snapshot,
+        ...result.log === void 0 ? {} : { log: result.log }
       });
       for (let attempt = 1; attempt <= 20; attempt += 1) {
         const suffix = attempt === 1 ? "" : `-${String(attempt)}`;
@@ -538,7 +596,8 @@ function createResultsStore() {
         memory.set(workspace, {
           savedAt: now.toISOString(),
           run: result.run,
-          snapshot: result.snapshot
+          snapshot: result.snapshot,
+          ...result.log === void 0 ? {} : { log: result.log }
         });
         return absolute;
       }
@@ -675,6 +734,7 @@ function createStateReader(deps) {
         workspaceName: basename(workspace),
         snapshot: cached.snapshot,
         run: cached.run,
+        ...cached.log === void 0 ? {} : { log: cached.log },
         cached: true
       };
     }

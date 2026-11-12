@@ -96,6 +96,9 @@ export function ContextMenu({ entries, anchor, onSelect, onClose, returnFocus }:
         }))}
         onSelect={onSelect}
         onClose={onClose}
+        // 0.2.2-rc.2 replaced `getAnchorRect` with `anchorPoint`; each host
+        // ignores the prop it does not know, so both ride along across versions.
+        anchorPoint={{ x: anchor.x, y: anchor.y }}
         getAnchorRect={() => anchorRect(anchor)}
         {...(returnFocus === undefined ? {} : { returnFocus })}
         listClassName="fx-menu-list"

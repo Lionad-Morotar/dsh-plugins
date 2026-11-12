@@ -489,11 +489,11 @@ function FallbackTextBody({ page, path, mode }: RendererBodyProps) {
 
 /** The built-in Markdown body: reading mode upgrades to GFM once the chunk is in. */
 function createMarkdownRenderer(chunk: PreviewChunkModule): RendererModule {
-  function MarkdownBody({ page, path, mode, find }: RendererBodyProps) {
+  function MarkdownBody({ page, path, mode, find, t }: RendererBodyProps) {
     if (mode === "reading") {
       return (
         <div className="fx-preview-read" data-testid="fs-preview-markdown" data-renderer="gfm">
-          <chunk.MarkdownView text={page?.text ?? ""} />
+          <chunk.MarkdownView text={page?.text ?? ""} t={t} />
         </div>
       );
     }

@@ -13,6 +13,10 @@
 
 `engines.dsh` 是 `>=0.2.1-rc.3 <0.3.0-0`，比同仓其他包高一个 rc。原因不在 API 许可，而在对端的实现事实：本包以 `id: activity` 接管统计 pill，而 0.2.0-rc.2 的 `dsh-client-ui-chat` 把统计 pill 注册为 `id: stats`（整个 `StatsPills` 一个条目），`activity` 这个 id 与 `usage` 拆分是在 0.2.1 里发生的。装在 rc.2 上不会报错，只会在输入框下方并排出现两份统计读数，且口径互相矛盾。
 
+## 宿主兼容
+
+客户端半只把 `IconGaugeOutlineRegular`、`useDismissOnOutsidePointer` 与 `createPortal` 三个平台成员当硬前置。0.2.2-rc.2 撤掉了共享的 `useAnchoredPosition`：缺失时弹窗改用自测量的定位，贴在触发器上方（gap 8px），水平对齐触发器左缘并夹进视口（margin 12px），在窗口 resize、任意滚动容器的 scroll 与面板自身尺寸变化时重测。旧宿主仍原样调用共享钩子。
+
 ## 为什么不接管 `sessionStats`
 
 同一个 projection key 无法 shadow：版本相同会静默共享第一个注册，版本不同直接抛错。接管只能靠 patch 掉 `session-stats` 的 Loader row，并把注册顺序压在它前面。新增自己的 key 没有这个耦合，卸载即回到上游行为，代价只是多一份整日志折叠（registry 每个事件每个单元 O(1)）。

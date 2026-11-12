@@ -101,6 +101,37 @@ describe("createResultsStore", () => {
     expect(saved.snapshot).toEqual(SNAPSHOT);
   });
 
+  it("persists the canonical log beside the latest run, so a scoped patch survives a reload", async () => {
+    const store = createResultsStore();
+    const full = finishedRun(1);
+    const scoped: RunProgress = {
+      ...finishedRun(2),
+      scope: { kind: "file", path: "packages/beta/test/two.test.ts" },
+    };
+    const now = new Date(2026, 10, 11, 9, 5, 7);
+    const path = await store.save(workspace, { run: scoped, snapshot: SNAPSHOT, log: full }, now);
+    if (path === undefined) throw new Error("save produced no path");
+
+    // A fresh store reads from disk, which is the path a reload takes.
+    const latest = await createResultsStore().latest(workspace);
+    expect(latest?.run.runId).toBe("run-2");
+    expect(latest?.log?.runId).toBe("run-1");
+  });
+
+  it("reads a record written before the log existed without inventing one", async () => {
+    const directory = join(workspace, RESULT_ROOT, "261111", "100000");
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, RESULT_FILE),
+      JSON.stringify({ version: 1, savedAt: "2026-11-11T10:00:00.000Z", run: finishedRun(), snapshot: SNAPSHOT }),
+      "utf8",
+    );
+
+    const latest = await createResultsStore().latest(workspace);
+    expect(latest?.run.runId).toBe("run-1");
+    expect(latest?.log).toBeUndefined();
+  });
+
   it("answers with the saved run straight away, from memory", async () => {
     const store = createResultsStore();
     await store.save(workspace, { run: finishedRun(), snapshot: SNAPSHOT }, new Date(2026, 10, 11, 9, 5, 7));

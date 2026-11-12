@@ -15,7 +15,8 @@ import { decodeSpeed, formatDuration, formatTokensPerSecond, type Translate } fr
 import { EN, ZH } from "../src/client/copy.ts";
 import { compactReading, detailRows, hasDetails } from "../src/client/rows.ts";
 import { CHAT_SETTINGS_NAMESPACE, ENTRY_ID, ENTRY_PRIORITY, LOCALE_NAMESPACE, SLOT } from "../src/client/registration.ts";
-import { resolveKit } from "../src/client/entry.ts";
+import { apply, boot, resolveKit } from "../src/client/entry.ts";
+import { placePanelAbove, useMeasuredPanelPosition, type PlatformKit } from "../src/client/stats-pill.tsx";
 import type { TimingView } from "../src/schema.ts";
 
 /** A translate seat over one dictionary, with the shipped parameter syntax. */
@@ -150,12 +151,84 @@ describe("registration", () => {
     expect(LOCALE_NAMESPACE).toBe("session-timing");
   });
 
-  it("refuses a kit with any platform member missing", () => {
+  it("requires the three hard members and treats placement as optional", () => {
     const primitives = { IconGaugeOutlineRegular: () => null, useAnchoredPosition: () => null, useDismissOnOutsidePointer: () => undefined };
     expect(resolveKit(null)).toBeUndefined();
     expect(resolveKit(() => ({ ...primitives, createPortal: () => null }))).toBeDefined();
     expect(resolveKit(() => primitives)).toBeUndefined();
-    expect(resolveKit(() => ({ ...primitives, createPortal: () => null, useAnchoredPosition: undefined }))).toBeUndefined();
+    expect(resolveKit(() => ({ ...primitives, createPortal: () => null, useAnchoredPosition: undefined }))).toBeDefined();
+  });
+});
+
+describe("host compatibility", () => {
+  /** The primitive table a host seeds; 0.2.2-rc.2 dropped the placement hook. */
+  const primitives = { IconGaugeOutlineRegular: () => null, useDismissOnOutsidePointer: () => undefined };
+
+  /** A loader require over one primitive table plus react-dom. */
+  function host(table: Record<string, unknown>): (specifier: string) => unknown {
+    return (specifier) => {
+      if (specifier === "@deepseek-ai/dsh-client-ui-primitives") return table;
+      if (specifier === "react-dom") return { createPortal: () => null };
+      throw new Error(`unexpected platform module ${specifier}`);
+    };
+  }
+
+  /** A settings form double with no preference recorded. */
+  function form(): ConfigFormLike {
+    return { getSnapshot: () => ({ value: {} }), subscribe: () => () => {} };
+  }
+
+  it("keeps the shared placement hook when the host still ships it", () => {
+    const placement = () => null;
+    expect(resolveKit(host({ ...primitives, useAnchoredPosition: placement }))?.useAnchoredPosition).toBe(placement);
+  });
+
+  it("accepts a kit without the placement hook", () => {
+    const kit = resolveKit(host(primitives));
+    expect(kit).toBeDefined();
+    expect(kit?.useAnchoredPosition).toBeUndefined();
+  });
+
+  it("still registers the slot on a host without the placement hook", () => {
+    boot(host(primitives));
+    const slots: string[] = [];
+    const registrations: Record<string, unknown>[] = [];
+    let dictionaries = 0;
+    const dispose = apply({
+      slots: {
+        inject: (slot, factory) => {
+          slots.push(slot);
+          factory();
+        },
+        register: (options) => {
+          registrations.push(options);
+          return () => {};
+        },
+      },
+      locale: {
+        register: () => {
+          dictionaries += 1;
+          return () => {};
+        },
+      },
+      configForms: { get: form },
+    });
+    expect(typeof dispose).toBe("function");
+    expect(slots).toEqual([SLOT]);
+    expect(dictionaries).toBe(1);
+    expect(registrations).toHaveLength(1);
+    const inject = registrations[0]?.inject as () => { readonly kit: PlatformKit };
+    expect(inject().kit.useAnchoredPosition).toBeUndefined();
+  });
+
+  it("measures the fallback panel above the trigger and clamps it into the viewport", () => {
+    const viewport = { width: 1200, height: 800 };
+    const panel = { left: 0, top: 0, width: 300, height: 120 };
+    // Left edge aligned, then clamped by each viewport edge; top clamped to the margin.
+    expect(placePanelAbove({ left: 4, top: 300, width: 80, height: 20 }, panel, viewport)).toEqual({ left: 12, top: 172 });
+    expect(placePanelAbove({ left: 1000, top: 500, width: 80, height: 20 }, panel, viewport)).toEqual({ left: 888, top: 372 });
+    expect(placePanelAbove({ left: 500, top: 50, width: 80, height: 20 }, panel, viewport)).toEqual({ left: 500, top: 12 });
+    expect(typeof useMeasuredPanelPosition).toBe("function");
   });
 });
 

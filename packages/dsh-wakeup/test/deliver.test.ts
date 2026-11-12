@@ -26,22 +26,38 @@ function agent(id: string, patch: Partial<FakeAgent> = {}): FakeAgent {
   return created
 }
 
+type SubagentProtocol = "deliverPrompt" | "sendMessage" | "both" | "none"
+
 function harness(options: {
   live?: FakeAgent[]
   parents?: Record<string, string | undefined>
-  subagents?: boolean
+  protocol?: SubagentProtocol
   resumable?: string[]
 } = {}) {
   const live = [...(options.live ?? [])]
   const delivered: unknown[][] = []
+  const sent: unknown[][] = []
   const resumed: string[] = []
-  const subagents = options.subagents === false
+  const protocol = options.protocol ?? "deliverPrompt"
+  const subagents = protocol === "none"
     ? undefined
     : {
-        [SIG]: (...args: unknown[]) => {
-          delivered.push(args)
-          return Promise.resolve("message-id")
-        },
+        ...(protocol === "deliverPrompt" || protocol === "both"
+          ? {
+              [SIG]: (...args: unknown[]) => {
+                delivered.push(args)
+                return Promise.resolve("message-id")
+              },
+            }
+          : {}),
+        ...(protocol === "sendMessage" || protocol === "both"
+          ? {
+              sendMessage: (...args: unknown[]) => {
+                sent.push(args)
+                return Promise.resolve("message-id")
+              },
+            }
+          : {}),
       }
   const ctx = {
     get(name: string) {
@@ -70,7 +86,7 @@ function harness(options: {
       return undefined
     },
   }
-  return { ctx, live, delivered, resumed }
+  return { ctx, live, delivered, sent, resumed }
 }
 
 describe("deliver", () => {
@@ -106,6 +122,48 @@ describe("deliver", () => {
     expect(h.delivered).toHaveLength(1)
   })
 
+  it("cold-resumes through the public sendMessage when the legacy symbol is gone", async () => {
+    const parent = agent("root-1", { status: "running" })
+    const h = harness({
+      live: [parent],
+      parents: { "child-1": "root-1" },
+      protocol: "sendMessage",
+    })
+    const result = await deliver(h.ctx, { text: "hi", sessionId: "child-1", source: "wechat" })
+    expect(result).toEqual({ sessionId: "child-1", via: "cold-resume" })
+    expect(h.delivered).toEqual([])
+    expect(h.sent).toHaveLength(1)
+    const [sender, childId, content, options] = h.sent[0] as unknown[]
+    expect(sender).toBe(parent)
+    expect(childId).toBe("child-1")
+    expect(content).toEqual([{ type: "text", text: "hi" }])
+    expect(options).toEqual({ signal: expect.any(AbortSignal) })
+    expect(h.resumed).toEqual([])
+  })
+
+  it("resumes the parent before calling sendMessage", async () => {
+    const h = harness({ parents: { "child-1": "root-1" }, protocol: "sendMessage" })
+    const result = await deliver(h.ctx, { text: "hi", sessionId: "child-1" })
+    expect(result).toEqual({ sessionId: "child-1", via: "cold-resume" })
+    expect(h.resumed).toEqual(["root-1"])
+    expect(h.sent).toHaveLength(1)
+    expect(h.sent[0]?.[0]).toMatchObject({ id: "root-1" })
+    expect(h.live.map((candidate) => candidate.id)).toContain("root-1")
+  })
+
+  it("prefers the legacy symbol when both protocols are available", async () => {
+    const parent = agent("root-1", { status: "running" })
+    const h = harness({
+      live: [parent],
+      parents: { "child-1": "root-1" },
+      protocol: "both",
+    })
+    const result = await deliver(h.ctx, { text: "hi", sessionId: "child-1" })
+    expect(result).toEqual({ sessionId: "child-1", via: "cold-resume" })
+    expect(h.delivered).toHaveLength(1)
+    expect(h.sent).toEqual([])
+  })
+
   it("resumes a cold root session and steers it", async () => {
     const h = harness({})
     const result = await deliver(h.ctx, { text: "hi", sessionId: "root-9" })
@@ -114,11 +172,11 @@ describe("deliver", () => {
     expect(h.live[0]?.steered).toHaveLength(1)
   })
 
-  it("falls back to resume when the host has no subagent service", async () => {
-    const h = harness({ subagents: false, parents: { "child-1": "root-1" } })
-    const result = await deliver(h.ctx, { text: "hi", sessionId: "child-1" })
-    expect(result.via).toBe("root-resume")
-    expect(h.resumed).toEqual(["child-1"])
+  it("refuses root-resume for a subagent when the host has no cold delivery", async () => {
+    const h = harness({ protocol: "none", parents: { "child-1": "root-1" } })
+    await expect(deliver(h.ctx, { text: "hi", sessionId: "child-1" })).rejects.toThrow(/refusing to root-resume/)
+    expect(h.resumed).toEqual([])
+    expect(h.live).toEqual([])
   })
 
   it("picks the most recent running root when no target is routed", async () => {
