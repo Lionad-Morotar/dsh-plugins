@@ -89,14 +89,17 @@ function createContext() {
     archivedSessionIds: [] as string[],
     pinnedSessionIds: [] as string[],
   });
+  const sessions = createStore({ ids: ["a", "b", "c"] });
   const opened: string[] = [];
   const started: (string | undefined)[] = [];
   const platformRequests: string[] = [];
+  const disposers: (() => void)[] = [];
   let effects = 0;
   const context = {
     uiWorkspace: {
       selection,
       workspaces: { list },
+      sessions: { list: sessions },
       openSession: (sessionId: string) => {
         opened.push(sessionId);
       },
@@ -106,14 +109,24 @@ function createContext() {
     },
     effect: (callback: () => () => void) => {
       effects += 1;
-      callback();
+      disposers.push(callback());
     },
   };
   const platform = (specifier: string): unknown => {
     platformRequests.push(specifier);
     throw new Error(`unexpected platform module ${specifier}`);
   };
-  return { context, selection, list, opened, started, platformRequests, effects: () => effects };
+  return {
+    context,
+    selection,
+    list,
+    sessions,
+    opened,
+    started,
+    platformRequests,
+    disposers,
+    effects: () => effects,
+  };
 }
 
 /**
@@ -147,18 +160,23 @@ describe("client bundle", () => {
   });
 
   it("asks the platform for no modules at all", () => {
-    const { plugin } = loadPlugin();
+    const { plugin, platformRequests } = loadPlugin();
     expect(plugin.name).toBe("dsh-archive-landing");
     expect(plugin.apply).toBeDefined();
+    expect(platformRequests).toEqual([]);
   });
 
   it("mounts exactly one effect and drops it on dispose", () => {
     const { plugin } = loadPlugin();
-    const { context, effects, selection, list } = createContext();
+    const { context, effects, selection, list, disposers } = createContext();
     plugin.apply(context);
     expect(effects()).toBe(1);
     expect(selection.listenerCount).toBe(1);
     expect(list.listenerCount).toBe(1);
+
+    for (const dispose of disposers) dispose();
+    expect(selection.listenerCount).toBe(0);
+    expect(list.listenerCount).toBe(0);
   });
 
   it("survives a second apply without subscribing twice", () => {

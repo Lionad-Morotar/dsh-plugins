@@ -54,7 +54,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "vitest run",
+    "test": "node scripts/build.mjs --check && vitest run",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {

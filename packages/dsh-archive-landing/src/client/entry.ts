@@ -32,15 +32,19 @@ interface SnapshotStore<T = unknown> {
 /**
  * `uiWorkspace` as this package uses it.
  *
- * `selection` and `workspaces` are public fields on the host's service instance
- * rather than methods; the workspace membership store is reached through the
- * service so this package depends on one client service, not two.
+ * `selection`, `workspaces` and `sessions` are instance fields on the host's
+ * shipped client, not a documented public API: the TypeScript source marks the
+ * first two private while the built bundle keeps the names. This package reads
+ * that runtime shape deliberately and the README names the risk; the wire stays
+ * this narrow so a host rename fails in one place.
  */
 export interface UiWorkspaceWire {
   /** The persisted "current session" snapshot, `{}` once the host clears it. */
   readonly selection: SnapshotStore;
   /** The workspace controller whose `list` snapshot carries membership and archives. */
   readonly workspaces: { readonly list: SnapshotStore };
+  /** The session registry; its snapshot carries the ids, including ungrouped ones. */
+  readonly sessions: { readonly list: SnapshotStore };
   /** Show a session's conversation; cross-workspace needs no extra step. */
   openSession(sessionId: string): void;
   /** Start (or reuse a blank) conversation, in `workspaceId` or the recent one. */
@@ -189,11 +193,20 @@ function paintedOrder(): string[] {
 
 /**
  * Flatten the workspace data order into one list.
+ *
+ * Workspace members come first, workspace by workspace, then the registry ids
+ * that belong to no workspace. The sidebar groups ungrouped sessions under
+ * their own group; leaving them out would make a collapsed Ungrouped group
+ * look empty and start a new conversation instead of landing in it.
  * @param snapshot - the `workspaces.list` snapshot.
- * @returns the member ids, workspace by workspace.
+ * @param sessions - the `sessions.list` snapshot.
+ * @returns the member ids, workspace by workspace, then ungrouped ids.
  */
-function dataOrder(snapshot: unknown): string[] {
-  return itemsOf(snapshot).flatMap((item) => asIds(item.sessionIds));
+function dataOrder(snapshot: unknown, sessions: unknown): string[] {
+  const grouped = itemsOf(snapshot).flatMap((item) => asIds(item.sessionIds));
+  const seen = new Set(grouped);
+  const ungrouped = asIds(asRecord(sessions)?.ids).filter((id) => !seen.has(id));
+  return [...grouped, ...ungrouped];
 }
 
 /**
@@ -228,10 +241,16 @@ function unique(ids: readonly string[]): string[] {
  *
  * Sessions that are already archived are not landing targets; the current one is
  * kept so its position stays resolvable.
+ *
+ * The painted rows alone are not the whole list: other workspaces may be
+ * collapsed, and the ungrouped group may be folded too. The full data order is
+ * appended after the visible rows so "next" can reach a collapsed session, and
+ * "start" only happens when the whole registry holds no other session.
  * @param before - the list snapshot from before this archive.
  * @param after - the list snapshot that announced the archive.
  * @param current - the session being archived.
  * @param archived - the archive set after this archive.
+ * @param sessions - the `sessions.list` snapshot for ungrouped ids.
  * @returns session ids in pre-archive sidebar order.
  */
 function landingOrder(
@@ -239,11 +258,11 @@ function landingOrder(
   after: unknown,
   current: string,
   archived: ReadonlySet<string>,
+  sessions: unknown,
 ): string[] {
   const painted = unique(paintedOrder()).filter((id) => id === current || !archived.has(id));
+  const data = dataOrder(before, sessions);
   if (!painted.includes(current)) {
-    const fromBefore = dataOrder(before);
-    const data = fromBefore.length > 0 ? fromBefore : dataOrder(after);
     return unique(data).filter((id) => id === current || !archived.has(id));
   }
   if (painted[painted.length - 1] !== current) return painted;
@@ -255,7 +274,9 @@ function landingOrder(
   const hidden = source.filter(
     (id) => id !== current && !paintedSet.has(id) && !pinned.has(id) && !archived.has(id),
   );
-  return unique([...painted, ...hidden]);
+  // The visible rows and the folded members of the current group come first;
+  // the rest of the registry keeps its data order behind them.
+  return unique([...painted, ...hidden, ...data]).filter((id) => id === current || !archived.has(id));
 }
 
 /**
@@ -271,6 +292,7 @@ function landingOrder(
 export function mountLanding(uiWorkspace: UiWorkspaceWire): () => void {
   const selection = uiWorkspace.selection;
   const list = uiWorkspace.workspaces.list;
+  const sessions = uiWorkspace.sessions.list;
 
   let origin: Origin | undefined;
   /** The archive set of the last usable snapshot; undefined until the baseline. */
@@ -278,6 +300,7 @@ export function mountLanding(uiWorkspace: UiWorkspaceWire): () => void {
   /** The snapshot the previous notification published, i.e. the pre-archive view. */
   let lastSnapshot: unknown;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let emptyTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
 
   const remember = (snapshot: unknown): void => {
@@ -293,6 +316,9 @@ export function mountLanding(uiWorkspace: UiWorkspaceWire): () => void {
       const selected = selectedId(selection.getSnapshot());
       // Anything other than the archived session means the user navigated first.
       if (selected !== undefined && selected !== archivedId) return;
+      // The target may have been archived by a second client between planning
+      // and this tick; opening it would land on an archived conversation.
+      if (choice.kind === "open" && archiveSetOf(list.getSnapshot())?.has(choice.id) === true) return;
       if (choice.kind === "open") uiWorkspace.openSession(choice.id);
       else if (workspaceId === undefined) uiWorkspace.startSession();
       else uiWorkspace.startSession(workspaceId);
@@ -306,7 +332,7 @@ export function mountLanding(uiWorkspace: UiWorkspaceWire): () => void {
     const snapshot = list.getSnapshot();
     const archived = archiveSetOf(snapshot);
     if (archived === undefined) return;
-    const order = landingOrder(before, snapshot, current.sessionId, archived);
+    const order = landingOrder(before, snapshot, current.sessionId, archived, sessions.getSnapshot());
     const choice = chooseLanding(order, current.sessionId);
     const workspaceId =
       workspaceIdOf(before, current.sessionId) ?? workspaceIdOf(snapshot, current.sessionId) ?? current.workspaceId;
@@ -318,7 +344,24 @@ export function mountLanding(uiWorkspace: UiWorkspaceWire): () => void {
   };
 
   const onSelection = (): void => {
-    remember(selection.getSnapshot());
+    const snapshot = selection.getSnapshot();
+    if (selectedId(snapshot) !== undefined) {
+      if (emptyTimer !== undefined) {
+        clearTimeout(emptyTimer);
+        emptyTimer = undefined;
+      }
+      remember(snapshot);
+      return;
+    }
+    // `/archive` clears the selection before the archive notification, and the
+    // landing still needs the origin. A clear with no archive behind it (for
+    // example startSession() with no workspace) is a real navigation away.
+    // One tick tells the two apart without losing either.
+    if (emptyTimer !== undefined || timer !== undefined) return;
+    emptyTimer = setTimeout(() => {
+      emptyTimer = undefined;
+      if (selectedId(selection.getSnapshot()) === undefined && timer === undefined) origin = undefined;
+    }, 0);
   };
 
   const onList = (): void => {
@@ -351,6 +394,8 @@ export function mountLanding(uiWorkspace: UiWorkspaceWire): () => void {
     offList();
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
+    if (emptyTimer !== undefined) clearTimeout(emptyTimer);
+    emptyTimer = undefined;
   };
 }
 

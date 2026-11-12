@@ -66,6 +66,7 @@ function createStore<T>(initial: T): Store<T> {
 interface Mounted {
   readonly selection: Store<{ sessionId?: string }>;
   readonly list: Store<ListSnapshot>;
+  readonly sessions: Store<{ ids: readonly string[] }>;
   readonly openSession: ReturnType<typeof vi.fn>;
   readonly startSession: ReturnType<typeof vi.fn>;
   /** Repaint the sidebar rows in the given order. */
@@ -98,6 +99,7 @@ function paintRows(ids: readonly string[]): void {
 function mount(options: {
   selection?: string;
   items?: readonly WorkspaceItem[];
+  sessions?: readonly string[];
   archived?: readonly string[];
   pinned?: readonly string[];
   phase?: "pending" | "ready";
@@ -112,12 +114,18 @@ function mount(options: {
     archivedSessionIds: options.archived ?? [],
     pinnedSessionIds: options.pinned ?? [],
   });
-  paintRows(options.rows ?? (options.items ?? []).flatMap((item) => item.sessionIds));
+  const rows = options.rows ?? (options.items ?? []).flatMap((item) => item.sessionIds);
+  paintRows(rows);
+  const grouped = (options.items ?? []).flatMap((item) => item.sessionIds);
+  const sessions = createStore<{ ids: readonly string[] }>({
+    ids: options.sessions ?? [...new Set([...grouped, ...rows])],
+  });
   const openSession = vi.fn();
   const startSession = vi.fn();
   const uiWorkspace: UiWorkspaceWire = {
     selection,
     workspaces: { list },
+    sessions: { list: sessions },
     openSession,
     startSession,
   };
@@ -126,6 +134,7 @@ function mount(options: {
   return {
     selection,
     list,
+    sessions,
     openSession,
     startSession,
     rows: paintRows,
@@ -302,6 +311,69 @@ describe("landing after a current-session archive", () => {
     vi.advanceTimersByTime(0);
     expect(mounted.openSession).not.toHaveBeenCalled();
     expect(mounted.startSession).not.toHaveBeenCalled();
+  });
+
+  it("lands in another workspace's collapsed session when the current group has no neighbour", () => {
+    mounted = mount({
+      selection: "a",
+      items: [
+        { workspaceId: "w1", sessionIds: ["a"] },
+        { workspaceId: "w2", sessionIds: ["b"] },
+      ],
+      rows: ["a"],
+    });
+    mounted.archive("a");
+    vi.advanceTimersByTime(0);
+    expect(mounted.openSession).toHaveBeenCalledWith("b");
+    expect(mounted.startSession).not.toHaveBeenCalled();
+  });
+
+  it("lands in an ungrouped session when the current workspace has no neighbour", () => {
+    mounted = mount({
+      selection: "a",
+      items: [{ workspaceId: "w1", sessionIds: ["a"] }],
+      sessions: ["a", "u"],
+      rows: ["a"],
+    });
+    mounted.archive("a");
+    vi.advanceTimersByTime(0);
+    expect(mounted.openSession).toHaveBeenCalledWith("u");
+  });
+
+  it("does not open a target that was archived before the timer ran", () => {
+    mounted = mount({
+      selection: "b",
+      items: [{ workspaceId: "w1", sessionIds: ["a", "b", "c"] }],
+    });
+    mounted.list.set({ ...mounted.list.getSnapshot(), archivedSessionIds: ["b"] });
+    mounted.list.set({ ...mounted.list.getSnapshot(), archivedSessionIds: ["b", "c"] });
+    mounted.selection.set({});
+    vi.advanceTimersByTime(0);
+    expect(mounted.openSession).not.toHaveBeenCalled();
+  });
+
+  it("forgets the origin when the host clears the view without an archive", () => {
+    mounted = mount({
+      selection: "a",
+      items: [{ workspaceId: "w1", sessionIds: ["a", "b"] }],
+    });
+    mounted.selection.set({});
+    vi.advanceTimersByTime(0);
+    mounted.list.set({ ...mounted.list.getSnapshot(), archivedSessionIds: ["a"] });
+    vi.advanceTimersByTime(0);
+    expect(mounted.openSession).not.toHaveBeenCalled();
+    expect(mounted.startSession).not.toHaveBeenCalled();
+  });
+
+  it("still lands when the command clears the view before the archive notification", () => {
+    mounted = mount({
+      selection: "b",
+      items: [{ workspaceId: "w1", sessionIds: ["a", "b", "c"] }],
+    });
+    mounted.selection.set({});
+    mounted.list.set({ ...mounted.list.getSnapshot(), archivedSessionIds: ["b"] });
+    vi.advanceTimersByTime(0);
+    expect(mounted.openSession).toHaveBeenCalledWith("c");
   });
 
   it("stops watching and drops the pending landing when disposed", () => {

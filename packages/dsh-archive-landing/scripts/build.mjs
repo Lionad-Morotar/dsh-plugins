@@ -74,23 +74,37 @@ async function bundle(entry, format) {
   return output.text;
 }
 
-await rm(libRoot, { recursive: true, force: true });
-await mkdir(libRoot, { recursive: true });
+const check = process.argv.includes("--check");
 
-await writeFile(join(libRoot, "index.js"), await bundle(join(packageRoot, "src", "index.ts"), "esm"), "utf8");
-
+const index = await bundle(join(packageRoot, "src", "index.ts"), "esm");
 const client = await bundle(join(packageRoot, "src", "client", "entry.ts"), "cjs");
 const requested = [...client.matchAll(/require\("([^"]+)"\)/gu)].map((match) => match[1]);
 if (requested.length > 0) {
   throw new Error(`client bundle must not require platform modules, saw ${requested.join(", ")}`);
 }
-await writeFile(join(libRoot, "client.js"), wrap(manifest.name, client), "utf8");
+const outputs = {
+  "index.js": index,
+  "client.js": wrap(manifest.name, client),
+};
 
-const written = ["index.js", "client.js"];
-const sizes = await Promise.all(
-  written.map(async (file) => {
-    const bytes = await readFile(join(libRoot, file));
-    return `${file.padEnd(16)} ${String(bytes.length).padStart(8)} B`;
-  }),
-);
-process.stdout.write(`${written.length} files\n${sizes.join("\n")}\n`);
+if (check) {
+  const stale = [];
+  for (const [file, content] of Object.entries(outputs)) {
+    const existing = await readFile(join(libRoot, file), "utf8").catch(() => undefined);
+    if (existing !== content) stale.push(file);
+  }
+  if (stale.length > 0) {
+    process.stderr.write(`lib/ is stale for: ${stale.join(", ")}\nrun pnpm build and commit lib/\n`);
+    process.exit(1);
+  }
+  process.stdout.write(`lib/ matches src/ (${Object.keys(outputs).length} files)\n`);
+} else {
+  await rm(libRoot, { recursive: true, force: true });
+  await mkdir(libRoot, { recursive: true });
+  const sizes = [];
+  for (const [file, content] of Object.entries(outputs)) {
+    await writeFile(join(libRoot, file), content, "utf8");
+    sizes.push(`${file.padEnd(16)} ${String(Buffer.byteLength(content)).padStart(8)} B`);
+  }
+  process.stdout.write(`${sizes.length} files\n${sizes.join("\n")}\n`);
+}
