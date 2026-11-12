@@ -187,7 +187,10 @@ export function createMap(
 
   host.append(root);
 
-  let current = data.rootPath;
+  let current =
+    options.initialPath !== undefined && data.levels.has(options.initialPath)
+      ? options.initialPath
+      : data.rootPath;
   let highlighted: string | null = null;
   // The geometry of the level on screen, keyed by path. Edges are anchored to
   // these rects, and they are rebuilt with every draw because the layout is.

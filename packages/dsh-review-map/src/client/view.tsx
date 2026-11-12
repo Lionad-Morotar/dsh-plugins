@@ -687,8 +687,12 @@ export function createReviewMapView({
           handle = createMap(host, buildMapData(readyIndex, repoName), {
             onOpenFile: openFromMap,
             onHover: hoverFromMap,
+            onDrill: path => {
+              memory.mapPath = path;
+            },
           }, {
             title: repoName,
+            initialPath: memory.mapPath,
             strings: {
               imports: mapCopy.flowImports,
               importedBy: mapCopy.flowImportedBy,
@@ -698,6 +702,9 @@ export function createReviewMapView({
             },
           });
           mapHandle.current = handle;
+          // The chunk ignores a remembered directory the new index no longer
+          // has; the record follows the level that actually opened.
+          memory.mapPath = handle.path();
         },
         () => {
           if (cancelled) return;
@@ -709,7 +716,7 @@ export function createReviewMapView({
         handle?.destroy();
         if (mapHandle.current === handle) mapHandle.current = null;
       };
-    }, [readyIndex, repoName, mapLoader, openFromMap, hoverFromMap, mapCopy]);
+    }, [readyIndex, repoName, mapLoader, openFromMap, hoverFromMap, mapCopy, memory]);
 
     /**
      * The pointer entered or left a list row.
@@ -755,6 +762,7 @@ export function createReviewMapView({
       setOpenPath(undefined);
       setDetailPhase(undefined);
       setSelectedPath(undefined);
+      delete memory.mapPath;
       setScopeKind(kind);
     };
 
@@ -861,7 +869,10 @@ export function createReviewMapView({
         // No panel: the map goes up one level, and only if it actually moved is
         // the key consumed. At the root `up()` returns false and Escape is left
         // alone for whatever else might want it.
-        if (mapHandle.current?.up() === true) event.preventDefault();
+        if (mapHandle.current?.up() === true) {
+          memory.mapPath = mapHandle.current.path();
+          event.preventDefault();
+        }
         return;
       }
       if (event.key === "ArrowDown") {

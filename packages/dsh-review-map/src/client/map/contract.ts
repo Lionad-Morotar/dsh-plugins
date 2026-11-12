@@ -256,6 +256,14 @@ export interface MapOptions {
   /** The root breadcrumb's label; the repository name, when the caller knows it. */
   readonly title?: string;
   /**
+   * The level to open on, when the caller remembers one.
+   *
+   * Absent or naming no level starts at `data.rootPath`: a remembered directory
+   * that the new index no longer has must fall back to the root rather than
+   * open an empty shelf.
+   */
+  readonly initialPath?: string;
+  /**
    * The legend's three labels and the two marker sentences.
    *
    * Passed in rather than baked into the chunk because the chunk has no locale

@@ -16,14 +16,14 @@
  * `boot` exists at all: the factory calls it with its own `require` right after
  * the module body runs, and every later `loadMapChunk` uses that reference.
  */
-import type { MapData, MapHandle, MapHandlers } from "./map/contract.ts";
+import type { MapData, MapHandle, MapHandlers, MapOptions } from "./map/contract.ts";
 import { MAP_CHUNK, PACKAGE_NAME, type LoaderRequire } from "../shared.ts";
 
 export type { LoaderRequire };
 
 /** Everything the map chunk exports. */
 export interface MapChunkModule {
-  readonly createMap: (host: HTMLElement, data: MapData, handlers?: MapHandlers) => MapHandle;
+  readonly createMap: (host: HTMLElement, data: MapData, handlers?: MapHandlers, options?: MapOptions) => MapHandle;
 }
 
 /** One package-local chunk, named once. */

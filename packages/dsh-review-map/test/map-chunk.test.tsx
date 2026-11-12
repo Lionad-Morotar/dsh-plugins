@@ -122,6 +122,33 @@ describe("mounting a map", () => {
     map.destroy();
   });
 
+  it("opens the level initialPath names", () => {
+    const element = host();
+    const levels = new Map<string, MapLevelInput>([
+      ["", level([{ path: "root.ts", lines: 10 }])],
+      ["src", { path: "src", dirs: [], files: [{ path: "src/deep.ts", lines: 20, changed: false }] }],
+    ]);
+    const map = createMap(element, { levels, rootPath: "" }, {}, { initialPath: "src" });
+
+    expect(map.path()).toBe("src");
+    expect(element.querySelector('[data-rm="map-tile"]')?.getAttribute("data-path")).toBe("src/deep.ts");
+    map.destroy();
+  });
+
+  it("falls back to the root when initialPath names no level", () => {
+    const element = host();
+    const map = createMap(
+      element,
+      data(level([{ path: "root.ts", lines: 10 }])),
+      {},
+      { initialPath: "gone" },
+    );
+
+    expect(map.path()).toBe("");
+    expect(element.querySelector('[data-rm="map-tile"]')?.getAttribute("data-path")).toBe("root.ts");
+    map.destroy();
+  });
+
   it("survives a rootPath that names no level", () => {
     const element = host();
     const map = createMap(element, { levels: new Map(), rootPath: "missing" });

@@ -14,9 +14,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createReviewMapView, type ReviewMapViewStrings } from "../src/client/view.tsx";
 import type { ReviewRuntime } from "../src/client/runtime.ts";
+import type { MapChunkModule } from "../src/client/chunk-loader.ts";
+import type { MapData, MapHandlers, MapOptions } from "../src/client/map/contract.ts";
 import type {
   ChangedFile,
   FileDiffResult,
+  ReviewIndexResult,
   ReviewScope,
   ReviewSnapshot,
   ReviewSnapshotResult,
@@ -78,6 +81,30 @@ function fakeRuntime(calls: Calls): ReviewRuntime {
     async loadDiff(_sessionId, scope, path) {
       calls.diffs.push({ scope, path });
       return OK_DIFF;
+    },
+    async loadIndex() {
+      return {
+        ok: true,
+        index: {
+          files: FILES.map(entry => ({ path: entry.path, lines: 10, binary: false, deleted: false })),
+          dirs: [
+            { path: "", lines: 30, files: FILES.length, changed: FILES.length, additions: 3, deletions: 0 },
+          ],
+          changed: FILES.map(entry => ({
+            path: entry.path,
+            status: entry.status,
+            additions: entry.additions,
+            deletions: entry.deletions,
+            binary: entry.binary,
+            hunks: [],
+          })),
+          edges: [],
+          imports: { newImports: 0, droppedImports: 0 },
+          unresolved: { count: 0, files: [] },
+          indexed: { files: FILES.length, parsed: FILES.length, complete: true, note: null },
+          snapshotId: "worktree:HEAD..HEAD",
+        },
+      } satisfies ReviewIndexResult;
     },
   };
 }
@@ -160,6 +187,35 @@ describe("review map session memory", () => {
     expect(row("b.ts").getAttribute("aria-selected")).toBe("true");
     expect(panelPath()).toBe("b.ts");
     expect(calls.diffs.at(-1)).toEqual({ scope: { kind: "branch" }, path: "b.ts" });
+  });
+
+  it("restores the map's drilled level", async () => {
+    const calls: Calls = { scopes: [], diffs: [] };
+    const seen: { options?: MapOptions; handlers?: MapHandlers } = {};
+    const mapLoader = async (): Promise<MapChunkModule> => ({
+      createMap(_host: HTMLElement, _data: MapData, handlers?: MapHandlers, options?: MapOptions) {
+        seen.options = options;
+        seen.handlers = handlers;
+        const start = options?.initialPath ?? "";
+        return {
+          destroy: () => undefined,
+          path: () => start,
+          setHighlight: () => undefined,
+          reveal: () => undefined,
+          up: () => false,
+        };
+      },
+    });
+    const View = createReviewMapView({ strings: STRINGS, runtime: fakeRuntime(calls), mapLoader });
+    await mount(View, "session-1");
+    for (let attempt = 0; attempt < 100 && seen.handlers === undefined; attempt += 1) await settle();
+    expect(seen.handlers).toBeDefined();
+    await act(async () => seen.handlers?.onDrill?.("src"));
+
+    await unmount();
+    await mount(View, "session-1");
+    for (let attempt = 0; attempt < 100 && seen.options?.initialPath !== "src"; attempt += 1) await settle();
+    expect(seen.options?.initialPath).toBe("src");
   });
 
   it("keeps each session's review apart", async () => {

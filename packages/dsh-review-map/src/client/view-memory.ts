@@ -26,6 +26,8 @@ export interface ReviewMapMemory {
   selectedPath?: string;
   /** The file whose detail panel was open. */
   openPath?: string;
+  /** The directory level the map was drilled into; absent means its root. */
+  mapPath?: string;
 }
 
 /** The session-keyed registry the view factory owns. */
