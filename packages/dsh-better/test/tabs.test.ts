@@ -1015,13 +1015,16 @@ describe("drag to reorder", () => {
     expect(pageOrder(section)).toEqual(["files", "wakatime", "git"]);
   });
 
-  it("commits the page's row order on the drop, and repaints numbered rows", () => {
+  it("commits on the dragend, the one end-of-drag event the browser always fires", () => {
     const { section, row, controller, storage } = painted();
     const source = row("git");
     source?.dispatch("dragstart", dragEvent());
     // Drag Git up to the top of the list: above 文件's midline.
     row("files")?.dispatch("dragover", dragEvent(10));
-    row("files")?.dispatch("drop", dragEvent());
+    // No drop: the browser only delivers one to a row whose dragover was
+    // prevented, and the dragged row follows the pointer, so a release over
+    // itself ends the drag without one. The commit happens anyway.
+    source?.dispatch("dragend");
 
     expect(controller.rows().map(row => row.id)).toEqual(["git", "files", "wakatime"]);
     expect(JSON.parse(storage.document.get("dsh-better.tabs") ?? "{}")).toEqual({
@@ -1034,15 +1037,48 @@ describe("drag to reorder", () => {
     expect(row("wakatime")?.querySelector("[data-dsh-better-tabs-pos]")?.textContent).toBe("4");
   });
 
-  it("repaints back to the stored order when a drag ends without a drop", () => {
-    const { section, row, controller } = painted();
+  it("keeps the drop deliverable over the dragged row itself", () => {
+    // The dragged row follows the pointer, so the release lands on it more
+    // often than not. Its dragover must still allow the drop — a dragover the
+    // browser sees as not prevented turns the whole gesture into a failed
+    // drag — while the list itself stays put.
+    const { section, row } = painted();
+    const source = row("wakatime");
+    source?.dispatch("dragstart", dragEvent());
+    let prevented = false;
+    source?.dispatch("dragover", { preventDefault: () => { prevented = true; }, clientY: 10 });
+    expect(prevented).toBe(true);
+    expect(pageOrder(section)).toEqual(["files", "wakatime", "git"]);
+    source?.dispatch("dragend");
+    // Nothing moved, so the stored order stands.
+    expect(pageOrder(section)).toEqual(["files", "wakatime", "git"]);
+  });
+
+  it("commits exactly once when a drop precedes the dragend", () => {
+    // A real release fires drop and then dragend; the commit belongs to the
+    // dragend alone, and a second write of the same order is a no-op.
+    const { section, row, storage } = painted();
     const source = row("git");
     source?.dispatch("dragstart", dragEvent());
     row("files")?.dispatch("dragover", dragEvent(10));
+    row("files")?.dispatch("drop", dragEvent());
+    expect(storage.document.get("dsh-better.tabs")).toBeUndefined();
+    source?.dispatch("dragend");
     expect(pageOrder(section)).toEqual(["git", "files", "wakatime"]);
+    expect(JSON.parse(storage.document.get("dsh-better.tabs") ?? "{}")).toEqual({
+      version: 2,
+      hidden: [],
+      order: ["git", "files", "wakatime"],
+    });
+  });
+
+  it("leaves the stored order untouched when the drag never moved a node", () => {
+    const { section, row, storage } = painted();
+    const source = row("git");
+    source?.dispatch("dragstart", dragEvent());
     source?.dispatch("dragend");
     expect(pageOrder(section)).toEqual(["files", "wakatime", "git"]);
-    expect(controller.rows().map(row => row.id)).toEqual(["files", "wakatime", "git"]);
+    expect(storage.document.get("dsh-better.tabs")).toBeUndefined();
   });
 
   it("never moves the fixed slot, however the drag crosses it", () => {

@@ -88,6 +88,7 @@ export const TABS_PAGE_CSS = `
   font-size: 14px;
   line-height: 22px;
   cursor: grab;
+  user-select: none;
 }
 [data-dsh-better-tabs] [data-dsh-better-tabs-row]:last-of-type {
   border-bottom: none;
@@ -208,27 +209,38 @@ export function paintRows(section: Element, props: TabPageProps): void {
 
   const rows = controller.rows();
   const positions = stripPositions(rows);
-  /** The id of the row a drag is carrying, cleared on drop and on dragend. */
+  /**
+   * The id of the row a drag is carrying, and whether the drag has moved any
+   * node yet. The drag ends on `dragend` no matter where the pointer lets go,
+   * so that is the one place the page commits; `drop` cannot be relied on,
+   * because the browser only delivers it to a row whose `dragover` was
+   * prevented — and the row the pointer is over when it lets go is frequently
+   * the dragged row itself, which follows the pointer and is skipped.
+   */
   let dragging: string | null = null;
+  let moved = false;
 
   for (const row of rows) {
     section.append(movableRow(doc, props, row, positions.get(row.id), {
       dragStart: () => {
         dragging = row.id;
+        moved = false;
       },
       dragOver: event => {
-        if (dragging === null || dragging === row.id) return;
+        if (dragging === null) return;
+        // The pointer must always sit somewhere drop is allowed, or the
+        // browser ends the drag as a failed one and the reorder is lost. The
+        // dragged row itself only allows the drop; it does not move.
         event.preventDefault();
-        moveRow(section, dragging, row.id, dropBefore(event, rowById(section, row.id)));
+        if (dragging === row.id) return;
+        if (moveRow(section, dragging, row.id, dropBefore(event, rowById(section, row.id)))) moved = true;
       },
       drop: event => {
         event.preventDefault();
-        if (dragging === null) return;
-        dragging = null;
-        controller.setOrder(readRowOrder(section));
       },
       dragEnd: () => {
         dragging = null;
+        if (moved) controller.setOrder(readRowOrder(section));
         paintRows(section, props);
       },
     }));
@@ -326,18 +338,22 @@ function rowById(section: Element, id: string): Element | null {
 /**
  * Move the dragged row across the row it now hovers, live.
  *
- * The DOM is the only thing that moves here: the controller is written once, on
- * the drop, so a repaint cannot land in the middle of a drag and detach the
- * node the browser is carrying. A row the section no longer has — the roster
- * changed under the drag — is a move that does not happen.
+ * The DOM is the only thing that moves here: the controller is written once,
+ * when the drag ends, so a repaint cannot land in the middle of a drag and
+ * detach the node the browser is carrying. A row the section no longer has —
+ * the roster changed under the drag — is a move that does not happen.
+ * @returns whether the list actually changed shape.
  */
-function moveRow(section: Element, dragId: string, overId: string, before: boolean): void {
+function moveRow(section: Element, dragId: string, overId: string, before: boolean): boolean {
   const dragged = rowById(section, dragId);
   const target = rowById(section, overId);
-  if (dragged === null || target === null) return;
+  if (dragged === null || target === null) return false;
   const parent = dragged.parentElement;
-  if (parent === null) return;
-  parent.insertBefore(dragged, before ? target : target.nextSibling);
+  if (parent === null) return false;
+  const reference = before ? target : target.nextSibling;
+  if (reference === dragged) return false;
+  parent.insertBefore(dragged, reference);
+  return true;
 }
 
 /**
