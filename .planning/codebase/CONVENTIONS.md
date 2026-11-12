@@ -46,6 +46,10 @@
 - 错误前缀跟着包名走：`ascii-rest:` 之外有 `dsh-jump: label space exhausted`（`src/client/hints.ts`）、`/copy cannot register: …` 与 `/rename cannot register: …`（两条注册路径都缺席时才抛，`command.ts` / `rename-command.ts`）
 - 包装别人的契约时照原样抛：`client/clipboard-shim.ts` 的 `writeBounded` 自身永不 reject（返回 boolean），但重新装回 `navigator.clipboard.writeText` 的那层包装在两条路径都失败时仍 `throw new Error("clipboard write failed")`——调用方 await 的是平台契约，只能收到 reject，插件不能在接缝上换语义
 
+## 共享 DOM 接缝
+
+跨包共享的宿主 DOM 面（`[data-conversation-tabs]`、`[data-shortcut-modal="settings"]` 这类稳定数据属性）不是任何单包的私有领地。给这类接缝**新增契约**（盖戳：`data-dsh-better-tab-hidden` 隐藏标记、行内 `style.order` 位次戳）之前，先仓库级 grep 接缝标记列全消费者清单，逐个判寻址方式：位次寻址（数 DOM 顺序或 flex 位次）受新戳影响，label 寻址（按文本匹配）免疫。判据实例：dsh-better 的 Tab 管理给按钮盖 `style.order` 只改视觉位次，`dsh-workbench-core` 的 `listViewTabs` 曾按 DOM 顺序给数字键定位次，重排后 `⌘2` 与所见 2 号位错位——而当时 `view-switcher.ts` 里已存在对 `data-dsh-better-tab-hidden` 的具名引用，seam 已有跨包消费者是明牌信号。配套纪律：戳的语义在消费者侧同步定义（排序必须稳定、无戳回落原序，两个包互不 import，契约具名引用并注明「DOM contract, not a code one」）；位次寻址的消费者必须补「带新戳」的用例，两包测试各自闭环拦不住集成缝断裂。
+
 ## 日志
 
 无日志框架。原则：损坏数据不值得每次页面加载刷错误；告警是调用方的责任。宿主侧插件（`dsh-slash-commands`）走注入的 `ctx.logger.info/warn`，不用 `console`（服务声明为全可选 `logger?: { info?; warn? }`，调用处统一 `ctx.logger?.info?.(…)`）；纯客户端插件（`dsh-jump`）不写日志，`dsh-slash-commands` 的客户端半边（`src/client/`）同样一句不写——它在页面里，失败要变成可见的状态（剪贴板兜底、设置行的拒绝理由），而不是控制台里的一行；皮肤包只有一个 `warn` 出口（`src/client/app.ts` 的 4 个调用点：场景加载失败、场景停止绘制、无场景时开面板、调参面板加载失败），且带一条 `// eslint-disable-next-line no-console` 注释说明为何无 logger 时仍需出声——仓内并无 ESLint 配置，这条指令属历史遗留，另有一条同类指令在 `packages/ascii-rest-scenes/scripts/generate-catalog.mjs`。
