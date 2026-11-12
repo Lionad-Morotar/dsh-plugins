@@ -132,19 +132,12 @@ export const TABS_PAGE_CSS = `
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-[data-dsh-better-tabs] [data-dsh-better-tabs-notecol] {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
 [data-dsh-better-tabs] [data-dsh-better-tabs-note] {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
-  line-height: 16px;
+  line-height: 18px;
 }
 [data-dsh-better-tabs] [data-dsh-better-tabs-check] {
   flex-shrink: 0;
@@ -284,12 +277,16 @@ interface RowDrag {
   dragEnd(): void;
 }
 
-/** The fixed first slot: numbered, named, its note, and carrying no control. */
+/** The fixed first slot: numbered, named, its note on the right, no control. */
 function fixedRow(doc: Document, copy: Pick<TabCopy, "chatLabel" | "chatNote">): HTMLElement {
   const row = doc.createElement("div");
   row.setAttribute(ROW_ATTR, FIXED_VIEW_ID);
   row.setAttribute(FIXED_ATTR, "");
-  row.append(leadWithNote(doc, 1, copy.chatLabel, copy.chatNote));
+  row.append(lead(doc, 1, copy.chatLabel));
+  const note = doc.createElement("span");
+  note.setAttribute("data-dsh-better-tabs-note", "");
+  note.textContent = copy.chatNote;
+  row.append(note);
   return row;
 }
 
@@ -304,7 +301,7 @@ function movableRow(
   const label = doc.createElement("label");
   label.setAttribute(ROW_ATTR, row.id);
   label.setAttribute("draggable", "true");
-  label.append(leadWithNote(doc, position, row.label));
+  label.append(lead(doc, position, row.label));
 
   const box = doc.createElement("input");
   box.setAttribute("data-dsh-better-tabs-check", row.id);
@@ -328,15 +325,12 @@ function movableRow(
 }
 
 /**
- * The lead cluster: the strip number when the row has one, then the name, and
- * — on the fixed row only — the one-line note under it.
+ * The lead cluster: the strip number when the row has one, then the name.
  *
  * A hidden row takes no number. It is not in the strip, and printing the place
- * it would take would promise a position the reader cannot see. The note is
- * the page's only explanatory copy: a row without a checkbox reads as a
- * broken row unless the page says why it has none.
+ * it would take would promise a position the reader cannot see.
  */
-function leadWithNote(doc: Document, position: number | undefined, labelText: string, note?: string): HTMLElement {
+function lead(doc: Document, position: number | undefined, labelText: string): HTMLElement {
   const cluster = doc.createElement("span");
   cluster.setAttribute("data-dsh-better-tabs-lead", "");
   if (position !== undefined) {
@@ -348,18 +342,7 @@ function leadWithNote(doc: Document, position: number | undefined, labelText: st
   const name = doc.createElement("span");
   name.setAttribute("data-dsh-better-tabs-name", "");
   name.textContent = labelText;
-  if (note === undefined) {
-    cluster.append(name);
-    return cluster;
-  }
-  const column = doc.createElement("span");
-  column.setAttribute("data-dsh-better-tabs-notecol", "");
-  column.append(name);
-  const noteLine = doc.createElement("span");
-  noteLine.setAttribute("data-dsh-better-tabs-note", "");
-  noteLine.textContent = note;
-  column.append(noteLine);
-  cluster.append(column);
+  cluster.append(name);
   return cluster;
 }
 
