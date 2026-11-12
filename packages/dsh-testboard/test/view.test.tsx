@@ -122,6 +122,8 @@ const STRINGS: TestboardViewStrings = {
   noticeCopied: "已复制路径",
   noticeCopyFailed: "复制失败",
   fromCache: "上次运行",
+  expandDirectory: "展开目录",
+  collapseDirectory: "收起目录",
 };
 
 /**
@@ -369,6 +371,378 @@ describe("testboard view", () => {
       document.body.removeAttribute("data-ds-dark-theme");
     });
     expect(board?.className).toContain("tst-theme-light");
+  });
+
+  describe("directory tree", () => {
+    /**
+     * A snapshot built for these cases only.
+     *
+     * The committed snapshot has exactly one package with a subdirectory, so it
+     * cannot show a three-level tree, a suppressed package and a root group side
+     * by side. The board takes its data through the runtime, so a runtime over
+     * this snapshot exercises the same path the host's data takes.
+     */
+    const TREE_SNAPSHOT: TestSnapshot = {
+      version: 2,
+      statusSource: "synthetic",
+      packages: [
+        {
+          name: ".",
+          files: [
+            { path: "tests/client/y.test.ts", cases: [{ path: "tests/client/y.test.ts", line: 1, name: "y", status: "passed", durationMs: 3 }] },
+            { path: "tests/server/api/x.test.ts", cases: [{ path: "tests/server/api/x.test.ts", line: 1, name: "x", status: "passed", durationMs: 2 }] },
+          ],
+        },
+        {
+          name: "flat",
+          files: [
+            { path: "packages/flat/test/a.test.ts", cases: [{ path: "packages/flat/test/a.test.ts", line: 1, name: "a", status: "passed", durationMs: 1 }] },
+            { path: "packages/flat/test/b.test.ts", cases: [{ path: "packages/flat/test/b.test.ts", line: 1, name: "b", status: "failed", durationMs: 4 }] },
+          ],
+        },
+        {
+          name: "tree",
+          files: [
+            { path: "packages/tree/smoke.test.ts", cases: [{ path: "packages/tree/smoke.test.ts", line: 1, name: "smoke", status: "passed", durationMs: 1 }] },
+            { path: "packages/tree/test/unit/a.test.ts", cases: [{ path: "packages/tree/test/unit/a.test.ts", line: 1, name: "a", status: "passed", durationMs: 5 }] },
+            { path: "packages/tree/test/unit/nested/b.test.ts", cases: [{ path: "packages/tree/test/unit/nested/b.test.ts", line: 1, name: "b", status: "failed", durationMs: 6 }] },
+            { path: "packages/tree/test/integration/c.test.ts", cases: [{ path: "packages/tree/test/integration/c.test.ts", line: 1, name: "c", status: "passed", durationMs: 7 }] },
+          ],
+        },
+      ],
+    };
+
+    /** Mount the board over the tree snapshot instead of the committed one. */
+    async function mountTree(): Promise<void> {
+      runtime = makeRuntime({ snapshot: TREE_SNAPSHOT, workspaceName: "tree" });
+      await mount();
+    }
+
+    /** Every rendered directory header, in document order. */
+    function directories(host: HTMLElement): HTMLElement[] {
+      return [...host.querySelectorAll<HTMLElement>('[data-testid="directory-section"]')];
+    }
+
+    /** The package section for one package name. */
+    function section(host: HTMLElement, packageName: string): HTMLElement {
+      const found = host.querySelector<HTMLElement>(`[data-testid="package-section"][data-package="${packageName}"]`);
+      if (found === null) throw new Error(`no section for ${packageName}`);
+      return found;
+    }
+
+    /** The branch wrapper a directory header belongs to, which holds its rows. */
+    function branchOf(host: HTMLElement, dir: string): HTMLElement {
+      const header = host.querySelector<HTMLElement>(`[data-testid="directory-section"][data-dir="${dir}"]`);
+      const branch = header?.parentElement;
+      if (branch === null || branch === undefined) throw new Error(`no branch for ${dir}`);
+      return branch;
+    }
+
+    it("renders one header per directory, in tree order, with its depth", async () => {
+      await mountTree();
+      // `tests/server` holds only `api`, so the pair is one header keyed by the
+      // outer directory; the depth is the level the branch starts at.
+      expect(directories(host).map(node => node.getAttribute("data-dir"))).toEqual([
+        ".:tests",
+        ".:tests/client",
+        ".:tests/server",
+        "tree:test",
+        "tree:test/integration",
+        "tree:test/unit",
+        "tree:test/unit/nested",
+      ]);
+      expect(directories(host).map(node => node.getAttribute("data-depth"))).toEqual([
+        "0", "1", "1", "0", "1", "1", "2",
+      ]);
+    });
+
+    it("names a directory by its own segment, joining a single-child chain", async () => {
+      await mountTree();
+      const labels = directories(host).map(node => node.querySelector('[data-tst="directory-name"]')?.textContent);
+      // A chain is one address, so it reads as one label: `server/api` rather
+      // than two headers that each say half of it.
+      expect(labels).toEqual(["tests", "client", "server/api", "test", "integration", "unit", "nested"]);
+    });
+
+    it("keeps a compressed header's fold key at the outer directory", async () => {
+      await mountTree();
+      // The label grew but the branch still starts at `tests/server`, so a fold
+      // keyed by the outer path takes the whole chain with it.
+      const header = host.querySelector<HTMLElement>('[data-dir=".:tests/server"]');
+      expect(header?.querySelector('[data-tst="directory-name"]')?.textContent).toBe("server/api");
+      expect(header?.getAttribute("data-depth")).toBe("1");
+
+      const toggle = header?.querySelector<HTMLElement>('[data-testid="directory-toggle"]');
+      if (toggle === null || toggle === undefined) throw new Error("no toggle");
+      await act(async () => toggle.click());
+      expect(rows(host).some(row => row.getAttribute("data-path") === "tests/server/api/x.test.ts")).toBe(false);
+    });
+
+    it("hangs each file under its own directory", async () => {
+      await mountTree();
+      // Direct slots only: a branch also contains its child branches, and their
+      // rows belong to them, not to this directory.
+      const own = (dir: string): (string | null)[] =>
+        [...branchOf(host, dir).querySelectorAll<HTMLElement>(':scope > [data-tst="lane-slot"] [data-testid="file-row"]')].map(
+          row => row.getAttribute("data-path"),
+        );
+
+      expect(own("tree:test/unit")).toEqual(["packages/tree/test/unit/a.test.ts"]);
+      expect(own("tree:test/unit/nested")).toEqual(["packages/tree/test/unit/nested/b.test.ts"]);
+      expect(own("tree:test/integration")).toEqual(["packages/tree/test/integration/c.test.ts"]);
+    });
+
+    it("drops the directory suffix from rows inside the tree", async () => {
+      await mountTree();
+      // The header above the row already says the directory; repeating it on
+      // every line is what the tree replaces.
+      expect(section(host, "tree").querySelectorAll('[data-tst="lane-dir"]')).toHaveLength(0);
+      expect(section(host, ".").querySelectorAll('[data-tst="lane-dir"]')).toHaveLength(0);
+    });
+
+    it("keeps a single-directory package flat, suffix and all", async () => {
+      await mountTree();
+      const flat = section(host, "flat");
+      expect(flat.querySelectorAll('[data-testid="directory-section"]')).toHaveLength(0);
+      const shown = [...flat.querySelectorAll<HTMLElement>('[data-testid="file-row"]')];
+      // The default sort puts the failing file first, and a flat package keeps
+      // exactly that order: the tree never reorders rows.
+      expect(shown.map(row => row.getAttribute("data-path"))).toEqual([
+        "packages/flat/test/b.test.ts",
+        "packages/flat/test/a.test.ts",
+      ]);
+      expect(shown[0]?.querySelector('[data-tst="lane-dir"]')?.textContent).toBe("test");
+    });
+
+    it("hides the package title for the root group but keeps its section", async () => {
+      await mountTree();
+      const root = section(host, ".");
+      expect(root.querySelector('[data-tst="package-name"]')).toBeNull();
+      expect(root.querySelectorAll('[data-testid="directory-section"]').length).toBeGreaterThan(0);
+      // The other packages still name themselves.
+      expect(section(host, "tree").querySelector('[data-tst="package-name"]')?.textContent).toBe("tree");
+    });
+
+    it("shows a directory's failure count beside its title", async () => {
+      await mountTree();
+      const unit = host.querySelector<HTMLElement>('[data-dir="tree:test/unit"]');
+      expect(unit?.textContent).toContain(`1 ${STRINGS.failed}`);
+      const integration = host.querySelector<HTMLElement>('[data-dir="tree:test/integration"]');
+      expect(integration?.textContent).not.toContain(STRINGS.failed);
+    });
+    it("still renders every file exactly once", async () => {
+      await mountTree();
+      const total = TREE_SNAPSHOT.packages.reduce((sum, pkg) => sum + pkg.files.length, 0);
+      expect(rows(host)).toHaveLength(total);
+      expect(new Set(rows(host).map(row => row.getAttribute("data-path"))).size).toBe(total);
+    });
+
+    it("keeps a tree row selectable and expandable", async () => {
+      await mountTree();
+      const row = rows(host).find(candidate => candidate.getAttribute("data-path") === "packages/tree/test/unit/nested/b.test.ts");
+      if (row === undefined) throw new Error("no nested row");
+      await act(async () => row.click());
+      expect(row.getAttribute("data-selected")).toBe("true");
+      expect(host.querySelectorAll('[data-testid="case-item"]')).toHaveLength(1);
+    });
+
+    it("renders a package-root file under its package heading", async () => {
+      await mountTree();
+      const tree = section(host, "tree");
+      const first = tree.querySelector<HTMLElement>('[data-testid="file-row"]');
+      // The package heading already says where the file is, so it comes before
+      // the directory headers and needs no header of its own.
+      expect(first?.getAttribute("data-path")).toBe("packages/tree/smoke.test.ts");
+      expect(tree.querySelector('[data-testid="directory-section"]')?.getAttribute("data-dir")).toBe("tree:test");
+      const row = rows(host).find(candidate => candidate.getAttribute("data-path") === "packages/tree/smoke.test.ts");
+      if (row === undefined) throw new Error("no root row");
+      await act(async () => row.click());
+      expect(row.getAttribute("data-selected")).toBe("true");
+    });
+
+    /** The toggle inside one directory header. */
+    function toggleOf(dir: string): HTMLElement {
+      const found = host.querySelector<HTMLElement>(`[data-dir="${dir}"] [data-testid="directory-toggle"]`);
+      if (found === null) throw new Error(`no toggle for ${dir}`);
+      return found;
+    }
+
+    /** The file paths currently rendered, in document order. */
+    function shownPaths(): (string | null)[] {
+      return rows(host).map(row => row.getAttribute("data-path"));
+    }
+
+    describe("collapsing", () => {
+      it("starts fully expanded", async () => {
+        await mountTree();
+        const toggles = [...host.querySelectorAll<HTMLElement>('[data-testid="directory-toggle"]')];
+        expect(toggles.length).toBeGreaterThan(0);
+        expect(toggles.every(toggle => toggle.getAttribute("aria-expanded") === "true")).toBe(true);
+        expect(toggles.every(toggle => toggle.getAttribute("data-collapsed") === "false")).toBe(true);
+      });
+
+      it("hides a directory's files and its subtree on click, and restores them", async () => {
+        await mountTree();
+        expect(shownPaths()).toContain("packages/tree/test/unit/a.test.ts");
+        expect(shownPaths()).toContain("packages/tree/test/unit/nested/b.test.ts");
+
+        await act(async () => toggleOf("tree:test/unit").click());
+        expect(toggleOf("tree:test/unit").getAttribute("aria-expanded")).toBe("false");
+        expect(toggleOf("tree:test/unit").getAttribute("data-collapsed")).toBe("true");
+        // The nested child goes with its parent: the reader folded the branch.
+        expect(shownPaths()).not.toContain("packages/tree/test/unit/a.test.ts");
+        expect(shownPaths()).not.toContain("packages/tree/test/unit/nested/b.test.ts");
+        expect(host.querySelector('[data-dir="tree:test/unit/nested"]')).toBeNull();
+        // The sibling branch is untouched.
+        expect(shownPaths()).toContain("packages/tree/test/integration/c.test.ts");
+
+        await act(async () => toggleOf("tree:test/unit").click());
+        expect(shownPaths()).toContain("packages/tree/test/unit/a.test.ts");
+        expect(shownPaths()).toContain("packages/tree/test/unit/nested/b.test.ts");
+      });
+
+      it("does not select a row when the header is clicked", async () => {
+        await mountTree();
+        await act(async () => toggleOf("tree:test/unit").click());
+        expect(rows(host).some(row => row.getAttribute("data-selected") === "true")).toBe(false);
+        expect(host.querySelector('[data-testid="detail-empty"]')).not.toBeNull();
+      });
+
+      it("keeps the toggle out of the listbox keyboard order", async () => {
+        await mountTree();
+        const toggle = toggleOf("tree:test/unit");
+        // The list owns the focus and the arrow keys. A header that took the
+        // focus would strand a keyboard reader mid-list, and the toggle is a
+        // pointer affordance by design, so it is explicitly out of the tab order.
+        expect(toggle.getAttribute("tabindex")).toBe("-1");
+        expect(toggle.getAttribute("role")).not.toBe("option");
+        expect(toggle.getAttribute("aria-label")).toBe(STRINGS.collapseDirectory);
+      });
+
+      it("does not let Enter or Space on the toggle reach the listbox", async () => {
+        await mountTree();
+        // Select a file first, so the listbox has something to activate: without
+        // the guard, Enter on the header would toggle that file's cases as well
+        // as folding the directory.
+        const row = rows(host).find(candidate => candidate.getAttribute("data-path") === "packages/tree/test/unit/a.test.ts");
+        if (row === undefined) throw new Error("no row");
+        await act(async () => row.click());
+        expect(host.querySelectorAll('[data-testid="case-item"]')).toHaveLength(1);
+
+        const toggle = toggleOf("tree:test/unit");
+        for (const key of ["Enter", " "]) {
+          const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+          await act(async () => {
+            toggle.dispatchEvent(event);
+          });
+          // The stroke is the header's, not the list's: it must not be read as
+          // an activate on whatever file happens to be selected.
+          expect(event.defaultPrevented).toBe(false);
+        }
+
+        // The fold is still the only thing that happened: the directory is
+        // untouched (no click was dispatched) and the file's cases are as they
+        // were.
+        expect(toggle.getAttribute("aria-expanded")).toBe("true");
+        expect(host.querySelectorAll('[data-testid="case-item"]')).toHaveLength(1);
+        expect(rows(host).find(candidate => candidate.getAttribute("data-selected") === "true")?.getAttribute("data-path")).toBe(
+          "packages/tree/test/unit/a.test.ts",
+        );
+      });
+
+      it("keeps arrow-key navigation alive after a click puts focus on the toggle", async () => {
+        await mountTree();
+        const toggle = toggleOf("tree:test/unit");
+        await act(async () => toggle.click());
+        // Browsers focus a clicked button even when it is out of the tab order;
+        // the list's keys must keep bubbling from there.
+        await act(async () => toggle.focus());
+        await act(async () => {
+          toggle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+        });
+        expect(rows(host).some(row => row.getAttribute("aria-selected") === "true")).toBe(true);
+      });
+
+      it("shows every match while a search is running, then restores the fold", async () => {
+        await mountTree();
+        await act(async () => toggleOf("tree:test/unit").click());
+        expect(shownPaths()).not.toContain("packages/tree/test/unit/a.test.ts");
+
+        const input = host.querySelector<HTMLInputElement>('[data-testid="search-input"]');
+        if (input === null) throw new Error("no search input");
+        await act(async () => {
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+          setter?.call(input, "unit/a.test");
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        // A search that cannot reach the file it matched would be useless, so a
+        // live query overrides the fold.
+        expect(shownPaths()).toEqual(["packages/tree/test/unit/a.test.ts"]);
+
+        await act(async () => {
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+          setter?.call(input, "");
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        // The reader's own fold comes back rather than being silently dropped.
+        expect(shownPaths()).not.toContain("packages/tree/test/unit/a.test.ts");
+      });
+
+      it("moves the selection to the next visible row when its file is folded away", async () => {
+        await mountTree();
+        const target = rows(host).find(row => row.getAttribute("data-path") === "packages/tree/test/unit/a.test.ts");
+        if (target === undefined) throw new Error("no target row");
+        await act(async () => target.click());
+        expect(target.getAttribute("data-selected")).toBe("true");
+
+        await act(async () => toggleOf("tree:test/unit").click());
+        // `test/integration/c.test.ts` follows the folded branch in render order.
+        const selected = rows(host).find(row => row.getAttribute("data-selected") === "true");
+        expect(selected?.getAttribute("data-path")).toBe("packages/tree/test/integration/c.test.ts");
+        expect(host.querySelector('[data-testid="detail-file"]')).not.toBeNull();
+      });
+
+      it("moves the selection into the next package when its own is folded away", async () => {
+        await mountTree();
+        const target = rows(host).find(row => row.getAttribute("data-path") === "packages/tree/test/integration/c.test.ts");
+        if (target === undefined) throw new Error("no target row");
+        await act(async () => target.click());
+
+        // Folding the whole `tree` package still leaves the package-root file
+        // visible above the tree, and it is the nearest surviving row.
+        await act(async () => toggleOf("tree:test").click());
+        const selected = rows(host).find(row => row.getAttribute("data-selected") === "true");
+        expect(selected?.getAttribute("data-path")).toBe("packages/tree/smoke.test.ts");
+        expect(host.querySelector('[data-testid="detail-file"]')).not.toBeNull();
+      });
+
+      it("expands the ancestors of a chip's target before selecting it", async () => {
+        await mountTree();
+        await act(async () => toggleOf("tree:test/unit").click());
+        expect(shownPaths()).not.toContain("packages/tree/test/unit/nested/b.test.ts");
+
+        const complete = { calls: 0 };
+        await act(async () => {
+          root.render(
+            createElement(makeView(), {
+              sessionId: "session-1",
+              viewRequest: { view: "testboard", focus: "file:packages/tree/test/unit/nested/b.test.ts" },
+              completeViewRequest: () => {
+                complete.calls += 1;
+              },
+            }),
+          );
+        });
+        await settleBoard(host);
+
+        // The request is the reason the reader is here, so the fold that hides
+        // its target gives way.
+        const selected = rows(host).find(row => row.getAttribute("data-selected") === "true");
+        expect(selected?.getAttribute("data-path")).toBe("packages/tree/test/unit/nested/b.test.ts");
+        expect(toggleOf("tree:test/unit").getAttribute("aria-expanded")).toBe("true");
+        expect(complete.calls).toBeGreaterThan(0);
+      });
+    });
   });
 
   describe("split layout", () => {

@@ -245,6 +245,8 @@ export function apply(ctx: TestboardClientContext): () => void {
       noticeCopied: t("testboard.noticeCopied"),
       noticeCopyFailed: t("testboard.noticeCopyFailed"),
       fromCache: t("testboard.fromCache"),
+      expandDirectory: t("testboard.expandDirectory"),
+      collapseDirectory: t("testboard.collapseDirectory"),
     } satisfies TestboardViewStrings,
     // The board reads the host's live state; the committed snapshot is the
     // preview's fixture and the tests' corpus, not something the tab fetches.

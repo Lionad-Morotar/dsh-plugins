@@ -58,6 +58,14 @@ export interface LaneRowProps {
    */
   readonly reading: RowReading;
   readonly strings: LaneRowStrings;
+  /**
+   * Whether the row repeats the directory after the file name.
+   *
+   * Default true, which is the flat list's reading. Inside a directory tree the
+   * header above the row already names the directory, so the suffix is dropped
+   * there; a suppressed package has no header and keeps it.
+   */
+  readonly showDirectory?: boolean;
   readonly onSelect: (path: string) => void;
   readonly onRun: (path: string) => void;
   /** Right-click on the row: the view anchors its menu at the pointer. */
@@ -79,6 +87,7 @@ export function LaneRow({
   reduced,
   reading,
   strings,
+  showDirectory = true,
   onSelect,
   onRun,
   onContextMenu,
@@ -110,7 +119,7 @@ export function LaneRow({
     >
       <span data-tst="lane-name">
         <span data-tst="lane-file">{fileNameOf(row.path)}</span>
-        <span data-tst="lane-dir">{directory}</span>
+        {showDirectory ? <span data-tst="lane-dir">{directory}</span> : null}
       </span>
 
       <TickMatrix ticks={ticks} reduced={reduced} />

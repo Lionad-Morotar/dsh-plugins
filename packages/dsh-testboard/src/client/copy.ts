@@ -67,6 +67,8 @@ export const ZH: Record<string, string> = {
   "testboard.noticeCopied": "已复制路径",
   "testboard.noticeCopyFailed": "复制失败",
   "testboard.fromCache": "上次运行",
+  "testboard.expandDirectory": "展开目录",
+  "testboard.collapseDirectory": "收起目录",
 };
 
 export const EN: Record<string, string> = {
@@ -131,4 +133,6 @@ export const EN: Record<string, string> = {
   "testboard.noticeCopied": "Path copied",
   "testboard.noticeCopyFailed": "Copy failed",
   "testboard.fromCache": "Last run",
+  "testboard.expandDirectory": "Expand directory",
+  "testboard.collapseDirectory": "Collapse directory",
 };

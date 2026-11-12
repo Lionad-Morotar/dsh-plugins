@@ -23,7 +23,8 @@ import type { RunProgress } from "../shared.ts";
 import { ensureStyles } from "./styles.ts";
 import { createTestboardView, type TestboardViewStrings } from "./view.tsx";
 import type { EditorChunkModule } from "./code-contract.ts";
-import type { TestSnapshot } from "./model.ts";
+import { fileNameOf } from "./format.ts";
+import type { TestFile, TestPackage, TestSnapshot, TestStatus } from "./model.ts";
 import type { SourceBundle } from "./source.ts";
 
 /** The attribute the host writes on `body` to select the dark palette. */
@@ -95,10 +96,12 @@ const STRINGS: TestboardViewStrings = {
   noticeCopied: "已复制路径",
   noticeCopyFailed: "复制失败",
   fromCache: "上次运行",
+  expandDirectory: "展开目录",
+  collapseDirectory: "收起目录",
 };
 
 /** Which static state the page should show instead of the demoting demo loop. */
-type PreviewState = "demo" | "empty" | "loading" | "cached";
+type PreviewState = "demo" | "empty" | "loading" | "cached" | "tree";
 
 /**
  * Read the requested state from the query string.
@@ -112,7 +115,43 @@ type PreviewState = "demo" | "empty" | "loading" | "cached";
  */
 function requestedState(search: string): PreviewState {
   const value = new URLSearchParams(search).get("state");
-  return value === "empty" || value === "loading" || value === "cached" ? value : "demo";
+  return value === "empty" || value === "loading" || value === "cached" || value === "tree" ? value : "demo";
+}
+
+/**
+ * A snapshot with one package deep enough to show a multi-level tree.
+ *
+ * The committed snapshot's packages are almost all a single `test/` directory,
+ * so the tree renders flat there and there is nothing to look at. This package
+ * is preview-only: it exists so `?state=tree` can be opened and screenshotted
+ * with real nesting, and it is built here rather than committed to
+ * `src/client/data/` because it is not data the board ever ships.
+ * @param base - the committed snapshot, kept as it is.
+ * @returns the snapshot plus the demo package.
+ */
+function treeSnapshot(base: TestSnapshot): TestSnapshot {
+  const file = (path: string, statuses: readonly TestStatus[]): TestFile => ({
+    path,
+    cases: statuses.map((status, index) => ({
+      path,
+      line: index + 1,
+      name: `${fileNameOf(path).replace(/\.test\.ts$/, "")} case ${String(index + 1)}`,
+      status,
+      durationMs: 12 * (index + 1),
+    })),
+  });
+  const demo: TestPackage = {
+    name: "demo-tree",
+    files: [
+      file("packages/demo-tree/test/unit/a.test.ts", ["passed", "passed", "failed"]),
+      file("packages/demo-tree/test/unit/b.test.ts", ["passed", "passed"]),
+      file("packages/demo-tree/test/unit/nested/c.test.ts", ["passed", "failed", "passed"]),
+      file("packages/demo-tree/test/unit/nested/deeper/d.test.ts", ["passed"]),
+      file("packages/demo-tree/test/integration/e.test.ts", ["passed", "passed", "passed"]),
+      file("packages/demo-tree/test/integration/f.test.ts", ["failed", "passed"]),
+    ],
+  };
+  return { ...base, packages: [...base.packages, demo] };
 }
 
 /**
@@ -264,7 +303,12 @@ function mount(host: HTMLElement, snapshot: TestSnapshot, sources: SourceBundle,
         ? loadingRuntime(fixture)
         : state === "cached"
           ? cachedRuntime(fixture, snapshot)
-          : fixture;
+          : state === "tree"
+            // The tree state is a still board: the fixture's demo loop would keep
+            // relighting cases under a screenshot, and the point of this state is
+            // the directory headers.
+            ? { ...fixture, loadState: async () => ({ snapshot: treeSnapshot(snapshot), workspaceName: "dsh-plugins" }) }
+            : fixture;
   const View = createTestboardView({
     strings: STRINGS,
     runtime,
