@@ -277,6 +277,18 @@ export const FS_STYLES = `
 .fx-notice[data-tone="ok"] { color: var(--dsw-alias-state-success-primary, var(--fx-text-2)); }
 .fx-notice[data-tone="error"] { color: var(--dsw-alias-state-error-primary, var(--fx-text-2)); }
 
+/* The host toast's own fill reads the --dsw-alias-toast-bg token, which the
+   running skin keeps translucent: the ASCII scene bleeds through and the
+   sentence competes with the background it floats over. Pin the alpha to 1 so
+   the card reads as a solid surface; the token stays the single source of the
+   hue, so light and dark themes and future skin retunes still flow through.
+   The inline --dsh-toast-hold variable is the component's own marker (it sets
+   the hold per occurrence), which targets its portal without a hashed class
+   name or a global token override. */
+div[role="alert"][style*="--dsh-toast-hold"] {
+  background: rgb(from var(--dsw-alias-toast-bg, Canvas) r g b / 1);
+}
+
 /* The context menu's own card, used only when the host seeds no primitive kit.
    The host's Menu brings its own material; this exists so right-click still
    works on a host that has none, not as a second menu design. */
